@@ -1,7 +1,7 @@
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from "fs";
 import { homedir } from "os";
 import { join, dirname } from "path";
-import type { ToolTarget, Marketplace } from "./types.js";
+import type { ToolTarget, ToolInstance, Marketplace } from "./types.js";
 
 const DEFAULT_TOOLS: Record<string, ToolTarget> = {
   "claude-code": {
@@ -11,7 +11,6 @@ const DEFAULT_TOOLS: Record<string, ToolTarget> = {
     skillsSubdir: "skills",
     commandsSubdir: "commands",
     agentsSubdir: "agents",
-    enabled: false,
   },
   opencode: {
     id: "opencode",
@@ -20,7 +19,6 @@ const DEFAULT_TOOLS: Record<string, ToolTarget> = {
     skillsSubdir: "skills",
     commandsSubdir: "commands",
     agentsSubdir: "agents",
-    enabled: false,
   },
   "amp-code": {
     id: "amp-code",
@@ -29,7 +27,6 @@ const DEFAULT_TOOLS: Record<string, ToolTarget> = {
     skillsSubdir: "skills",
     commandsSubdir: "commands",
     agentsSubdir: "agents",
-    enabled: false,
   },
   "openai-codex": {
     id: "openai-codex",
@@ -38,7 +35,6 @@ const DEFAULT_TOOLS: Record<string, ToolTarget> = {
     skillsSubdir: "skills",
     commandsSubdir: null,
     agentsSubdir: null,
-    enabled: false,
   },
 };
 
@@ -104,9 +100,17 @@ export function getConfigPath(): string {
   return join(getConfigDir(), "config.toml");
 }
 
+export interface ToolInstanceConfig {
+  id?: string;
+  name?: string;
+  enabled?: boolean;
+  configDir?: string;
+}
+
 export interface ToolConfig {
   enabled?: boolean;
   configDir?: string;
+  instances?: ToolInstanceConfig[];
 }
 
 export interface TomlConfig {
@@ -126,10 +130,31 @@ export function loadConfig(configPath?: string): TomlConfig {
 
   let currentSection = "";
   let currentTool = "";
+  let currentInstance: ToolInstanceConfig | null = null;
   
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
     if (trimmed.startsWith("#") || !trimmed) continue;
+
+    const arraySectionMatch = trimmed.match(/^\[\[([^\]]+)\]\]$/);
+    if (arraySectionMatch) {
+      const section = arraySectionMatch[1];
+      if (section.startsWith("tools.") && section.endsWith(".instances")) {
+        currentSection = "tool_instances";
+        currentTool = section.replace(/^tools\./, "").replace(/\.instances$/, "");
+        const toolConfig = result.tools![currentTool] || {};
+        toolConfig.instances = toolConfig.instances || [];
+        const instance: ToolInstanceConfig = {};
+        toolConfig.instances.push(instance);
+        result.tools![currentTool] = toolConfig;
+        currentInstance = instance;
+      } else {
+        currentSection = "";
+        currentTool = "";
+        currentInstance = null;
+      }
+      continue;
+    }
 
     const sectionMatch = trimmed.match(/^\[([^\]]+)\]$/);
     if (sectionMatch) {
@@ -138,9 +163,11 @@ export function loadConfig(configPath?: string): TomlConfig {
         currentSection = "tools";
         currentTool = section.replace("tools.", "");
         result.tools![currentTool] = result.tools![currentTool] || {};
+        currentInstance = null;
       } else {
         currentSection = section;
         currentTool = "";
+        currentInstance = null;
       }
       continue;
     }
@@ -154,6 +181,9 @@ export function loadConfig(configPath?: string): TomlConfig {
       } else if (currentSection === "tools" && currentTool) {
         const normalizedKey = key === "config_dir" ? "configDir" : key;
         (result.tools![currentTool] as Record<string, string>)[normalizedKey] = value;
+      } else if (currentSection === "tool_instances" && currentTool && currentInstance) {
+        const normalizedKey = key === "config_dir" ? "configDir" : key;
+        (currentInstance as Record<string, string>)[normalizedKey] = value;
       }
     } else if (kvBoolMatch) {
       const [, key, rawValue] = kvBoolMatch;
@@ -161,6 +191,9 @@ export function loadConfig(configPath?: string): TomlConfig {
       if (currentSection === "tools" && currentTool) {
         const normalizedKey = key === "config_dir" ? "configDir" : key;
         (result.tools![currentTool] as Record<string, boolean>)[normalizedKey] = value;
+      } else if (currentSection === "tool_instances" && currentTool && currentInstance) {
+        const normalizedKey = key === "config_dir" ? "configDir" : key;
+        (currentInstance as Record<string, boolean>)[normalizedKey] = value;
       }
     }
   }
@@ -194,7 +227,6 @@ export function saveConfig(config: TomlConfig, configPath?: string): void {
 
   if (hasTools) {
     for (const [toolId, toolConfig] of Object.entries(config.tools!)) {
-      lines.push(`[tools.${toolId}]`);
       const orderedEntries: Array<[string, string | boolean]> = [];
       if (typeof toolConfig.enabled === "boolean") {
         orderedEntries.push(["enabled", toolConfig.enabled]);
@@ -202,22 +234,52 @@ export function saveConfig(config: TomlConfig, configPath?: string): void {
       if (typeof toolConfig.configDir === "string") {
         orderedEntries.push(["config_dir", toolConfig.configDir]);
       }
-      for (const [key, value] of orderedEntries) {
-        if (typeof value === "boolean") {
-          lines.push(`${key} = ${value}`);
-        } else {
-          lines.push(`${key} = "${value}"`);
+      if (orderedEntries.length > 0) {
+        lines.push(`[tools.${toolId}]`);
+        for (const [key, value] of orderedEntries) {
+          if (typeof value === "boolean") {
+            lines.push(`${key} = ${value}`);
+          } else {
+            lines.push(`${key} = "${value}"`);
+          }
+        }
+        lines.push("");
+      }
+
+      if (toolConfig.instances && toolConfig.instances.length > 0) {
+        for (const instance of toolConfig.instances) {
+          lines.push(`[[tools.${toolId}.instances]]`);
+          if (typeof instance.id === "string") {
+            lines.push(`id = "${instance.id}"`);
+          }
+          if (typeof instance.name === "string") {
+            lines.push(`name = "${instance.name}"`);
+          }
+          if (typeof instance.enabled === "boolean") {
+            lines.push(`enabled = ${instance.enabled}`);
+          }
+          if (typeof instance.configDir === "string") {
+            lines.push(`config_dir = "${instance.configDir}"`);
+          }
+          lines.push("");
         }
       }
-      lines.push("");
     }
   } else {
-    lines.push("# Enable tools and override config directories (optional). Examples:");
+    lines.push("# Configure tool instances. Examples:");
     lines.push("# [tools.claude-code]");
+    lines.push("#");
+    lines.push("# [[tools.claude-code.instances]]");
+    lines.push("# id = \"default\"");
+    lines.push("# name = \"Claude\"");
     lines.push("# enabled = true");
     lines.push("# config_dir = \"~/.claude\"");
     lines.push("");
     lines.push("# [tools.opencode]");
+    lines.push("#");
+    lines.push("# [[tools.opencode.instances]]");
+    lines.push("# id = \"default\"");
+    lines.push("# name = \"OpenCode\"");
     lines.push("# enabled = true");
     lines.push("# config_dir = \"~/.config/opencode\"");
   }
@@ -233,7 +295,16 @@ function buildInitialToolConfig(): Record<string, ToolConfig> {
   const tools: Record<string, ToolConfig> = {};
   for (const [toolId, tool] of Object.entries(DEFAULT_TOOLS)) {
     if (existsSync(tool.configDir)) {
-      tools[toolId] = { enabled: true, configDir: tool.configDir };
+      tools[toolId] = {
+        instances: [
+          {
+            id: "default",
+            name: tool.name,
+            enabled: true,
+            configDir: tool.configDir,
+          },
+        ],
+      };
     }
   }
   return tools;
@@ -246,12 +317,23 @@ export function ensureConfigExists(): void {
   }
 }
 
-export function updateToolConfig(toolId: string, updates: ToolConfig): void {
+export function updateToolInstanceConfig(
+  toolId: string,
+  instanceId: string,
+  updates: ToolInstanceConfig
+): void {
   const config = loadConfig();
   config.tools = config.tools || {};
-  const existing = config.tools[toolId] || {};
-  const next: ToolConfig = { ...existing, ...updates };
-  config.tools[toolId] = next;
+  const toolConfig: ToolConfig = config.tools[toolId] || {};
+  const instances = toolConfig.instances ? [...toolConfig.instances] : [];
+  const index = instances.findIndex((instance) => instance.id === instanceId);
+  if (index >= 0) {
+    instances[index] = { ...instances[index], ...updates };
+  } else {
+    instances.push({ id: instanceId, ...updates });
+  }
+  toolConfig.instances = instances;
+  config.tools[toolId] = toolConfig;
   saveConfig(config);
 }
 
@@ -270,52 +352,58 @@ export function removeMarketplace(name: string): void {
   }
 }
 
-export function getMergedConfig(): { marketplaces: Record<string, string>; tools: Record<string, ToolTarget> } {
+export function getToolDefinitions(): Record<string, ToolTarget> {
+  return DEFAULT_TOOLS;
+}
+
+export function getToolInstances(): ToolInstance[] {
   const userConfig = loadConfig();
-  
-  // Merge marketplaces: user config overrides/extends defaults
-  const marketplaces = { ...DEFAULT_MARKETPLACES, ...userConfig.marketplaces };
-  
-  // Merge tools: user config overrides specific fields
-  const tools: Record<string, ToolTarget> = {};
-  for (const [toolId, defaultTool] of Object.entries(DEFAULT_TOOLS)) {
-    const userTool = userConfig.tools?.[toolId] || {};
-    const enabled = typeof userTool.enabled === "boolean" ? userTool.enabled : false;
-    const configDir = typeof userTool.configDir === "string" ? userTool.configDir : defaultTool.configDir;
-    tools[toolId] = {
-      ...defaultTool,
-      configDir,
-      enabled,
-    };
+  const instances: ToolInstance[] = [];
+
+  for (const toolId of TOOL_IDS) {
+    const tool = DEFAULT_TOOLS[toolId];
+    const toolConfig = userConfig.tools?.[toolId];
+    const toolInstances = toolConfig?.instances || [];
+
+    toolInstances.forEach((instance, index) => {
+      const instanceId = instance.id && instance.id.trim().length > 0
+        ? instance.id
+        : `${toolId}-${index + 1}`;
+      const name = instance.name && instance.name.trim().length > 0
+        ? instance.name
+        : tool.name;
+      const configDir = typeof instance.configDir === "string" && instance.configDir.length > 0
+        ? instance.configDir
+        : tool.configDir;
+      const enabled = typeof instance.enabled === "boolean" ? instance.enabled : false;
+
+      instances.push({
+        toolId,
+        instanceId,
+        name,
+        configDir,
+        skillsSubdir: tool.skillsSubdir,
+        commandsSubdir: tool.commandsSubdir,
+        agentsSubdir: tool.agentsSubdir,
+        enabled,
+      });
+    });
   }
-  
-  return { marketplaces, tools };
+
+  return instances;
 }
 
-export function getTools(): Record<string, ToolTarget> {
-  return getMergedConfig().tools;
-}
-
-export function getEnabledTools(): Record<string, ToolTarget> {
-  const tools = getMergedConfig().tools;
-  const enabled: Record<string, ToolTarget> = {};
-  for (const [toolId, tool] of Object.entries(tools)) {
-    if (tool.enabled) {
-      enabled[toolId] = tool;
-    }
-  }
-  return enabled;
-}
-
-export function getToolList(): ToolTarget[] {
-  const tools = getMergedConfig().tools;
-  return TOOL_IDS.map((toolId) => tools[toolId]).filter((tool): tool is ToolTarget => Boolean(tool));
+export function getEnabledToolInstances(): ToolInstance[] {
+  return getToolInstances().filter((instance) => instance.enabled);
 }
 
 export function parseMarketplaces(config?: TomlConfig): Marketplace[] {
-  const merged = getMergedConfig();
-  const blackbookUrls = config?.marketplaces || merged.marketplaces;
-  const claudeUrls = merged.tools["claude-code"].enabled ? loadClaudeMarketplaces() : {};
+  const userConfig = config || loadConfig();
+  const blackbookUrls = { ...DEFAULT_MARKETPLACES, ...userConfig.marketplaces };
+  const hasEnabledClaudeInstance = getToolInstances().some(
+    (instance) => instance.toolId === "claude-code" && instance.enabled
+  );
+  const claudeUrls = hasEnabledClaudeInstance ? loadClaudeMarketplaces() : {};
   const marketplaces: Marketplace[] = [];
 
   // Add Blackbook marketplaces first (they take precedence)

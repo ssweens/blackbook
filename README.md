@@ -1,5 +1,9 @@
 # Blackbook
 
+[![npm version](https://img.shields.io/npm/v/@ssweens/blackbook.svg)](https://www.npmjs.com/package/@ssweens/blackbook)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![CI](https://github.com/ssweens/blackbook/actions/workflows/ci.yml/badge.svg)](https://github.com/ssweens/blackbook/actions/workflows/ci.yml)
+
 Plugin manager for agentic coding tools built with React/Ink. Install skills, commands, and agents from marketplaces to Claude Code, OpenAI Codex, OpenCode, and Amp.
 
 ![Blackbook TUI](assets/discover-tab.png)
@@ -27,7 +31,20 @@ Everything is a plugin. Plugins can include skills, commands, agents, hooks, MCP
 ## Installation
 
 ```bash
-# Clone and run TUI
+# Install from npm
+npm install -g @ssweens/blackbook
+blackbook
+```
+
+Or run directly with npx:
+
+```bash
+npx @ssweens/blackbook
+```
+
+Or clone and run from source:
+
+```bash
 git clone https://github.com/ssweens/blackbook ~/src/blackbook
 cd ~/src/blackbook/tui
 pnpm install
@@ -85,11 +102,24 @@ my-private = "https://raw.githubusercontent.com/myorg/plugins/main/.claude-plugi
 
 # Enable tools (required)
 [tools.claude-code]
+
+[[tools.claude-code.instances]]
+id = "claude-main"
+name = "Claude"
 enabled = true
 config_dir = "~/.claude"
 
-# Override tool config directories (optional)
+[[tools.claude-code.instances]]
+id = "claude-learning"
+name = "Claude Learning"
+enabled = true
+config_dir = "~/.claude-learning"
+
 [tools.opencode]
+
+[[tools.opencode.instances]]
+id = "opencode"
+name = "OpenCode"
 enabled = true
 config_dir = "~/.config/opencode"
 
@@ -107,7 +137,17 @@ If you already use Claude plugins, Blackbook also reads known marketplaces from 
 
 ### Tools
 
-Tools are only managed when enabled in config. On first run, Blackbook enables any tools whose default config directories already exist. Use the Tools tab in the TUI to toggle enablement and edit config directories.
+Tools are only managed when enabled in config. On first run, Blackbook enables tool instances whose default config directories already exist. Use the Tools tab in the TUI to toggle enablement and edit config directories.
+
+**Supported tools (default config paths):**
+- Claude — `~/.claude`
+- OpenCode — `~/.config/opencode`
+- Amp — `~/.config/amp`
+- Codex — `~/.codex`
+
+**Supported plugin types:** skills, commands, agents, hooks, MCP servers, LSP servers.
+
+Incomplete installs are detected when a plugin is missing from any enabled instance that supports it.
 
 ### Private Repositories
 

@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
-import type { ToolTarget } from "../lib/types.js";
+import type { ToolInstance } from "../lib/types.js";
 
 interface EditToolModalProps {
-  tool: ToolTarget | null;
-  onSubmit: (toolId: string, configDir: string) => void;
+  tool: ToolInstance | null;
+  onSubmit: (toolId: string, instanceId: string, configDir: string) => void;
   onCancel: () => void;
 }
 
@@ -33,7 +33,7 @@ export function EditToolModal({ tool, onSubmit, onCancel }: EditToolModalProps) 
         setError("Config directory cannot be empty");
         return;
       }
-      onSubmit(tool.id, trimmed);
+      onSubmit(tool.toolId, tool.instanceId, trimmed);
     }
   });
 
@@ -45,10 +45,10 @@ export function EditToolModal({ tool, onSubmit, onCancel }: EditToolModalProps) 
 
       {tool && (
         <Box marginBottom={1}>
-          <Text color="gray">Tool: </Text>
-          <Text>{tool.name}</Text>
-          <Text color="gray"> ({tool.id})</Text>
-        </Box>
+        <Text color="gray">Tool: </Text>
+        <Text>{tool.name}</Text>
+        <Text color="gray"> ({tool.toolId}:{tool.instanceId})</Text>
+      </Box>
       )}
 
       <Box marginBottom={1}>

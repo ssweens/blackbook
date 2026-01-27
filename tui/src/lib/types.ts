@@ -5,6 +5,16 @@ export interface ToolTarget {
   skillsSubdir: string | null;
   commandsSubdir: string | null;
   agentsSubdir: string | null;
+}
+
+export interface ToolInstance {
+  toolId: string;
+  instanceId: string;
+  name: string;
+  configDir: string;
+  skillsSubdir: string | null;
+  commandsSubdir: string | null;
+  agentsSubdir: string | null;
   enabled: boolean;
 }
 
@@ -28,6 +38,7 @@ export interface Plugin {
   hasLsp: boolean;
   homepage: string;
   installed: boolean;
+  partial?: boolean;
   scope: "user" | "project";
   updatedAt?: Date;
 }
@@ -65,7 +76,7 @@ export interface AppState {
   tab: Tab;
   marketplaces: Marketplace[];
   installedPlugins: Plugin[];
-  tools: ToolTarget[];
+  tools: ToolInstance[];
   search: string;
   selectedIndex: number;
   loading: boolean;

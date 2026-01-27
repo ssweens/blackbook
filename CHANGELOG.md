@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-01-26
+
+### Added
+- Multi-instance tool support with per-instance config and status
+- Partial install indicator in plugin lists
+- Tool instance config examples in README
+
+### Changed
+- Plugin install/repair logic now targets enabled instances
+- Manifest keys now include tool instance identifiers
+
+### Fixed
+- Plugin detail actions now reliably include back navigation
+
 ## [0.4.0] - 2026-01-26
 
 ### Added
@@ -93,7 +107,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Symlink handling for plugin assets
 
-[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/ssweens/blackbook/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ssweens/blackbook/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ssweens/blackbook/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ssweens/blackbook/compare/v0.1.0...v0.2.0

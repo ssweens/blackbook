@@ -1,9 +1,9 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
-import type { ToolTarget } from "../lib/types.js";
+import type { ToolInstance } from "../lib/types.js";
 
 interface ToolsListProps {
-  tools: ToolTarget[];
+  tools: ToolInstance[];
   selectedIndex: number;
   maxHeight?: number;
 }
@@ -51,7 +51,7 @@ export function ToolsList({ tools, selectedIndex, maxHeight = 12 }: ToolsListPro
         const statusLabel = tool.enabled ? "Enabled" : "Disabled";
 
         return (
-          <Box key={tool.id} flexDirection="column" marginBottom={1}>
+          <Box key={`${tool.toolId}:${tool.instanceId}`} flexDirection="column" marginBottom={1}>
             <Box>
               <Text color={isSelected ? "cyan" : "gray"}>
                 {isSelected ? "❯ " : "  "}
@@ -59,7 +59,7 @@ export function ToolsList({ tools, selectedIndex, maxHeight = 12 }: ToolsListPro
               <Text bold={isSelected} color="white">
                 {tool.name}
               </Text>
-              <Text color="gray"> ({tool.id})</Text>
+              <Text color="gray"> ({tool.toolId}:{tool.instanceId})</Text>
               <Text> </Text>
               <Text color={statusColor}>{statusLabel}</Text>
             </Box>

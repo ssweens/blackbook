@@ -76,8 +76,8 @@ export function PluginDetail({ plugin, selectedAction }: PluginDetailProps) {
             }
 
             return (
-            <Box key={status.toolId} marginLeft={1}>
-              <Text color="gray">• {status.toolName}: </Text>
+            <Box key={`${status.toolId}:${status.instanceId}`} marginLeft={1}>
+              <Text color="gray">• {status.name}: </Text>
               <Text color={color}>{label}</Text>
             </Box>
             );
