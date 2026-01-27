@@ -1,7 +1,7 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
 import type { Plugin } from "../lib/types.js";
-import { getPluginToolStatus, type ToolInstallStatus } from "../lib/install.js";
+import { getPluginToolStatus } from "../lib/install.js";
 
 interface PluginDetailProps {
   plugin: Plugin;
@@ -12,7 +12,7 @@ interface PluginDetailProps {
 export function PluginDetail({ plugin, selectedAction }: PluginDetailProps) {
   const toolStatuses = useMemo(() => getPluginToolStatus(plugin), [plugin]);
   
-  const supportedTools = toolStatuses.filter(t => t.supported);
+  const supportedTools = toolStatuses.filter(t => t.supported && t.enabled);
   const installedCount = supportedTools.filter(t => t.installed).length;
   const needsRepair = plugin.installed && installedCount < supportedTools.length && supportedTools.length > 0;
   
@@ -61,17 +61,27 @@ export function PluginDetail({ plugin, selectedAction }: PluginDetailProps) {
         )}
       </Box>
 
-      {plugin.installed && supportedTools.length > 0 && (
+      {plugin.installed && toolStatuses.length > 0 && (
         <Box flexDirection="column" marginBottom={1}>
           <Text bold>Tool Status:</Text>
-          {supportedTools.map((status) => (
+          {toolStatuses.map((status) => {
+            let label = "Not supported";
+            let color: "green" | "yellow" | "gray" = "gray";
+            if (!status.enabled) {
+              label = "Not enabled";
+              color = "gray";
+            } else if (status.supported) {
+              label = status.installed ? "Installed" : "Not installed";
+              color = status.installed ? "green" : "yellow";
+            }
+
+            return (
             <Box key={status.toolId} marginLeft={1}>
               <Text color="gray">• {status.toolName}: </Text>
-              <Text color={status.installed ? "green" : "yellow"}>
-                {status.installed ? "✔" : "✗"}
-              </Text>
+              <Text color={color}>{label}</Text>
             </Box>
-          ))}
+            );
+          })}
         </Box>
       )}
 

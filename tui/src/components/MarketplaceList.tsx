@@ -6,6 +6,7 @@ interface MarketplaceListProps {
   marketplaces: Marketplace[];
   selectedIndex: number;
   showAddOption?: boolean;
+  maxHeight?: number;
 }
 
 function formatDate(date?: Date): string {
@@ -21,12 +22,38 @@ export function MarketplaceList({
   marketplaces,
   selectedIndex,
   showAddOption = true,
+  maxHeight = 12,
 }: MarketplaceListProps) {
   const offset = showAddOption ? 1 : 0;
 
   const maxNameLen = useMemo(() => {
     return Math.min(30, Math.max(...marketplaces.map(m => m.name.length), 10));
   }, [marketplaces]);
+
+  const totalItems = marketplaces.length + offset;
+  const { visibleMarketplaces, startIndex, hasMore, hasPrev } = useMemo(() => {
+    if (totalItems <= maxHeight) {
+      return {
+        visibleMarketplaces: marketplaces,
+        startIndex: 0,
+        hasMore: false,
+        hasPrev: false,
+      };
+    }
+
+    const adjustedIndex = selectedIndex - offset;
+    let start = Math.max(0, adjustedIndex - Math.floor(maxHeight / 2));
+    if (start + maxHeight > marketplaces.length) {
+      start = Math.max(0, marketplaces.length - maxHeight);
+    }
+
+    return {
+      visibleMarketplaces: marketplaces.slice(start, start + maxHeight),
+      startIndex: start,
+      hasMore: start + maxHeight < marketplaces.length,
+      hasPrev: start > 0,
+    };
+  }, [marketplaces, selectedIndex, maxHeight, totalItems, offset]);
 
   return (
     <Box flexDirection="column">
@@ -43,15 +70,21 @@ export function MarketplaceList({
         </Box>
       )}
 
-      {marketplaces.map((m, i) => {
-        const index = i + offset;
-        const isSelected = selectedIndex === index;
+      {hasPrev && (
+        <Box>
+          <Text color="gray">  ↑ {startIndex} more above</Text>
+        </Box>
+      )}
+
+      {visibleMarketplaces.map((m, visibleIdx) => {
+        const actualIndex = startIndex + visibleIdx + offset;
+        const isSelected = selectedIndex === actualIndex;
         const hasNew = m.installedCount > 0;
         const isReadOnly = m.source === "claude";
         const paddedName = m.name.padEnd(maxNameLen);
 
         return (
-          <Box key={m.name} flexDirection="column" marginTop={i === 0 && showAddOption ? 1 : 0}>
+          <Box key={m.name} flexDirection="column" marginTop={visibleIdx === 0 && showAddOption && !hasPrev ? 1 : 0}>
             <Box>
               <Text color={isSelected ? "cyan" : "gray"}>
                 {isSelected ? "❯ " : "  "}
@@ -80,11 +113,11 @@ export function MarketplaceList({
         );
       })}
 
-      <Box marginTop={2}>
-        <Text color="gray">
-          Enter to select · u to update · r to remove · Esc to go back
-        </Text>
-      </Box>
+      {hasMore && (
+        <Box>
+          <Text color="gray">  ↓ {marketplaces.length - startIndex - maxHeight} more below</Text>
+        </Box>
+      )}
     </Box>
   );
 }

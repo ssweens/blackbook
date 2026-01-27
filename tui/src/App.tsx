@@ -8,13 +8,15 @@ import { PluginDetail } from "./components/PluginDetail.js";
 import { MarketplaceList } from "./components/MarketplaceList.js";
 import { MarketplaceDetail } from "./components/MarketplaceDetail.js";
 import { AddMarketplaceModal } from "./components/AddMarketplaceModal.js";
+import { EditToolModal } from "./components/EditToolModal.js";
+import { ToolsList } from "./components/ToolsList.js";
 import { HintBar } from "./components/HintBar.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { Notifications } from "./components/Notifications.js";
 import { getPluginToolStatus } from "./lib/install.js";
 import type { Tab } from "./lib/types.js";
 
-const TABS: Tab[] = ["discover", "installed", "marketplaces"];
+const TABS: Tab[] = ["discover", "installed", "marketplaces", "tools"];
 
 export function App() {
   const { exit } = useApp();
@@ -23,6 +25,7 @@ export function App() {
     setTab,
     marketplaces,
     installedPlugins,
+    tools,
     search,
     setSearch,
     selectedIndex,
@@ -40,15 +43,23 @@ export function App() {
     updateMarketplace,
     removeMarketplace,
     addMarketplace,
+    toggleToolEnabled,
+    updateToolConfigDir,
     notifications,
     clearNotification,
   } = useStore();
 
   const [actionIndex, setActionIndex] = useState(0);
   const [showAddMarketplace, setShowAddMarketplace] = useState(false);
+  const [editingToolId, setEditingToolId] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<"name" | "installed">("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [searchFocused, setSearchFocused] = useState(false);
+
+  const enabledToolNames = useMemo(
+    () => tools.filter((tool) => tool.enabled).map((tool) => tool.name),
+    [tools]
+  );
 
   useEffect(() => {
     loadMarketplaces();
@@ -92,15 +103,18 @@ export function App() {
     if (tab === "marketplaces") {
       return marketplaces.length; // +1 for "Add Marketplace"
     }
+    if (tab === "tools") {
+      return Math.max(0, tools.length - 1);
+    }
     return Math.max(0, filteredPlugins.length - 1);
-  }, [tab, marketplaces, filteredPlugins]);
+  }, [tab, marketplaces, tools, filteredPlugins]);
 
   const getPluginActionCount = (plugin: typeof detailPlugin) => {
     if (!plugin) return 0;
     if (!plugin.installed) return 2; // Install, Back
     
     const toolStatuses = getPluginToolStatus(plugin);
-    const supportedTools = toolStatuses.filter(t => t.supported);
+    const supportedTools = toolStatuses.filter(t => t.supported && t.enabled);
     const installedCount = supportedTools.filter(t => t.installed).length;
     const needsRepair = installedCount < supportedTools.length && supportedTools.length > 0;
     
@@ -109,7 +123,7 @@ export function App() {
 
   useInput((input, key) => {
     // Don't handle input when modal is open (modal handles its own input)
-    if (showAddMarketplace) {
+    if (showAddMarketplace || editingToolId) {
       return;
     }
 
@@ -194,6 +208,14 @@ export function App() {
         return;
       }
 
+      if (tab === "tools") {
+        const tool = tools[selectedIndex];
+        if (tool) {
+          void toggleToolEnabled(tool.id);
+        }
+        return;
+      }
+
       const plugin = filteredPlugins[selectedIndex];
       if (plugin) {
         setDetailPlugin(plugin);
@@ -204,6 +226,14 @@ export function App() {
 
     // Space - toggle install/uninstall
     if (input === " " && !detailPlugin && !detailMarketplace) {
+      if (tab === "tools") {
+        const tool = tools[selectedIndex];
+        if (tool) {
+          void toggleToolEnabled(tool.id);
+        }
+        return;
+      }
+
       const plugin = filteredPlugins[selectedIndex];
       if (plugin?.installed) {
         doUninstall(plugin);
@@ -223,6 +253,14 @@ export function App() {
     if (input === "r" && tab === "marketplaces" && !detailMarketplace) {
       const m = marketplaces[selectedIndex - 1];
       if (m) removeMarketplace(m.name);
+      return;
+    }
+
+    if (input === "e" && tab === "tools") {
+      const tool = tools[selectedIndex];
+      if (tool) {
+        setEditingToolId(tool.id);
+      }
       return;
     }
 
@@ -320,11 +358,22 @@ export function App() {
     setShowAddMarketplace(false);
   };
 
+  const handleToolConfigSave = (toolId: string, configDir: string) => {
+    void updateToolConfigDir(toolId, configDir);
+    setEditingToolId(null);
+  };
+
   return (
     <Box flexDirection="column" padding={1}>
       <TabBar activeTab={tab} onTabChange={setTab} />
 
-      {showAddMarketplace ? (
+      {editingToolId ? (
+        <EditToolModal
+          tool={tools.find((tool) => tool.id === editingToolId) || null}
+          onSubmit={handleToolConfigSave}
+          onCancel={() => setEditingToolId(null)}
+        />
+      ) : showAddMarketplace ? (
         <AddMarketplaceModal
           onSubmit={handleAddMarketplace}
           onCancel={() => setShowAddMarketplace(false)}
@@ -341,8 +390,8 @@ export function App() {
           selectedIndex={actionIndex}
         />
       ) : (
-        <>
-          {tab !== "marketplaces" && (
+        <Box flexDirection="column" height={18}>
+          {(tab === "discover" || tab === "installed") && (
             <Box flexDirection="row" justifyContent="space-between">
               <Box flexGrow={1}>
                 <SearchBox
@@ -421,12 +470,21 @@ export function App() {
               )}
             </>
           )}
-        </>
+
+          {tab === "tools" && (
+            <ToolsList tools={tools} selectedIndex={selectedIndex} />
+          )}
+        </Box>
       )}
 
       <Notifications notifications={notifications} onClear={clearNotification} />
       <HintBar tab={tab} hasDetail={Boolean(detailPlugin || detailMarketplace)} />
-      <StatusBar loading={loading} message={statusMessage} error={error} />
+      <StatusBar
+        loading={loading}
+        message={statusMessage}
+        error={error}
+        enabledTools={enabledToolNames}
+      />
     </Box>
   );
 }

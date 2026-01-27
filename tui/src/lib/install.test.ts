@@ -54,6 +54,7 @@ function createMockTool(overrides: Partial<ToolTarget> = {}): ToolTarget {
     skillsSubdir: "skills",
     commandsSubdir: "commands",
     agentsSubdir: "agents",
+    enabled: true,
     ...overrides,
   };
 }

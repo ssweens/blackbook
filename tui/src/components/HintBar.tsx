@@ -11,6 +11,7 @@ const HINTS: Record<Tab, string> = {
   discover: "/ search · Space toggle · Enter details · s sort · r reverse · q quit",
   installed: "/ search · Space toggle · Enter details · s sort · r reverse · q quit",
   marketplaces: "Enter select · u update · r remove · q quit",
+  tools: "Enter toggle · Space toggle · e edit config dir · q quit",
 };
 
 export function HintBar({ tab, hasDetail }: HintBarProps) {

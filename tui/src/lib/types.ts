@@ -5,6 +5,7 @@ export interface ToolTarget {
   skillsSubdir: string | null;
   commandsSubdir: string | null;
   agentsSubdir: string | null;
+  enabled: boolean;
 }
 
 export interface ItemStatus {
@@ -51,7 +52,7 @@ export interface InstalledItem {
   backup: string | null;
 }
 
-export type Tab = "discover" | "installed" | "marketplaces";
+export type Tab = "discover" | "installed" | "marketplaces" | "tools";
 
 export interface Notification {
   id: string;
@@ -64,6 +65,7 @@ export interface AppState {
   tab: Tab;
   marketplaces: Marketplace[];
   installedPlugins: Plugin[];
+  tools: ToolTarget[];
   search: string;
   selectedIndex: number;
   loading: boolean;

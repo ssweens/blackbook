@@ -58,6 +58,7 @@ cd ~/src/blackbook/tui && pnpm start
 
 - **Discover/Installed**: `s` cycle sort (name/installed), `r` reverse sort
 - **Marketplaces**: `u` update marketplace, `r` remove marketplace
+- **Tools**: `Enter`/`Space` toggle enabled, `e` edit config dir
 
 ## Configuration
 
@@ -82,12 +83,16 @@ Or set `XDG_CONFIG_HOME` to use a custom location.
 playbook = "https://raw.githubusercontent.com/ssweens/playbook/main/.claude-plugin/marketplace.json"
 my-private = "https://raw.githubusercontent.com/myorg/plugins/main/.claude-plugin/marketplace.json"
 
-# Override tool config directories (optional)
+# Enable tools (required)
 [tools.claude-code]
+enabled = true
 config_dir = "~/.claude"
 
+# Override tool config directories (optional)
 [tools.opencode]
+enabled = true
 config_dir = "~/.config/opencode"
+
 ```
 
 ### Default Marketplaces
@@ -100,6 +105,10 @@ The default config includes Anthropic's official marketplace:
 
 If you already use Claude plugins, Blackbook also reads known marketplaces from `~/.claude/plugins/known_marketplaces.json`.
 
+### Tools
+
+Tools are only managed when enabled in config. On first run, Blackbook enables any tools whose default config directories already exist. Use the Tools tab in the TUI to toggle enablement and edit config directories.
+
 ### Private Repositories
 
 For private GitHub repos, set a token in your environment:
@@ -109,8 +118,6 @@ export GITHUB_TOKEN=ghp_xxxxxxxxxxxx
 # or
 export GH_TOKEN=ghp_xxxxxxxxxxxx
 ```
-
-Get a token at: https://github.com/settings/tokens (requires `repo` scope)
 
 ### Managing Marketplaces
 
@@ -144,13 +151,18 @@ pnpm typecheck    # Type check
 pnpm build        # Build for production
 ```
 
+```bash
+cd tui
+npm install
+npm run dev
+npm test
+npm run typecheck
+npm run build
+```
+
 ### TUI Code Layout
 
 - `tui/src/cli.tsx` entry point
 - `tui/src/App.tsx` app shell
 - `tui/src/components/` UI components
 - `tui/src/lib/` config, marketplace, install, state
-
-## Related
-
-- [playbook](https://github.com/ssweens/playbook) - Personal plugin marketplace

@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-01-26
+
+### Added
+- Tools tab for managing enabled tools
+- EditToolModal for changing tool config directories
+- Auto-enable tools whose config dirs exist on first run
+- Scrolling for MarketplaceList and ToolsList (matches PluginList)
+- Sorting in Discover and Installed tabs: `s` cycles sort field (Name/Installed), `S` toggles direction
+- Sort indicator displays current sort state
+- Screenshot in README
+
+### Changed
+- Tools only managed when enabled in config
+- Tools enablement stored in config.toml
+- StatusBar shows enabled tools
+- Consistent height across tabs with fixed content area
+- Backups now stored in `~/.cache/blackbook/backups/` with max one per plugin
+- Search uses `/` to focus, `Esc` to exit; sort keys `s`/`r` only work when search unfocused
+- Blackbook marketplaces take full precedence over Claude's (removable, not read-only)
+- Default config now includes `claude-plugins-official` marketplace (user can remove it)
+- Symlink backups now use cache directory (consistent with copy backups)
+
+### Fixed
+- Search input bug where second character appeared before first
+- Store tests no longer pollute user config file
+- Plugin names now readable (white instead of grey) in Discover/Installed tabs
+- Column alignment in plugin and marketplace lists
+
 ## [0.3.0] - 2026-01-26
 
 ### Added
@@ -65,7 +93,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Symlink handling for plugin assets
 
-[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/ssweens/blackbook/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ssweens/blackbook/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ssweens/blackbook/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ssweens/blackbook/releases/tag/v0.1.0

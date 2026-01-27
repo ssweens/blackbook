@@ -6,9 +6,15 @@ interface StatusBarProps {
   loading: boolean;
   message?: string;
   error?: string | null;
+  enabledTools: string[];
 }
 
-export function StatusBar({ loading, message, error }: StatusBarProps) {
+export function StatusBar({ loading, message, error, enabledTools }: StatusBarProps) {
+  const toolsLabel = enabledTools.length > 0
+    ? `Tools: ${enabledTools.join(", ")}`
+    : "Tools: none";
+  const statusText = message ? `${message} · ${toolsLabel}` : toolsLabel;
+
   return (
     <Box>
       {loading && (
@@ -20,9 +26,12 @@ export function StatusBar({ loading, message, error }: StatusBarProps) {
         </>
       )}
       {error ? (
-        <Text color="red">{error}</Text>
+        <>
+          <Text color="red">{error}</Text>
+          <Text color="gray"> · {toolsLabel}</Text>
+        </>
       ) : (
-        <Text color="gray">{message || ""}</Text>
+        <Text color="gray">{statusText}</Text>
       )}
     </Box>
   );

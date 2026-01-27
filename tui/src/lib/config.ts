@@ -11,14 +11,16 @@ const DEFAULT_TOOLS: Record<string, ToolTarget> = {
     skillsSubdir: "skills",
     commandsSubdir: "commands",
     agentsSubdir: "agents",
+    enabled: false,
   },
   opencode: {
     id: "opencode",
-    name: "OC",
+    name: "OpenCode",
     configDir: join(homedir(), ".config/opencode"),
     skillsSubdir: "skills",
     commandsSubdir: "commands",
     agentsSubdir: "agents",
+    enabled: false,
   },
   "amp-code": {
     id: "amp-code",
@@ -27,6 +29,7 @@ const DEFAULT_TOOLS: Record<string, ToolTarget> = {
     skillsSubdir: "skills",
     commandsSubdir: "commands",
     agentsSubdir: "agents",
+    enabled: false,
   },
   "openai-codex": {
     id: "openai-codex",
@@ -35,8 +38,11 @@ const DEFAULT_TOOLS: Record<string, ToolTarget> = {
     skillsSubdir: "skills",
     commandsSubdir: null,
     agentsSubdir: null,
+    enabled: false,
   },
 };
+
+export const TOOL_IDS = Object.keys(DEFAULT_TOOLS);
 
 const DEFAULT_MARKETPLACES: Record<string, string> = {};
 
@@ -98,9 +104,14 @@ export function getConfigPath(): string {
   return join(getConfigDir(), "config.toml");
 }
 
+export interface ToolConfig {
+  enabled?: boolean;
+  configDir?: string;
+}
+
 export interface TomlConfig {
   marketplaces?: Record<string, string>;
-  tools?: Record<string, Partial<ToolTarget>>;
+  tools?: Record<string, ToolConfig>;
 }
 
 export function loadConfig(configPath?: string): TomlConfig {
@@ -134,13 +145,22 @@ export function loadConfig(configPath?: string): TomlConfig {
       continue;
     }
 
-    const kvMatch = trimmed.match(/^(\S+)\s*=\s*"(.+)"$/);
-    if (kvMatch) {
-      const [, key, value] = kvMatch;
+    const kvStringMatch = trimmed.match(/^(\S+)\s*=\s*"(.+)"$/);
+    const kvBoolMatch = trimmed.match(/^(\S+)\s*=\s*(true|false)$/);
+    if (kvStringMatch) {
+      const [, key, value] = kvStringMatch;
       if (currentSection === "marketplaces") {
         result.marketplaces![key] = value;
       } else if (currentSection === "tools" && currentTool) {
-        (result.tools![currentTool] as Record<string, string>)[key] = value;
+        const normalizedKey = key === "config_dir" ? "configDir" : key;
+        (result.tools![currentTool] as Record<string, string>)[normalizedKey] = value;
+      }
+    } else if (kvBoolMatch) {
+      const [, key, rawValue] = kvBoolMatch;
+      const value = rawValue === "true";
+      if (currentSection === "tools" && currentTool) {
+        const normalizedKey = key === "config_dir" ? "configDir" : key;
+        (result.tools![currentTool] as Record<string, boolean>)[normalizedKey] = value;
       }
     }
   }
@@ -175,19 +195,30 @@ export function saveConfig(config: TomlConfig, configPath?: string): void {
   if (hasTools) {
     for (const [toolId, toolConfig] of Object.entries(config.tools!)) {
       lines.push(`[tools.${toolId}]`);
-      for (const [key, value] of Object.entries(toolConfig)) {
-        if (typeof value === "string") {
+      const orderedEntries: Array<[string, string | boolean]> = [];
+      if (typeof toolConfig.enabled === "boolean") {
+        orderedEntries.push(["enabled", toolConfig.enabled]);
+      }
+      if (typeof toolConfig.configDir === "string") {
+        orderedEntries.push(["config_dir", toolConfig.configDir]);
+      }
+      for (const [key, value] of orderedEntries) {
+        if (typeof value === "boolean") {
+          lines.push(`${key} = ${value}`);
+        } else {
           lines.push(`${key} = "${value}"`);
         }
       }
       lines.push("");
     }
   } else {
-    lines.push("# Override tool config directories (optional). Examples:");
+    lines.push("# Enable tools and override config directories (optional). Examples:");
     lines.push("# [tools.claude-code]");
+    lines.push("# enabled = true");
     lines.push("# config_dir = \"~/.claude\"");
     lines.push("");
     lines.push("# [tools.opencode]");
+    lines.push("# enabled = true");
     lines.push("# config_dir = \"~/.config/opencode\"");
   }
 
@@ -198,11 +229,30 @@ const DEFAULT_INITIAL_MARKETPLACES: Record<string, string> = {
   "claude-plugins-official": "https://raw.githubusercontent.com/anthropics/claude-plugins-official/main/.claude-plugin/marketplace.json",
 };
 
+function buildInitialToolConfig(): Record<string, ToolConfig> {
+  const tools: Record<string, ToolConfig> = {};
+  for (const [toolId, tool] of Object.entries(DEFAULT_TOOLS)) {
+    if (existsSync(tool.configDir)) {
+      tools[toolId] = { enabled: true, configDir: tool.configDir };
+    }
+  }
+  return tools;
+}
+
 export function ensureConfigExists(): void {
   const path = getConfigPath();
   if (!existsSync(path)) {
-    saveConfig({ marketplaces: DEFAULT_INITIAL_MARKETPLACES, tools: {} });
+    saveConfig({ marketplaces: DEFAULT_INITIAL_MARKETPLACES, tools: buildInitialToolConfig() });
   }
+}
+
+export function updateToolConfig(toolId: string, updates: ToolConfig): void {
+  const config = loadConfig();
+  config.tools = config.tools || {};
+  const existing = config.tools[toolId] || {};
+  const next: ToolConfig = { ...existing, ...updates };
+  config.tools[toolId] = next;
+  saveConfig(config);
 }
 
 export function addMarketplace(name: string, url: string): void {
@@ -230,22 +280,42 @@ export function getMergedConfig(): { marketplaces: Record<string, string>; tools
   const tools: Record<string, ToolTarget> = {};
   for (const [toolId, defaultTool] of Object.entries(DEFAULT_TOOLS)) {
     const userTool = userConfig.tools?.[toolId] || {};
+    const enabled = typeof userTool.enabled === "boolean" ? userTool.enabled : false;
+    const configDir = typeof userTool.configDir === "string" ? userTool.configDir : defaultTool.configDir;
     tools[toolId] = {
       ...defaultTool,
-      configDir: (userTool.configDir as string) || defaultTool.configDir,
+      configDir,
+      enabled,
     };
   }
   
   return { marketplaces, tools };
 }
 
-// Export merged tools for backward compatibility
-export const TOOLS: Record<string, ToolTarget> = getMergedConfig().tools;
+export function getTools(): Record<string, ToolTarget> {
+  return getMergedConfig().tools;
+}
+
+export function getEnabledTools(): Record<string, ToolTarget> {
+  const tools = getMergedConfig().tools;
+  const enabled: Record<string, ToolTarget> = {};
+  for (const [toolId, tool] of Object.entries(tools)) {
+    if (tool.enabled) {
+      enabled[toolId] = tool;
+    }
+  }
+  return enabled;
+}
+
+export function getToolList(): ToolTarget[] {
+  const tools = getMergedConfig().tools;
+  return TOOL_IDS.map((toolId) => tools[toolId]).filter((tool): tool is ToolTarget => Boolean(tool));
+}
 
 export function parseMarketplaces(config?: TomlConfig): Marketplace[] {
   const merged = getMergedConfig();
   const blackbookUrls = config?.marketplaces || merged.marketplaces;
-  const claudeUrls = loadClaudeMarketplaces();
+  const claudeUrls = merged.tools["claude-code"].enabled ? loadClaudeMarketplaces() : {};
   const marketplaces: Marketplace[] = [];
 
   // Add Blackbook marketplaces first (they take precedence)

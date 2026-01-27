@@ -28,6 +28,21 @@
 - PRs should include a clear summary, list affected tools/paths, and note validation performed (e.g., `./blackbook status`).
 - If you change deployment behavior or config mappings, update `README.md` and any affected skill docs.
 
+## Pre-commit Checklist
+Before committing, verify:
+1. **Run tests**: `cd tui && pnpm test` - all tests must pass.
+2. **Version bump**: Update `tui/package.json` version (`feat:` = minor, `fix:` = patch).
+3. **Changelog**: Update `CHANGELOG.md`:
+   - Add new version section below `[Unreleased]` with date (YYYY-MM-DD).
+   - Categorize under `### Added`, `### Changed`, `### Fixed`, `### Removed`.
+   - Never overwrite previous versions - add new versions above them.
+   - Update links at bottom: add new version link, update `[Unreleased]` compare URL.
+4. **README**: Check if changes require documentation updates:
+   - New features need usage instructions.
+   - New keyboard shortcuts go in Navigation section.
+   - Config changes need Example Configuration updates.
+   - New tabs/UI elements may need screenshots updated.
+
 ## Configuration & Deployment Notes
 - `tools.toml` is the authoritative mapping for what gets deployed.
 - Avoid storing secrets in this repo; deploy only files intended to be symlinked into user config directories.

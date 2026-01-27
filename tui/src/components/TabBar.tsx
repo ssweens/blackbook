@@ -11,6 +11,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "discover", label: "Discover" },
   { id: "installed", label: "Installed" },
   { id: "marketplaces", label: "Marketplaces" },
+  { id: "tools", label: "Tools" },
 ];
 
 export function TabBar({ activeTab }: TabBarProps) {

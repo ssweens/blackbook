@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useStore } from "./store.js";
-import type { Plugin, Marketplace } from "./types.js";
+import { getToolList, updateToolConfig } from "./config.js";
+import type { Plugin, Marketplace, ToolTarget } from "./types.js";
 
 // Mock config functions to avoid writing to real config file
 vi.mock("./config.js", async (importOriginal) => {
@@ -10,6 +11,9 @@ vi.mock("./config.js", async (importOriginal) => {
     addMarketplace: vi.fn(),
     removeMarketplace: vi.fn(),
     ensureConfigExists: vi.fn(),
+    getToolList: vi.fn(),
+    updateToolConfig: vi.fn(),
+    getEnabledTools: vi.fn(),
   };
 });
 
@@ -42,6 +46,19 @@ function createMockMarketplace(overrides: Partial<Marketplace> = {}): Marketplac
     installedCount: 0,
     autoUpdate: false,
     source: "blackbook",
+    ...overrides,
+  };
+}
+
+function createMockTool(overrides: Partial<ToolTarget> = {}): ToolTarget {
+  return {
+    id: "opencode",
+    name: "OC",
+    configDir: "/tmp/opencode",
+    skillsSubdir: "skills",
+    commandsSubdir: "commands",
+    agentsSubdir: "agents",
+    enabled: true,
     ...overrides,
   };
 }
@@ -224,5 +241,49 @@ describe("Store marketplace management", () => {
     const { marketplaces } = useStore.getState();
     const local = marketplaces.find((m) => m.name === "local");
     expect(local?.isLocal).toBe(true);
+  });
+});
+
+describe("Store tool management", () => {
+  beforeEach(() => {
+    useStore.setState({ tools: [] });
+    vi.mocked(getToolList).mockReset();
+    vi.mocked(updateToolConfig).mockReset();
+  });
+
+  it("should refresh tool list when config changes", () => {
+    const toolEnabled = createMockTool({ enabled: true });
+    const toolDisabled = createMockTool({ enabled: false });
+
+    vi.mocked(getToolList).mockReturnValueOnce([toolEnabled]);
+    useStore.getState().loadTools();
+    expect(useStore.getState().tools[0].enabled).toBe(true);
+
+    vi.mocked(getToolList).mockReturnValueOnce([toolDisabled]);
+    useStore.getState().loadTools();
+    expect(useStore.getState().tools[0].enabled).toBe(false);
+  });
+
+  it("toggles tool enablement and refreshes", async () => {
+    const tool = createMockTool({ enabled: true });
+    vi.mocked(getToolList).mockReturnValue([tool]);
+
+    const refreshAll = vi.fn().mockResolvedValue(undefined);
+    useStore.setState({ refreshAll: refreshAll as () => Promise<void> });
+
+    await useStore.getState().toggleToolEnabled(tool.id);
+
+    expect(updateToolConfig).toHaveBeenCalledWith(tool.id, { enabled: false });
+    expect(refreshAll).toHaveBeenCalled();
+  });
+
+  it("updates tool config_dir with trimmed value", async () => {
+    const refreshAll = vi.fn().mockResolvedValue(undefined);
+    useStore.setState({ refreshAll: refreshAll as () => Promise<void> });
+
+    await useStore.getState().updateToolConfigDir("opencode", "  /tmp/opencode  ");
+
+    expect(updateToolConfig).toHaveBeenCalledWith("opencode", { configDir: "/tmp/opencode" });
+    expect(refreshAll).toHaveBeenCalled();
   });
 });

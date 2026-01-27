@@ -1,6 +1,14 @@
 import { create } from "zustand";
 import type { Tab, Marketplace, Plugin, AppState, Notification } from "./types.js";
-import { parseMarketplaces, addMarketplace as addMarketplaceToConfig, removeMarketplace as removeMarketplaceFromConfig, ensureConfigExists } from "./config.js";
+import {
+  parseMarketplaces,
+  addMarketplace as addMarketplaceToConfig,
+  removeMarketplace as removeMarketplaceFromConfig,
+  ensureConfigExists,
+  getToolList,
+  updateToolConfig,
+  getEnabledTools,
+} from "./config.js";
 import { fetchMarketplace } from "./marketplace.js";
 
 // Ensure config file exists on module load
@@ -18,6 +26,7 @@ interface Actions {
   setSelectedIndex: (index: number) => void;
   loadMarketplaces: () => Promise<void>;
   loadInstalledPlugins: () => void;
+  loadTools: () => void;
   refreshAll: () => Promise<void>;
   installPlugin: (plugin: Plugin) => Promise<boolean>;
   uninstallPlugin: (plugin: Plugin) => Promise<boolean>;
@@ -27,6 +36,8 @@ interface Actions {
   addMarketplace: (name: string, url: string) => void;
   removeMarketplace: (name: string) => void;
   updateMarketplace: (name: string) => Promise<void>;
+  toggleToolEnabled: (toolId: string) => Promise<void>;
+  updateToolConfigDir: (toolId: string, configDir: string) => Promise<void>;
   notify: (message: string, type?: Notification["type"]) => void;
   clearNotification: (id: string) => void;
 }
@@ -37,6 +48,7 @@ export const useStore = create<Store>((set, get) => ({
   tab: "discover",
   marketplaces: [],
   installedPlugins: [],
+  tools: getToolList(),
   search: "",
   selectedIndex: 0,
   loading: false,
@@ -61,12 +73,17 @@ export const useStore = create<Store>((set, get) => ({
     set((state) => ({ notifications: state.notifications.filter((n) => n.id !== id) }));
   },
 
+  loadTools: () => {
+    set({ tools: getToolList() });
+  },
+
   loadMarketplaces: async () => {
     set({ loading: true, error: null });
 
     try {
       const marketplaces = parseMarketplaces();
       const { plugins: installedPlugins } = getAllInstalledPlugins();
+      const tools = getToolList();
 
       const enrichedMarketplaces: Marketplace[] = await Promise.all(
         marketplaces.map(async (m) => {
@@ -91,6 +108,7 @@ export const useStore = create<Store>((set, get) => ({
       set({
         marketplaces: enrichedMarketplaces,
         installedPlugins,
+        tools,
         loading: false,
       });
     } catch (e) {
@@ -107,7 +125,7 @@ export const useStore = create<Store>((set, get) => ({
         installed: installed.some((ip) => ip.name === p.name),
       })),
     }));
-    set({ installedPlugins: installed, marketplaces });
+    set({ installedPlugins: installed, marketplaces, tools: getToolList() });
   },
 
   refreshAll: async () => {
@@ -132,15 +150,20 @@ export const useStore = create<Store>((set, get) => ({
       
       const parts: string[] = [];
       if (result.claudeInstalled) parts.push("Claude");
+      const toolList = get().tools;
       for (const [toolId, count] of Object.entries(result.linkedTools)) {
         if (count > 0) {
-          const toolName = toolId.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+          const toolName = toolList.find((tool) => tool.id === toolId)?.name
+            || toolId.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
           parts.push(`${toolName} (${count})`);
         }
       }
       
       if (parts.length > 0) {
-        notify(`✓ Installed ${plugin.name} → ${parts.join(", ")}`, "success");
+        const skipped = result.skippedTools.length > 0
+          ? ` (skipped: ${result.skippedTools.map((toolId) => toolList.find((tool) => tool.id === toolId)?.name || toolId).join(", ")})`
+          : "";
+        notify(`✓ Installed ${plugin.name} → ${parts.join(", ")}${skipped}`, "success");
       } else {
         notify(`⚠ Install ran but no items linked for ${plugin.name}`, "error");
       }
@@ -152,6 +175,11 @@ export const useStore = create<Store>((set, get) => ({
 
   uninstallPlugin: async (plugin) => {
     const { notify } = get();
+    const enabledTools = getEnabledTools();
+    if (Object.keys(enabledTools).length === 0) {
+      notify("No tools enabled in config.", "error");
+      return false;
+    }
     notify(`Uninstalling ${plugin.name}...`, "info");
     const success = await uninstallPlugin(plugin);
     await get().refreshAll();
@@ -181,15 +209,20 @@ export const useStore = create<Store>((set, get) => ({
       
       const parts: string[] = [];
       if (result.claudeEnabled) parts.push("Claude");
+      const toolList = get().tools;
       for (const [toolId, count] of Object.entries(result.linkedTools)) {
         if (count > 0) {
-          const toolName = toolId.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+          const toolName = toolList.find((tool) => tool.id === toolId)?.name
+            || toolId.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
           parts.push(`${toolName} (${count})`);
         }
       }
       
       if (parts.length > 0) {
-        notify(`✓ Updated ${plugin.name} → ${parts.join(", ")}`, "success");
+        const skipped = result.skippedTools.length > 0
+          ? ` (skipped: ${result.skippedTools.map((toolId) => toolList.find((tool) => tool.id === toolId)?.name || toolId).join(", ")})`
+          : "";
+        notify(`✓ Updated ${plugin.name} → ${parts.join(", ")}${skipped}`, "success");
       } else {
         notify(`✓ Updated ${plugin.name}`, "success");
       }
@@ -197,6 +230,33 @@ export const useStore = create<Store>((set, get) => ({
       notify(`✗ Failed to update ${plugin.name}: ${result.errors.join("; ")}`, "error");
     }
     return result.success;
+  },
+
+  toggleToolEnabled: async (toolId) => {
+    const { notify } = get();
+    const tools = getToolList();
+    const tool = tools.find((t) => t.id === toolId);
+    if (!tool) {
+      notify(`Unknown tool: ${toolId}`, "error");
+      return;
+    }
+
+    updateToolConfig(toolId, { enabled: !tool.enabled });
+    await get().refreshAll();
+    notify(`${tool.name} ${tool.enabled ? "disabled" : "enabled"}`, "success");
+  },
+
+  updateToolConfigDir: async (toolId, configDir) => {
+    const { notify } = get();
+    const trimmed = configDir.trim();
+    if (!trimmed) {
+      notify("Config directory cannot be empty.", "error");
+      return;
+    }
+    updateToolConfig(toolId, { configDir: trimmed });
+    await get().refreshAll();
+    const tool = get().tools.find((t) => t.id === toolId);
+    notify(`Updated ${tool?.name ?? toolId} config_dir`, "success");
   },
 
   addMarketplace: (name, url) => {

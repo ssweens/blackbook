@@ -9,7 +9,7 @@ import {
   realpathSync,
 } from "fs";
 import { join } from "path";
-import { tmpdir, homedir } from "os";
+import { tmpdir } from "os";
 import {
   enablePlugin,
   disablePlugin,
@@ -23,7 +23,7 @@ import {
   removeSymlink,
   getPluginsCacheDir,
 } from "./install.js";
-import { TOOLS, getCacheDir } from "./config.js";
+import { getCacheDir, getTools, updateToolConfig, TOOL_IDS } from "./config.js";
 import type { Plugin } from "./types.js";
 
 const TEST_PLUGIN_NAME = "blackbook-test-plugin";
@@ -31,6 +31,35 @@ const TEST_SKILL_NAME = "blackbook-test-skill";
 const TEST_COMMAND_NAME = "blackbook-test-command";
 const TEST_AGENT_NAME = "blackbook-test-agent";
 const TEST_MARKETPLACE = "blackbook-test-marketplace";
+const TEST_ROOT = join(tmpdir(), `blackbook-integration-${Date.now()}`);
+const TEST_CONFIG_HOME = join(TEST_ROOT, "config");
+const TEST_CACHE_HOME = join(TEST_ROOT, "cache");
+const TEST_TOOL_DIR = join(TEST_ROOT, "tools");
+
+function setupTestEnvironment(): void {
+  process.env.XDG_CONFIG_HOME = TEST_CONFIG_HOME;
+  process.env.XDG_CACHE_HOME = TEST_CACHE_HOME;
+  rmSync(TEST_ROOT, { recursive: true, force: true });
+  mkdirSync(TEST_TOOL_DIR, { recursive: true });
+
+  for (const toolId of TOOL_IDS) {
+    const toolDir = join(TEST_TOOL_DIR, toolId);
+    mkdirSync(toolDir, { recursive: true });
+    updateToolConfig(toolId, { enabled: toolId !== "claude-code", configDir: toolDir });
+  }
+}
+
+function cleanupTestEnvironment(): void {
+  rmSync(TEST_ROOT, { recursive: true, force: true });
+}
+
+beforeEach(() => {
+  setupTestEnvironment();
+});
+
+afterEach(() => {
+  cleanupTestEnvironment();
+});
 
 function createTestPluginInCache(): string {
   const pluginDir = join(getPluginsCacheDir(), TEST_MARKETPLACE, TEST_PLUGIN_NAME);
@@ -78,7 +107,8 @@ function cleanupAllTestArtifacts(): void {
     /* ignore */
   }
 
-  for (const [, tool] of Object.entries(TOOLS)) {
+  const tools = getTools();
+  for (const [, tool] of Object.entries(tools)) {
     if (tool.skillsSubdir) {
       const skillPath = join(tool.configDir, tool.skillsSubdir, TEST_SKILL_NAME);
       rmSync(skillPath, { recursive: true, force: true });
@@ -142,7 +172,7 @@ describe("enablePlugin", () => {
     expect(result.success).toBe(true);
 
     for (const toolId of ["opencode", "amp-code", "openai-codex"]) {
-      const tool = TOOLS[toolId];
+      const tool = getTools()[toolId];
       if (tool.skillsSubdir) {
         const skillPath = join(tool.configDir, tool.skillsSubdir, TEST_SKILL_NAME);
         expect(existsSync(skillPath), `skill should exist for ${toolId}`).toBe(true);
@@ -154,6 +184,22 @@ describe("enablePlugin", () => {
     }
   });
 
+  it("skips disabled tools", async () => {
+    updateToolConfig("opencode", { enabled: false });
+    createTestPluginInCache();
+    const plugin = createTestPlugin();
+
+    const result = await enablePlugin(plugin);
+
+    expect(result.linkedTools["opencode"]).toBeUndefined();
+
+    const opencode = getTools()["opencode"];
+    if (opencode.skillsSubdir) {
+      const skillPath = join(opencode.configDir, opencode.skillsSubdir, TEST_SKILL_NAME);
+      expect(existsSync(skillPath)).toBe(false);
+    }
+  });
+
   it("copies commands to tools with commandsSubdir", async () => {
     createTestPluginInCache();
     const plugin = createTestPlugin();
@@ -161,7 +207,7 @@ describe("enablePlugin", () => {
     await enablePlugin(plugin);
 
     for (const toolId of ["opencode", "amp-code"]) {
-      const tool = TOOLS[toolId];
+      const tool = getTools()[toolId];
       if (tool.commandsSubdir) {
         const cmdPath = join(tool.configDir, tool.commandsSubdir, `${TEST_COMMAND_NAME}.md`);
         expect(existsSync(cmdPath), `command should exist for ${toolId}`).toBe(true);
@@ -171,7 +217,7 @@ describe("enablePlugin", () => {
       }
     }
 
-    const codexTool = TOOLS["openai-codex"];
+    const codexTool = getTools()["openai-codex"];
     expect(codexTool.commandsSubdir).toBeNull();
   });
 
@@ -182,7 +228,7 @@ describe("enablePlugin", () => {
     await enablePlugin(plugin);
 
     for (const toolId of ["opencode", "amp-code"]) {
-      const tool = TOOLS[toolId];
+      const tool = getTools()[toolId];
       if (tool.agentsSubdir) {
         const agentPath = join(tool.configDir, tool.agentsSubdir, `${TEST_AGENT_NAME}.md`);
         expect(existsSync(agentPath), `agent should exist for ${toolId}`).toBe(true);
@@ -248,7 +294,7 @@ describe("disablePlugin", () => {
     await enablePlugin(plugin);
 
     for (const toolId of ["opencode", "amp-code", "openai-codex"]) {
-      const tool = TOOLS[toolId];
+      const tool = getTools()[toolId];
       if (tool.skillsSubdir) {
         const skillPath = join(tool.configDir, tool.skillsSubdir, TEST_SKILL_NAME);
         expect(existsSync(skillPath)).toBe(true);
@@ -260,7 +306,7 @@ describe("disablePlugin", () => {
     expect(result.success).toBe(true);
 
     for (const toolId of ["opencode", "amp-code", "openai-codex"]) {
-      const tool = TOOLS[toolId];
+      const tool = getTools()[toolId];
       if (tool.skillsSubdir) {
         const skillPath = join(tool.configDir, tool.skillsSubdir, TEST_SKILL_NAME);
         expect(existsSync(skillPath), `skill should be removed for ${toolId}`).toBe(false);
@@ -278,7 +324,7 @@ describe("disablePlugin", () => {
     expect(result.success).toBe(true);
 
     for (const toolId of ["opencode", "amp-code"]) {
-      const tool = TOOLS[toolId];
+      const tool = getTools()[toolId];
       if (tool.commandsSubdir) {
         const cmdPath = join(tool.configDir, tool.commandsSubdir, `${TEST_COMMAND_NAME}.md`);
         expect(existsSync(cmdPath)).toBe(false);
@@ -329,7 +375,7 @@ describe("backup and restore", () => {
   });
 
   it("backs up existing skill directory before overwriting", async () => {
-    const tool = TOOLS["opencode"];
+    const tool = getTools()["opencode"];
     const skillPath = join(tool.configDir, tool.skillsSubdir!, TEST_SKILL_NAME);
     const backupPath = join(getCacheDir(), "backups", TEST_PLUGIN_NAME, "skill", TEST_SKILL_NAME);
 
@@ -351,7 +397,7 @@ describe("backup and restore", () => {
   });
 
   it("backs up existing command file before overwriting", async () => {
-    const tool = TOOLS["opencode"];
+    const tool = getTools()["opencode"];
     const cmdPath = join(tool.configDir, tool.commandsSubdir!, `${TEST_COMMAND_NAME}.md`);
     const backupPath = join(getCacheDir(), "backups", TEST_PLUGIN_NAME, "command", `${TEST_COMMAND_NAME}.md`);
 
@@ -369,7 +415,7 @@ describe("backup and restore", () => {
   });
 
   it("restores backup when disabling", async () => {
-    const tool = TOOLS["opencode"];
+    const tool = getTools()["opencode"];
     const skillPath = join(tool.configDir, tool.skillsSubdir!, TEST_SKILL_NAME);
     const backupPath = join(getCacheDir(), "backups", TEST_PLUGIN_NAME, "skill", TEST_SKILL_NAME);
 
@@ -408,7 +454,7 @@ describe("backup and restore", () => {
   });
 
   it("overwrites previous backup (max one per plugin)", async () => {
-    const tool = TOOLS["opencode"];
+    const tool = getTools()["opencode"];
     const skillPath = join(tool.configDir, tool.skillsSubdir!, TEST_SKILL_NAME);
     const backupPath = join(getCacheDir(), "backups", TEST_PLUGIN_NAME, "skill", TEST_SKILL_NAME);
 

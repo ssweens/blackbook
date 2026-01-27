@@ -19,7 +19,7 @@ import { exec } from "child_process";
 const execAsync = promisify(exec);
 import { join, dirname } from "path";
 import { tmpdir } from "os";
-import { TOOLS, getCacheDir } from "./config.js";
+import { getCacheDir, getEnabledTools, getTools } from "./config.js";
 import type { Plugin, InstalledItem } from "./types.js";
 
 export function getPluginsCacheDir(): string {
@@ -153,15 +153,28 @@ export function createSymlink(
       }
     }
 
-    if (!pluginName || !itemKind || !itemName) return false;
+    let backupPath: string;
+    if (pluginName && itemKind && itemName) {
+      const backupDir = join(getCacheDir(), "backups", pluginName, itemKind);
+      mkdirSync(backupDir, { recursive: true });
+      backupPath = join(backupDir, itemName);
 
-    const backupDir = join(getCacheDir(), "backups", pluginName, itemKind);
-    mkdirSync(backupDir, { recursive: true });
-    const backupPath = join(backupDir, itemName);
-
-    if (existsSync(backupPath) || isSymlink(backupPath)) {
-      rmSync(backupPath, { recursive: true, force: true });
+      if (existsSync(backupPath) || isSymlink(backupPath)) {
+        rmSync(backupPath, { recursive: true, force: true });
+      }
+    } else {
+      backupPath = `${target}.bak`;
+      if (existsSync(backupPath) || isSymlink(backupPath)) {
+        let i = 1;
+        let candidate = `${backupPath}.${i}`;
+        while (existsSync(candidate) || isSymlink(candidate)) {
+          i += 1;
+          candidate = `${backupPath}.${i}`;
+        }
+        backupPath = candidate;
+      }
     }
+
     renameSync(target, backupPath);
   }
 
@@ -195,7 +208,11 @@ export function removeSymlink(target: string): boolean {
 }
 
 export function isPluginInstalled(plugin: Plugin): boolean {
-  const claudePluginsDir = join(TOOLS["claude-code"].configDir, "plugins/cache");
+  const tools = getTools();
+  const claudeTool = tools["claude-code"];
+  if (!claudeTool || !claudeTool.enabled) return false;
+
+  const claudePluginsDir = join(claudeTool.configDir, "plugins/cache");
   if (!existsSync(claudePluginsDir)) return false;
 
   for (const marketplace of readdirSync(claudePluginsDir)) {
@@ -215,35 +232,52 @@ export interface InstallResult {
   claudeInstalled: boolean;
   linkedTools: Record<string, number>;
   errors: string[];
+  skippedTools: string[];
 }
 
 export async function installPlugin(plugin: Plugin, marketplaceUrl: string): Promise<InstallResult> {
+  const tools = getTools();
+  const enabledTools = getEnabledTools();
+  const skippedTools = Object.keys(tools).filter((toolId) => !enabledTools[toolId]);
+  const enabledToolIds = Object.keys(enabledTools);
   const result: InstallResult = {
     success: false,
     claudeInstalled: false,
     linkedTools: {},
     errors: [],
+    skippedTools,
   };
 
-  try {
-    await execAsync(`claude plugin install "${plugin.name}"`);
-    result.claudeInstalled = true;
-  } catch (e) {
-    result.errors.push(`Claude install failed: ${e instanceof Error ? e.message : "unknown error"}`);
+  if (enabledToolIds.length === 0) {
+    result.errors.push("No tools enabled in config.");
+    return result;
   }
 
-  const sourcePath = await downloadPlugin(plugin, marketplaceUrl);
-  
-  if (!sourcePath) {
-    if (!result.claudeInstalled) {
-      result.errors.push(`Failed to download plugin ${plugin.name}`);
-      return result;
+  const claudeEnabled = Boolean(enabledTools["claude-code"]);
+  const nonClaudeToolIds = enabledToolIds.filter((toolId) => toolId !== "claude-code");
+
+  if (claudeEnabled) {
+    try {
+      await execAsync(`claude plugin install "${plugin.name}"`);
+      result.claudeInstalled = true;
+    } catch (e) {
+      result.errors.push(`Claude install failed: ${e instanceof Error ? e.message : "unknown error"}`);
     }
-  } else {
-    for (const toolId of Object.keys(TOOLS)) {
-      if (toolId === "claude-code") continue;
-      const { count } = installPluginItemsToTool(plugin.name, sourcePath, toolId);
-      result.linkedTools[toolId] = count;
+  }
+
+  if (nonClaudeToolIds.length > 0) {
+    const sourcePath = await downloadPlugin(plugin, marketplaceUrl);
+
+    if (!sourcePath) {
+      if (!result.claudeInstalled) {
+        result.errors.push(`Failed to download plugin ${plugin.name}`);
+        return result;
+      }
+    } else {
+      for (const toolId of nonClaudeToolIds) {
+        const { count } = installPluginItemsToTool(plugin.name, sourcePath, toolId);
+        result.linkedTools[toolId] = count;
+      }
     }
   }
 
@@ -252,16 +286,25 @@ export async function installPlugin(plugin: Plugin, marketplaceUrl: string): Pro
 }
 
 export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
+  const enabledTools = getEnabledTools();
+  const enabledToolIds = Object.keys(enabledTools);
   let claudeSuccess = false;
-  
-  try {
-    await execAsync(`claude plugin uninstall "${plugin.name}"`);
-    claudeSuccess = true;
-  } catch { /* ignore */ }
+  let removedCount = 0;
 
-  for (const toolId of Object.keys(TOOLS)) {
+  if (enabledToolIds.length === 0) {
+    return false;
+  }
+
+  if (enabledTools["claude-code"]) {
+    try {
+      await execAsync(`claude plugin uninstall "${plugin.name}"`);
+      claudeSuccess = true;
+    } catch { /* ignore */ }
+  }
+
+  for (const toolId of enabledToolIds) {
     if (toolId === "claude-code") continue;
-    uninstallPluginItemsFromTool(plugin.name, toolId);
+    removedCount += uninstallPluginItemsFromTool(plugin.name, toolId);
   }
 
   const pluginDir = join(getPluginsCacheDir(), plugin.marketplace, plugin.name);
@@ -269,7 +312,7 @@ export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
     rmSync(pluginDir, { recursive: true, force: true });
   } catch { /* ignore */ }
 
-  return claudeSuccess;
+  return claudeSuccess || removedCount > 0;
 }
 
 export interface EnableResult {
@@ -277,6 +320,7 @@ export interface EnableResult {
   claudeEnabled: boolean;
   linkedTools: Record<string, number>;
   errors: string[];
+  skippedTools: string[];
 }
 
 function copyWithBackup(
@@ -318,8 +362,8 @@ function installPluginItemsToTool(
   sourcePath: string,
   toolId: string
 ): { count: number; items: InstalledItem[] } {
-  const tool = TOOLS[toolId];
-  if (!tool) return { count: 0, items: [] };
+  const tool = getTools()[toolId];
+  if (!tool || !tool.enabled) return { count: 0, items: [] };
   
   const items: InstalledItem[] = [];
   let count = 0;
@@ -455,17 +499,29 @@ function uninstallPluginItemsFromTool(pluginName: string, toolId: string): numbe
 }
 
 export async function enablePlugin(plugin: Plugin, marketplaceUrl?: string): Promise<EnableResult> {
+  const tools = getTools();
+  const enabledTools = getEnabledTools();
+  const skippedTools = Object.keys(tools).filter((toolId) => !enabledTools[toolId]);
+  const enabledToolIds = Object.keys(enabledTools);
   const result: EnableResult = {
     success: false,
     claudeEnabled: false,
     linkedTools: {},
     errors: [],
+    skippedTools,
   };
 
-  try {
-    await execAsync(`claude plugin enable "${plugin.name}"`);
-    result.claudeEnabled = true;
-  } catch { /* ignore */ }
+  if (enabledToolIds.length === 0) {
+    result.errors.push("No tools enabled in config.");
+    return result;
+  }
+
+  if (enabledTools["claude-code"]) {
+    try {
+      await execAsync(`claude plugin enable "${plugin.name}"`);
+      result.claudeEnabled = true;
+    } catch { /* ignore */ }
+  }
 
   let sourcePath = getPluginSourcePath(plugin);
   
@@ -474,12 +530,12 @@ export async function enablePlugin(plugin: Plugin, marketplaceUrl?: string): Pro
   }
   
   if (sourcePath) {
-    for (const toolId of Object.keys(TOOLS)) {
+    for (const toolId of enabledToolIds) {
       if (toolId === "claude-code") continue;
       const { count } = installPluginItemsToTool(plugin.name, sourcePath, toolId);
       result.linkedTools[toolId] = count;
     }
-  } else {
+  } else if (enabledToolIds.some((toolId) => toolId !== "claude-code")) {
     result.errors.push(`Plugin source not found for ${plugin.name}`);
   }
 
@@ -488,19 +544,31 @@ export async function enablePlugin(plugin: Plugin, marketplaceUrl?: string): Pro
 }
 
 export async function disablePlugin(plugin: Plugin): Promise<EnableResult> {
+  const tools = getTools();
+  const enabledTools = getEnabledTools();
+  const skippedTools = Object.keys(tools).filter((toolId) => !enabledTools[toolId]);
+  const enabledToolIds = Object.keys(enabledTools);
   const result: EnableResult = {
     success: false,
     claudeEnabled: false,
     linkedTools: {},
     errors: [],
+    skippedTools,
   };
 
-  try {
-    await execAsync(`claude plugin disable "${plugin.name}"`);
-    result.claudeEnabled = true;
-  } catch { /* ignore */ }
+  if (enabledToolIds.length === 0) {
+    result.errors.push("No tools enabled in config.");
+    return result;
+  }
 
-  for (const toolId of Object.keys(TOOLS)) {
+  if (enabledTools["claude-code"]) {
+    try {
+      await execAsync(`claude plugin disable "${plugin.name}"`);
+      result.claudeEnabled = true;
+    } catch { /* ignore */ }
+  }
+
+  for (const toolId of enabledToolIds) {
     if (toolId === "claude-code") continue;
     const removed = uninstallPluginItemsFromTool(plugin.name, toolId);
     result.linkedTools[toolId] = removed;
@@ -511,19 +579,31 @@ export async function disablePlugin(plugin: Plugin): Promise<EnableResult> {
 }
 
 export async function updatePlugin(plugin: Plugin, marketplaceUrl: string): Promise<EnableResult> {
+  const tools = getTools();
+  const enabledTools = getEnabledTools();
+  const skippedTools = Object.keys(tools).filter((toolId) => !enabledTools[toolId]);
+  const enabledToolIds = Object.keys(enabledTools);
   const result: EnableResult = {
     success: false,
     claudeEnabled: false,
     linkedTools: {},
     errors: [],
+    skippedTools,
   };
 
-  try {
-    await execAsync(`claude plugin update "${plugin.name}"`);
-    result.claudeEnabled = true;
-  } catch { /* ignore */ }
+  if (enabledToolIds.length === 0) {
+    result.errors.push("No tools enabled in config.");
+    return result;
+  }
 
-  for (const toolId of Object.keys(TOOLS)) {
+  if (enabledTools["claude-code"]) {
+    try {
+      await execAsync(`claude plugin update "${plugin.name}"`);
+      result.claudeEnabled = true;
+    } catch { /* ignore */ }
+  }
+
+  for (const toolId of enabledToolIds) {
     if (toolId === "claude-code") continue;
     uninstallPluginItemsFromTool(plugin.name, toolId);
   }
@@ -533,16 +613,16 @@ export async function updatePlugin(plugin: Plugin, marketplaceUrl: string): Prom
     rmSync(pluginDir, { recursive: true, force: true });
   } catch { /* ignore */ }
 
-  const sourcePath = await downloadPlugin(plugin, marketplaceUrl);
-  
-  if (sourcePath) {
-    for (const toolId of Object.keys(TOOLS)) {
-      if (toolId === "claude-code") continue;
-      const { count } = installPluginItemsToTool(plugin.name, sourcePath, toolId);
-      result.linkedTools[toolId] = count;
-    }
-  } else {
-    if (!result.claudeEnabled) {
+  const nonClaudeToolIds = enabledToolIds.filter((toolId) => toolId !== "claude-code");
+  if (nonClaudeToolIds.length > 0) {
+    const sourcePath = await downloadPlugin(plugin, marketplaceUrl);
+
+    if (sourcePath) {
+      for (const toolId of nonClaudeToolIds) {
+        const { count } = installPluginItemsToTool(plugin.name, sourcePath, toolId);
+        result.linkedTools[toolId] = count;
+      }
+    } else if (!result.claudeEnabled) {
       result.errors.push(`Failed to download plugin update for ${plugin.name}`);
     }
   }
@@ -556,8 +636,8 @@ export function linkPluginToTool(
   toolId: string,
   sourcePath: string
 ): number {
-  const tool = TOOLS[toolId];
-  if (!tool) return 0;
+  const tool = getTools()[toolId];
+  if (!tool || !tool.enabled) return 0;
 
   let linked = 0;
   const manifest = loadManifest();
@@ -627,7 +707,11 @@ export function linkPluginToTool(
 }
 
 export function getInstalledPlugins(): Plugin[] {
-  const claudePluginsDir = join(TOOLS["claude-code"].configDir, "plugins/cache");
+  const tools = getTools();
+  const claudeTool = tools["claude-code"];
+  if (!claudeTool || !claudeTool.enabled) return [];
+
+  const claudePluginsDir = join(claudeTool.configDir, "plugins/cache");
   const plugins: Plugin[] = [];
 
   if (!existsSync(claudePluginsDir)) return plugins;
@@ -760,8 +844,8 @@ export function getInstalledPlugins(): Plugin[] {
 }
 
 export function getInstalledPluginsForTool(toolId: string): Plugin[] {
-  const tool = TOOLS[toolId];
-  if (!tool) return [];
+  const tool = getTools()[toolId];
+  if (!tool || !tool.enabled) return [];
 
   const plugins: Plugin[] = [];
   const seen = new Set<string>();
@@ -842,6 +926,7 @@ export function getAllInstalledPlugins(): { plugins: Plugin[]; byTool: Record<st
   const byTool: Record<string, Plugin[]> = {};
   const allPlugins: Plugin[] = [];
   const seen = new Set<string>();
+  const tools = getTools();
 
   const claudePlugins = getInstalledPlugins();
   byTool["claude-code"] = claudePlugins;
@@ -852,12 +937,17 @@ export function getAllInstalledPlugins(): { plugins: Plugin[]; byTool: Record<st
     }
   }
 
-  for (const toolId of Object.keys(TOOLS)) {
+  for (const [toolId, tool] of Object.entries(tools)) {
     if (toolId === "claude-code") continue;
-    
+
+    if (!tool.enabled) {
+      byTool[toolId] = [];
+      continue;
+    }
+
     const toolPlugins = getInstalledPluginsForTool(toolId);
     byTool[toolId] = toolPlugins;
-    
+
     for (const p of toolPlugins) {
       if (!seen.has(p.name)) {
         seen.add(p.name);
@@ -874,12 +964,14 @@ export interface ToolInstallStatus {
   toolName: string;
   installed: boolean;
   supported: boolean;
+  enabled: boolean;
 }
 
 export function getPluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
   const statuses: ToolInstallStatus[] = [];
-  
-  for (const [toolId, tool] of Object.entries(TOOLS)) {
+  const tools = getTools();
+
+  for (const [toolId, tool] of Object.entries(tools)) {
     const hasSkills = plugin.skills.length > 0;
     const hasCommands = plugin.commands.length > 0;
     const hasAgents = plugin.agents.length > 0;
@@ -892,8 +984,9 @@ export function getPluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
                       (toolId === "claude-code" && (plugin.hasMcp || plugin.hasLsp));
     
     let installed = false;
-    
-    if (supported) {
+    const enabled = tool.enabled;
+
+    if (enabled && supported) {
       if (toolId === "claude-code") {
         installed = isPluginInstalled(plugin);
       } else {
@@ -932,6 +1025,7 @@ export function getPluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
       toolName: tool.name,
       installed,
       supported,
+      enabled,
     });
   }
   
