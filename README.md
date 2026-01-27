@@ -82,6 +82,11 @@ cd ~/src/blackbook/tui && pnpm start
 
 Blackbook uses a single config file at `~/.config/blackbook/config.toml`.
 
+### Prerequisites
+
+- `git` is required to download plugins from repositories.
+- The Claude CLI is required only for managing Claude Code instances; other tools can still use direct file copies.
+
 ### Config File Location
 
 ```
@@ -125,6 +130,8 @@ enabled = true
 config_dir = "~/.config/opencode"
 
 ```
+
+Paths in `config_dir` (and local marketplace paths) support `~` expansion to your home directory.
 
 ### Default Marketplaces
 

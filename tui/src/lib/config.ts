@@ -1,7 +1,8 @@
-import { readFileSync, existsSync, writeFileSync, mkdirSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
-import { join, dirname } from "path";
+import { join } from "path";
 import type { ToolTarget, ToolInstance, Marketplace } from "./types.js";
+import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
 
 const DEFAULT_TOOLS: Record<string, ToolTarget> = {
   "claude-code": {
@@ -61,27 +62,30 @@ export function loadClaudeMarketplaces(): Record<string, string> {
   const path = getClaudeMarketplacesPath();
   if (!existsSync(path)) return {};
 
-  try {
-    const data = JSON.parse(readFileSync(path, "utf-8")) as Record<string, ClaudeMarketplaceEntry>;
-    const result: Record<string, string> = {};
+  return withFileLockSync(path, () => {
+    try {
+      const data = JSON.parse(readFileSync(path, "utf-8")) as Record<string, ClaudeMarketplaceEntry>;
+      const result: Record<string, string> = {};
 
-    for (const [name, entry] of Object.entries(data)) {
-      if (entry.source.source === "github" && entry.source.repo) {
-        result[name] = `https://raw.githubusercontent.com/${entry.source.repo}/main/.claude-plugin/marketplace.json`;
-      } else if (entry.source.source === "git" && entry.source.url) {
-        const match = entry.source.url.match(/github\.com\/([^/]+\/[^/.]+)/);
-        if (match) {
-          result[name] = `https://raw.githubusercontent.com/${match[1]}/main/.claude-plugin/marketplace.json`;
+      for (const [name, entry] of Object.entries(data)) {
+        if (entry.source.source === "github" && entry.source.repo) {
+          result[name] = `https://raw.githubusercontent.com/${entry.source.repo}/main/.claude-plugin/marketplace.json`;
+        } else if (entry.source.source === "git" && entry.source.url) {
+          const match = entry.source.url.match(/github\.com\/([^/]+\/[^/.]+)/);
+          if (match) {
+            result[name] = `https://raw.githubusercontent.com/${match[1]}/main/.claude-plugin/marketplace.json`;
+          }
+        } else if (entry.source.source === "directory" && entry.source.path) {
+          result[name] = expandPath(entry.source.path);
         }
-      } else if (entry.source.source === "directory" && entry.source.path) {
-        result[name] = entry.source.path;
       }
-    }
 
-    return result;
-  } catch {
-    return {};
-  }
+      return result;
+    } catch (error) {
+      console.error(`Failed to parse Claude marketplaces at ${path}: ${error instanceof Error ? error.message : String(error)}`);
+      return {};
+    }
+  });
 }
 
 export function getCacheDir(): string {
@@ -125,85 +129,86 @@ export function loadConfig(configPath?: string): TomlConfig {
     return { marketplaces: {}, tools: {} };
   }
 
-  const content = readFileSync(path, "utf-8");
-  const result: TomlConfig = { marketplaces: {}, tools: {} };
+  return withFileLockSync(path, () => {
+    const content = readFileSync(path, "utf-8");
+    const result: TomlConfig = { marketplaces: {}, tools: {} };
 
-  let currentSection = "";
-  let currentTool = "";
-  let currentInstance: ToolInstanceConfig | null = null;
-  
-  for (const line of content.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("#") || !trimmed) continue;
+    let currentSection = "";
+    let currentTool = "";
+    let currentInstance: ToolInstanceConfig | null = null;
+    
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("#") || !trimmed) continue;
 
-    const arraySectionMatch = trimmed.match(/^\[\[([^\]]+)\]\]$/);
-    if (arraySectionMatch) {
-      const section = arraySectionMatch[1];
-      if (section.startsWith("tools.") && section.endsWith(".instances")) {
-        currentSection = "tool_instances";
-        currentTool = section.replace(/^tools\./, "").replace(/\.instances$/, "");
-        const toolConfig = result.tools![currentTool] || {};
-        toolConfig.instances = toolConfig.instances || [];
-        const instance: ToolInstanceConfig = {};
-        toolConfig.instances.push(instance);
-        result.tools![currentTool] = toolConfig;
-        currentInstance = instance;
-      } else {
-        currentSection = "";
-        currentTool = "";
-        currentInstance = null;
+      const arraySectionMatch = trimmed.match(/^\[\[([^\]]+)\]\]$/);
+      if (arraySectionMatch) {
+        const section = arraySectionMatch[1];
+        if (section.startsWith("tools.") && section.endsWith(".instances")) {
+          currentSection = "tool_instances";
+          currentTool = section.replace(/^tools\./, "").replace(/\.instances$/, "");
+          const toolConfig = result.tools![currentTool] || {};
+          toolConfig.instances = toolConfig.instances || [];
+          const instance: ToolInstanceConfig = {};
+          toolConfig.instances.push(instance);
+          result.tools![currentTool] = toolConfig;
+          currentInstance = instance;
+        } else {
+          currentSection = "";
+          currentTool = "";
+          currentInstance = null;
+        }
+        continue;
       }
-      continue;
+
+      const sectionMatch = trimmed.match(/^\[([^\]]+)\]$/);
+      if (sectionMatch) {
+        const section = sectionMatch[1];
+        if (section.startsWith("tools.")) {
+          currentSection = "tools";
+          currentTool = section.replace("tools.", "");
+          result.tools![currentTool] = result.tools![currentTool] || {};
+          currentInstance = null;
+        } else {
+          currentSection = section;
+          currentTool = "";
+          currentInstance = null;
+        }
+        continue;
+      }
+
+      const kvStringMatch = trimmed.match(/^(\S+)\s*=\s*"(.+)"$/);
+      const kvBoolMatch = trimmed.match(/^(\S+)\s*=\s*(true|false)$/);
+      if (kvStringMatch) {
+        const [, key, value] = kvStringMatch;
+        if (currentSection === "marketplaces") {
+          result.marketplaces![key] = value;
+        } else if (currentSection === "tools" && currentTool) {
+          const normalizedKey = key === "config_dir" ? "configDir" : key;
+          (result.tools![currentTool] as Record<string, string>)[normalizedKey] = value;
+        } else if (currentSection === "tool_instances" && currentTool && currentInstance) {
+          const normalizedKey = key === "config_dir" ? "configDir" : key;
+          (currentInstance as Record<string, string>)[normalizedKey] = value;
+        }
+      } else if (kvBoolMatch) {
+        const [, key, rawValue] = kvBoolMatch;
+        const value = rawValue === "true";
+        if (currentSection === "tools" && currentTool) {
+          const normalizedKey = key === "config_dir" ? "configDir" : key;
+          (result.tools![currentTool] as Record<string, boolean>)[normalizedKey] = value;
+        } else if (currentSection === "tool_instances" && currentTool && currentInstance) {
+          const normalizedKey = key === "config_dir" ? "configDir" : key;
+          (currentInstance as Record<string, boolean>)[normalizedKey] = value;
+        }
+      }
     }
 
-    const sectionMatch = trimmed.match(/^\[([^\]]+)\]$/);
-    if (sectionMatch) {
-      const section = sectionMatch[1];
-      if (section.startsWith("tools.")) {
-        currentSection = "tools";
-        currentTool = section.replace("tools.", "");
-        result.tools![currentTool] = result.tools![currentTool] || {};
-        currentInstance = null;
-      } else {
-        currentSection = section;
-        currentTool = "";
-        currentInstance = null;
-      }
-      continue;
-    }
-
-    const kvStringMatch = trimmed.match(/^(\S+)\s*=\s*"(.+)"$/);
-    const kvBoolMatch = trimmed.match(/^(\S+)\s*=\s*(true|false)$/);
-    if (kvStringMatch) {
-      const [, key, value] = kvStringMatch;
-      if (currentSection === "marketplaces") {
-        result.marketplaces![key] = value;
-      } else if (currentSection === "tools" && currentTool) {
-        const normalizedKey = key === "config_dir" ? "configDir" : key;
-        (result.tools![currentTool] as Record<string, string>)[normalizedKey] = value;
-      } else if (currentSection === "tool_instances" && currentTool && currentInstance) {
-        const normalizedKey = key === "config_dir" ? "configDir" : key;
-        (currentInstance as Record<string, string>)[normalizedKey] = value;
-      }
-    } else if (kvBoolMatch) {
-      const [, key, rawValue] = kvBoolMatch;
-      const value = rawValue === "true";
-      if (currentSection === "tools" && currentTool) {
-        const normalizedKey = key === "config_dir" ? "configDir" : key;
-        (result.tools![currentTool] as Record<string, boolean>)[normalizedKey] = value;
-      } else if (currentSection === "tool_instances" && currentTool && currentInstance) {
-        const normalizedKey = key === "config_dir" ? "configDir" : key;
-        (currentInstance as Record<string, boolean>)[normalizedKey] = value;
-      }
-    }
-  }
-
-  return result;
+    return result;
+  });
 }
 
 export function saveConfig(config: TomlConfig, configPath?: string): void {
   const path = configPath || getConfigPath();
-  mkdirSync(dirname(path), { recursive: true });
   
   const lines: string[] = [
     "# Blackbook Configuration",
@@ -284,7 +289,9 @@ export function saveConfig(config: TomlConfig, configPath?: string): void {
     lines.push("# config_dir = \"~/.config/opencode\"");
   }
 
-  writeFileSync(path, lines.join("\n"));
+  withFileLockSync(path, () => {
+    atomicWriteFileSync(path, lines.join("\n"));
+  });
 }
 
 const DEFAULT_INITIAL_MARKETPLACES: Record<string, string> = {
@@ -373,7 +380,7 @@ export function getToolInstances(): ToolInstance[] {
         ? instance.name
         : tool.name;
       const configDir = typeof instance.configDir === "string" && instance.configDir.length > 0
-        ? instance.configDir
+        ? expandPath(instance.configDir)
         : tool.configDir;
       const enabled = typeof instance.enabled === "boolean" ? instance.enabled : false;
 
@@ -408,10 +415,11 @@ export function parseMarketplaces(config?: TomlConfig): Marketplace[] {
 
   // Add Blackbook marketplaces first (they take precedence)
   for (const [name, url] of Object.entries(blackbookUrls)) {
-    const isLocal = url.startsWith("/") || url.startsWith("~");
+    const expandedUrl = expandPath(url);
+    const isLocal = expandedUrl.startsWith("/");
     marketplaces.push({
       name,
-      url,
+      url: expandedUrl,
       isLocal,
       plugins: [],
       availableCount: 0,
@@ -426,10 +434,11 @@ export function parseMarketplaces(config?: TomlConfig): Marketplace[] {
   for (const [name, url] of Object.entries(claudeUrls)) {
     if (blackbookNames.has(name)) continue;
     
-    const isLocal = url.startsWith("/") || url.startsWith("~");
+    const expandedUrl = expandPath(url);
+    const isLocal = expandedUrl.startsWith("/");
     marketplaces.push({
       name,
-      url,
+      url: expandedUrl,
       isLocal,
       plugins: [],
       availableCount: 0,
@@ -440,4 +449,14 @@ export function parseMarketplaces(config?: TomlConfig): Marketplace[] {
   }
 
   return marketplaces;
+}
+
+function expandPath(pathValue: string): string {
+  if (pathValue === "~") {
+    return homedir();
+  }
+  if (pathValue.startsWith("~/")) {
+    return join(homedir(), pathValue.slice(2));
+  }
+  return pathValue;
 }

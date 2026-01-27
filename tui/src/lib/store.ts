@@ -1,18 +1,19 @@
 import { create } from "zustand";
+import { existsSync, watch } from "fs";
 import type { Tab, Marketplace, Plugin, AppState, Notification, SyncPreviewItem } from "./types.js";
 import {
   parseMarketplaces,
   addMarketplace as addMarketplaceToConfig,
   removeMarketplace as removeMarketplaceFromConfig,
   ensureConfigExists,
+  getConfigPath,
   getToolInstances,
   updateToolInstanceConfig,
   getEnabledToolInstances,
+  getCacheDir,
 } from "./config.js";
 import { fetchMarketplace } from "./marketplace.js";
 
-// Ensure config file exists on module load
-ensureConfigExists();
 import {
   getAllInstalledPlugins,
   installPlugin,
@@ -20,6 +21,7 @@ import {
   updatePlugin,
   getPluginToolStatus,
   syncPluginInstances,
+  manifestPath,
 } from "./install.js";
 
 interface Actions {
@@ -362,7 +364,7 @@ export const useStore = create<Store>((set, get) => ({
         {
           name,
           url,
-          isLocal: url.startsWith("/"),
+          isLocal: url.startsWith("/") || url.startsWith("~"),
           plugins: [],
           availableCount: 0,
           installedCount: 0,
@@ -375,7 +377,14 @@ export const useStore = create<Store>((set, get) => ({
     notify(`Added marketplace "${name}"`, "success");
     
     // Fetch plugins for the new marketplace
-    get().updateMarketplace(name);
+    get()
+      .updateMarketplace(name)
+      .catch((error) => {
+        notify(
+          `Added marketplace "${name}" but failed to fetch plugins: ${error instanceof Error ? error.message : String(error)}`,
+          "error"
+        );
+      });
   },
 
   removeMarketplace: (name) => {
@@ -419,3 +428,54 @@ export const useStore = create<Store>((set, get) => ({
     });
   },
 }));
+
+let watchersStarted = false;
+let refreshTimer: NodeJS.Timeout | null = null;
+
+function scheduleRefresh(refresh: () => Promise<void>, notify: (message: string, type?: Notification["type"]) => void): void {
+  if (refreshTimer) {
+    clearTimeout(refreshTimer);
+  }
+  refreshTimer = setTimeout(() => {
+    refresh().catch((error) => {
+      notify(`Failed to refresh after file change: ${error instanceof Error ? error.message : String(error)}`, "error");
+    });
+  }, 250);
+}
+
+function startFileWatchers(refresh: () => Promise<void>, notify: (message: string, type?: Notification["type"]) => void): void {
+  if (watchersStarted) return;
+  watchersStarted = true;
+
+  const configPath = getConfigPath();
+  const cacheDir = getCacheDir();
+  const manifestFile = manifestPath();
+
+  try {
+    if (existsSync(configPath)) {
+      watch(configPath, { persistent: false }, () => scheduleRefresh(refresh, notify));
+    }
+  } catch (error) {
+    notify(`Failed to watch config file: ${error instanceof Error ? error.message : String(error)}`, "error");
+  }
+
+  try {
+    if (existsSync(cacheDir)) {
+      watch(cacheDir, { persistent: false }, (event, filename) => {
+        if (filename && filename.toString() === "installed_items.json") {
+          scheduleRefresh(refresh, notify);
+        }
+      });
+    } else if (existsSync(manifestFile)) {
+      watch(manifestFile, { persistent: false }, () => scheduleRefresh(refresh, notify));
+    }
+  } catch (error) {
+    notify(`Failed to watch cache directory: ${error instanceof Error ? error.message : String(error)}`, "error");
+  }
+}
+
+export function initializeStore(): void {
+  ensureConfigExists();
+  const { refreshAll, notify } = useStore.getState();
+  startFileWatchers(refreshAll, notify);
+}

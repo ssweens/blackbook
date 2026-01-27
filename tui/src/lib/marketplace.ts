@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "fs";
 import { join, dirname } from "path";
 import { createHash } from "crypto";
 import { getCacheDir } from "./config.js";
@@ -16,12 +16,13 @@ function cacheGet(key: string, maxAgeSeconds = 3600): unknown | null {
   if (!existsSync(path)) return null;
 
   try {
-    const stat = require("fs").statSync(path);
+    const stat = statSync(path);
     const age = (Date.now() - stat.mtimeMs) / 1000;
     if (age > maxAgeSeconds) return null;
 
     return JSON.parse(readFileSync(path, "utf-8"));
-  } catch {
+  } catch (error) {
+    console.error(`Failed to read cache ${path}: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }
@@ -69,6 +70,22 @@ interface GitHubTreeResponse {
   };
 }
 
+function isGitHubHost(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const validHosts = new Set([
+      "github.com",
+      "raw.githubusercontent.com",
+      "api.github.com",
+      "gist.github.com",
+      "gist.githubusercontent.com",
+    ]);
+    return validHosts.has(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
 async function fetchGitHubTree(repo: string, branch: string, path: string): Promise<GitHubTreeItem[]> {
   const url = `https://github.com/${repo}/tree/${branch}/${path}`;
   const cacheKey = `gh-tree:${url}`;
@@ -79,16 +96,20 @@ async function fetchGitHubTree(repo: string, branch: string, path: string): Prom
   try {
     const headers: Record<string, string> = { Accept: "application/json" };
     const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-    if (token) {
+    if (token && isGitHubHost(url)) {
       headers["Authorization"] = `token ${token}`;
     }
     const res = await fetch(url, { headers });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      console.error(`Failed to fetch GitHub tree ${url}: HTTP ${res.status}`);
+      return [];
+    }
     const data: GitHubTreeResponse = await res.json();
     const items = data.payload?.tree?.items || [];
     cacheSet(cacheKey, items);
     return items;
-  } catch {
+  } catch (error) {
+    console.error(`Failed to fetch GitHub tree ${url}: ${error instanceof Error ? error.message : String(error)}`);
     return [];
   }
 }
@@ -184,7 +205,8 @@ async function fetchPluginContents(
 
     await Promise.all(subFetches);
     return result;
-  } catch {
+  } catch (error) {
+    console.error(`Failed to fetch plugin contents for ${repo}@${branch}/${path}: ${error instanceof Error ? error.message : String(error)}`);
     return { skills: [], commands: [], agents: [], hooks: [], hasMcp: false };
   }
 }
@@ -197,14 +219,18 @@ export async function fetchMarketplace(marketplace: Marketplace): Promise<Plugin
     try {
       const headers: Record<string, string> = {};
       const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-      if (token && marketplace.url.includes("github")) {
+      if (token && isGitHubHost(marketplace.url)) {
         headers["Authorization"] = `token ${token}`;
       }
       const res = await fetch(marketplace.url, { headers });
-      if (!res.ok) return [];
+      if (!res.ok) {
+        console.error(`Failed to fetch marketplace ${marketplace.url}: HTTP ${res.status}`);
+        return [];
+      }
       data = await res.json();
       cacheSet(cacheKey, data);
-    } catch {
+    } catch (error) {
+      console.error(`Failed to fetch marketplace ${marketplace.url}: ${error instanceof Error ? error.message : String(error)}`);
       return [];
     }
   }

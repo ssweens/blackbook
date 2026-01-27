@@ -66,6 +66,8 @@ export interface InstalledItem {
   source: string;
   dest: string;
   backup: string | null;
+  owner?: string;
+  previous?: InstalledItem | null;
 }
 
 export type Tab = "discover" | "installed" | "marketplaces" | "tools" | "sync";

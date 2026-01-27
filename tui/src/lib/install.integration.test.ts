@@ -7,12 +7,15 @@ import {
   rmSync,
   lstatSync,
   realpathSync,
+  chmodSync,
+  readdirSync,
 } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import {
   enablePlugin,
   disablePlugin,
+  uninstallPlugin,
   getAllInstalledPlugins,
   getInstalledPluginsForInstance,
   loadManifest,
@@ -88,6 +91,31 @@ function createTestPluginInCache(): string {
   return pluginDir;
 }
 
+function createPluginInCache(
+  pluginName: string,
+  skillName: string,
+  commandName?: string,
+  skillContent = "Plugin Skill"
+): string {
+  const pluginDir = join(getPluginsCacheDir(), TEST_MARKETPLACE, pluginName);
+
+  mkdirSync(join(pluginDir, "skills", skillName), { recursive: true });
+  writeFileSync(
+    join(pluginDir, "skills", skillName, "SKILL.md"),
+    `# ${skillName}\n\n${skillContent}`
+  );
+
+  if (commandName) {
+    mkdirSync(join(pluginDir, "commands"), { recursive: true });
+    writeFileSync(
+      join(pluginDir, "commands", `${commandName}.md`),
+      `# ${commandName}\n\nCommand content`
+    );
+  }
+
+  return pluginDir;
+}
+
 function cleanupAllTestArtifacts(): void {
   const manifest = loadManifest();
   for (const toolId of Object.keys(manifest.tools)) {
@@ -137,6 +165,11 @@ function cleanupAllTestArtifacts(): void {
       }
     }
   }
+
+  const backupsDir = join(getCacheDir(), "backups");
+  rmSync(join(backupsDir, "skill", TEST_SKILL_NAME), { recursive: true, force: true });
+  rmSync(join(backupsDir, "command", TEST_COMMAND_NAME), { recursive: true, force: true });
+  rmSync(join(backupsDir, "agent", TEST_AGENT_NAME), { recursive: true, force: true });
 }
 
 function getInstance(toolId: string): ToolInstance {
@@ -156,6 +189,28 @@ function createTestPlugin(): Plugin {
     skills: [TEST_SKILL_NAME],
     commands: [TEST_COMMAND_NAME],
     agents: [TEST_AGENT_NAME],
+    hooks: [],
+    hasMcp: false,
+    hasLsp: false,
+    homepage: "",
+    installed: true,
+    scope: "user",
+  };
+}
+
+function createPluginWithName(
+  pluginName: string,
+  skillName: string,
+  commandName?: string
+): Plugin {
+  return {
+    name: pluginName,
+    marketplace: TEST_MARKETPLACE,
+    description: "Custom test plugin",
+    source: "",
+    skills: [skillName],
+    commands: commandName ? [commandName] : [],
+    agents: [],
     hooks: [],
     hasMcp: false,
     hasLsp: false,
@@ -292,6 +347,73 @@ describe("enablePlugin", () => {
 
     expect(result.success).toBe(false);
     expect(result.errors).toContain(`Plugin source not found for ${TEST_PLUGIN_NAME}`);
+  });
+});
+
+describe("backup and rollback behavior", () => {
+  it("restores the latest backup on uninstall with a single backup per item", async () => {
+    const skillName = "shared-skill";
+    const pluginAName = "backup-plugin-a";
+    const pluginBName = "backup-plugin-b";
+
+    createPluginInCache(pluginAName, skillName, undefined, "Plugin A");
+    createPluginInCache(pluginBName, skillName, undefined, "Plugin B");
+
+    const instance = getInstance("opencode");
+    const skillPath = join(instance.configDir, instance.skillsSubdir!, skillName);
+    mkdirSync(skillPath, { recursive: true });
+    writeFileSync(join(skillPath, "SKILL.md"), "original");
+
+    const pluginA = createPluginWithName(pluginAName, skillName);
+    const pluginB = createPluginWithName(pluginBName, skillName);
+
+    const resultA = await enablePlugin(pluginA);
+    expect(resultA.success).toBe(true);
+    expect(readFileSync(join(skillPath, "SKILL.md"), "utf-8")).toContain("Plugin A");
+
+    const backupPath = join(getCacheDir(), "backups", "skill", skillName);
+    expect(existsSync(backupPath)).toBe(true);
+
+    const resultB = await enablePlugin(pluginB);
+    expect(resultB.success).toBe(true);
+    expect(readFileSync(join(skillPath, "SKILL.md"), "utf-8")).toContain("Plugin B");
+
+    expect(existsSync(backupPath)).toBe(true);
+
+    await uninstallPlugin(pluginB);
+    expect(readFileSync(join(skillPath, "SKILL.md"), "utf-8")).toContain("Plugin A");
+  });
+
+  it("rolls back partial installs when a later step fails", async () => {
+    const skillName = "rollback-skill";
+    const commandName = "rollback-command";
+    const pluginName = "rollback-plugin";
+
+    const pluginDir = createPluginInCache(pluginName, skillName, commandName, "Rollback Skill");
+    const commandsDir = join(pluginDir, "commands");
+    chmodSync(commandsDir, 0o000);
+
+    const instance = getInstance("opencode");
+    const skillPath = join(instance.configDir, instance.skillsSubdir!, skillName);
+    mkdirSync(skillPath, { recursive: true });
+    writeFileSync(join(skillPath, "SKILL.md"), "original");
+
+    const plugin = createPluginWithName(pluginName, skillName, commandName);
+
+    try {
+      const result = await enablePlugin(plugin);
+      expect(result.errors.length).toBeGreaterThan(0);
+      expect(readFileSync(join(skillPath, "SKILL.md"), "utf-8")).toBe("original");
+
+      const manifest = loadManifest();
+      const key = `${instance.toolId}:${instance.instanceId}`;
+      const toolManifest = manifest.tools[key];
+      if (toolManifest) {
+        expect(toolManifest.items[`skill:${skillName}`]).toBeUndefined();
+      }
+    } finally {
+      chmodSync(commandsDir, 0o755);
+    }
   });
 });
 
@@ -455,7 +577,6 @@ describe("backup and restore", () => {
   it("backs up existing skill directory before overwriting", async () => {
     const instance = getInstance("opencode");
     const skillPath = join(instance.configDir, instance.skillsSubdir!, TEST_SKILL_NAME);
-    const backupPath = join(getCacheDir(), "backups", TEST_PLUGIN_NAME, "skill", TEST_SKILL_NAME);
 
     mkdirSync(skillPath, { recursive: true });
     writeFileSync(join(skillPath, "SKILL.md"), "# Original Content\n\nExisting user skill.");
@@ -464,6 +585,11 @@ describe("backup and restore", () => {
     const plugin = createTestPlugin();
     await enablePlugin(plugin);
 
+    const manifest = loadManifest();
+    const opencodeKey = `${instance.toolId}:${instance.instanceId}`;
+    const skillItem = manifest.tools[opencodeKey]?.items[`skill:${TEST_SKILL_NAME}`];
+    expect(skillItem?.backup).toBeTruthy();
+    const backupPath = skillItem?.backup ?? "";
     expect(existsSync(backupPath)).toBe(true);
     expect(existsSync(join(backupPath, "SKILL.md"))).toBe(true);
 
@@ -477,7 +603,6 @@ describe("backup and restore", () => {
   it("backs up existing command file before overwriting", async () => {
     const instance = getInstance("opencode");
     const cmdPath = join(instance.configDir, instance.commandsSubdir!, `${TEST_COMMAND_NAME}.md`);
-    const backupPath = join(getCacheDir(), "backups", TEST_PLUGIN_NAME, "command", `${TEST_COMMAND_NAME}.md`);
 
     mkdirSync(join(instance.configDir, instance.commandsSubdir!), { recursive: true });
     writeFileSync(cmdPath, "# Original Command\n\nExisting user command.");
@@ -486,6 +611,11 @@ describe("backup and restore", () => {
     const plugin = createTestPlugin();
     await enablePlugin(plugin);
 
+    const manifest = loadManifest();
+    const opencodeKey = `${instance.toolId}:${instance.instanceId}`;
+    const commandItem = manifest.tools[opencodeKey]?.items[`command:${TEST_COMMAND_NAME}`];
+    expect(commandItem?.backup).toBeTruthy();
+    const backupPath = commandItem?.backup ?? "";
     expect(existsSync(backupPath)).toBe(true);
 
     const backupContent = readFileSync(backupPath, "utf-8");
@@ -495,7 +625,6 @@ describe("backup and restore", () => {
   it("restores backup when disabling", async () => {
     const instance = getInstance("opencode");
     const skillPath = join(instance.configDir, instance.skillsSubdir!, TEST_SKILL_NAME);
-    const backupPath = join(getCacheDir(), "backups", TEST_PLUGIN_NAME, "skill", TEST_SKILL_NAME);
 
     mkdirSync(skillPath, { recursive: true });
     writeFileSync(join(skillPath, "SKILL.md"), "# Original Content\n\nExisting user skill.");
@@ -505,13 +634,14 @@ describe("backup and restore", () => {
     const enableResult = await enablePlugin(plugin);
 
     expect(enableResult.success).toBe(true);
-    expect(existsSync(backupPath)).toBe(true);
 
     const manifest = loadManifest();
     const opencodeKey = `${instance.toolId}:${instance.instanceId}`;
     const skillItem = manifest.tools[opencodeKey]?.items[`skill:${TEST_SKILL_NAME}`];
     expect(skillItem).toBeDefined();
-    expect(skillItem?.backup).toBe(backupPath);
+    expect(skillItem?.backup).toBeTruthy();
+    const backupPath = skillItem?.backup ?? "";
+    expect(existsSync(backupPath)).toBe(true);
     expect(skillItem?.source).toContain(TEST_PLUGIN_NAME);
 
     const disableResult = await disablePlugin(plugin);
@@ -522,20 +652,17 @@ describe("backup and restore", () => {
     const itemAfterDisable = manifestAfterDisable.tools[opencodeKey]?.items[`skill:${TEST_SKILL_NAME}`];
     expect(itemAfterDisable).toBeUndefined();
 
-    expect(
-      existsSync(skillPath),
-      `skillPath ${skillPath} should exist after restore. backupPath ${backupPath} exists: ${existsSync(backupPath)}`
-    ).toBe(true);
+    expect(existsSync(skillPath)).toBe(true);
     expect(existsSync(backupPath)).toBe(false);
 
     const restoredContent = readFileSync(join(skillPath, "SKILL.md"), "utf-8");
     expect(restoredContent).toContain("Original Content");
   });
 
-  it("overwrites previous backup (max one per plugin)", async () => {
+  it("overwrites existing backup (single backup per item)", async () => {
     const instance = getInstance("opencode");
     const skillPath = join(instance.configDir, instance.skillsSubdir!, TEST_SKILL_NAME);
-    const backupPath = join(getCacheDir(), "backups", TEST_PLUGIN_NAME, "skill", TEST_SKILL_NAME);
+    const backupPath = join(getCacheDir(), "backups", "skill", TEST_SKILL_NAME);
 
     mkdirSync(skillPath, { recursive: true });
     writeFileSync(join(skillPath, "SKILL.md"), "# First Version");
@@ -548,7 +675,6 @@ describe("backup and restore", () => {
     await enablePlugin(plugin);
 
     expect(existsSync(backupPath)).toBe(true);
-
     const backupContent = readFileSync(join(backupPath, "SKILL.md"), "utf-8");
     expect(backupContent).toContain("First Version");
   });
@@ -662,14 +788,14 @@ describe("createSymlink and removeSymlink", () => {
   it("creates symlink pointing to source", () => {
     const result = createSymlink(SOURCE_FILE, TARGET_FILE);
 
-    expect(result).toBe(true);
+    expect(result.success).toBe(true);
     expect(isSymlink(TARGET_FILE)).toBe(true);
     expect(realpathSync(TARGET_FILE)).toBe(realpathSync(SOURCE_FILE));
   });
 
   it("returns false when source does not exist", () => {
     const result = createSymlink(join(TMP_DIR, "nonexistent"), TARGET_FILE);
-    expect(result).toBe(false);
+    expect(result.success).toBe(false);
   });
 
   it("backs up existing file when creating symlink", () => {
@@ -677,7 +803,7 @@ describe("createSymlink and removeSymlink", () => {
 
     const result = createSymlink(SOURCE_FILE, TARGET_FILE);
 
-    expect(result).toBe(true);
+    expect(result.success).toBe(true);
     expect(existsSync(`${TARGET_FILE}.bak`)).toBe(true);
     expect(readFileSync(`${TARGET_FILE}.bak`, "utf-8")).toBe("existing content");
   });
@@ -687,7 +813,7 @@ describe("createSymlink and removeSymlink", () => {
 
     const result = createSymlink(SOURCE_FILE, TARGET_FILE);
 
-    expect(result).toBe(true);
+    expect(result.success).toBe(true);
     expect(existsSync(`${TARGET_FILE}.bak`)).toBe(false);
   });
 
@@ -697,7 +823,7 @@ describe("createSymlink and removeSymlink", () => {
 
     const result = removeSymlink(TARGET_FILE);
 
-    expect(result).toBe(true);
+    expect(result.success).toBe(true);
     expect(existsSync(TARGET_FILE)).toBe(false);
   });
 
@@ -706,7 +832,7 @@ describe("createSymlink and removeSymlink", () => {
 
     const result = removeSymlink(TARGET_FILE);
 
-    expect(result).toBe(false);
+    expect(result.success).toBe(false);
     expect(existsSync(TARGET_FILE)).toBe(true);
   });
 });
@@ -754,7 +880,6 @@ describe("manifest operations", () => {
     mkdirSync(TMP_CACHE, { recursive: true });
     writeFileSync(join(TMP_CACHE, "installed_items.json"), "{ invalid json }");
 
-    const manifest = loadManifest(TMP_CACHE);
-    expect(manifest).toEqual({ tools: {} });
+    expect(() => loadManifest(TMP_CACHE)).toThrow(/Manifest file is corrupted/);
   });
 });

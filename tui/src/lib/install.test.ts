@@ -117,7 +117,7 @@ describe("createSymlink", () => {
 
     const result = createSymlink(source, target);
 
-    expect(result).toBe(true);
+    expect(result.success).toBe(true);
     expect(existsSync(target)).toBe(true);
     expect(isSymlink(target)).toBe(true);
     expect(readFileSync(target, "utf-8")).toBe("hello world");
@@ -131,7 +131,7 @@ describe("createSymlink", () => {
 
     const result = createSymlink(sourceDir, targetDir);
 
-    expect(result).toBe(true);
+    expect(result.success).toBe(true);
     expect(isSymlink(targetDir)).toBe(true);
     expect(existsSync(join(targetDir, "file.txt"))).toBe(true);
   });
@@ -142,7 +142,8 @@ describe("createSymlink", () => {
 
     const result = createSymlink(source, target);
 
-    expect(result).toBe(false);
+    expect(result.success).toBe(false);
+    expect(result.code).toBe("SOURCE_NOT_FOUND");
     expect(existsSync(target)).toBe(false);
   });
 
@@ -154,7 +155,7 @@ describe("createSymlink", () => {
 
     const result = createSymlink(source, target);
 
-    expect(result).toBe(true);
+    expect(result.success).toBe(true);
     expect(isSymlink(target)).toBe(true);
     expect(readFileSync(target, "utf-8")).toBe("new content");
     expect(existsSync(`${target}.bak`)).toBe(true);
@@ -170,7 +171,7 @@ describe("createSymlink", () => {
 
     const result = createSymlink(source, target);
 
-    expect(result).toBe(true);
+    expect(result.success).toBe(true);
     expect(existsSync(`${target}.bak.1`)).toBe(true);
     expect(readFileSync(`${target}.bak.1`, "utf-8")).toBe("current");
   });
@@ -183,7 +184,7 @@ describe("createSymlink", () => {
 
     const result = createSymlink(source, target);
 
-    expect(result).toBe(true);
+    expect(result.success).toBe(true);
     expect(existsSync(`${target}.bak`)).toBe(false); // No backup created
   });
 
@@ -197,7 +198,7 @@ describe("createSymlink", () => {
 
     const result = createSymlink(source2, target);
 
-    expect(result).toBe(true);
+    expect(result.success).toBe(true);
     expect(readFileSync(target, "utf-8")).toBe("content2");
   });
 
@@ -208,7 +209,7 @@ describe("createSymlink", () => {
 
     const result = createSymlink(source, target);
 
-    expect(result).toBe(true);
+    expect(result.success).toBe(true);
     expect(existsSync(target)).toBe(true);
   });
 });
@@ -225,7 +226,7 @@ describe("removeSymlink", () => {
 
     const result = removeSymlink(target);
 
-    expect(result).toBe(true);
+    expect(result.success).toBe(true);
     expect(existsSync(target)).toBe(false);
     expect(existsSync(source)).toBe(true); // Source unchanged
   });
@@ -236,7 +237,8 @@ describe("removeSymlink", () => {
 
     const result = removeSymlink(file);
 
-    expect(result).toBe(false);
+    expect(result.success).toBe(false);
+    expect(result.code).toBe("TARGET_MISSING");
     expect(existsSync(file)).toBe(true); // File unchanged
   });
 
@@ -246,13 +248,15 @@ describe("removeSymlink", () => {
 
     const result = removeSymlink(dir);
 
-    expect(result).toBe(false);
+    expect(result.success).toBe(false);
+    expect(result.code).toBe("TARGET_MISSING");
     expect(existsSync(dir)).toBe(true);
   });
 
   it("returns false for nonexistent paths", () => {
     const result = removeSymlink(join(TEST_DIR, "nonexistent"));
-    expect(result).toBe(false);
+    expect(result.success).toBe(false);
+    expect(result.code).toBe("TARGET_MISSING");
   });
 });
 
@@ -331,6 +335,13 @@ describe("Manifest operations", () => {
     expect(loaded).toEqual(manifest);
   });
 
+  it("cleans up temp files after save", () => {
+    saveManifest({ tools: {} }, TEST_CACHE_DIR);
+    const entries = readdirSync(TEST_CACHE_DIR);
+    const tmpEntries = entries.filter((entry) => entry.endsWith(".tmp"));
+    expect(tmpEntries.length).toBe(0);
+  });
+
   it("creates cache directory if it does not exist", () => {
     const nestedCache = join(TEST_DIR, "nested", "cache");
     saveManifest({ tools: {} }, nestedCache);
@@ -343,8 +354,7 @@ describe("Manifest operations", () => {
     mkdirSync(TEST_CACHE_DIR, { recursive: true });
     writeFileSync(path, "not valid json {{{");
 
-    const manifest = loadManifest(TEST_CACHE_DIR);
-    expect(manifest).toEqual({ tools: {} });
+    expect(() => loadManifest(TEST_CACHE_DIR)).toThrow(/Manifest file is corrupted/);
   });
 
   it("preserves existing entries when adding new ones", () => {
@@ -478,7 +488,7 @@ describe("linkPluginToInstance", () => {
     for (const skill of plugin.skills) {
       const source = join(pluginDir, "skills", skill);
       const target = join(tool.configDir, tool.skillsSubdir!, skill);
-      if (createSymlink(source, target)) {
+      if (createSymlink(source, target).success) {
         linked++;
       }
     }
@@ -643,7 +653,7 @@ describe("Multi-tool linking", () => {
         const source = join(pluginDir, "skills", skill);
         if (tool.skillsSubdir && existsSync(source)) {
           const target = join(tool.configDir, tool.skillsSubdir, skill);
-          if (createSymlink(source, target)) linked++;
+          if (createSymlink(source, target).success) linked++;
         }
       }
 
@@ -651,7 +661,7 @@ describe("Multi-tool linking", () => {
         const source = join(pluginDir, "commands", `${cmd}.md`);
         if (tool.commandsSubdir && existsSync(source)) {
           const target = join(tool.configDir, tool.commandsSubdir, `${cmd}.md`);
-          if (createSymlink(source, target)) linked++;
+          if (createSymlink(source, target).success) linked++;
         }
       }
 
@@ -702,7 +712,7 @@ describe("Multi-tool linking", () => {
       const source = join(pluginDir, "commands", `${cmd}.md`);
       if (toolNoSkills.commandsSubdir && existsSync(source)) {
         const target = join(toolNoSkills.configDir, toolNoSkills.commandsSubdir, `${cmd}.md`);
-        if (createSymlink(source, target)) linkedNoSkills++;
+        if (createSymlink(source, target).success) linkedNoSkills++;
       }
     }
 
@@ -710,7 +720,7 @@ describe("Multi-tool linking", () => {
       const source = join(pluginDir, "skills", skill);
       if (toolNoCommands.skillsSubdir && existsSync(source)) {
         const target = join(toolNoCommands.configDir, toolNoCommands.skillsSubdir, skill);
-        if (createSymlink(source, target)) linkedNoCommands++;
+        if (createSymlink(source, target).success) linkedNoCommands++;
       }
     }
     for (const cmd of plugin.commands) {
@@ -744,14 +754,14 @@ describe("Full install/uninstall workflow", () => {
     for (const skill of plugin.skills) {
       const source = join(pluginDir, "skills", skill);
       const target = join(tool.configDir, tool.skillsSubdir!, skill);
-      if (createSymlink(source, target)) {
+      if (createSymlink(source, target).success) {
         links.push(target);
       }
     }
     for (const cmd of plugin.commands) {
       const source = join(pluginDir, "commands", `${cmd}.md`);
       const target = join(tool.configDir, tool.commandsSubdir!, `${cmd}.md`);
-      if (createSymlink(source, target)) {
+      if (createSymlink(source, target).success) {
         links.push(target);
       }
     }

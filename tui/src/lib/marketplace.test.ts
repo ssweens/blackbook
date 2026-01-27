@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { rmSync, existsSync } from "fs";
+import { rmSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
+import { tmpdir } from "os";
 import { fetchMarketplace } from "./marketplace.js";
 import { getCacheDir } from "./config.js";
 import type { Marketplace } from "./types.js";
@@ -13,7 +14,12 @@ function clearHttpCache() {
 }
 
 describe("marketplace", () => {
+  const originalCacheHome = process.env.XDG_CACHE_HOME;
+
   beforeEach(() => {
+    const testCache = join(tmpdir(), `blackbook-marketplace-cache-${Date.now()}`);
+    mkdirSync(testCache, { recursive: true });
+    process.env.XDG_CACHE_HOME = testCache;
     vi.clearAllMocks();
     clearHttpCache();
   });
@@ -21,6 +27,11 @@ describe("marketplace", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     clearHttpCache();
+    if (originalCacheHome === undefined) {
+      delete process.env.XDG_CACHE_HOME;
+    } else {
+      process.env.XDG_CACHE_HOME = originalCacheHome;
+    }
   });
 
   function createMockMarketplace(name = "test-marketplace"): Marketplace {
@@ -37,6 +48,51 @@ describe("marketplace", () => {
   }
 
   describe("fetchMarketplace", () => {
+    it("only sends GitHub token to trusted GitHub hosts", async () => {
+      const token = "ghp_test_token";
+      const originalToken = process.env.GITHUB_TOKEN;
+      process.env.GITHUB_TOKEN = token;
+
+      const mockMarketplaceJson = { plugins: [] };
+      let seenAuth: string | undefined;
+
+      vi.spyOn(global, "fetch").mockImplementation(async (_url, options) => {
+        const headers = (options as { headers?: Record<string, string> } | undefined)?.headers || {};
+        seenAuth = headers.Authorization;
+        return { ok: true, json: async () => mockMarketplaceJson } as Response;
+      });
+
+      const fakeMarketplace: Marketplace = {
+        name: "fake-market",
+        url: "https://github-fake.attacker.com/marketplace.json",
+        isLocal: false,
+        plugins: [],
+        availableCount: 0,
+        installedCount: 0,
+        autoUpdate: false,
+        source: "blackbook",
+      };
+
+      await fetchMarketplace(fakeMarketplace);
+      expect(seenAuth).toBeUndefined();
+
+      const realMarketplace: Marketplace = {
+        ...fakeMarketplace,
+        name: "real-market",
+        url: "https://raw.githubusercontent.com/org/repo/main/marketplace.json",
+      };
+
+      seenAuth = undefined;
+      await fetchMarketplace(realMarketplace);
+      expect(seenAuth).toBe(`token ${token}`);
+
+      if (originalToken === undefined) {
+        delete process.env.GITHUB_TOKEN;
+      } else {
+        process.env.GITHUB_TOKEN = originalToken;
+      }
+    });
+
     it("parses plugins with local source paths", async () => {
       const mockMarketplace = createMockMarketplace("test-org-1");
       const mockMarketplaceJson = {

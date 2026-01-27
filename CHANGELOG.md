@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-01-27
+
+### Added
+- Validation tests for marketplace URL handling and path safety
+
+### Changed
+- Plugin installation now uses safer execution and path validation
+- File watching refreshes state when config or manifest changes
+- Backups are now limited to a single backup per item with safe replacement
+- Config and manifest writes are now atomic with file locking
+
+### Fixed
+- Prevented GitHub tokens from being sent to non-GitHub domains
+- Improved error reporting for marketplace fetches and plugin operations
+- Rollback now restores original files on partial installs
+
 ## [0.4.2] - 2026-01-26
 
 ### Added
@@ -116,7 +132,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Symlink handling for plugin assets
 
-[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/ssweens/blackbook/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/ssweens/blackbook/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/ssweens/blackbook/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ssweens/blackbook/compare/v0.3.0...v0.4.0

@@ -2,7 +2,6 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  writeFileSync,
   symlinkSync,
   unlinkSync,
   renameSync,
@@ -14,13 +13,23 @@ import {
   rmSync,
 } from "fs";
 import { promisify } from "util";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 import { join, dirname } from "path";
 import { tmpdir } from "os";
 import { getCacheDir, getEnabledToolInstances, getToolInstances } from "./config.js";
 import type { Plugin, InstalledItem, ToolInstance } from "./types.js";
+import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
+import {
+  safePath,
+  validateGitRef,
+  validateItemName,
+  validateMarketplaceName,
+  validatePluginName,
+  validateRepoUrl,
+  validateRelativeSubPath,
+} from "./validation.js";
 
 export function getPluginsCacheDir(): string {
   return join(getCacheDir(), "plugins");
@@ -30,13 +39,111 @@ function instanceKey(instance: ToolInstance): string {
   return `${instance.toolId}:${instance.instanceId}`;
 }
 
-async function execClaudeCommand(instance: ToolInstance, args: string): Promise<void> {
-  await execAsync(`claude plugin ${args}`, {
+type SymlinkErrorCode =
+  | "SOURCE_NOT_FOUND"
+  | "TARGET_MISSING"
+  | "BACKUP_FAILED"
+  | "SYMLINK_FAILED"
+  | "UNLINK_FAILED";
+
+export type SymlinkResult =
+  | { success: true }
+  | { success: false; code: SymlinkErrorCode; message: string };
+
+let cachedGitAvailable: boolean | null = null;
+let cachedClaudeAvailable: boolean | null = null;
+
+function logError(context: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`${context}: ${message}`);
+}
+
+async function ensureGitAvailable(): Promise<void> {
+  if (cachedGitAvailable === true) return;
+  try {
+    await execFileAsync("git", ["--version"]);
+    cachedGitAvailable = true;
+  } catch (error) {
+    cachedGitAvailable = false;
+    throw new Error("Git is required to download plugins but was not found. Install from https://git-scm.com/");
+  }
+}
+
+async function ensureClaudeAvailable(): Promise<void> {
+  if (cachedClaudeAvailable === true) return;
+  try {
+    await execFileAsync("claude", ["--version"]);
+    cachedClaudeAvailable = true;
+  } catch (error) {
+    cachedClaudeAvailable = false;
+    throw new Error(
+      "Claude CLI was not found. Install it or disable Claude instances in your config."
+    );
+  }
+}
+
+async function execClaudeCommand(
+  instance: ToolInstance,
+  command: "install" | "uninstall" | "enable" | "disable" | "update",
+  pluginName: string
+): Promise<void> {
+  validatePluginName(pluginName);
+  await ensureClaudeAvailable();
+  await execFileAsync("claude", ["plugin", command, pluginName], {
     env: {
       ...process.env,
       CLAUDE_CONFIG_DIR: instance.configDir,
     },
   });
+}
+
+function buildBackupPath(
+  pluginName: string,
+  itemKind: string,
+  itemName: string
+): string {
+  validatePluginName(pluginName);
+  validateItemName(itemKind, itemName);
+  const backupRoot = join(getCacheDir(), "backups");
+  const backupPath = safePath(backupRoot, itemKind, itemName);
+  mkdirSync(dirname(backupPath), { recursive: true });
+  return backupPath;
+}
+
+function buildLooseBackupPath(target: string): string {
+  let backupPath = `${target}.bak`;
+  let attempt = 0;
+  while (existsSync(backupPath) || isSymlink(backupPath)) {
+    attempt += 1;
+    backupPath = `${target}.bak.${attempt}`;
+  }
+  return backupPath;
+}
+
+function withTempDir<T>(prefix: string, fn: (dir: string) => Promise<T>): Promise<T> {
+  const tempDir = join(tmpdir(), `${prefix}-${Date.now()}-${process.pid}`);
+  mkdirSync(tempDir, { recursive: true });
+  return fn(tempDir).finally(() => {
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch (error) {
+      logError(`Failed to clean temp dir ${tempDir}`, error);
+    }
+  });
+}
+
+function validatePluginMetadata(plugin: Plugin): void {
+  validateMarketplaceName(plugin.marketplace);
+  validatePluginName(plugin.name);
+  for (const skill of plugin.skills) {
+    validateItemName("skill", skill);
+  }
+  for (const cmd of plugin.commands) {
+    validateItemName("command", cmd);
+  }
+  for (const agent of plugin.agents) {
+    validateItemName("agent", agent);
+  }
 }
 
 function parseGithubRepoFromUrl(url: string): { repo: string; ref: string } | null {
@@ -50,8 +157,10 @@ function parseGithubRepoFromUrl(url: string): { repo: string; ref: string } | nu
 }
 
 export async function downloadPlugin(plugin: Plugin, marketplaceUrl: string): Promise<string | null> {
+  validateMarketplaceName(plugin.marketplace);
+  validatePluginName(plugin.name);
   const pluginsDir = getPluginsCacheDir();
-  const pluginDir = join(pluginsDir, plugin.marketplace, plugin.name);
+  const pluginDir = safePath(pluginsDir, plugin.marketplace, plugin.name);
 
   if (existsSync(pluginDir)) {
     return pluginDir;
@@ -90,34 +199,45 @@ export async function downloadPlugin(plugin: Plugin, marketplaceUrl: string): Pr
   }
 
   try {
-    const tempDir = join(tmpdir(), `blackbook-clone-${Date.now()}`);
-    await execAsync(`git clone --depth 1 --branch "${ref}" "${repoUrl}" "${tempDir}"`);
+    validateRepoUrl(repoUrl);
+    validateGitRef(ref);
+    validateRelativeSubPath(subPath);
+    await ensureGitAvailable();
 
-    const sourceDir = subPath ? join(tempDir, subPath) : tempDir;
+    return await withTempDir("blackbook-clone", async (tempDir) => {
+      await execFileAsync("git", ["clone", "--depth", "1", "--branch", ref, repoUrl!, tempDir]);
 
-    if (!existsSync(sourceDir)) {
-      rmSync(tempDir, { recursive: true, force: true });
-      rmSync(pluginDir, { recursive: true, force: true });
-      return null;
-    }
+      const sourceDir = subPath ? join(tempDir, subPath) : tempDir;
 
-    cpSync(sourceDir, pluginDir, { recursive: true });
+      if (!existsSync(sourceDir)) {
+        logError(`Plugin source path not found: ${sourceDir}`, new Error("Missing plugin source"));
+        rmSync(pluginDir, { recursive: true, force: true });
+        return null;
+      }
 
-    rmSync(tempDir, { recursive: true, force: true });
-
-    return pluginDir;
-  } catch {
+      cpSync(sourceDir, pluginDir, { recursive: true });
+      return pluginDir;
+    });
+  } catch (error) {
+    logError(`Failed to download plugin ${plugin.name}`, error);
     rmSync(pluginDir, { recursive: true, force: true });
     return null;
   }
 }
 
 export function getPluginSourcePath(plugin: Plugin): string | null {
-  const pluginDir = join(getPluginsCacheDir(), plugin.marketplace, plugin.name);
-  if (existsSync(pluginDir)) {
-    return pluginDir;
+  try {
+    validateMarketplaceName(plugin.marketplace);
+    validatePluginName(plugin.name);
+    const pluginDir = safePath(getPluginsCacheDir(), plugin.marketplace, plugin.name);
+    if (existsSync(pluginDir)) {
+      return pluginDir;
+    }
+    return null;
+  } catch (error) {
+    logError(`Invalid plugin source path for ${plugin.name}`, error);
+    return null;
   }
-  return null;
 }
 
 export function manifestPath(cacheDir?: string): string {
@@ -131,17 +251,22 @@ interface Manifest {
 export function loadManifest(cacheDir?: string): Manifest {
   const path = manifestPath(cacheDir);
   if (!existsSync(path)) return { tools: {} };
-  try {
-    return JSON.parse(readFileSync(path, "utf-8"));
-  } catch {
-    return { tools: {} };
-  }
+  return withFileLockSync(path, () => {
+    const content = readFileSync(path, "utf-8");
+    try {
+      return JSON.parse(content);
+    } catch (error) {
+      const message = `Manifest file is corrupted at ${path}: ${error instanceof Error ? error.message : String(error)}`;
+      throw new Error(message);
+    }
+  });
 }
 
 export function saveManifest(manifest: Manifest, cacheDir?: string): void {
   const path = manifestPath(cacheDir);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(manifest, null, 2));
+  withFileLockSync(path, () => {
+    atomicWriteFileSync(path, JSON.stringify(manifest, null, 2));
+  });
 }
 
 export function createSymlink(
@@ -150,8 +275,10 @@ export function createSymlink(
   pluginName?: string,
   itemKind?: string,
   itemName?: string
-): boolean {
-  if (!existsSync(source)) return false;
+): SymlinkResult {
+  if (!existsSync(source)) {
+    return { success: false, code: "SOURCE_NOT_FOUND", message: `Source not found: ${source}` };
+  }
 
   mkdirSync(dirname(target), { recursive: true });
 
@@ -160,49 +287,48 @@ export function createSymlink(
       try {
         const actual = realpathSync(target);
         const expected = realpathSync(source);
-        if (actual === expected) return true;
-      } catch {
-        // Broken symlink
+        if (actual === expected) return { success: true };
+      } catch (error) {
+        logError(`Broken symlink at ${target}`, error);
       }
     }
 
     let backupPath: string;
     if (pluginName && itemKind && itemName) {
-      const backupDir = join(getCacheDir(), "backups", pluginName, itemKind);
-      mkdirSync(backupDir, { recursive: true });
-      backupPath = join(backupDir, itemName);
+      backupPath = buildBackupPath(pluginName, itemKind, itemName);
+    } else {
+      backupPath = buildLooseBackupPath(target);
+    }
 
+    try {
+      const tempBackup = `${backupPath}.new.${Date.now()}`;
+      renameSync(target, tempBackup);
       if (existsSync(backupPath) || isSymlink(backupPath)) {
         rmSync(backupPath, { recursive: true, force: true });
       }
-    } else {
-      backupPath = `${target}.bak`;
-      if (existsSync(backupPath) || isSymlink(backupPath)) {
-        let i = 1;
-        let candidate = `${backupPath}.${i}`;
-        while (existsSync(candidate) || isSymlink(candidate)) {
-          i += 1;
-          candidate = `${backupPath}.${i}`;
-        }
-        backupPath = candidate;
-      }
+      renameSync(tempBackup, backupPath);
+    } catch (error) {
+      logError(`Failed to backup ${target}`, error);
+      return { success: false, code: "BACKUP_FAILED", message: `Failed to backup ${target}` };
     }
-
-    renameSync(target, backupPath);
   }
 
   const tmpPath = join(tmpdir(), `.tmp_${Date.now()}`);
   try {
     symlinkSync(source, tmpPath);
     renameSync(tmpPath, target);
-    return true;
-  } catch {
-    try {
-      unlinkSync(tmpPath);
-    } catch {
-      // Ignore
+    return { success: true };
+  } catch (error) {
+    logError(`Failed to create symlink ${target}`, error);
+    return { success: false, code: "SYMLINK_FAILED", message: `Failed to create symlink ${target}` };
+  } finally {
+    if (existsSync(tmpPath)) {
+      try {
+        unlinkSync(tmpPath);
+      } catch (error) {
+        logError(`Failed to remove temp symlink ${tmpPath}`, error);
+      }
     }
-    return false;
   }
 }
 
@@ -214,10 +340,17 @@ export function isSymlink(path: string): boolean {
   }
 }
 
-export function removeSymlink(target: string): boolean {
-  if (!isSymlink(target)) return false;
-  unlinkSync(target);
-  return true;
+export function removeSymlink(target: string): SymlinkResult {
+  if (!isSymlink(target)) {
+    return { success: false, code: "TARGET_MISSING", message: `Target is not a symlink: ${target}` };
+  }
+  try {
+    unlinkSync(target);
+    return { success: true };
+  } catch (error) {
+    logError(`Failed to remove symlink ${target}`, error);
+    return { success: false, code: "UNLINK_FAILED", message: `Failed to remove symlink ${target}` };
+  }
 }
 
 function isPluginInstalledInClaudeInstance(plugin: Plugin, instance: ToolInstance): boolean {
@@ -244,6 +377,7 @@ export interface InstallResult {
 }
 
 export async function installPlugin(plugin: Plugin, marketplaceUrl: string): Promise<InstallResult> {
+  validatePluginMetadata(plugin);
   const instances = getToolInstances();
   const enabledInstances = getEnabledToolInstances();
   const skippedInstances = instances.filter((instance) => !instance.enabled).map(instanceKey);
@@ -264,7 +398,7 @@ export async function installPlugin(plugin: Plugin, marketplaceUrl: string): Pro
 
   for (const instance of claudeInstances) {
     try {
-      await execClaudeCommand(instance, `install "${plugin.name}"`);
+      await execClaudeCommand(instance, "install", plugin.name);
       result.linkedInstances[instanceKey(instance)] = 1;
     } catch (e) {
       result.errors.push(
@@ -283,8 +417,16 @@ export async function installPlugin(plugin: Plugin, marketplaceUrl: string): Pro
       }
     } else {
       for (const instance of nonClaudeInstances) {
-        const { count } = installPluginItemsToInstance(plugin.name, sourcePath, instance);
-        result.linkedInstances[instanceKey(instance)] = count;
+        try {
+          const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance);
+          result.linkedInstances[instanceKey(instance)] = count;
+          result.errors.push(...errors);
+        } catch (error) {
+          logError(`Install failed for ${plugin.name} in ${instance.name}`, error);
+          result.errors.push(
+            `Install failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`
+          );
+        }
       }
     }
   }
@@ -294,6 +436,7 @@ export async function installPlugin(plugin: Plugin, marketplaceUrl: string): Pro
 }
 
 export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
+  validatePluginMetadata(plugin);
   const enabledInstances = getEnabledToolInstances();
   let claudeSuccess = false;
   let removedCount = 0;
@@ -307,19 +450,23 @@ export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
 
   for (const instance of claudeInstances) {
     try {
-      await execClaudeCommand(instance, `uninstall "${plugin.name}"`);
+      await execClaudeCommand(instance, "uninstall", plugin.name);
       claudeSuccess = true;
-    } catch { /* ignore */ }
+    } catch (error) {
+      logError(`Claude uninstall failed for ${instance.name}`, error);
+    }
   }
 
   for (const instance of nonClaudeInstances) {
     removedCount += uninstallPluginItemsFromInstance(plugin.name, instance);
   }
 
-  const pluginDir = join(getPluginsCacheDir(), plugin.marketplace, plugin.name);
   try {
+    const pluginDir = safePath(getPluginsCacheDir(), plugin.marketplace, plugin.name);
     rmSync(pluginDir, { recursive: true, force: true });
-  } catch { /* ignore */ }
+  } catch (error) {
+    logError(`Failed to remove plugin dir for ${plugin.name}`, error);
+  }
 
   return claudeSuccess || removedCount > 0;
 }
@@ -347,16 +494,13 @@ function copyWithBackup(
   let backupPath: string | null = null;
   
   if (existsSync(dest) || isSymlink(dest)) {
-    const backupDir = join(getCacheDir(), "backups", pluginName, itemKind);
-    mkdirSync(backupDir, { recursive: true });
-    const backup = join(backupDir, itemName);
-    
-    if (existsSync(backup) || isSymlink(backup)) {
-      rmSync(backup, { recursive: true, force: true });
+    backupPath = buildBackupPath(pluginName, itemKind, itemName);
+    const tempBackup = `${backupPath}.new.${Date.now()}`;
+    renameSync(dest, tempBackup);
+    if (existsSync(backupPath) || isSymlink(backupPath)) {
+      rmSync(backupPath, { recursive: true, force: true });
     }
-    
-    renameSync(dest, backup);
-    backupPath = backup;
+    renameSync(tempBackup, backupPath);
   }
   
   mkdirSync(dirname(dest), { recursive: true });
@@ -375,113 +519,149 @@ function installPluginItemsToInstance(
   pluginName: string,
   sourcePath: string,
   instance: ToolInstance
-): { count: number; items: InstalledItem[] } {
-  if (!instance.enabled) return { count: 0, items: [] };
-  
+): { count: number; items: InstalledItem[]; errors: string[] } {
+  if (!instance.enabled) return { count: 0, items: [], errors: [] };
+
+  validatePluginName(pluginName);
+  const errors: string[] = [];
   const items: InstalledItem[] = [];
-  let count = 0;
-  
-  if (instance.skillsSubdir) {
-    const skillsDir = join(sourcePath, "skills");
-    if (existsSync(skillsDir)) {
+  const appliedKeys: string[] = [];
+
+  const manifest = loadManifest();
+  const key = instanceKey(instance);
+  if (!manifest.tools[key]) {
+    manifest.tools[key] = { items: {} };
+  }
+  const toolManifest = manifest.tools[key];
+
+  const rollback = () => {
+    for (const appliedKey of appliedKeys.reverse()) {
+      const item = toolManifest.items[appliedKey];
+      if (!item) continue;
       try {
-        for (const entry of readdirSync(skillsDir)) {
-          const src = join(skillsDir, entry);
-          if (existsSync(join(src, "SKILL.md"))) {
-            const dest = join(instance.configDir, instance.skillsSubdir, entry);
-            const result = copyWithBackup(src, dest, pluginName, "skill", entry);
-            items.push({
-              kind: "skill",
-              name: entry,
-              source: src,
-              dest: result.dest,
-              backup: result.backup,
-            });
-            count++;
+        if (existsSync(item.dest) || isSymlink(item.dest)) {
+          const stat = lstatSync(item.dest);
+          if (stat.isDirectory() && !stat.isSymbolicLink()) {
+            rmSync(item.dest, { recursive: true });
+          } else {
+            unlinkSync(item.dest);
           }
         }
-      } catch { /* ignore */ }
+        if (item.backup && (existsSync(item.backup) || isSymlink(item.backup))) {
+          renameSync(item.backup, item.dest);
+        }
+      } catch (error) {
+        logError(`Failed to rollback ${item.dest}`, error);
+      }
+      if (item.previous) {
+        toolManifest.items[appliedKey] = item.previous;
+      } else {
+        delete toolManifest.items[appliedKey];
+      }
     }
-  }
-  
-  if (instance.commandsSubdir) {
-    const commandsDir = join(sourcePath, "commands");
-    if (existsSync(commandsDir)) {
-      try {
+  };
+
+  const installItem = (kind: "skill" | "command" | "agent", name: string, src: string, dest: string) => {
+    validateItemName(kind, name);
+    const key = `${kind}:${name}`;
+    const previous = toolManifest.items[key] || null;
+    const result = copyWithBackup(src, dest, pluginName, kind, name);
+    const item: InstalledItem = {
+      kind,
+      name,
+      source: src,
+      dest: result.dest,
+      backup: result.backup,
+      owner: pluginName,
+      previous,
+    };
+    toolManifest.items[key] = item;
+    items.push(item);
+    appliedKeys.push(key);
+  };
+
+  try {
+    if (instance.skillsSubdir) {
+      const skillsDir = join(sourcePath, "skills");
+      if (existsSync(skillsDir)) {
+        for (const entry of readdirSync(skillsDir)) {
+          const src = safePath(skillsDir, entry);
+          if (existsSync(join(src, "SKILL.md"))) {
+            const baseDest = join(instance.configDir, instance.skillsSubdir);
+            const dest = safePath(baseDest, entry);
+            installItem("skill", entry, src, dest);
+          }
+        }
+      }
+    }
+
+    if (instance.commandsSubdir) {
+      const commandsDir = join(sourcePath, "commands");
+      if (existsSync(commandsDir)) {
         for (const entry of readdirSync(commandsDir)) {
           if (entry.endsWith(".md")) {
-            const src = join(commandsDir, entry);
-            const dest = join(instance.configDir, instance.commandsSubdir, entry);
-            const result = copyWithBackup(src, dest, pluginName, "command", entry);
-            items.push({
-              kind: "command",
-              name: entry.replace(/\.md$/, ""),
-              source: src,
-              dest: result.dest,
-              backup: result.backup,
-            });
-            count++;
+            const name = entry.replace(/\.md$/, "");
+            const src = safePath(commandsDir, entry);
+            const baseDest = join(instance.configDir, instance.commandsSubdir);
+            const dest = safePath(baseDest, entry);
+            installItem("command", name, src, dest);
           }
         }
-      } catch { /* ignore */ }
+      }
     }
-  }
-  
-  if (instance.agentsSubdir) {
-    const agentsDir = join(sourcePath, "agents");
-    if (existsSync(agentsDir)) {
-      try {
+
+    if (instance.agentsSubdir) {
+      const agentsDir = join(sourcePath, "agents");
+      if (existsSync(agentsDir)) {
         for (const entry of readdirSync(agentsDir)) {
           if (entry.endsWith(".md")) {
-            const src = join(agentsDir, entry);
-            const dest = join(instance.configDir, instance.agentsSubdir, entry);
-            const result = copyWithBackup(src, dest, pluginName, "agent", entry);
-            items.push({
-              kind: "agent",
-              name: entry.replace(/\.md$/, ""),
-              source: src,
-              dest: result.dest,
-              backup: result.backup,
-            });
-            count++;
+            const name = entry.replace(/\.md$/, "");
+            const src = safePath(agentsDir, entry);
+            const baseDest = join(instance.configDir, instance.agentsSubdir);
+            const dest = safePath(baseDest, entry);
+            installItem("agent", name, src, dest);
           }
         }
-      } catch { /* ignore */ }
+      }
     }
+  } catch (error) {
+    const message = `Install failed for ${pluginName} in ${instance.name}`;
+    logError(message, error);
+    errors.push(`${message}: ${error instanceof Error ? error.message : String(error)}`);
+    rollback();
+    return { count: 0, items: [], errors };
   }
-  
+
   if (items.length > 0) {
-    const manifest = loadManifest();
-    const key = instanceKey(instance);
-    if (!manifest.tools[key]) {
-      manifest.tools[key] = { items: {} };
-    }
-    const pluginKey = `plugin:${pluginName}`;
-    manifest.tools[key].items[pluginKey] = items[0];
-    for (const item of items) {
-      manifest.tools[key].items[`${item.kind}:${item.name}`] = item;
-    }
     saveManifest(manifest);
   }
-  
-  return { count, items };
+
+  return { count: items.length, items, errors };
 }
 
 function uninstallPluginItemsFromInstance(pluginName: string, instance: ToolInstance): number {
-  const manifest = loadManifest();
+  validatePluginName(pluginName);
+  let manifest: Manifest;
+  try {
+    manifest = loadManifest();
+  } catch (error) {
+    logError("Failed to load manifest during uninstall", error);
+    return 0;
+  }
   const key = instanceKey(instance);
   const toolManifest = manifest.tools[key];
   if (!toolManifest) return 0;
-  
+
   let removed = 0;
   const keysToRemove: string[] = [];
   const processedDests = new Set<string>();
-  
-  for (const [key, item] of Object.entries(toolManifest.items)) {
-    if (item.source.includes(pluginName)) {
+
+  for (const [entryKey, item] of Object.entries(toolManifest.items)) {
+    const owner = item.owner || "";
+    if (owner === pluginName || (!owner && item.source.includes(pluginName))) {
       const dest = item.dest;
       const backup = item.backup;
-      
+
       if (!processedDests.has(dest)) {
         processedDests.add(dest);
         try {
@@ -494,26 +674,33 @@ function uninstallPluginItemsFromInstance(pluginName: string, instance: ToolInst
             }
             removed++;
           }
-          
+
           if (backup && (existsSync(backup) || isSymlink(backup))) {
             renameSync(backup, dest);
           }
-        } catch { /* ignore */ }
+
+          if (item.previous) {
+            toolManifest.items[entryKey] = item.previous;
+          } else {
+            keysToRemove.push(entryKey);
+          }
+        } catch (error) {
+          logError(`Failed to uninstall ${item.kind}:${item.name}`, error);
+        }
       }
-      
-      keysToRemove.push(key);
     }
   }
-  
-  for (const key of keysToRemove) {
-    delete toolManifest.items[key];
+
+  for (const entryKey of keysToRemove) {
+    delete toolManifest.items[entryKey];
   }
   saveManifest(manifest);
-  
+
   return removed;
 }
 
 export async function enablePlugin(plugin: Plugin, marketplaceUrl?: string): Promise<EnableResult> {
+  validatePluginMetadata(plugin);
   const instances = getToolInstances();
   const enabledInstances = getEnabledToolInstances();
   const skippedInstances = instances.filter((instance) => !instance.enabled).map(instanceKey);
@@ -534,9 +721,14 @@ export async function enablePlugin(plugin: Plugin, marketplaceUrl?: string): Pro
 
   for (const instance of claudeInstances) {
     try {
-      await execClaudeCommand(instance, `enable "${plugin.name}"`);
+      await execClaudeCommand(instance, "enable", plugin.name);
       result.linkedInstances[instanceKey(instance)] = 1;
-    } catch { /* ignore */ }
+    } catch (error) {
+      logError(`Claude enable failed for ${instance.name}`, error);
+      result.errors.push(
+        `Claude enable failed for ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`
+      );
+    }
   }
 
   let sourcePath = getPluginSourcePath(plugin);
@@ -547,8 +739,16 @@ export async function enablePlugin(plugin: Plugin, marketplaceUrl?: string): Pro
   
   if (sourcePath) {
     for (const instance of nonClaudeInstances) {
-      const { count } = installPluginItemsToInstance(plugin.name, sourcePath, instance);
-      result.linkedInstances[instanceKey(instance)] = count;
+      try {
+        const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance);
+        result.linkedInstances[instanceKey(instance)] = count;
+        result.errors.push(...errors);
+      } catch (error) {
+        logError(`Enable failed for ${plugin.name} in ${instance.name}`, error);
+        result.errors.push(
+          `Enable failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`
+        );
+      }
     }
   } else if (nonClaudeInstances.length > 0) {
     result.errors.push(`Plugin source not found for ${plugin.name}`);
@@ -559,6 +759,7 @@ export async function enablePlugin(plugin: Plugin, marketplaceUrl?: string): Pro
 }
 
 export async function disablePlugin(plugin: Plugin): Promise<EnableResult> {
+  validatePluginMetadata(plugin);
   const instances = getToolInstances();
   const enabledInstances = getEnabledToolInstances();
   const skippedInstances = instances.filter((instance) => !instance.enabled).map(instanceKey);
@@ -579,9 +780,14 @@ export async function disablePlugin(plugin: Plugin): Promise<EnableResult> {
 
   for (const instance of claudeInstances) {
     try {
-      await execClaudeCommand(instance, `disable "${plugin.name}"`);
+      await execClaudeCommand(instance, "disable", plugin.name);
       result.linkedInstances[instanceKey(instance)] = 1;
-    } catch { /* ignore */ }
+    } catch (error) {
+      logError(`Claude disable failed for ${instance.name}`, error);
+      result.errors.push(
+        `Claude disable failed for ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`
+      );
+    }
   }
 
   for (const instance of nonClaudeInstances) {
@@ -594,6 +800,7 @@ export async function disablePlugin(plugin: Plugin): Promise<EnableResult> {
 }
 
 export async function updatePlugin(plugin: Plugin, marketplaceUrl: string): Promise<EnableResult> {
+  validatePluginMetadata(plugin);
   const instances = getToolInstances();
   const enabledInstances = getEnabledToolInstances();
   const skippedInstances = instances.filter((instance) => !instance.enabled).map(instanceKey);
@@ -614,27 +821,42 @@ export async function updatePlugin(plugin: Plugin, marketplaceUrl: string): Prom
 
   for (const instance of claudeInstances) {
     try {
-      await execClaudeCommand(instance, `update "${plugin.name}"`);
+      await execClaudeCommand(instance, "update", plugin.name);
       result.linkedInstances[instanceKey(instance)] = 1;
-    } catch { /* ignore */ }
+    } catch (error) {
+      logError(`Claude update failed for ${instance.name}`, error);
+      result.errors.push(
+        `Claude update failed for ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`
+      );
+    }
   }
 
   for (const instance of nonClaudeInstances) {
     uninstallPluginItemsFromInstance(plugin.name, instance);
   }
 
-  const pluginDir = join(getPluginsCacheDir(), plugin.marketplace, plugin.name);
   try {
+    const pluginDir = safePath(getPluginsCacheDir(), plugin.marketplace, plugin.name);
     rmSync(pluginDir, { recursive: true, force: true });
-  } catch { /* ignore */ }
+  } catch (error) {
+    logError(`Failed to remove plugin dir for ${plugin.name}`, error);
+  }
 
   if (nonClaudeInstances.length > 0) {
     const sourcePath = await downloadPlugin(plugin, marketplaceUrl);
 
     if (sourcePath) {
       for (const instance of nonClaudeInstances) {
-        const { count } = installPluginItemsToInstance(plugin.name, sourcePath, instance);
-        result.linkedInstances[instanceKey(instance)] = count;
+        try {
+          const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance);
+          result.linkedInstances[instanceKey(instance)] = count;
+          result.errors.push(...errors);
+        } catch (error) {
+          logError(`Update failed for ${plugin.name} in ${instance.name}`, error);
+          result.errors.push(
+            `Update failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`
+          );
+        }
       }
     } else if (Object.values(result.linkedInstances).every((count) => count === 0)) {
       result.errors.push(`Failed to download plugin update for ${plugin.name}`);
@@ -651,6 +873,7 @@ export function linkPluginToInstance(
   sourcePath: string
 ): number {
   if (!instance.enabled) return 0;
+  validatePluginName(plugin.name);
 
   let linked = 0;
   const manifest = loadManifest();
@@ -660,58 +883,79 @@ export function linkPluginToInstance(
   }
 
   for (const skill of plugin.skills) {
-    const source = join(sourcePath, "skills", skill);
+    validateItemName("skill", skill);
+    const source = safePath(join(sourcePath, "skills"), skill);
     if (!existsSync(source)) continue;
 
     if (instance.skillsSubdir) {
-      const target = join(instance.configDir, instance.skillsSubdir, skill);
-      if (createSymlink(source, target, plugin.name, "skill", skill)) {
+      const baseTarget = join(instance.configDir, instance.skillsSubdir);
+      const target = safePath(baseTarget, skill);
+      const result = createSymlink(source, target, plugin.name, "skill", skill);
+      if (result.success) {
         manifest.tools[key].items[`skill:${skill}`] = {
           kind: "skill",
           name: skill,
           source,
           dest: join(instance.skillsSubdir, skill),
           backup: null,
+          owner: plugin.name,
+          previous: null,
         };
         linked++;
+      } else {
+        logError(`Failed to link skill ${skill}`, result.message);
       }
     }
   }
 
   for (const cmd of plugin.commands) {
-    const source = join(sourcePath, "commands", `${cmd}.md`);
+    validateItemName("command", cmd);
+    const source = safePath(join(sourcePath, "commands"), `${cmd}.md`);
     if (!existsSync(source)) continue;
 
     if (instance.commandsSubdir) {
-      const target = join(instance.configDir, instance.commandsSubdir, `${cmd}.md`);
-      if (createSymlink(source, target, plugin.name, "command", `${cmd}.md`)) {
+      const baseTarget = join(instance.configDir, instance.commandsSubdir);
+      const target = safePath(baseTarget, `${cmd}.md`);
+      const result = createSymlink(source, target, plugin.name, "command", cmd);
+      if (result.success) {
         manifest.tools[key].items[`command:${cmd}`] = {
           kind: "command",
           name: cmd,
           source,
           dest: join(instance.commandsSubdir, `${cmd}.md`),
           backup: null,
+          owner: plugin.name,
+          previous: null,
         };
         linked++;
+      } else {
+        logError(`Failed to link command ${cmd}`, result.message);
       }
     }
   }
 
   for (const agent of plugin.agents) {
-    const source = join(sourcePath, "agents", `${agent}.md`);
+    validateItemName("agent", agent);
+    const source = safePath(join(sourcePath, "agents"), `${agent}.md`);
     if (!existsSync(source)) continue;
 
     if (instance.agentsSubdir) {
-      const target = join(instance.configDir, instance.agentsSubdir, `${agent}.md`);
-      if (createSymlink(source, target, plugin.name, "agent", `${agent}.md`)) {
+      const baseTarget = join(instance.configDir, instance.agentsSubdir);
+      const target = safePath(baseTarget, `${agent}.md`);
+      const result = createSymlink(source, target, plugin.name, "agent", agent);
+      if (result.success) {
         manifest.tools[key].items[`agent:${agent}`] = {
           kind: "agent",
           name: agent,
           source,
           dest: join(instance.agentsSubdir, `${agent}.md`),
           backup: null,
+          owner: plugin.name,
+          previous: null,
         };
         linked++;
+      } else {
+        logError(`Failed to link agent ${agent}`, result.message);
       }
     }
   }
@@ -735,7 +979,8 @@ function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] 
       try {
         const stat = lstatSync(mpDir);
         if (!stat.isDirectory()) continue;
-      } catch {
+      } catch (error) {
+        logError(`Failed to stat ${mpDir}`, error);
         continue;
       }
 
@@ -747,7 +992,8 @@ function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] 
         try {
           const stat = lstatSync(pluginDir);
           if (!stat.isDirectory()) continue;
-        } catch {
+        } catch (error) {
+          logError(`Failed to stat ${pluginDir}`, error);
           continue;
         }
 
@@ -756,7 +1002,8 @@ function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] 
           const p = join(pluginDir, d);
           try {
             return lstatSync(p).isDirectory() && !d.startsWith(".");
-          } catch {
+          } catch (error) {
+            logError(`Failed to stat ${p}`, error);
             return false;
           }
         });
@@ -782,7 +1029,9 @@ function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] 
                 skills.push(item);
               }
             }
-          } catch { /* ignore */ }
+          } catch (error) {
+            logError(`Failed to read skills in ${skillsDir}`, error);
+          }
         }
 
         const commandsDir = join(contentDir, "commands");
@@ -793,7 +1042,9 @@ function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] 
                 commands.push(item.replace(/\.md$/, ""));
               }
             }
-          } catch { /* ignore */ }
+          } catch (error) {
+            logError(`Failed to read commands in ${commandsDir}`, error);
+          }
         }
 
         const agentsDir = join(contentDir, "agents");
@@ -804,7 +1055,9 @@ function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] 
                 agents.push(item.replace(/\.md$/, ""));
               }
             }
-          } catch { /* ignore */ }
+          } catch (error) {
+            logError(`Failed to read agents in ${agentsDir}`, error);
+          }
         }
 
         const hooksDir = join(contentDir, "hooks");
@@ -813,7 +1066,9 @@ function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] 
             for (const item of readdirSync(hooksDir)) {
               hooks.push(item.replace(/\.(md|json)$/, ""));
             }
-          } catch { /* ignore */ }
+          } catch (error) {
+            logError(`Failed to read hooks in ${hooksDir}`, error);
+          }
         }
 
         if (existsSync(join(contentDir, "mcp.json")) || 
@@ -826,7 +1081,9 @@ function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] 
           try {
             const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
             description = manifest.description || "";
-          } catch { /* ignore */ }
+          } catch (error) {
+            logError(`Failed to read manifest ${manifestPath}`, error);
+          }
         }
 
         plugins.push({
@@ -846,8 +1103,8 @@ function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] 
         });
       }
     }
-  } catch (e) {
-    // Directory scanning failed
+  } catch (error) {
+    logError("Failed to scan Claude plugins directory", error);
   }
 
   return plugins;
@@ -892,9 +1149,13 @@ export function getInstalledPluginsForInstance(instance: ToolInstance): Plugin[]
                 }
               }
             }
-          } catch { /* ignore */ }
+          } catch (error) {
+            logError(`Failed to stat skill entry ${itemPath}`, error);
+          }
         }
-      } catch { /* ignore */ }
+      } catch (error) {
+        logError(`Failed to read skills in ${skillsDir}`, error);
+      }
     }
   }
 
@@ -927,7 +1188,9 @@ export function getInstalledPluginsForInstance(instance: ToolInstance): Plugin[]
             }
           }
         }
-      } catch { /* ignore */ }
+      } catch (error) {
+        logError(`Failed to read commands in ${commandsDir}`, error);
+      }
     }
   }
 
@@ -960,7 +1223,9 @@ export function getInstalledPluginsForInstance(instance: ToolInstance): Plugin[]
             }
           }
         }
-      } catch { /* ignore */ }
+      } catch (error) {
+        logError(`Failed to read agents in ${agentsDir}`, error);
+      }
     }
   }
 
@@ -1015,6 +1280,7 @@ export async function syncPluginInstances(
   marketplaceUrl: string | undefined,
   missingStatuses: ToolInstallStatus[]
 ): Promise<SyncResult> {
+  validatePluginMetadata(plugin);
   const result: SyncResult = { success: false, syncedInstances: {}, errors: [] };
   if (missingStatuses.length === 0) return result;
 
@@ -1027,7 +1293,7 @@ export async function syncPluginInstances(
 
   for (const instance of claudeInstances) {
     try {
-      await execClaudeCommand(instance, `install "${plugin.name}"`);
+      await execClaudeCommand(instance, "install", plugin.name);
       result.syncedInstances[instanceKey(instance)] = 1;
     } catch (e) {
       result.errors.push(
@@ -1046,8 +1312,16 @@ export async function syncPluginInstances(
       result.errors.push(`Failed to locate plugin source for ${plugin.name}`);
     } else {
       for (const instance of nonClaudeInstances) {
-        const { count } = installPluginItemsToInstance(plugin.name, sourcePath, instance);
-        result.syncedInstances[instanceKey(instance)] = count;
+        try {
+          const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance);
+          result.syncedInstances[instanceKey(instance)] = count;
+          result.errors.push(...errors);
+        } catch (error) {
+          logError(`Sync failed for ${plugin.name} in ${instance.name}`, error);
+          result.errors.push(
+            `Sync failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`
+          );
+        }
       }
     }
   }
@@ -1058,6 +1332,12 @@ export async function syncPluginInstances(
 
 export function getPluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
   const statuses: ToolInstallStatus[] = [];
+  try {
+    validatePluginMetadata(plugin);
+  } catch (error) {
+    logError(`Invalid plugin metadata for ${plugin.name}`, error);
+    return statuses;
+  }
   const instances = getToolInstances();
 
   for (const instance of instances) {
@@ -1081,7 +1361,8 @@ export function getPluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
       } else {
         if (canInstallSkills && instance.skillsSubdir) {
           for (const skill of plugin.skills) {
-            const skillPath = join(instance.configDir, instance.skillsSubdir, skill);
+            const base = join(instance.configDir, instance.skillsSubdir);
+            const skillPath = safePath(base, skill);
             if (existsSync(skillPath)) {
               installed = true;
               break;
@@ -1090,7 +1371,8 @@ export function getPluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
         }
         if (!installed && canInstallCommands && instance.commandsSubdir) {
           for (const cmd of plugin.commands) {
-            const cmdPath = join(instance.configDir, instance.commandsSubdir, `${cmd}.md`);
+            const base = join(instance.configDir, instance.commandsSubdir);
+            const cmdPath = safePath(base, `${cmd}.md`);
             if (existsSync(cmdPath)) {
               installed = true;
               break;
@@ -1099,7 +1381,8 @@ export function getPluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
         }
         if (!installed && canInstallAgents && instance.agentsSubdir) {
           for (const agent of plugin.agents) {
-            const agentPath = join(instance.configDir, instance.agentsSubdir, `${agent}.md`);
+            const base = join(instance.configDir, instance.agentsSubdir);
+            const agentPath = safePath(base, `${agent}.md`);
             if (existsSync(agentPath)) {
               installed = true;
               break;
