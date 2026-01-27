@@ -13,6 +13,8 @@ export function PluginList({
   selectedIndex,
   maxHeight = 12,
 }: PluginListProps) {
+  const hasSelection = selectedIndex >= 0;
+  const effectiveIndex = hasSelection ? selectedIndex : 0;
   // Calculate max lengths for column alignment
   const { maxNameLen, maxMarketplaceLen } = useMemo(() => {
     return {
@@ -33,7 +35,7 @@ export function PluginList({
 
     const maxStart = Math.max(0, plugins.length - maxHeight);
     const start = Math.min(
-      Math.max(0, selectedIndex - (maxHeight - 1)),
+      Math.max(0, effectiveIndex - (maxHeight - 1)),
       maxStart
     );
 
@@ -43,7 +45,7 @@ export function PluginList({
       hasMore: start + maxHeight < plugins.length,
       hasPrev: start > 0,
     };
-  }, [plugins, selectedIndex, maxHeight]);
+  }, [plugins, effectiveIndex, maxHeight]);
 
   if (plugins.length === 0) {
     return (
@@ -63,7 +65,7 @@ export function PluginList({
 
       {visiblePlugins.map((plugin, visibleIdx) => {
         const actualIndex = startIndex + visibleIdx;
-        const isSelected = actualIndex === selectedIndex;
+        const isSelected = hasSelection && actualIndex === selectedIndex;
         const indicator = isSelected ? "❯" : " ";
 
         const typeLabel = plugin.hasMcp ? "MCP" : "Plugin";

@@ -49,13 +49,23 @@ export function SyncList({ items, selectedIndex, maxHeight = 12 }: SyncListProps
         const isSelected = actualIndex === selectedIndex;
         const indicator = isSelected ? "❯" : " ";
 
+        const name = item.kind === "plugin" ? item.plugin.name : item.asset.name;
+        const key = item.kind === "plugin"
+          ? `${item.plugin.marketplace}:${item.plugin.name}`
+          : item.asset.name;
+        const missingCount = item.missingInstances.length;
+        const driftedCount = item.kind === "asset" ? item.driftedInstances.length : 0;
+        const missingLabel = item.kind === "asset"
+          ? `Missing: ${missingCount}${driftedCount > 0 ? ` · Drifted: ${driftedCount}` : ""}`
+          : `Missing: ${missingCount}`;
+
         return (
-          <Box key={`${item.plugin.marketplace}:${item.plugin.name}`} flexDirection="column">
+          <Box key={`${item.kind}:${key}`} flexDirection="column">
             <Box>
               <Text color={isSelected ? "cyan" : "white"}>{indicator} </Text>
-              <Text bold={isSelected} color="white">{item.plugin.name}</Text>
+              <Text bold={isSelected} color="white">{name}</Text>
               <Text color="gray"> · </Text>
-              <Text color="gray">Missing: {item.missingInstances.length}</Text>
+              <Text color="gray">{missingLabel}</Text>
             </Box>
           </Box>
         );

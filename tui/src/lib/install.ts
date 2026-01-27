@@ -14,12 +14,13 @@ import {
 } from "fs";
 import { promisify } from "util";
 import { execFile } from "child_process";
+import { createHash } from "crypto";
 
 const execFileAsync = promisify(execFile);
 import { join, dirname } from "path";
 import { tmpdir } from "os";
-import { getCacheDir, getEnabledToolInstances, getToolInstances } from "./config.js";
-import type { Plugin, InstalledItem, ToolInstance } from "./types.js";
+import { expandPath, getCacheDir, getEnabledToolInstances, getToolInstances } from "./config.js";
+import type { Asset, AssetConfig, Plugin, InstalledItem, ToolInstance } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
 import {
   safePath,
@@ -37,6 +38,133 @@ export function getPluginsCacheDir(): string {
 
 function instanceKey(instance: ToolInstance): string {
   return `${instance.toolId}:${instance.instanceId}`;
+}
+
+function hashBuffer(buffer: Buffer): string {
+  return createHash("sha256").update(buffer).digest("hex");
+}
+
+function hashFile(path: string): string {
+  const data = readFileSync(path);
+  return hashBuffer(data);
+}
+
+function hashPath(path: string): { hash: string; isDirectory: boolean } {
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink()) {
+    const resolved = realpathSync(path);
+    return hashPath(resolved);
+  }
+  if (stat.isDirectory()) {
+    return { hash: hashDirectory(path), isDirectory: true };
+  }
+  return { hash: hashFile(path), isDirectory: false };
+}
+
+function hashDirectory(path: string): string {
+  const entries: string[] = [];
+  const walk = (dir: string, prefix: string) => {
+    const children = readdirSync(dir);
+    children.sort();
+    for (const child of children) {
+      const fullPath = join(dir, child);
+      const relPath = prefix ? `${prefix}/${child}` : child;
+      const stat = lstatSync(fullPath);
+      if (stat.isSymbolicLink()) {
+        const resolved = realpathSync(fullPath);
+        const resolvedStat = lstatSync(resolved);
+        if (resolvedStat.isDirectory()) {
+          walk(resolved, relPath);
+        } else if (resolvedStat.isFile()) {
+          entries.push(relPath);
+        }
+      } else if (stat.isDirectory()) {
+        walk(fullPath, relPath);
+      } else if (stat.isFile()) {
+        entries.push(relPath);
+      }
+    }
+  };
+
+  walk(path, "");
+  entries.sort();
+
+  const hasher = createHash("sha256");
+  for (const entry of entries) {
+    const filePath = join(path, entry);
+    const fileHash = hashFile(filePath);
+    hasher.update(entry);
+    hasher.update("\0");
+    hasher.update(fileHash);
+    hasher.update("\0");
+  }
+  return hasher.digest("hex");
+}
+
+export interface AssetToolStatus {
+  toolId: string;
+  instanceId: string;
+  name: string;
+  enabled: boolean;
+  installed: boolean;
+  drifted: boolean;
+  targetPath: string;
+}
+
+export interface AssetSourceInfo {
+  sourcePath: string;
+  exists: boolean;
+  isDirectory: boolean;
+  hash: string | null;
+  error?: string;
+}
+
+function normalizeAssetTarget(target: string): string {
+  const trimmed = target.trim();
+  if (!trimmed) {
+    throw new Error("Asset target cannot be empty.");
+  }
+  const cleaned = trimmed.replace(/\/+$/, "");
+  validateRelativeSubPath(cleaned);
+  return cleaned;
+}
+
+function resolveAssetTarget(asset: AssetConfig, instance: ToolInstance): string {
+  const overrideKey = `${instance.toolId}:${instance.instanceId}`;
+  const override = asset.overrides?.[overrideKey];
+  if (override) return normalizeAssetTarget(override);
+  if (asset.defaultTarget) return normalizeAssetTarget(asset.defaultTarget);
+  return instance.toolId === "claude-code" ? "CLAUDE.md" : "AGENTS.md";
+}
+
+export function getAssetSourceInfo(asset: AssetConfig): AssetSourceInfo {
+  const sourcePath = expandPath(asset.source);
+  if (sourcePath.startsWith("http://") || sourcePath.startsWith("https://")) {
+    return {
+      sourcePath,
+      exists: false,
+      isDirectory: false,
+      hash: null,
+      error: "Asset source URLs are not supported yet.",
+    };
+  }
+
+  if (!existsSync(sourcePath)) {
+    return { sourcePath, exists: false, isDirectory: false, hash: null, error: "Asset source not found." };
+  }
+
+  try {
+    const { hash, isDirectory } = hashPath(sourcePath);
+    return { sourcePath, exists: true, isDirectory, hash };
+  } catch (error) {
+    return {
+      sourcePath,
+      exists: false,
+      isDirectory: false,
+      hash: null,
+      error: `Failed to read asset source: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
 }
 
 type SymlinkErrorCode =
@@ -484,6 +612,12 @@ export interface SyncResult {
   errors: string[];
 }
 
+export interface AssetSyncResult {
+  success: boolean;
+  syncedInstances: Record<string, number>;
+  errors: string[];
+}
+
 function copyWithBackup(
   src: string,
   dest: string,
@@ -513,6 +647,96 @@ function copyWithBackup(
   }
   
   return { dest, backup: backupPath };
+}
+
+function installAssetToInstance(
+  asset: Asset,
+  instance: ToolInstance,
+  sourceInfo: AssetSourceInfo
+): { count: number; item?: InstalledItem; error?: string } {
+  if (!instance.enabled) return { count: 0 };
+  try {
+    validateItemName("asset", asset.name);
+    const targetRel = resolveAssetTarget(asset, instance);
+    const targetPath = join(instance.configDir, targetRel);
+    if (!sourceInfo.exists || !sourceInfo.hash) {
+      return { count: 0, error: sourceInfo.error || "Asset source not found." };
+    }
+
+    const manifest = loadManifest();
+    const key = instanceKey(instance);
+    if (!manifest.tools[key]) {
+      manifest.tools[key] = { items: {} };
+    }
+
+    const itemKey = `asset:${asset.name}`;
+    const previous = manifest.tools[key].items[itemKey] || null;
+    const backupName = `${asset.name}-${instance.toolId}-${instance.instanceId}`;
+    const result = copyWithBackup(sourceInfo.sourcePath, targetPath, asset.name, "asset", backupName);
+
+    const item: InstalledItem = {
+      kind: "asset",
+      name: asset.name,
+      source: asset.source,
+      dest: result.dest,
+      backup: result.backup,
+      owner: asset.name,
+      previous,
+    };
+
+    manifest.tools[key].items[itemKey] = item;
+    saveManifest(manifest);
+
+    return { count: 1, item };
+  } catch (error) {
+    return { count: 0, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+export function getAssetToolStatus(asset: Asset, sourceInfo?: AssetSourceInfo): AssetToolStatus[] {
+  const statuses: AssetToolStatus[] = [];
+  const instances = getToolInstances();
+  const resolvedSource = sourceInfo || getAssetSourceInfo(asset);
+
+  for (const instance of instances) {
+    const enabled = instance.enabled;
+    let installed = false;
+    let drifted = false;
+    let targetPath = "";
+    try {
+      const targetRel = resolveAssetTarget(asset, instance);
+      targetPath = join(instance.configDir, targetRel);
+      if (enabled && existsSync(targetPath)) {
+        installed = true;
+        if (resolvedSource.exists && resolvedSource.hash) {
+          try {
+            const targetHash = hashPath(targetPath);
+            if (targetHash.isDirectory !== resolvedSource.isDirectory) {
+              drifted = true;
+            } else {
+              drifted = targetHash.hash !== resolvedSource.hash;
+            }
+          } catch {
+            drifted = true;
+          }
+        }
+      }
+    } catch (error) {
+      logError(`Failed to resolve asset target for ${asset.name}`, error);
+    }
+
+    statuses.push({
+      toolId: instance.toolId,
+      instanceId: instance.instanceId,
+      name: instance.name,
+      enabled,
+      installed,
+      drifted,
+      targetPath,
+    });
+  }
+
+  return statuses;
 }
 
 function installPluginItemsToInstance(
@@ -1323,6 +1547,37 @@ export async function syncPluginInstances(
           );
         }
       }
+    }
+  }
+
+  result.success = Object.values(result.syncedInstances).some((n) => n > 0);
+  return result;
+}
+
+export function syncAssetInstances(
+  asset: Asset,
+  targetStatuses: AssetToolStatus[]
+): AssetSyncResult {
+  const result: AssetSyncResult = { success: false, syncedInstances: {}, errors: [] };
+  if (targetStatuses.length === 0) return result;
+
+  const sourceInfo = getAssetSourceInfo(asset);
+  if (!sourceInfo.exists || !sourceInfo.hash) {
+    result.errors.push(sourceInfo.error || `Asset source not found for ${asset.name}`);
+    return result;
+  }
+
+  for (const status of targetStatuses) {
+    const instance = findInstance(status.toolId, status.instanceId);
+    if (!instance) continue;
+    if (!instance.enabled) continue;
+
+    const installResult = installAssetToInstance(asset, instance, sourceInfo);
+    if (installResult.count > 0) {
+      result.syncedInstances[instanceKey(instance)] = installResult.count;
+    }
+    if (installResult.error) {
+      result.errors.push(`Asset sync failed for ${instance.name}: ${installResult.error}`);
     }
   }
 

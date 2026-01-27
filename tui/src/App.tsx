@@ -4,8 +4,11 @@ import { useStore } from "./lib/store.js";
 import { TabBar } from "./components/TabBar.js";
 import { SearchBox } from "./components/SearchBox.js";
 import { PluginList } from "./components/PluginList.js";
+import { AssetList } from "./components/AssetList.js";
 import { PluginPreview } from "./components/PluginPreview.js";
+import { AssetPreview } from "./components/AssetPreview.js";
 import { PluginDetail } from "./components/PluginDetail.js";
+import { AssetDetail } from "./components/AssetDetail.js";
 import { MarketplaceList } from "./components/MarketplaceList.js";
 import { MarketplaceDetail } from "./components/MarketplaceDetail.js";
 import { AddMarketplaceModal } from "./components/AddMarketplaceModal.js";
@@ -17,7 +20,7 @@ import { HintBar } from "./components/HintBar.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { Notifications } from "./components/Notifications.js";
 import { getPluginToolStatus } from "./lib/install.js";
-import type { Tab, SyncPreviewItem } from "./lib/types.js";
+import type { Tab, SyncPreviewItem, Plugin, Asset } from "./lib/types.js";
 
 const TABS: Tab[] = ["discover", "installed", "marketplaces", "tools", "sync"];
 
@@ -28,6 +31,7 @@ export function App() {
     setTab,
     marketplaces,
     installedPlugins,
+    assets,
     tools,
     search,
     setSearch,
@@ -36,8 +40,10 @@ export function App() {
     loading,
     error,
     detailPlugin,
+    detailAsset,
     detailMarketplace,
     setDetailPlugin,
+    setDetailAsset,
     setDetailMarketplace,
     loadMarketplaces,
     installPlugin: doInstall,
@@ -82,7 +88,7 @@ export function App() {
       setSyncPreview(getSyncPreview());
       setSyncArmed(false);
     }
-  }, [tab, marketplaces, installedPlugins]);
+  }, [tab, marketplaces, installedPlugins, assets]);
 
   useEffect(() => {
     if (!syncArmed) return;
@@ -126,6 +132,34 @@ export function App() {
     return sorted;
   }, [tab, allPlugins, installedPlugins, search, sortBy, sortDir]);
 
+  const filteredAssets = useMemo(() => {
+    const lowerSearch = search.toLowerCase();
+    const base = tab === "installed" ? assets.filter((a) => a.installed) : assets;
+    let filtered = base;
+    if (search) {
+      filtered = base.filter(
+        (a) => a.name.toLowerCase().includes(lowerSearch) || a.source.toLowerCase().includes(lowerSearch)
+      );
+    }
+
+    const sorted = [...filtered].sort((a, b) => {
+      if (sortBy === "name") {
+        const cmp = a.name.localeCompare(b.name);
+        return sortDir === "asc" ? cmp : -cmp;
+      }
+      const aInstalled = a.installed ? 1 : 0;
+      const bInstalled = b.installed ? 1 : 0;
+      const cmp = bInstalled - aInstalled;
+      if (cmp !== 0) return sortDir === "asc" ? cmp : -cmp;
+      return a.name.localeCompare(b.name);
+    });
+
+    return sorted;
+  }, [tab, assets, search, sortBy, sortDir]);
+
+  const pluginCount = filteredPlugins.length;
+  const libraryCount = pluginCount + filteredAssets.length;
+
   const maxIndex = useMemo(() => {
     if (tab === "marketplaces") {
       return marketplaces.length; // +1 for "Add Marketplace"
@@ -136,8 +170,25 @@ export function App() {
     if (tab === "sync") {
       return Math.max(0, syncPreview.length - 1);
     }
-    return Math.max(0, filteredPlugins.length - 1);
-  }, [tab, marketplaces, tools, syncPreview, filteredPlugins]);
+    return Math.max(0, libraryCount - 1);
+  }, [tab, marketplaces, tools, syncPreview, libraryCount]);
+
+  const selectedLibraryItem = useMemo(
+    ():
+      | { kind: "plugin"; plugin: Plugin }
+      | { kind: "asset"; asset: Asset }
+      | null => {
+      if (tab !== "discover" && tab !== "installed") return null;
+      if (selectedIndex < pluginCount) {
+        const plugin = filteredPlugins[selectedIndex];
+        return plugin ? { kind: "plugin", plugin } : null;
+      }
+      const assetIndex = selectedIndex - pluginCount;
+      const asset = filteredAssets[assetIndex];
+      return asset ? { kind: "asset", asset } : null;
+    },
+    [tab, selectedIndex, filteredPlugins, filteredAssets, pluginCount]
+  );
 
   const getPluginActions = (plugin: typeof detailPlugin) => {
     if (!plugin) return [] as string[];
@@ -157,6 +208,16 @@ export function App() {
     return getPluginActions(plugin).length;
   };
 
+  const getAssetActions = (asset: typeof detailAsset) => {
+    if (!asset) return [] as string[];
+    const actions = [] as string[];
+    if (asset.partial || asset.drifted || !asset.installed) {
+      actions.push("Sync to all tools");
+    }
+    actions.push("Back to list");
+    return actions;
+  };
+
   useInput((input, key) => {
     // Don't handle input when modal is open (modal handles its own input)
     if (showAddMarketplace || editingToolId) {
@@ -171,14 +232,14 @@ export function App() {
 
     // Tab navigation
     if (key.tab || key.rightArrow) {
-      if (!detailPlugin && !detailMarketplace) {
+      if (!detailPlugin && !detailAsset && !detailMarketplace) {
         const idx = TABS.indexOf(tab);
         setTab(TABS[(idx + 1) % TABS.length]);
         return;
       }
     }
     if (key.leftArrow) {
-      if (!detailPlugin && !detailMarketplace) {
+      if (!detailPlugin && !detailAsset && !detailMarketplace) {
         const idx = TABS.indexOf(tab);
         setTab(TABS[(idx - 1 + TABS.length) % TABS.length]);
         return;
@@ -189,6 +250,9 @@ export function App() {
     if (key.escape) {
       if (detailPlugin) {
         setDetailPlugin(null);
+        setActionIndex(0);
+      } else if (detailAsset) {
+        setDetailAsset(null);
         setActionIndex(0);
       } else if (detailMarketplace) {
         setDetailMarketplace(null);
@@ -201,6 +265,8 @@ export function App() {
     if (key.upArrow) {
       if (detailPlugin || detailMarketplace) {
         setActionIndex((i) => Math.max(0, i - 1));
+      } else if (detailAsset) {
+        setActionIndex((i) => Math.max(0, i - 1));
       } else {
         setSelectedIndex(Math.max(0, selectedIndex - 1));
         if (tab === "sync") {
@@ -212,6 +278,9 @@ export function App() {
     if (key.downArrow) {
       if (detailPlugin) {
         const actionCount = getPluginActionCount(detailPlugin);
+        setActionIndex((i) => Math.min(actionCount - 1, i + 1));
+      } else if (detailAsset) {
+        const actionCount = getAssetActions(detailAsset).length;
         setActionIndex((i) => Math.min(actionCount - 1, i + 1));
       } else if (detailMarketplace) {
         const maxActions = detailMarketplace.source === "claude" ? 2 : 3;
@@ -229,6 +298,11 @@ export function App() {
     if (key.return) {
       if (detailPlugin) {
         handlePluginAction(actionIndex);
+        return;
+      }
+
+      if (detailAsset) {
+        handleAssetAction(actionIndex);
         return;
       }
 
@@ -258,16 +332,18 @@ export function App() {
         return;
       }
 
-      const plugin = filteredPlugins[selectedIndex];
-      if (plugin) {
-        setDetailPlugin(plugin);
+      if (selectedLibraryItem?.kind === "plugin") {
+        setDetailPlugin(selectedLibraryItem.plugin);
+        setActionIndex(0);
+      } else if (selectedLibraryItem?.kind === "asset") {
+        setDetailAsset(selectedLibraryItem.asset);
         setActionIndex(0);
       }
       return;
     }
 
     // Space - toggle install/uninstall
-    if (input === " " && !detailPlugin && !detailMarketplace) {
+    if (input === " " && !detailPlugin && !detailAsset && !detailMarketplace) {
       if (tab === "tools") {
         const tool = tools[selectedIndex];
         if (tool) {
@@ -276,11 +352,13 @@ export function App() {
         return;
       }
 
-      const plugin = filteredPlugins[selectedIndex];
-      if (plugin?.installed) {
-        doUninstall(plugin);
-      } else if (plugin) {
-        doInstall(plugin);
+      if (selectedLibraryItem?.kind === "plugin") {
+        const plugin = selectedLibraryItem.plugin;
+        if (plugin.installed) {
+          doUninstall(plugin);
+        } else {
+          doInstall(plugin);
+        }
       }
       return;
     }
@@ -306,7 +384,7 @@ export function App() {
       return;
     }
 
-    if (input === "y" && tab === "sync" && !detailPlugin && !detailMarketplace) {
+    if (input === "y" && tab === "sync" && !detailPlugin && !detailAsset && !detailMarketplace) {
       if (syncArmed) {
         void syncTools(syncPreview);
         setSyncArmed(false);
@@ -357,6 +435,26 @@ export function App() {
     }
   };
 
+  const handleAssetAction = async (index: number) => {
+    if (!detailAsset) return;
+    const actions = getAssetActions(detailAsset);
+    const action = actions[index];
+    if (!action) return;
+
+    switch (action) {
+      case "Sync to all tools":
+        await syncTools([{ kind: "asset", asset: detailAsset, missingInstances: [], driftedInstances: [] }]);
+        setDetailAsset(null);
+        break;
+      case "Back to list":
+        setDetailAsset(null);
+        setActionIndex(0);
+        break;
+      default:
+        break;
+    }
+  };
+
   const handleMarketplaceAction = (index: number) => {
     if (!detailMarketplace) return;
     const isReadOnly = detailMarketplace.source === "claude";
@@ -383,7 +481,7 @@ export function App() {
 
   const statusMessage = loading
     ? "Loading..."
-    : `${allPlugins.length} plugins from ${marketplaces.length} marketplaces`;
+    : `${allPlugins.length} plugins, ${assets.length} assets from ${marketplaces.length} marketplaces`;
 
   const handleAddMarketplace = (name: string, url: string) => {
     addMarketplace(name, url);
@@ -417,6 +515,11 @@ export function App() {
           selectedAction={actionIndex}
           onAction={() => {}}
         />
+      ) : detailAsset ? (
+        <AssetDetail
+          asset={detailAsset}
+          selectedAction={actionIndex}
+        />
       ) : detailMarketplace ? (
         <MarketplaceDetail
           marketplace={detailMarketplace}
@@ -432,8 +535,8 @@ export function App() {
                   onChange={setSearch}
                   placeholder={
                     tab === "discover"
-                      ? "Search available plugins..."
-                      : "Search installed plugins..."
+                      ? "Search plugins and assets..."
+                      : "Search installed plugins and assets..."
                   }
                   focus={searchFocused}
                   onFocus={() => setSearchFocused(true)}
@@ -459,10 +562,17 @@ export function App() {
                 </Box>
               ) : (
                 <>
-                  <Text color="gray">User</Text>
+                  <Text color="gray">Plugins</Text>
                   <PluginList
                     plugins={filteredPlugins}
-                    selectedIndex={selectedIndex}
+                    selectedIndex={selectedIndex < pluginCount ? selectedIndex : -1}
+                    maxHeight={7}
+                  />
+                  <Text color="gray">Assets</Text>
+                  <AssetList
+                    assets={filteredAssets}
+                    selectedIndex={selectedIndex >= pluginCount ? selectedIndex - pluginCount : -1}
+                    maxHeight={5}
                   />
                 </>
               )}
@@ -477,10 +587,17 @@ export function App() {
                 </Box>
               ) : (
                 <>
-                  <Text color="gray">User</Text>
+                  <Text color="gray">Plugins</Text>
                   <PluginList
                     plugins={filteredPlugins}
-                    selectedIndex={selectedIndex}
+                    selectedIndex={selectedIndex < pluginCount ? selectedIndex : -1}
+                    maxHeight={7}
+                  />
+                  <Text color="gray">Assets</Text>
+                  <AssetList
+                    assets={filteredAssets}
+                    selectedIndex={selectedIndex >= pluginCount ? selectedIndex - pluginCount : -1}
+                    maxHeight={5}
                   />
                 </>
               )}
@@ -512,7 +629,7 @@ export function App() {
                 <Text color={syncArmed ? "yellow" : "gray"}>
                   {syncArmed
                     ? "Press y again to confirm sync"
-                    : "Press y to sync missing plugins across enabled instances"}
+                    : "Press y to sync missing or drifted items"}
                 </Text>
               </Box>
               <SyncList items={syncPreview} selectedIndex={selectedIndex} />
@@ -521,16 +638,20 @@ export function App() {
         </Box>
       )}
 
-      {(tab === "discover" || tab === "installed") && !detailPlugin && !detailMarketplace && (
-        <PluginPreview plugin={filteredPlugins[selectedIndex] ?? null} />
+      {(tab === "discover" || tab === "installed") && !detailPlugin && !detailAsset && !detailMarketplace && (
+        selectedLibraryItem?.kind === "plugin" ? (
+          <PluginPreview plugin={selectedLibraryItem.plugin} />
+        ) : (
+          <AssetPreview asset={selectedLibraryItem?.kind === "asset" ? selectedLibraryItem.asset : null} />
+        )
       )}
 
-      {tab === "sync" && !detailPlugin && !detailMarketplace && (
+      {tab === "sync" && !detailPlugin && !detailAsset && !detailMarketplace && (
         <SyncPreview item={syncPreview[selectedIndex] ?? null} />
       )}
 
       <Notifications notifications={notifications} onClear={clearNotification} />
-      <HintBar tab={tab} hasDetail={Boolean(detailPlugin || detailMarketplace)} />
+      <HintBar tab={tab} hasDetail={Boolean(detailPlugin || detailAsset || detailMarketplace)} />
       <StatusBar
         loading={loading}
         message={statusMessage}

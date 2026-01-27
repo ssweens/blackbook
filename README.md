@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![CI](https://github.com/ssweens/blackbook/actions/workflows/ci.yml/badge.svg)](https://github.com/ssweens/blackbook/actions/workflows/ci.yml)
 
-Plugin manager for agentic coding tools built with React/Ink. Install skills, commands, and agents from marketplaces to Claude Code, OpenAI Codex, OpenCode, and Amp.
+Plugin manager for agentic coding tools built with React/Ink. Install skills, commands, agents, and synced assets from marketplaces to Claude Code, OpenAI Codex, OpenCode, and Amp.
 
 ![Blackbook TUI](assets/discover-tab.png)
 
@@ -76,7 +76,7 @@ cd ~/src/blackbook/tui && pnpm start
 - **Discover/Installed**: `s` cycle sort (name/installed), `r` reverse sort
 - **Marketplaces**: `u` update marketplace, `r` remove marketplace
 - **Tools**: `Enter`/`Space` toggle enabled, `e` edit config dir
-- **Sync**: `y` sync tools (press twice to confirm)
+- **Sync**: `y` sync missing/drifted items (press twice to confirm)
 
 ## Configuration
 
@@ -156,6 +156,27 @@ Tools are only managed when enabled in config. On first run, Blackbook enables t
 **Supported plugin types:** skills, commands, agents, hooks, MCP servers, LSP servers.
 
 Incomplete installs are detected when a plugin is missing from any enabled instance that supports it.
+
+### Assets
+
+Assets let you sync user-level instruction files or folders (like `AGENTS.md`) into tool config directories.
+
+```toml
+[[assets]]
+name = "AGENTS.md"
+source = "~/dotfiles/AGENTS.md"
+default_target = "AGENTS.md"
+
+[assets.overrides]
+"claude-code:default" = "CLAUDE.md"
+
+[[assets]]
+name = "agent-pack"
+source = "~/dotfiles/agent-pack"
+default_target = "agent-assets"
+```
+
+Assets are synced to enabled instances and show drift if the target differs from the source.
 
 ### Private Repositories
 

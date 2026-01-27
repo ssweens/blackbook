@@ -43,10 +43,34 @@ export interface Plugin {
   updatedAt?: Date;
 }
 
-export interface SyncPreviewItem {
-  plugin: Plugin;
-  missingInstances: string[];
+export interface AssetConfig {
+  name: string;
+  source: string;
+  defaultTarget?: string;
+  overrides?: Record<string, string>;
 }
+
+export interface Asset extends AssetConfig {
+  installed: boolean;
+  partial?: boolean;
+  drifted?: boolean;
+  scope: "user" | "project";
+  sourceExists?: boolean;
+  sourceError?: string | null;
+}
+
+export type SyncPreviewItem =
+  | {
+      kind: "plugin";
+      plugin: Plugin;
+      missingInstances: string[];
+    }
+  | {
+      kind: "asset";
+      asset: Asset;
+      missingInstances: string[];
+      driftedInstances: string[];
+    };
 
 export interface Marketplace {
   name: string;
@@ -61,7 +85,7 @@ export interface Marketplace {
 }
 
 export interface InstalledItem {
-  kind: "skill" | "command" | "agent" | "hook" | "mcp";
+  kind: "skill" | "command" | "agent" | "hook" | "mcp" | "asset";
   name: string;
   source: string;
   dest: string;
@@ -83,12 +107,14 @@ export interface AppState {
   tab: Tab;
   marketplaces: Marketplace[];
   installedPlugins: Plugin[];
+  assets: Asset[];
   tools: ToolInstance[];
   search: string;
   selectedIndex: number;
   loading: boolean;
   error: string | null;
   detailPlugin: Plugin | null;
+  detailAsset: Asset | null;
   detailMarketplace: Marketplace | null;
   notifications: Notification[];
 }

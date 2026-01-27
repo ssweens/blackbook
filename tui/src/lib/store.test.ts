@@ -336,7 +336,10 @@ describe("Store sync tools", () => {
 
     const preview = useStore.getState().getSyncPreview();
     expect(preview).toHaveLength(1);
-    expect(preview[0].plugin.name).toBe("partial-plugin");
-    expect(preview[0].missingInstances).toContain("OpenCode Secondary");
+    expect(preview[0].kind).toBe("plugin");
+    if (preview[0].kind === "plugin") {
+      expect(preview[0].plugin.name).toBe("partial-plugin");
+      expect(preview[0].missingInstances).toContain("OpenCode Secondary");
+    }
   });
 });
