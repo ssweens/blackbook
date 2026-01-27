@@ -677,12 +677,14 @@ describe("Multi-tool linking", () => {
     createPluginFiles(pluginDir, plugin);
 
     const toolNoSkills = createMockTool({
-      id: "no-skills",
+      toolId: "no-skills",
+      instanceId: "no-skills",
       configDir: join(TEST_CONFIG_DIR, "no-skills"),
       skillsSubdir: null,
     });
     const toolNoCommands = createMockTool({
-      id: "no-commands",
+      toolId: "no-commands",
+      instanceId: "no-commands",
       configDir: join(TEST_CONFIG_DIR, "no-commands"),
       commandsSubdir: null,
     });
