@@ -31,10 +31,11 @@ export function PluginList({
       };
     }
 
-    let start = Math.max(0, selectedIndex - Math.floor(maxHeight / 2));
-    if (start + maxHeight > plugins.length) {
-      start = Math.max(0, plugins.length - maxHeight);
-    }
+    const maxStart = Math.max(0, plugins.length - maxHeight);
+    const start = Math.min(
+      Math.max(0, selectedIndex - (maxHeight - 1)),
+      maxStart
+    );
 
     return {
       visiblePlugins: plugins.slice(start, start + maxHeight),

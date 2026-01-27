@@ -76,6 +76,7 @@ cd ~/src/blackbook/tui && pnpm start
 - **Discover/Installed**: `s` cycle sort (name/installed), `r` reverse sort
 - **Marketplaces**: `u` update marketplace, `r` remove marketplace
 - **Tools**: `Enter`/`Space` toggle enabled, `e` edit config dir
+- **Sync**: `y` sync tools (press twice to confirm)
 
 ## Configuration
 

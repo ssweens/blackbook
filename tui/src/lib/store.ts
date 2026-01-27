@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Tab, Marketplace, Plugin, AppState, Notification } from "./types.js";
+import type { Tab, Marketplace, Plugin, AppState, Notification, SyncPreviewItem } from "./types.js";
 import {
   parseMarketplaces,
   addMarketplace as addMarketplaceToConfig,
@@ -19,6 +19,7 @@ import {
   uninstallPlugin,
   updatePlugin,
   getPluginToolStatus,
+  syncPluginInstances,
 } from "./install.js";
 
 interface Actions {
@@ -39,6 +40,8 @@ interface Actions {
   updateMarketplace: (name: string) => Promise<void>;
   toggleToolEnabled: (toolId: string, instanceId: string) => Promise<void>;
   updateToolConfigDir: (toolId: string, instanceId: string, configDir: string) => Promise<void>;
+  getSyncPreview: () => SyncPreviewItem[];
+  syncTools: (items: SyncPreviewItem[]) => Promise<void>;
   notify: (message: string, type?: Notification["type"]) => void;
   clearNotification: (id: string) => void;
 }
@@ -58,6 +61,24 @@ function getInstallStatus(plugin: Plugin, installedAny: boolean): { installed: b
 
   const partial = supportedEnabled.some((status) => !status.installed);
   return { installed: true, partial };
+}
+
+function buildSyncPreview(plugins: Plugin[]): SyncPreviewItem[] {
+  const preview: SyncPreviewItem[] = [];
+  for (const plugin of plugins) {
+    const statuses = getPluginToolStatus(plugin);
+    const supportedEnabled = statuses.filter((status) => status.enabled && status.supported);
+    if (supportedEnabled.length === 0) continue;
+    const installedAny = supportedEnabled.some((status) => status.installed);
+    if (!installedAny) continue;
+    const missingInstances = supportedEnabled
+      .filter((status) => !status.installed)
+      .map((status) => status.name);
+    if (missingInstances.length === 0) continue;
+
+    preview.push({ plugin, missingInstances });
+  }
+  return preview;
 }
 
 export const useStore = create<Store>((set, get) => ({
@@ -282,6 +303,45 @@ export const useStore = create<Store>((set, get) => ({
     await get().refreshAll();
     const tool = get().tools.find((t) => t.toolId === toolId && t.instanceId === instanceId);
     notify(`Updated ${tool?.name ?? `${toolId}:${instanceId}`} config_dir`, "success");
+  },
+
+  getSyncPreview: () => {
+    const { plugins } = getAllInstalledPlugins();
+    return buildSyncPreview(plugins);
+  },
+
+  syncTools: async (items) => {
+    const { notify } = get();
+    if (items.length === 0) {
+      notify("All enabled instances are in sync.", "success");
+      return;
+    }
+
+    const marketplaces = get().marketplaces;
+    notify(`Syncing ${items.length} plugins...`, "info");
+
+    const errors: string[] = [];
+    let syncedPlugins = 0;
+
+    for (const item of items) {
+      const marketplaceUrl = marketplaces.find((m) => m.name === item.plugin.marketplace)?.url;
+      const statuses = getPluginToolStatus(item.plugin)
+        .filter((status) => status.enabled && status.supported && !status.installed);
+      if (statuses.length === 0) continue;
+
+      const result = await syncPluginInstances(item.plugin, marketplaceUrl, statuses);
+      if (result.success) syncedPlugins += 1;
+      errors.push(...result.errors);
+    }
+
+    await get().refreshAll();
+
+    if (syncedPlugins > 0) {
+      notify(`✓ Synced ${syncedPlugins} plugins`, errors.length ? "success" : "success");
+    }
+    if (errors.length > 0) {
+      notify(`⚠ Sync completed with errors: ${errors.slice(0, 3).join("; ")}`, "error");
+    }
   },
 
   addMarketplace: (name, url) => {

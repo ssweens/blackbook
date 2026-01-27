@@ -43,6 +43,11 @@ export interface Plugin {
   updatedAt?: Date;
 }
 
+export interface SyncPreviewItem {
+  plugin: Plugin;
+  missingInstances: string[];
+}
+
 export interface Marketplace {
   name: string;
   url: string;
@@ -63,7 +68,7 @@ export interface InstalledItem {
   backup: string | null;
 }
 
-export type Tab = "discover" | "installed" | "marketplaces" | "tools";
+export type Tab = "discover" | "installed" | "marketplaces" | "tools" | "sync";
 
 export interface Notification {
   id: string;

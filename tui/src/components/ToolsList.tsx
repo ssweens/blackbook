@@ -19,10 +19,11 @@ export function ToolsList({ tools, selectedIndex, maxHeight = 12 }: ToolsListPro
       };
     }
 
-    let start = Math.max(0, selectedIndex - Math.floor(maxHeight / 2));
-    if (start + maxHeight > tools.length) {
-      start = Math.max(0, tools.length - maxHeight);
-    }
+    const maxStart = Math.max(0, tools.length - maxHeight);
+    const start = Math.min(
+      Math.max(0, selectedIndex - (maxHeight - 1)),
+      maxStart
+    );
 
     return {
       visibleTools: tools.slice(start, start + maxHeight),
