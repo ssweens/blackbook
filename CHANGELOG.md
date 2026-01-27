@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-01-26
+
+### Added
+- Plugin preview panel showing skills, commands, agents below plugin list
+
+### Changed
+- Plugin list no longer expands inline when navigating (eliminates list jumping)
+- Plugin detail components section now uses compact comma-separated format
+
 ## [0.4.1] - 2026-01-26
 
 ### Added
@@ -107,7 +116,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Symlink handling for plugin assets
 
-[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/ssweens/blackbook/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/ssweens/blackbook/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ssweens/blackbook/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ssweens/blackbook/compare/v0.2.0...v0.3.0

@@ -4,6 +4,7 @@ import { useStore } from "./lib/store.js";
 import { TabBar } from "./components/TabBar.js";
 import { SearchBox } from "./components/SearchBox.js";
 import { PluginList } from "./components/PluginList.js";
+import { PluginPreview } from "./components/PluginPreview.js";
 import { PluginDetail } from "./components/PluginDetail.js";
 import { MarketplaceList } from "./components/MarketplaceList.js";
 import { MarketplaceDetail } from "./components/MarketplaceDetail.js";
@@ -421,7 +422,6 @@ export function App() {
                   <PluginList
                     plugins={filteredPlugins}
                     selectedIndex={selectedIndex}
-                    showNested
                   />
                 </>
               )}
@@ -440,7 +440,6 @@ export function App() {
                   <PluginList
                     plugins={filteredPlugins}
                     selectedIndex={selectedIndex}
-                    showNested
                   />
                 </>
               )}
@@ -466,6 +465,10 @@ export function App() {
             <ToolsList tools={tools} selectedIndex={selectedIndex} />
           )}
         </Box>
+      )}
+
+      {(tab === "discover" || tab === "installed") && !detailPlugin && !detailMarketplace && (
+        <PluginPreview plugin={filteredPlugins[selectedIndex] ?? null} />
       )}
 
       <Notifications notifications={notifications} onClear={clearNotification} />

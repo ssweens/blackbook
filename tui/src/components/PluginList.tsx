@@ -5,14 +5,12 @@ import type { Plugin } from "../lib/types.js";
 interface PluginListProps {
   plugins: Plugin[];
   selectedIndex: number;
-  showNested?: boolean;
   maxHeight?: number;
 }
 
 export function PluginList({
   plugins,
   selectedIndex,
-  showNested = false,
   maxHeight = 12,
 }: PluginListProps) {
   // Calculate max lengths for column alignment
@@ -72,26 +70,6 @@ export function PluginList({
         const statusColor = plugin.installed ? "green" : "gray";
         const showPartial = Boolean(plugin.installed && plugin.partial);
 
-        const componentParts: string[] = [];
-        if (plugin.skills.length > 0) {
-          componentParts.push(`Skills: ${plugin.skills.join(", ")}`);
-        }
-        if (plugin.commands.length > 0) {
-          componentParts.push(`Commands: ${plugin.commands.join(", ")}`);
-        }
-        if (plugin.agents.length > 0) {
-          componentParts.push(`Agents: ${plugin.agents.join(", ")}`);
-        }
-        if (plugin.hooks.length > 0) {
-          componentParts.push("Hooks ✔");
-        }
-        if (plugin.hasMcp) {
-          componentParts.push("MCP Server ✔");
-        }
-        if (plugin.hasLsp) {
-          componentParts.push("LSP Server ✔");
-        }
-
         const paddedName = plugin.name.padEnd(maxNameLen);
 
         return (
@@ -117,19 +95,6 @@ export function PluginList({
                 </>
               )}
             </Box>
-
-            {isSelected && componentParts.length > 0 && (
-              <Box marginLeft={2} flexDirection="column">
-                {componentParts.map((part, i) => (
-                  <Box key={i}>
-                    <Text color="gray">    </Text>
-                    <Text color="cyan">{part}</Text>
-                  </Box>
-                ))}
-              </Box>
-            )}
-
-
           </Box>
         );
       })}
