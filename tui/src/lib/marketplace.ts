@@ -104,56 +104,56 @@ async function fetchPluginContents(
   hooks: string[];
   hasMcp: boolean;
 }> {
-  const result: {
-    skills: string[];
-    commands: string[];
-    agents: string[];
-    hooks: string[];
-    hasMcp: boolean;
-  } = { skills: [], commands: [], agents: [], hooks: [], hasMcp: false };
-  
   const cleanPath = path.replace(/^\.\//, "");
 
   try {
     const items = await fetchGitHubTree(repo, branch, cleanPath);
 
+    // Collect directories that need sub-fetching
+    const subFetches: Promise<void>[] = [];
+    const result = { skills: [] as string[], commands: [] as string[], agents: [] as string[], hooks: [] as string[], hasMcp: false };
+
     for (const item of items) {
       const baseName = item.name.split("/")[0];
       
       if (item.contentType === "directory") {
-        if (baseName === "skills") {
-          if (item.name === "skills") {
-            const skillItems = await fetchGitHubTree(repo, branch, item.path);
-            result.skills = skillItems
-              .filter((s) => s.contentType === "directory")
-              .map((s) => s.name);
-          } else if (item.name.startsWith("skills/")) {
-            const skillName = item.name.replace("skills/", "");
-            if (!skillName.includes("/")) {
-              result.skills.push(skillName);
-            }
+        if (item.name === "skills") {
+          subFetches.push(
+            fetchGitHubTree(repo, branch, item.path).then((skillItems) => {
+              result.skills = skillItems
+                .filter((s) => s.contentType === "directory")
+                .map((s) => s.name);
+            })
+          );
+        } else if (baseName === "skills" && item.name.startsWith("skills/")) {
+          const skillName = item.name.replace("skills/", "");
+          if (!skillName.includes("/")) {
+            result.skills.push(skillName);
           }
-        } else if (baseName === "commands") {
-          if (item.name === "commands") {
-            const cmdItems = await fetchGitHubTree(repo, branch, item.path);
-            result.commands = cmdItems
-              .filter((c) => c.name.endsWith(".md"))
-              .map((c) => c.name.replace(/\.md$/, ""));
-          }
-        } else if (baseName === "agents") {
-          if (item.name === "agents") {
-            const agentItems = await fetchGitHubTree(repo, branch, item.path);
-            result.agents = agentItems
-              .filter((a) => a.name.endsWith(".md"))
-              .map((a) => a.name.replace(/\.md$/, ""));
-          }
-        } else if (baseName === "hooks") {
-          if (item.name === "hooks") {
-            const hookItems = await fetchGitHubTree(repo, branch, item.path);
-            result.hooks = hookItems
-              .filter((h) => h.name.endsWith(".md") || h.name.endsWith(".json"))
-              .map((h) => h.name.replace(/\.(md|json)$/, ""));
-          }
+        } else if (item.name === "commands") {
+          subFetches.push(
+            fetchGitHubTree(repo, branch, item.path).then((cmdItems) => {
+              result.commands = cmdItems
+                .filter((c) => c.name.endsWith(".md"))
+                .map((c) => c.name.replace(/\.md$/, ""));
+            })
+          );
+        } else if (item.name === "agents") {
+          subFetches.push(
+            fetchGitHubTree(repo, branch, item.path).then((agentItems) => {
+              result.agents = agentItems
+                .filter((a) => a.name.endsWith(".md"))
+                .map((a) => a.name.replace(/\.md$/, ""));
+            })
+          );
+        } else if (item.name === "hooks") {
+          subFetches.push(
+            fetchGitHubTree(repo, branch, item.path).then((hookItems) => {
+              result.hooks = hookItems
+                .filter((h) => h.name.endsWith(".md") || h.name.endsWith(".json"))
+                .map((h) => h.name.replace(/\.(md|json)$/, ""));
+            })
+          );
         }
       }
       
@@ -181,11 +181,12 @@ async function fetchPluginContents(
         result.hasMcp = true;
       }
     }
-  } catch {
-    // Ignore fetch errors
-  }
 
-  return result;
+    await Promise.all(subFetches);
+    return result;
+  } catch {
+    return { skills: [], commands: [], agents: [], hooks: [], hasMcp: false };
+  }
 }
 
 export async function fetchMarketplace(marketplace: Marketplace): Promise<Plugin[]> {
@@ -209,9 +210,9 @@ export async function fetchMarketplace(marketplace: Marketplace): Promise<Plugin
   }
 
   const repoInfo = parseGithubRepoFromUrl(marketplace.url);
-  const plugins: Plugin[] = [];
 
-  for (const p of data?.plugins || []) {
+  // Fetch all plugin contents in parallel
+  const pluginPromises = (data?.plugins || []).map(async (p) => {
     let skills: string[] = [];
     let commands: string[] = [];
     let agents: string[] = [];
@@ -263,7 +264,7 @@ export async function fetchMarketplace(marketplace: Marketplace): Promise<Plugin
     const hasLspFromManifest = p.lspServers && Object.keys(p.lspServers).length > 0;
     const hasMcpFromManifest = p.mcpServers && Object.keys(p.mcpServers).length > 0;
 
-    plugins.push({
+    return {
       name: p.name || "",
       marketplace: marketplace.name,
       description: p.description || "",
@@ -276,11 +277,11 @@ export async function fetchMarketplace(marketplace: Marketplace): Promise<Plugin
       hasLsp: Boolean(hasLspFromManifest),
       homepage,
       installed: false,
-      scope: "user",
-    });
-  }
+      scope: "user" as const,
+    };
+  });
 
-  return plugins;
+  return Promise.all(pluginPromises);
 }
 
 export async function fetchAllMarketplaces(

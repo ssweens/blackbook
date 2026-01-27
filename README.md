@@ -1,6 +1,8 @@
 # Blackbook
 
-Plugin manager for agentic coding tools. Install skills, commands, and agents from marketplaces to Claude Code, OpenAI Codex, OpenCode, and Amp.
+Plugin manager for agentic coding tools built with React/Ink. Install skills, commands, and agents from marketplaces to Claude Code, OpenAI Codex, OpenCode, and Amp.
+
+![Blackbook TUI](assets/discover-tab.png)
 
 ## Features
 
@@ -8,6 +10,10 @@ Plugin manager for agentic coding tools. Install skills, commands, and agents fr
 - **Marketplace support** - Browse and install from official and community marketplaces
 - **TUI interface** - Interactive terminal UI for plugin discovery and management
 - **Cross-tool sync** - Install plugins to multiple tools at once
+
+## Plugin Model
+
+Everything is a plugin. Plugins can include skills, commands, agents, hooks, MCP servers, and LSP servers.
 
 ## Supported Tools
 
@@ -38,12 +44,20 @@ cd ~/src/blackbook/tui && pnpm start
 
 ### Navigation
 
-- **Tab / ←→** - Switch between Discover, Installed, Marketplaces tabs
-- **↑↓** - Navigate lists
-- **Enter** - Select/view details
-- **Space** - Quick install/uninstall
-- **Esc** - Go back
-- **q** - Quit
+| Key | Action |
+|-----|--------|
+| Tab / ← → | Switch tabs |
+| ↑ ↓ | Navigate lists |
+| Enter | Select / open details |
+| Space | Install/uninstall selected plugin |
+| / | Focus search (Discover/Installed) |
+| Esc | Back from details or exit search |
+| q | Quit |
+
+### Shortcuts
+
+- **Discover/Installed**: `s` cycle sort (name/installed), `r` reverse sort
+- **Marketplaces**: `u` update marketplace, `r` remove marketplace
 
 ## Configuration
 
@@ -63,7 +77,7 @@ Or set `XDG_CONFIG_HOME` to use a custom location.
 # ~/.config/blackbook/config.toml
 
 # Marketplaces to fetch plugins from
-# These extend the built-in defaults (official, compound-engineering)
+# These extend the initial defaults and any Claude marketplaces
 [marketplaces]
 playbook = "https://raw.githubusercontent.com/ssweens/playbook/main/.claude-plugin/marketplace.json"
 my-private = "https://raw.githubusercontent.com/myorg/plugins/main/.claude-plugin/marketplace.json"
@@ -78,12 +92,13 @@ config_dir = "~/.config/opencode"
 
 ### Default Marketplaces
 
-These are included by default and don't need to be added:
+The default config includes Anthropic's official marketplace:
 
 | Name | URL |
 |------|-----|
-| `official` | Anthropic's official Claude plugins |
-| `compound-engineering` | Compound Engineering community plugins |
+| `claude-plugins-official` | https://raw.githubusercontent.com/anthropics/claude-plugins-official/main/.claude-plugin/marketplace.json |
+
+If you already use Claude plugins, Blackbook also reads known marketplaces from `~/.claude/plugins/known_marketplaces.json`.
 
 ### Private Repositories
 
@@ -128,6 +143,13 @@ pnpm test         # Run tests
 pnpm typecheck    # Type check
 pnpm build        # Build for production
 ```
+
+### TUI Code Layout
+
+- `tui/src/cli.tsx` entry point
+- `tui/src/App.tsx` app shell
+- `tui/src/components/` UI components
+- `tui/src/lib/` config, marketplace, install, state
 
 ## Related
 

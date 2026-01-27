@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Box, Text } from "ink";
 import type { Marketplace } from "../lib/types.js";
 
@@ -24,6 +24,10 @@ export function MarketplaceList({
 }: MarketplaceListProps) {
   const offset = showAddOption ? 1 : 0;
 
+  const maxNameLen = useMemo(() => {
+    return Math.min(30, Math.max(...marketplaces.map(m => m.name.length), 10));
+  }, [marketplaces]);
+
   return (
     <Box flexDirection="column">
       <Box marginBottom={1}>
@@ -44,6 +48,7 @@ export function MarketplaceList({
         const isSelected = selectedIndex === index;
         const hasNew = m.installedCount > 0;
         const isReadOnly = m.source === "claude";
+        const paddedName = m.name.padEnd(maxNameLen);
 
         return (
           <Box key={m.name} flexDirection="column" marginTop={i === 0 && showAddOption ? 1 : 0}>
@@ -53,8 +58,8 @@ export function MarketplaceList({
               </Text>
               <Text color="gray">● </Text>
               {hasNew && <Text color="yellow">* </Text>}
-              <Text bold={isSelected} color={isSelected ? "white" : "gray"}>
-                {m.name}
+              <Text bold={isSelected} color="white">
+                {paddedName}
               </Text>
               {hasNew && <Text color="yellow"> *</Text>}
               {isReadOnly && <Text color="magenta"> (Claude)</Text>}

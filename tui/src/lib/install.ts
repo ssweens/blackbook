@@ -131,7 +131,13 @@ export function saveManifest(manifest: Manifest, cacheDir?: string): void {
   writeFileSync(path, JSON.stringify(manifest, null, 2));
 }
 
-export function createSymlink(source: string, target: string, backup = true): boolean {
+export function createSymlink(
+  source: string,
+  target: string,
+  pluginName?: string,
+  itemKind?: string,
+  itemName?: string
+): boolean {
   if (!existsSync(source)) return false;
 
   mkdirSync(dirname(target), { recursive: true });
@@ -147,13 +153,14 @@ export function createSymlink(source: string, target: string, backup = true): bo
       }
     }
 
-    if (!backup) return false;
+    if (!pluginName || !itemKind || !itemName) return false;
 
-    let backupPath = `${target}.bak`;
-    let i = 1;
-    while (existsSync(backupPath) || isSymlink(backupPath)) {
-      backupPath = `${target}.bak.${i}`;
-      i++;
+    const backupDir = join(getCacheDir(), "backups", pluginName, itemKind);
+    mkdirSync(backupDir, { recursive: true });
+    const backupPath = join(backupDir, itemName);
+
+    if (existsSync(backupPath) || isSymlink(backupPath)) {
+      rmSync(backupPath, { recursive: true, force: true });
     }
     renameSync(target, backupPath);
   }
@@ -564,7 +571,7 @@ export function linkPluginToTool(
 
     if (tool.skillsSubdir) {
       const target = join(tool.configDir, tool.skillsSubdir, skill);
-      if (createSymlink(source, target)) {
+      if (createSymlink(source, target, plugin.name, "skill", skill)) {
         manifest.tools[toolId].items[`skill:${skill}`] = {
           kind: "skill",
           name: skill,
@@ -583,7 +590,7 @@ export function linkPluginToTool(
 
     if (tool.commandsSubdir) {
       const target = join(tool.configDir, tool.commandsSubdir, `${cmd}.md`);
-      if (createSymlink(source, target)) {
+      if (createSymlink(source, target, plugin.name, "command", `${cmd}.md`)) {
         manifest.tools[toolId].items[`command:${cmd}`] = {
           kind: "command",
           name: cmd,
@@ -602,7 +609,7 @@ export function linkPluginToTool(
 
     if (tool.agentsSubdir) {
       const target = join(tool.configDir, tool.agentsSubdir, `${agent}.md`);
-      if (createSymlink(source, target)) {
+      if (createSymlink(source, target, plugin.name, "agent", `${agent}.md`)) {
         manifest.tools[toolId].items[`agent:${agent}`] = {
           kind: "agent",
           name: agent,

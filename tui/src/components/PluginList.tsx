@@ -15,6 +15,14 @@ export function PluginList({
   showNested = false,
   maxHeight = 12,
 }: PluginListProps) {
+  // Calculate max lengths for column alignment
+  const { maxNameLen, maxMarketplaceLen } = useMemo(() => {
+    return {
+      maxNameLen: Math.min(30, Math.max(...plugins.map(p => p.name.length), 10)),
+      maxMarketplaceLen: Math.max(...plugins.map(p => p.marketplace.length), 10),
+    };
+  }, [plugins]);
+
   const { visiblePlugins, startIndex, hasMore, hasPrev } = useMemo(() => {
     if (plugins.length <= maxHeight) {
       return {
@@ -83,18 +91,20 @@ export function PluginList({
           componentParts.push("LSP Server ✔");
         }
 
+        const paddedName = plugin.name.padEnd(maxNameLen);
+
         return (
           <Box key={`${plugin.marketplace}:${plugin.name}`} flexDirection="column">
             <Box>
               <Text color={isSelected ? "cyan" : "white"}>{indicator} </Text>
-              <Text bold={isSelected} color={isSelected ? "white" : "gray"}>
-                {plugin.name}
+              <Text bold={isSelected} color="white">
+                {paddedName}
               </Text>
               <Text color="gray"> </Text>
-              <Text color="blue">{typeLabel}</Text>
+              <Text color="blue">{typeLabel.padEnd(6)}</Text>
               <Text color="gray"> · </Text>
-              <Text color="gray">{plugin.marketplace}</Text>
-              <Text color="gray"> · </Text>
+              <Text color="gray">{plugin.marketplace.padEnd(maxMarketplaceLen)}</Text>
+              <Text color="gray"> </Text>
               <Text color={statusColor}>{statusIcon}</Text>
               <Text color={statusColor}>
                 {plugin.installed ? " installed" : ""}
@@ -112,16 +122,7 @@ export function PluginList({
               </Box>
             )}
 
-            {showNested && plugin.hasMcp && isSelected && (
-              <Box marginLeft={2}>
-                <Text color="gray">└ </Text>
-                <Text>{plugin.name}</Text>
-                <Text color="gray"> </Text>
-                <Text color="blue">MCP</Text>
-                <Text color="gray"> · </Text>
-                <Text color="green">✔ connected</Text>
-              </Box>
-            )}
+
           </Box>
         );
       })}
