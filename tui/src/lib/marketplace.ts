@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "fs";
-import { join, dirname } from "path";
+import { join, dirname, resolve } from "path";
 import { createHash } from "crypto";
+import { homedir } from "os";
+import { fileURLToPath } from "url";
 import { getCacheDir } from "./config.js";
 import type { Marketplace, Plugin } from "./types.js";
 
@@ -84,6 +86,39 @@ function isGitHubHost(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+function resolveLocalMarketplacePath(url: string, isLocal: boolean): string | null {
+  if (!url) return null;
+  if (url.startsWith("file://")) {
+    try {
+      return fileURLToPath(url);
+    } catch {
+      return null;
+    }
+  }
+
+  const looksLocal =
+    isLocal ||
+    url.startsWith("/") ||
+    url.startsWith("~") ||
+    url.startsWith("./") ||
+    url.startsWith("../");
+
+  if (!looksLocal && url.includes("://")) return null;
+
+  let normalized = url;
+  if (normalized.startsWith("~")) {
+    normalized = resolve(homedir(), normalized.slice(1));
+  } else if (!normalized.startsWith("/")) {
+    normalized = resolve(process.cwd(), normalized);
+  }
+
+  if (looksLocal || existsSync(normalized)) {
+    return normalized;
+  }
+
+  return null;
 }
 
 async function fetchGitHubTree(repo: string, branch: string, path: string): Promise<GitHubTreeItem[]> {
@@ -217,18 +252,40 @@ export async function fetchMarketplace(marketplace: Marketplace): Promise<Plugin
 
   if (!data) {
     try {
-      const headers: Record<string, string> = {};
-      const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-      if (token && isGitHubHost(marketplace.url)) {
-        headers["Authorization"] = `token ${token}`;
+      const localPath = resolveLocalMarketplacePath(marketplace.url, marketplace.isLocal);
+      if (localPath) {
+        let targetPath = localPath;
+        if (existsSync(localPath) && statSync(localPath).isDirectory()) {
+          const candidate = join(localPath, "marketplace.json");
+          const fallback = join(localPath, ".claude-plugin", "marketplace.json");
+          if (existsSync(candidate)) {
+            targetPath = candidate;
+          } else if (existsSync(fallback)) {
+            targetPath = fallback;
+          } else {
+            console.error(`Local marketplace directory missing marketplace.json: ${localPath}`);
+            return [];
+          }
+        }
+        if (!existsSync(targetPath)) {
+          console.error(`Local marketplace path not found: ${targetPath}`);
+          return [];
+        }
+        data = JSON.parse(readFileSync(targetPath, "utf-8"));
+      } else {
+        const headers: Record<string, string> = {};
+        const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+        if (token && isGitHubHost(marketplace.url)) {
+          headers["Authorization"] = `token ${token}`;
+        }
+        const res = await fetch(marketplace.url, { headers });
+        if (!res.ok) {
+          console.error(`Failed to fetch marketplace ${marketplace.url}: HTTP ${res.status}`);
+          return [];
+        }
+        data = await res.json();
+        cacheSet(cacheKey, data);
       }
-      const res = await fetch(marketplace.url, { headers });
-      if (!res.ok) {
-        console.error(`Failed to fetch marketplace ${marketplace.url}: HTTP ${res.status}`);
-        return [];
-      }
-      data = await res.json();
-      cacheSet(cacheKey, data);
     } catch (error) {
       console.error(`Failed to fetch marketplace ${marketplace.url}: ${error instanceof Error ? error.message : String(error)}`);
       return [];

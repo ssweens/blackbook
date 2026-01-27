@@ -390,7 +390,7 @@ export const useStore = create<Store>((set, get) => ({
   getSyncPreview: () => {
     const { plugins } = getAllInstalledPlugins();
     const assets = get().assets.length > 0 ? get().assets : get().loadAssets();
-    return [...buildSyncPreview(plugins), ...buildAssetSyncPreview(assets)];
+    return [...buildAssetSyncPreview(assets), ...buildSyncPreview(plugins)];
   },
 
   syncTools: async (items) => {
@@ -455,7 +455,12 @@ export const useStore = create<Store>((set, get) => ({
         {
           name,
           url,
-          isLocal: url.startsWith("/") || url.startsWith("~"),
+          isLocal:
+            url.startsWith("/") ||
+            url.startsWith("~") ||
+            url.startsWith("./") ||
+            url.startsWith("../") ||
+            url.startsWith("file://"),
           plugins: [],
           availableCount: 0,
           installedCount: 0,

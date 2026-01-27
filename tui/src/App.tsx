@@ -84,11 +84,34 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (tab === "sync") {
-      setSyncPreview(getSyncPreview());
-      setSyncArmed(false);
-    }
-  }, [tab, marketplaces, installedPlugins, assets]);
+    if (tab !== "sync") return;
+    const preview = getSyncPreview();
+    setSyncPreview((current) => {
+      const isSame =
+        preview.length === current.length &&
+        preview.every((item, index) => {
+          const existing = current[index];
+          if (!existing) return false;
+          if (existing.kind !== item.kind) return false;
+          if (item.kind === "plugin" && existing.kind === "plugin") {
+            return (
+              existing.plugin.name === item.plugin.name &&
+              existing.missingInstances.join("|") === item.missingInstances.join("|")
+            );
+          }
+          if (item.kind === "asset" && existing.kind === "asset") {
+            return (
+              existing.asset.name === item.asset.name &&
+              existing.missingInstances.join("|") === item.missingInstances.join("|") &&
+              existing.driftedInstances.join("|") === item.driftedInstances.join("|")
+            );
+          }
+          return false;
+        });
+      return isSame ? current : preview;
+    });
+    setSyncArmed(false);
+  }, [tab, marketplaces, installedPlugins, assets, getSyncPreview]);
 
   useEffect(() => {
     if (!syncArmed) return;
@@ -157,8 +180,9 @@ export function App() {
     return sorted;
   }, [tab, assets, search, sortBy, sortDir]);
 
+  const assetCount = filteredAssets.length;
   const pluginCount = filteredPlugins.length;
-  const libraryCount = pluginCount + filteredAssets.length;
+  const libraryCount = assetCount + pluginCount;
 
   const maxIndex = useMemo(() => {
     if (tab === "marketplaces") {
@@ -179,15 +203,15 @@ export function App() {
       | { kind: "asset"; asset: Asset }
       | null => {
       if (tab !== "discover" && tab !== "installed") return null;
-      if (selectedIndex < pluginCount) {
-        const plugin = filteredPlugins[selectedIndex];
-        return plugin ? { kind: "plugin", plugin } : null;
+      if (selectedIndex < assetCount) {
+        const asset = filteredAssets[selectedIndex];
+        return asset ? { kind: "asset", asset } : null;
       }
-      const assetIndex = selectedIndex - pluginCount;
-      const asset = filteredAssets[assetIndex];
-      return asset ? { kind: "asset", asset } : null;
+      const pluginIndex = selectedIndex - assetCount;
+      const plugin = filteredPlugins[pluginIndex];
+      return plugin ? { kind: "plugin", plugin } : null;
     },
-    [tab, selectedIndex, filteredPlugins, filteredAssets, pluginCount]
+    [tab, selectedIndex, filteredPlugins, filteredAssets, assetCount]
   );
 
   const getPluginActions = (plugin: typeof detailPlugin) => {
@@ -562,17 +586,17 @@ export function App() {
                 </Box>
               ) : (
                 <>
-                  <Text color="gray">Plugins</Text>
-                  <PluginList
-                    plugins={filteredPlugins}
-                    selectedIndex={selectedIndex < pluginCount ? selectedIndex : -1}
-                    maxHeight={7}
-                  />
                   <Text color="gray">Assets</Text>
                   <AssetList
                     assets={filteredAssets}
-                    selectedIndex={selectedIndex >= pluginCount ? selectedIndex - pluginCount : -1}
+                    selectedIndex={selectedIndex < assetCount ? selectedIndex : -1}
                     maxHeight={5}
+                  />
+                  <Text color="gray">Plugins</Text>
+                  <PluginList
+                    plugins={filteredPlugins}
+                    selectedIndex={selectedIndex >= assetCount ? selectedIndex - assetCount : -1}
+                    maxHeight={7}
                   />
                 </>
               )}
@@ -587,17 +611,17 @@ export function App() {
                 </Box>
               ) : (
                 <>
-                  <Text color="gray">Plugins</Text>
-                  <PluginList
-                    plugins={filteredPlugins}
-                    selectedIndex={selectedIndex < pluginCount ? selectedIndex : -1}
-                    maxHeight={7}
-                  />
                   <Text color="gray">Assets</Text>
                   <AssetList
                     assets={filteredAssets}
-                    selectedIndex={selectedIndex >= pluginCount ? selectedIndex - pluginCount : -1}
+                    selectedIndex={selectedIndex < assetCount ? selectedIndex : -1}
                     maxHeight={5}
+                  />
+                  <Text color="gray">Plugins</Text>
+                  <PluginList
+                    plugins={filteredPlugins}
+                    selectedIndex={selectedIndex >= assetCount ? selectedIndex - assetCount : -1}
+                    maxHeight={7}
                   />
                 </>
               )}
