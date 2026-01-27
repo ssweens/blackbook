@@ -12,7 +12,7 @@ import {
 import { dirname } from "path";
 import { join } from "path";
 import { tmpdir } from "os";
-import type { Plugin, ToolTarget } from "./types.js";
+import type { Plugin, ToolInstance } from "./types.js";
 import {
   createSymlink,
   removeSymlink,
@@ -20,7 +20,6 @@ import {
   loadManifest,
   saveManifest,
   manifestPath,
-  linkPluginToTool,
 } from "./install.js";
 
 const TEST_DIR = join(tmpdir(), "blackbook-test-" + Date.now());
@@ -46,9 +45,10 @@ function createMockPlugin(overrides: Partial<Plugin> = {}): Plugin {
   };
 }
 
-function createMockTool(overrides: Partial<ToolTarget> = {}): ToolTarget {
+function createMockTool(overrides: Partial<ToolInstance> = {}): ToolInstance {
   return {
-    id: "test-tool",
+    toolId: "test-tool",
+    instanceId: "default",
     name: "Test Tool",
     configDir: join(TEST_CONFIG_DIR, "test-tool"),
     skillsSubdir: "skills",
@@ -350,7 +350,7 @@ describe("Manifest operations", () => {
   it("preserves existing entries when adding new ones", () => {
     const initial = {
       tools: {
-        "tool-a": {
+        "tool-a:default": {
           items: {
             "skill:existing": {
               kind: "skill" as const,
@@ -366,7 +366,7 @@ describe("Manifest operations", () => {
     saveManifest(initial, TEST_CACHE_DIR);
 
     const loaded = loadManifest(TEST_CACHE_DIR);
-    loaded.tools["tool-b"] = {
+    loaded.tools["tool-b:default"] = {
       items: {
         "command:new": {
           kind: "command",
@@ -380,12 +380,12 @@ describe("Manifest operations", () => {
     saveManifest(loaded, TEST_CACHE_DIR);
 
     const final = loadManifest(TEST_CACHE_DIR);
-    expect(final.tools["tool-a"]).toBeDefined();
-    expect(final.tools["tool-b"]).toBeDefined();
+    expect(final.tools["tool-a:default"]).toBeDefined();
+    expect(final.tools["tool-b:default"]).toBeDefined();
   });
 });
 
-describe("linkPluginToTool", () => {
+describe("linkPluginToInstance", () => {
   beforeEach(setupTestDirs);
   afterEach(cleanupTestDirs);
 
@@ -520,7 +520,7 @@ describe("Unlink plugin from tool", () => {
     // First save with item
     const initialManifest = {
       tools: {
-        "test-tool": {
+        "test-tool:default": {
           items: {
             "skill:skill-a": {
               kind: "skill" as const,
@@ -538,7 +538,7 @@ describe("Unlink plugin from tool", () => {
     // Unlink operation - save with empty items
     const emptyManifest = {
       tools: {
-        "test-tool": {
+        "test-tool:default": {
           items: {},
         },
       },
@@ -546,7 +546,7 @@ describe("Unlink plugin from tool", () => {
     saveManifest(emptyManifest, TEST_CACHE_DIR);
 
     const loaded = loadManifest(TEST_CACHE_DIR);
-    expect(loaded.tools["test-tool"].items["skill:skill-a"]).toBeUndefined();
+    expect(loaded.tools["test-tool:default"].items["skill:skill-a"]).toBeUndefined();
   });
 });
 
@@ -629,8 +629,8 @@ describe("Multi-tool linking", () => {
     createPluginFiles(pluginDir, plugin);
 
     const tools = [
-      createMockTool({ id: "tool-a", configDir: join(TEST_CONFIG_DIR, "tool-a") }),
-      createMockTool({ id: "tool-b", configDir: join(TEST_CONFIG_DIR, "tool-b") }),
+      createMockTool({ toolId: "tool-a", configDir: join(TEST_CONFIG_DIR, "tool-a") }),
+      createMockTool({ toolId: "tool-b", configDir: join(TEST_CONFIG_DIR, "tool-b") }),
     ];
 
     const linkedCounts: Record<string, number> = {};
@@ -655,11 +655,11 @@ describe("Multi-tool linking", () => {
         }
       }
 
-      linkedCounts[tool.id] = linked;
+      linkedCounts[`${tool.toolId}:${tool.instanceId}`] = linked;
     }
 
-    expect(linkedCounts["tool-a"]).toBe(2);
-    expect(linkedCounts["tool-b"]).toBe(2);
+    expect(linkedCounts["tool-a:default"]).toBe(2);
+    expect(linkedCounts["tool-b:default"]).toBe(2);
 
     expect(existsSync(join(tools[0].configDir, "skills", "shared-skill", "SKILL.md"))).toBe(true);
     expect(existsSync(join(tools[1].configDir, "skills", "shared-skill", "SKILL.md"))).toBe(true);
@@ -677,12 +677,14 @@ describe("Multi-tool linking", () => {
     createPluginFiles(pluginDir, plugin);
 
     const toolNoSkills = createMockTool({
-      id: "no-skills",
+      toolId: "no-skills",
+      instanceId: "no-skills",
       configDir: join(TEST_CONFIG_DIR, "no-skills"),
       skillsSubdir: null,
     });
     const toolNoCommands = createMockTool({
-      id: "no-commands",
+      toolId: "no-commands",
+      instanceId: "no-commands",
       configDir: join(TEST_CONFIG_DIR, "no-commands"),
       commandsSubdir: null,
     });
@@ -756,9 +758,10 @@ describe("Full install/uninstall workflow", () => {
 
     // Save to manifest
     const manifest = loadManifest(TEST_CACHE_DIR);
-    manifest.tools[tool.id] = { items: {} };
+    const manifestKey = `${tool.toolId}:${tool.instanceId}`;
+    manifest.tools[manifestKey] = { items: {} };
     for (const skill of plugin.skills) {
-      manifest.tools[tool.id].items[`skill:${skill}`] = {
+      manifest.tools[manifestKey].items[`skill:${skill}`] = {
         kind: "skill",
         name: skill,
         source: join(pluginDir, "skills", skill),
@@ -767,7 +770,7 @@ describe("Full install/uninstall workflow", () => {
       };
     }
     for (const cmd of plugin.commands) {
-      manifest.tools[tool.id].items[`command:${cmd}`] = {
+      manifest.tools[manifestKey].items[`command:${cmd}`] = {
         kind: "command",
         name: cmd,
         source: join(pluginDir, "commands", `${cmd}.md`),
@@ -783,21 +786,21 @@ describe("Full install/uninstall workflow", () => {
       expect(existsSync(link)).toBe(true);
       expect(isSymlink(link)).toBe(true);
     }
-    expect(Object.keys(loadManifest(TEST_CACHE_DIR).tools[tool.id].items)).toHaveLength(2);
+    expect(Object.keys(loadManifest(TEST_CACHE_DIR).tools[manifestKey].items)).toHaveLength(2);
 
     // Uninstall: remove all links
     for (const link of links) {
       removeSymlink(link);
     }
     const uninstallManifest = loadManifest(TEST_CACHE_DIR);
-    uninstallManifest.tools[tool.id].items = {};
+    uninstallManifest.tools[manifestKey].items = {};
     saveManifest(uninstallManifest, TEST_CACHE_DIR);
 
     // Verify uninstalled
     for (const link of links) {
       expect(existsSync(link)).toBe(false);
     }
-    expect(Object.keys(loadManifest(TEST_CACHE_DIR).tools[tool.id].items)).toHaveLength(0);
+    expect(Object.keys(loadManifest(TEST_CACHE_DIR).tools[manifestKey].items)).toHaveLength(0);
   });
 
   it("handles update by re-linking", () => {

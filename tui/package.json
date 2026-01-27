@@ -1,11 +1,38 @@
 {
-  "name": "blackbook-tui",
-  "version": "0.4.0",
+  "name": "@ssweens/blackbook",
+  "version": "0.4.2",
   "description": "Plugin manager for AI coding tools",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ssweens/blackbook.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ssweens/blackbook/issues"
+  },
+  "homepage": "https://github.com/ssweens/blackbook#readme",
+  "keywords": [
+    "claude",
+    "codex",
+    "opencode",
+    "amp",
+    "plugins",
+    "ai",
+    "cli",
+    "tui"
+  ],
   "type": "module",
   "main": "dist/cli.js",
   "bin": {
     "blackbook": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "dev": "tsx src/cli.tsx",

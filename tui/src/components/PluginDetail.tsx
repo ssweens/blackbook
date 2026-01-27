@@ -76,8 +76,8 @@ export function PluginDetail({ plugin, selectedAction }: PluginDetailProps) {
             }
 
             return (
-            <Box key={status.toolId} marginLeft={1}>
-              <Text color="gray">• {status.toolName}: </Text>
+            <Box key={`${status.toolId}:${status.instanceId}`} marginLeft={1}>
+              <Text color="gray">• {status.name}: </Text>
               <Text color={color}>{label}</Text>
             </Box>
             );
@@ -88,55 +88,44 @@ export function PluginDetail({ plugin, selectedAction }: PluginDetailProps) {
       <Box flexDirection="column" marginBottom={1}>
         <Text bold>Components:</Text>
         {plugin.skills.length > 0 && (
-          <Box marginLeft={1} flexDirection="column">
-            <Text color="gray">• Skills:</Text>
-            {plugin.skills.map((skill) => (
-              <Box key={skill} marginLeft={2}>
-                <Text color="cyan">- {skill}</Text>
-              </Box>
-            ))}
+          <Box marginLeft={1}>
+            <Text color="gray">• Skills: </Text>
+            <Text color="cyan">{plugin.skills.join(", ")}</Text>
           </Box>
         )}
         {plugin.commands.length > 0 && (
-          <Box marginLeft={1} flexDirection="column">
-            <Text color="gray">• Commands:</Text>
-            {plugin.commands.map((cmd) => (
-              <Box key={cmd} marginLeft={2}>
-                <Text color="cyan">- {cmd}</Text>
-              </Box>
-            ))}
+          <Box marginLeft={1}>
+            <Text color="gray">• Commands: </Text>
+            <Text color="cyan">{plugin.commands.join(", ")}</Text>
           </Box>
         )}
         {plugin.agents.length > 0 && (
-          <Box marginLeft={1} flexDirection="column">
-            <Text color="gray">• Agents:</Text>
-            {plugin.agents.map((agent) => (
-              <Box key={agent} marginLeft={2}>
-                <Text color="cyan">- {agent}</Text>
-              </Box>
-            ))}
+          <Box marginLeft={1}>
+            <Text color="gray">• Agents: </Text>
+            <Text color="cyan">{plugin.agents.join(", ")}</Text>
           </Box>
         )}
         {plugin.hooks.length > 0 && (
-          <Box marginLeft={1} flexDirection="column">
-            <Text color="gray">• Hooks:</Text>
-            {plugin.hooks.map((hook) => (
-              <Box key={hook} marginLeft={2}>
-                <Text color="cyan">- {hook}</Text>
-              </Box>
-            ))}
+          <Box marginLeft={1}>
+            <Text color="gray">• Hooks: </Text>
+            <Text color="cyan">{plugin.hooks.join(", ")}</Text>
           </Box>
         )}
-        {plugin.hasMcp && (
+        {(plugin.hasMcp || plugin.hasLsp) && (
           <Box marginLeft={1}>
-            <Text color="gray">• MCP: </Text>
-            <Text color="green">✔</Text>
-          </Box>
-        )}
-        {plugin.hasLsp && (
-          <Box marginLeft={1}>
-            <Text color="gray">• LSP: </Text>
-            <Text color="green">✔</Text>
+            {plugin.hasMcp && (
+              <>
+                <Text color="gray">• MCP </Text>
+                <Text color="green">✔</Text>
+              </>
+            )}
+            {plugin.hasMcp && plugin.hasLsp && <Text color="gray">  </Text>}
+            {plugin.hasLsp && (
+              <>
+                <Text color="gray">• LSP </Text>
+                <Text color="green">✔</Text>
+              </>
+            )}
           </Box>
         )}
       </Box>

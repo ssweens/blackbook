@@ -14,17 +14,17 @@ import {
   enablePlugin,
   disablePlugin,
   getAllInstalledPlugins,
-  getInstalledPlugins,
-  getInstalledPluginsForTool,
+  getInstalledPluginsForInstance,
   loadManifest,
   saveManifest,
   isSymlink,
   createSymlink,
   removeSymlink,
   getPluginsCacheDir,
+  getPluginToolStatus,
 } from "./install.js";
-import { getCacheDir, getTools, updateToolConfig, TOOL_IDS } from "./config.js";
-import type { Plugin } from "./types.js";
+import { getCacheDir, getToolInstances, updateToolInstanceConfig, TOOL_IDS } from "./config.js";
+import type { Plugin, ToolInstance } from "./types.js";
 
 const TEST_PLUGIN_NAME = "blackbook-test-plugin";
 const TEST_SKILL_NAME = "blackbook-test-skill";
@@ -45,7 +45,10 @@ function setupTestEnvironment(): void {
   for (const toolId of TOOL_IDS) {
     const toolDir = join(TEST_TOOL_DIR, toolId);
     mkdirSync(toolDir, { recursive: true });
-    updateToolConfig(toolId, { enabled: toolId !== "claude-code", configDir: toolDir });
+    updateToolInstanceConfig(toolId, "default", {
+      enabled: toolId !== "claude-code",
+      configDir: toolDir,
+    });
   }
 }
 
@@ -107,26 +110,26 @@ function cleanupAllTestArtifacts(): void {
     /* ignore */
   }
 
-  const tools = getTools();
-  for (const [, tool] of Object.entries(tools)) {
-    if (tool.skillsSubdir) {
-      const skillPath = join(tool.configDir, tool.skillsSubdir, TEST_SKILL_NAME);
+  const instances = getToolInstances();
+  for (const instance of instances) {
+    if (instance.skillsSubdir) {
+      const skillPath = join(instance.configDir, instance.skillsSubdir, TEST_SKILL_NAME);
       rmSync(skillPath, { recursive: true, force: true });
       rmSync(`${skillPath}.bak`, { recursive: true, force: true });
       for (let i = 1; i <= 30; i++) {
         rmSync(`${skillPath}.bak.${i}`, { recursive: true, force: true });
       }
     }
-    if (tool.commandsSubdir) {
-      const cmdPath = join(tool.configDir, tool.commandsSubdir, `${TEST_COMMAND_NAME}.md`);
+    if (instance.commandsSubdir) {
+      const cmdPath = join(instance.configDir, instance.commandsSubdir, `${TEST_COMMAND_NAME}.md`);
       rmSync(cmdPath, { force: true });
       rmSync(`${cmdPath}.bak`, { force: true });
       for (let i = 1; i <= 30; i++) {
         rmSync(`${cmdPath}.bak.${i}`, { force: true });
       }
     }
-    if (tool.agentsSubdir) {
-      const agentPath = join(tool.configDir, tool.agentsSubdir, `${TEST_AGENT_NAME}.md`);
+    if (instance.agentsSubdir) {
+      const agentPath = join(instance.configDir, instance.agentsSubdir, `${TEST_AGENT_NAME}.md`);
       rmSync(agentPath, { force: true });
       rmSync(`${agentPath}.bak`, { force: true });
       for (let i = 1; i <= 30; i++) {
@@ -134,6 +137,14 @@ function cleanupAllTestArtifacts(): void {
       }
     }
   }
+}
+
+function getInstance(toolId: string): ToolInstance {
+  const instance = getToolInstances().find((item) => item.toolId === toolId);
+  if (!instance) {
+    throw new Error(`Missing tool instance for ${toolId}`);
+  }
+  return instance;
 }
 
 function createTestPlugin(): Plugin {
@@ -172,9 +183,9 @@ describe("enablePlugin", () => {
     expect(result.success).toBe(true);
 
     for (const toolId of ["opencode", "amp-code", "openai-codex"]) {
-      const tool = getTools()[toolId];
-      if (tool.skillsSubdir) {
-        const skillPath = join(tool.configDir, tool.skillsSubdir, TEST_SKILL_NAME);
+      const instance = getInstance(toolId);
+      if (instance.skillsSubdir) {
+        const skillPath = join(instance.configDir, instance.skillsSubdir, TEST_SKILL_NAME);
         expect(existsSync(skillPath), `skill should exist for ${toolId}`).toBe(true);
         expect(existsSync(join(skillPath, "SKILL.md"))).toBe(true);
 
@@ -185,15 +196,16 @@ describe("enablePlugin", () => {
   });
 
   it("skips disabled tools", async () => {
-    updateToolConfig("opencode", { enabled: false });
+    updateToolInstanceConfig("opencode", "default", { enabled: false });
     createTestPluginInCache();
     const plugin = createTestPlugin();
 
     const result = await enablePlugin(plugin);
 
-    expect(result.linkedTools["opencode"]).toBeUndefined();
+    const opencodeKey = `${getInstance("opencode").toolId}:${getInstance("opencode").instanceId}`;
+    expect(result.linkedInstances[opencodeKey]).toBeUndefined();
 
-    const opencode = getTools()["opencode"];
+    const opencode = getInstance("opencode");
     if (opencode.skillsSubdir) {
       const skillPath = join(opencode.configDir, opencode.skillsSubdir, TEST_SKILL_NAME);
       expect(existsSync(skillPath)).toBe(false);
@@ -207,9 +219,9 @@ describe("enablePlugin", () => {
     await enablePlugin(plugin);
 
     for (const toolId of ["opencode", "amp-code"]) {
-      const tool = getTools()[toolId];
-      if (tool.commandsSubdir) {
-        const cmdPath = join(tool.configDir, tool.commandsSubdir, `${TEST_COMMAND_NAME}.md`);
+      const instance = getInstance(toolId);
+      if (instance.commandsSubdir) {
+        const cmdPath = join(instance.configDir, instance.commandsSubdir, `${TEST_COMMAND_NAME}.md`);
         expect(existsSync(cmdPath), `command should exist for ${toolId}`).toBe(true);
 
         const content = readFileSync(cmdPath, "utf-8");
@@ -217,7 +229,7 @@ describe("enablePlugin", () => {
       }
     }
 
-    const codexTool = getTools()["openai-codex"];
+    const codexTool = getInstance("openai-codex");
     expect(codexTool.commandsSubdir).toBeNull();
   });
 
@@ -228,9 +240,9 @@ describe("enablePlugin", () => {
     await enablePlugin(plugin);
 
     for (const toolId of ["opencode", "amp-code"]) {
-      const tool = getTools()[toolId];
-      if (tool.agentsSubdir) {
-        const agentPath = join(tool.configDir, tool.agentsSubdir, `${TEST_AGENT_NAME}.md`);
+      const instance = getInstance(toolId);
+      if (instance.agentsSubdir) {
+        const agentPath = join(instance.configDir, instance.agentsSubdir, `${TEST_AGENT_NAME}.md`);
         expect(existsSync(agentPath), `agent should exist for ${toolId}`).toBe(true);
 
         const content = readFileSync(agentPath, "utf-8");
@@ -245,9 +257,12 @@ describe("enablePlugin", () => {
 
     const result = await enablePlugin(plugin);
 
-    expect(result.linkedTools["opencode"]).toBe(3);
-    expect(result.linkedTools["amp-code"]).toBe(3);
-    expect(result.linkedTools["openai-codex"]).toBe(1);
+    const opencodeKey = `${getInstance("opencode").toolId}:${getInstance("opencode").instanceId}`;
+    const ampKey = `${getInstance("amp-code").toolId}:${getInstance("amp-code").instanceId}`;
+    const codexKey = `${getInstance("openai-codex").toolId}:${getInstance("openai-codex").instanceId}`;
+    expect(result.linkedInstances[opencodeKey]).toBe(3);
+    expect(result.linkedInstances[ampKey]).toBe(3);
+    expect(result.linkedInstances[codexKey]).toBe(1);
   });
 
   it("records items in manifest with correct metadata", async () => {
@@ -258,12 +273,13 @@ describe("enablePlugin", () => {
 
     const manifest = loadManifest();
 
-    expect(manifest.tools["opencode"]).toBeDefined();
-    expect(manifest.tools["opencode"].items[`skill:${TEST_SKILL_NAME}`]).toBeDefined();
-    expect(manifest.tools["opencode"].items[`command:${TEST_COMMAND_NAME}`]).toBeDefined();
-    expect(manifest.tools["opencode"].items[`agent:${TEST_AGENT_NAME}`]).toBeDefined();
+    const opencodeKey = `${getInstance("opencode").toolId}:${getInstance("opencode").instanceId}`;
+    expect(manifest.tools[opencodeKey]).toBeDefined();
+    expect(manifest.tools[opencodeKey].items[`skill:${TEST_SKILL_NAME}`]).toBeDefined();
+    expect(manifest.tools[opencodeKey].items[`command:${TEST_COMMAND_NAME}`]).toBeDefined();
+    expect(manifest.tools[opencodeKey].items[`agent:${TEST_AGENT_NAME}`]).toBeDefined();
 
-    const skillItem = manifest.tools["opencode"].items[`skill:${TEST_SKILL_NAME}`];
+    const skillItem = manifest.tools[opencodeKey].items[`skill:${TEST_SKILL_NAME}`];
     expect(skillItem.kind).toBe("skill");
     expect(skillItem.name).toBe(TEST_SKILL_NAME);
     expect(skillItem.source).toContain(TEST_PLUGIN_NAME);
@@ -276,6 +292,64 @@ describe("enablePlugin", () => {
 
     expect(result.success).toBe(false);
     expect(result.errors).toContain(`Plugin source not found for ${TEST_PLUGIN_NAME}`);
+  });
+});
+
+describe("plugin completeness across instances", () => {
+  beforeEach(() => {
+    cleanupAllTestArtifacts();
+  });
+
+  afterEach(() => {
+    cleanupAllTestArtifacts();
+  });
+
+  it("marks missing when any enabled instance lacks installs", () => {
+    const primary = getInstance("opencode");
+    const secondaryDir = join(TEST_TOOL_DIR, "opencode-secondary");
+    mkdirSync(secondaryDir, { recursive: true });
+    updateToolInstanceConfig("opencode", "secondary", {
+      enabled: true,
+      configDir: secondaryDir,
+      name: "OpenCode Secondary",
+    });
+
+    const plugin = createTestPlugin();
+    if (primary.skillsSubdir) {
+      const skillPath = join(primary.configDir, primary.skillsSubdir, TEST_SKILL_NAME);
+      mkdirSync(skillPath, { recursive: true });
+      writeFileSync(join(skillPath, "SKILL.md"), "# Test Skill");
+    }
+
+    const statuses = getPluginToolStatus(plugin);
+    const supportedEnabled = statuses.filter((status) => status.enabled && status.supported);
+    const installedCount = supportedEnabled.filter((status) => status.installed).length;
+    expect(installedCount).toBeLessThan(supportedEnabled.length);
+  });
+
+  it("does not mark missing when only disabled instances lack installs", () => {
+    const primary = getInstance("opencode");
+    updateToolInstanceConfig("amp-code", "default", { enabled: false });
+    updateToolInstanceConfig("openai-codex", "default", { enabled: false });
+    const secondaryDir = join(TEST_TOOL_DIR, "opencode-secondary-disabled");
+    mkdirSync(secondaryDir, { recursive: true });
+    updateToolInstanceConfig("opencode", "secondary-disabled", {
+      enabled: false,
+      configDir: secondaryDir,
+      name: "OpenCode Secondary Disabled",
+    });
+
+    const plugin = createTestPlugin();
+    if (primary.skillsSubdir) {
+      const skillPath = join(primary.configDir, primary.skillsSubdir, TEST_SKILL_NAME);
+      mkdirSync(skillPath, { recursive: true });
+      writeFileSync(join(skillPath, "SKILL.md"), "# Test Skill");
+    }
+
+    const statuses = getPluginToolStatus(plugin);
+    const supportedEnabled = statuses.filter((status) => status.enabled && status.supported);
+    const installedCount = supportedEnabled.filter((status) => status.installed).length;
+    expect(installedCount).toBe(supportedEnabled.length);
   });
 });
 
@@ -294,9 +368,9 @@ describe("disablePlugin", () => {
     await enablePlugin(plugin);
 
     for (const toolId of ["opencode", "amp-code", "openai-codex"]) {
-      const tool = getTools()[toolId];
-      if (tool.skillsSubdir) {
-        const skillPath = join(tool.configDir, tool.skillsSubdir, TEST_SKILL_NAME);
+      const instance = getInstance(toolId);
+      if (instance.skillsSubdir) {
+        const skillPath = join(instance.configDir, instance.skillsSubdir, TEST_SKILL_NAME);
         expect(existsSync(skillPath)).toBe(true);
       }
     }
@@ -306,9 +380,9 @@ describe("disablePlugin", () => {
     expect(result.success).toBe(true);
 
     for (const toolId of ["opencode", "amp-code", "openai-codex"]) {
-      const tool = getTools()[toolId];
-      if (tool.skillsSubdir) {
-        const skillPath = join(tool.configDir, tool.skillsSubdir, TEST_SKILL_NAME);
+      const instance = getInstance(toolId);
+      if (instance.skillsSubdir) {
+        const skillPath = join(instance.configDir, instance.skillsSubdir, TEST_SKILL_NAME);
         expect(existsSync(skillPath), `skill should be removed for ${toolId}`).toBe(false);
       }
     }
@@ -324,9 +398,9 @@ describe("disablePlugin", () => {
     expect(result.success).toBe(true);
 
     for (const toolId of ["opencode", "amp-code"]) {
-      const tool = getTools()[toolId];
-      if (tool.commandsSubdir) {
-        const cmdPath = join(tool.configDir, tool.commandsSubdir, `${TEST_COMMAND_NAME}.md`);
+      const instance = getInstance(toolId);
+      if (instance.commandsSubdir) {
+        const cmdPath = join(instance.configDir, instance.commandsSubdir, `${TEST_COMMAND_NAME}.md`);
         expect(existsSync(cmdPath)).toBe(false);
       }
     }
@@ -342,7 +416,8 @@ describe("disablePlugin", () => {
     const manifest = loadManifest();
 
     for (const toolId of ["opencode", "amp-code", "openai-codex"]) {
-      const toolManifest = manifest.tools[toolId];
+      const instance = getInstance(toolId);
+      const toolManifest = manifest.tools[`${instance.toolId}:${instance.instanceId}`];
       if (toolManifest) {
         const hasTestItems = Object.values(toolManifest.items).some((item) =>
           item.source.includes(TEST_PLUGIN_NAME)
@@ -359,9 +434,12 @@ describe("disablePlugin", () => {
 
     const result = await disablePlugin(plugin);
 
-    expect(result.linkedTools["opencode"]).toBe(3);
-    expect(result.linkedTools["amp-code"]).toBe(3);
-    expect(result.linkedTools["openai-codex"]).toBe(1);
+    const opencodeKey = `${getInstance("opencode").toolId}:${getInstance("opencode").instanceId}`;
+    const ampKey = `${getInstance("amp-code").toolId}:${getInstance("amp-code").instanceId}`;
+    const codexKey = `${getInstance("openai-codex").toolId}:${getInstance("openai-codex").instanceId}`;
+    expect(result.linkedInstances[opencodeKey]).toBe(3);
+    expect(result.linkedInstances[ampKey]).toBe(3);
+    expect(result.linkedInstances[codexKey]).toBe(1);
   });
 });
 
@@ -375,8 +453,8 @@ describe("backup and restore", () => {
   });
 
   it("backs up existing skill directory before overwriting", async () => {
-    const tool = getTools()["opencode"];
-    const skillPath = join(tool.configDir, tool.skillsSubdir!, TEST_SKILL_NAME);
+    const instance = getInstance("opencode");
+    const skillPath = join(instance.configDir, instance.skillsSubdir!, TEST_SKILL_NAME);
     const backupPath = join(getCacheDir(), "backups", TEST_PLUGIN_NAME, "skill", TEST_SKILL_NAME);
 
     mkdirSync(skillPath, { recursive: true });
@@ -397,11 +475,11 @@ describe("backup and restore", () => {
   });
 
   it("backs up existing command file before overwriting", async () => {
-    const tool = getTools()["opencode"];
-    const cmdPath = join(tool.configDir, tool.commandsSubdir!, `${TEST_COMMAND_NAME}.md`);
+    const instance = getInstance("opencode");
+    const cmdPath = join(instance.configDir, instance.commandsSubdir!, `${TEST_COMMAND_NAME}.md`);
     const backupPath = join(getCacheDir(), "backups", TEST_PLUGIN_NAME, "command", `${TEST_COMMAND_NAME}.md`);
 
-    mkdirSync(join(tool.configDir, tool.commandsSubdir!), { recursive: true });
+    mkdirSync(join(instance.configDir, instance.commandsSubdir!), { recursive: true });
     writeFileSync(cmdPath, "# Original Command\n\nExisting user command.");
 
     createTestPluginInCache();
@@ -415,8 +493,8 @@ describe("backup and restore", () => {
   });
 
   it("restores backup when disabling", async () => {
-    const tool = getTools()["opencode"];
-    const skillPath = join(tool.configDir, tool.skillsSubdir!, TEST_SKILL_NAME);
+    const instance = getInstance("opencode");
+    const skillPath = join(instance.configDir, instance.skillsSubdir!, TEST_SKILL_NAME);
     const backupPath = join(getCacheDir(), "backups", TEST_PLUGIN_NAME, "skill", TEST_SKILL_NAME);
 
     mkdirSync(skillPath, { recursive: true });
@@ -430,17 +508,18 @@ describe("backup and restore", () => {
     expect(existsSync(backupPath)).toBe(true);
 
     const manifest = loadManifest();
-    const skillItem = manifest.tools["opencode"]?.items[`skill:${TEST_SKILL_NAME}`];
+    const opencodeKey = `${instance.toolId}:${instance.instanceId}`;
+    const skillItem = manifest.tools[opencodeKey]?.items[`skill:${TEST_SKILL_NAME}`];
     expect(skillItem).toBeDefined();
     expect(skillItem?.backup).toBe(backupPath);
     expect(skillItem?.source).toContain(TEST_PLUGIN_NAME);
 
     const disableResult = await disablePlugin(plugin);
     expect(disableResult.success).toBe(true);
-    expect(disableResult.linkedTools["opencode"]).toBeGreaterThan(0);
+    expect(disableResult.linkedInstances[opencodeKey]).toBeGreaterThan(0);
 
     const manifestAfterDisable = loadManifest();
-    const itemAfterDisable = manifestAfterDisable.tools["opencode"]?.items[`skill:${TEST_SKILL_NAME}`];
+    const itemAfterDisable = manifestAfterDisable.tools[opencodeKey]?.items[`skill:${TEST_SKILL_NAME}`];
     expect(itemAfterDisable).toBeUndefined();
 
     expect(
@@ -454,8 +533,8 @@ describe("backup and restore", () => {
   });
 
   it("overwrites previous backup (max one per plugin)", async () => {
-    const tool = getTools()["opencode"];
-    const skillPath = join(tool.configDir, tool.skillsSubdir!, TEST_SKILL_NAME);
+    const instance = getInstance("opencode");
+    const skillPath = join(instance.configDir, instance.skillsSubdir!, TEST_SKILL_NAME);
     const backupPath = join(getCacheDir(), "backups", TEST_PLUGIN_NAME, "skill", TEST_SKILL_NAME);
 
     mkdirSync(skillPath, { recursive: true });
@@ -477,12 +556,12 @@ describe("backup and restore", () => {
 
 describe("getInstalledPlugins", () => {
   it("returns plugins from Claude cache (if any exist)", () => {
-    const plugins = getInstalledPlugins();
+    const plugins = getInstalledPluginsForInstance(getInstance("claude-code"));
     expect(Array.isArray(plugins)).toBe(true);
   });
 });
 
-describe("getInstalledPluginsForTool", () => {
+describe("getInstalledPluginsForInstance", () => {
   beforeEach(() => {
     cleanupAllTestArtifacts();
   });
@@ -496,7 +575,7 @@ describe("getInstalledPluginsForTool", () => {
     const plugin = createTestPlugin();
     await enablePlugin(plugin);
 
-    const plugins = getInstalledPluginsForTool("opencode");
+    const plugins = getInstalledPluginsForInstance(getInstance("opencode"));
 
     const testPlugin = plugins.find((p) => p.name === TEST_SKILL_NAME);
     expect(testPlugin).toBeDefined();
@@ -504,7 +583,16 @@ describe("getInstalledPluginsForTool", () => {
   });
 
   it("returns empty array for unknown tool", () => {
-    const plugins = getInstalledPluginsForTool("nonexistent-tool");
+    const plugins = getInstalledPluginsForInstance({
+      toolId: "nonexistent-tool",
+      instanceId: "default",
+      name: "Nonexistent",
+      configDir: "/tmp/nonexistent-tool",
+      skillsSubdir: null,
+      commandsSubdir: null,
+      agentsSubdir: null,
+      enabled: true,
+    });
     expect(plugins).toEqual([]);
   });
 });
@@ -525,12 +613,17 @@ describe("getAllInstalledPlugins", () => {
 
     const { byTool } = getAllInstalledPlugins();
 
-    expect(byTool["claude-code"]).toBeDefined();
-    expect(byTool["opencode"]).toBeDefined();
-    expect(byTool["amp-code"]).toBeDefined();
-    expect(byTool["openai-codex"]).toBeDefined();
+    const claudeKey = `${getInstance("claude-code").toolId}:${getInstance("claude-code").instanceId}`;
+    const opencodeKey = `${getInstance("opencode").toolId}:${getInstance("opencode").instanceId}`;
+    const ampKey = `${getInstance("amp-code").toolId}:${getInstance("amp-code").instanceId}`;
+    const codexKey = `${getInstance("openai-codex").toolId}:${getInstance("openai-codex").instanceId}`;
 
-    const opencodePlugins = byTool["opencode"];
+    expect(byTool[claudeKey]).toBeDefined();
+    expect(byTool[opencodeKey]).toBeDefined();
+    expect(byTool[ampKey]).toBeDefined();
+    expect(byTool[codexKey]).toBeDefined();
+
+    const opencodePlugins = byTool[opencodeKey];
     expect(opencodePlugins.some((p) => p.skills.includes(TEST_SKILL_NAME))).toBe(true);
   });
 
@@ -637,7 +730,7 @@ describe("manifest operations", () => {
   it("saveManifest creates directory and writes JSON", () => {
     const manifest = {
       tools: {
-        opencode: {
+        "opencode:default": {
           items: {
             "skill:test": {
               kind: "skill" as const,

@@ -4,6 +4,7 @@ import { useStore } from "./lib/store.js";
 import { TabBar } from "./components/TabBar.js";
 import { SearchBox } from "./components/SearchBox.js";
 import { PluginList } from "./components/PluginList.js";
+import { PluginPreview } from "./components/PluginPreview.js";
 import { PluginDetail } from "./components/PluginDetail.js";
 import { MarketplaceList } from "./components/MarketplaceList.js";
 import { MarketplaceDetail } from "./components/MarketplaceDetail.js";
@@ -61,6 +62,11 @@ export function App() {
     [tools]
   );
 
+  const editingTool = useMemo(
+    () => tools.find((tool) => `${tool.toolId}:${tool.instanceId}` === editingToolId) || null,
+    [tools, editingToolId]
+  );
+
   useEffect(() => {
     loadMarketplaces();
   }, []);
@@ -109,16 +115,22 @@ export function App() {
     return Math.max(0, filteredPlugins.length - 1);
   }, [tab, marketplaces, tools, filteredPlugins]);
 
-  const getPluginActionCount = (plugin: typeof detailPlugin) => {
-    if (!plugin) return 0;
-    if (!plugin.installed) return 2; // Install, Back
-    
+  const getPluginActions = (plugin: typeof detailPlugin) => {
+    if (!plugin) return [] as string[];
+    if (!plugin.installed) return ["Install", "Back to plugin list"];
+
     const toolStatuses = getPluginToolStatus(plugin);
     const supportedTools = toolStatuses.filter(t => t.supported && t.enabled);
     const installedCount = supportedTools.filter(t => t.installed).length;
     const needsRepair = installedCount < supportedTools.length && supportedTools.length > 0;
-    
-    return needsRepair ? 4 : 3; // Uninstall, Update, [Install to all], Back
+    const actions = ["Uninstall", "Update now"];
+    if (needsRepair) actions.push("Install to all tools");
+    actions.push("Back to plugin list");
+    return actions;
+  };
+
+  const getPluginActionCount = (plugin: typeof detailPlugin) => {
+    return getPluginActions(plugin).length;
   };
 
   useInput((input, key) => {
@@ -211,7 +223,7 @@ export function App() {
       if (tab === "tools") {
         const tool = tools[selectedIndex];
         if (tool) {
-          void toggleToolEnabled(tool.id);
+          void toggleToolEnabled(tool.toolId, tool.instanceId);
         }
         return;
       }
@@ -229,7 +241,7 @@ export function App() {
       if (tab === "tools") {
         const tool = tools[selectedIndex];
         if (tool) {
-          void toggleToolEnabled(tool.id);
+          void toggleToolEnabled(tool.toolId, tool.instanceId);
         }
         return;
       }
@@ -259,7 +271,7 @@ export function App() {
     if (input === "e" && tab === "tools") {
       const tool = tools[selectedIndex];
       if (tool) {
-        setEditingToolId(tool.id);
+        setEditingToolId(`${tool.toolId}:${tool.instanceId}`);
       }
       return;
     }
@@ -279,49 +291,29 @@ export function App() {
 
   const handlePluginAction = async (index: number) => {
     if (!detailPlugin) return;
+    const actions = getPluginActions(detailPlugin);
+    const action = actions[index];
+    if (!action) return;
 
-    if (detailPlugin.installed) {
-      const toolStatuses = getPluginToolStatus(detailPlugin);
-      const supportedTools = toolStatuses.filter(t => t.supported);
-      const installedCount = supportedTools.filter(t => t.installed).length;
-      const needsRepair = installedCount < supportedTools.length && supportedTools.length > 0;
-      
-      // Actions: ["Uninstall", "Update now", ["Install to all tools"], "Back to plugin list"]
-      switch (index) {
-        case 0: // Uninstall
-          await doUninstall(detailPlugin);
-          setDetailPlugin(null);
-          break;
-        case 1: // Update now
-          await doUpdate(detailPlugin);
-          break;
-        case 2:
-          if (needsRepair) {
-            // Install to all tools
-            await doInstall(detailPlugin);
-          } else {
-            // Back
-            setDetailPlugin(null);
-            setActionIndex(0);
-          }
-          break;
-        case 3: // Back (when repair option exists)
-          setDetailPlugin(null);
-          setActionIndex(0);
-          break;
-      }
-    } else {
-      // Actions: ["Install", "Back to plugin list"]
-      switch (index) {
-        case 0: // Install
-          await doInstall(detailPlugin);
-          setDetailPlugin(null);
-          break;
-        case 1: // Back
-          setDetailPlugin(null);
-          setActionIndex(0);
-          break;
-      }
+    switch (action) {
+      case "Uninstall":
+        await doUninstall(detailPlugin);
+        setDetailPlugin(null);
+        break;
+      case "Update now":
+        await doUpdate(detailPlugin);
+        break;
+      case "Install to all tools":
+      case "Install":
+        await doInstall(detailPlugin);
+        setDetailPlugin(null);
+        break;
+      case "Back to plugin list":
+        setDetailPlugin(null);
+        setActionIndex(0);
+        break;
+      default:
+        break;
     }
   };
 
@@ -358,8 +350,8 @@ export function App() {
     setShowAddMarketplace(false);
   };
 
-  const handleToolConfigSave = (toolId: string, configDir: string) => {
-    void updateToolConfigDir(toolId, configDir);
+  const handleToolConfigSave = (toolId: string, instanceId: string, configDir: string) => {
+    void updateToolConfigDir(toolId, instanceId, configDir);
     setEditingToolId(null);
   };
 
@@ -369,7 +361,7 @@ export function App() {
 
       {editingToolId ? (
         <EditToolModal
-          tool={tools.find((tool) => tool.id === editingToolId) || null}
+          tool={editingTool}
           onSubmit={handleToolConfigSave}
           onCancel={() => setEditingToolId(null)}
         />
@@ -430,7 +422,6 @@ export function App() {
                   <PluginList
                     plugins={filteredPlugins}
                     selectedIndex={selectedIndex}
-                    showNested
                   />
                 </>
               )}
@@ -449,7 +440,6 @@ export function App() {
                   <PluginList
                     plugins={filteredPlugins}
                     selectedIndex={selectedIndex}
-                    showNested
                   />
                 </>
               )}
@@ -475,6 +465,10 @@ export function App() {
             <ToolsList tools={tools} selectedIndex={selectedIndex} />
           )}
         </Box>
+      )}
+
+      {(tab === "discover" || tab === "installed") && !detailPlugin && !detailMarketplace && (
+        <PluginPreview plugin={filteredPlugins[selectedIndex] ?? null} />
       )}
 
       <Notifications notifications={notifications} onClear={clearNotification} />

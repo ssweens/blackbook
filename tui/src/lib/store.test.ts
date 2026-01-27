@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useStore } from "./store.js";
-import { getToolList, updateToolConfig } from "./config.js";
-import type { Plugin, Marketplace, ToolTarget } from "./types.js";
+import { getToolInstances, updateToolInstanceConfig, getEnabledToolInstances } from "./config.js";
+import { getAllInstalledPlugins } from "./install.js";
+import type { Plugin, Marketplace, ToolInstance } from "./types.js";
 
 // Mock config functions to avoid writing to real config file
 vi.mock("./config.js", async (importOriginal) => {
@@ -11,9 +12,17 @@ vi.mock("./config.js", async (importOriginal) => {
     addMarketplace: vi.fn(),
     removeMarketplace: vi.fn(),
     ensureConfigExists: vi.fn(),
-    getToolList: vi.fn(),
-    updateToolConfig: vi.fn(),
-    getEnabledTools: vi.fn(),
+    getToolInstances: vi.fn(),
+    updateToolInstanceConfig: vi.fn(),
+    getEnabledToolInstances: vi.fn(),
+  };
+});
+
+vi.mock("./install.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./install.js")>();
+  return {
+    ...actual,
+    getAllInstalledPlugins: vi.fn(),
   };
 });
 
@@ -50,9 +59,10 @@ function createMockMarketplace(overrides: Partial<Marketplace> = {}): Marketplac
   };
 }
 
-function createMockTool(overrides: Partial<ToolTarget> = {}): ToolTarget {
+function createMockTool(overrides: Partial<ToolInstance> = {}): ToolInstance {
   return {
-    id: "opencode",
+    toolId: "opencode",
+    instanceId: "default",
     name: "OC",
     configDir: "/tmp/opencode",
     skillsSubdir: "skills",
@@ -247,33 +257,34 @@ describe("Store marketplace management", () => {
 describe("Store tool management", () => {
   beforeEach(() => {
     useStore.setState({ tools: [] });
-    vi.mocked(getToolList).mockReset();
-    vi.mocked(updateToolConfig).mockReset();
+    vi.mocked(getToolInstances).mockReset();
+    vi.mocked(updateToolInstanceConfig).mockReset();
+    vi.mocked(getEnabledToolInstances).mockReset();
   });
 
   it("should refresh tool list when config changes", () => {
     const toolEnabled = createMockTool({ enabled: true });
     const toolDisabled = createMockTool({ enabled: false });
 
-    vi.mocked(getToolList).mockReturnValueOnce([toolEnabled]);
+    vi.mocked(getToolInstances).mockReturnValueOnce([toolEnabled]);
     useStore.getState().loadTools();
     expect(useStore.getState().tools[0].enabled).toBe(true);
 
-    vi.mocked(getToolList).mockReturnValueOnce([toolDisabled]);
+    vi.mocked(getToolInstances).mockReturnValueOnce([toolDisabled]);
     useStore.getState().loadTools();
     expect(useStore.getState().tools[0].enabled).toBe(false);
   });
 
   it("toggles tool enablement and refreshes", async () => {
     const tool = createMockTool({ enabled: true });
-    vi.mocked(getToolList).mockReturnValue([tool]);
+    vi.mocked(getToolInstances).mockReturnValue([tool]);
 
     const refreshAll = vi.fn().mockResolvedValue(undefined);
     useStore.setState({ refreshAll: refreshAll as () => Promise<void> });
 
-    await useStore.getState().toggleToolEnabled(tool.id);
+    await useStore.getState().toggleToolEnabled(tool.toolId, tool.instanceId);
 
-    expect(updateToolConfig).toHaveBeenCalledWith(tool.id, { enabled: false });
+    expect(updateToolInstanceConfig).toHaveBeenCalledWith(tool.toolId, tool.instanceId, { enabled: false });
     expect(refreshAll).toHaveBeenCalled();
   });
 
@@ -281,9 +292,13 @@ describe("Store tool management", () => {
     const refreshAll = vi.fn().mockResolvedValue(undefined);
     useStore.setState({ refreshAll: refreshAll as () => Promise<void> });
 
-    await useStore.getState().updateToolConfigDir("opencode", "  /tmp/opencode  ");
+    await useStore.getState().updateToolConfigDir("opencode", "default", "  /tmp/opencode  ");
 
-    expect(updateToolConfig).toHaveBeenCalledWith("opencode", { configDir: "/tmp/opencode" });
+    expect(updateToolInstanceConfig).toHaveBeenCalledWith(
+      "opencode",
+      "default",
+      { configDir: "/tmp/opencode" }
+    );
     expect(refreshAll).toHaveBeenCalled();
   });
 });
