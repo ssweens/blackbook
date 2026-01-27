@@ -1,0 +1,932 @@
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  symlinkSync,
+  unlinkSync,
+  renameSync,
+  lstatSync,
+  realpathSync,
+  readdirSync,
+  copyFileSync,
+  cpSync,
+  rmSync,
+} from "fs";
+import { promisify } from "util";
+import { exec } from "child_process";
+
+const execAsync = promisify(exec);
+import { join, dirname } from "path";
+import { tmpdir } from "os";
+import { TOOLS, getCacheDir } from "./config.js";
+import type { Plugin, InstalledItem } from "./types.js";
+
+export function getPluginsCacheDir(): string {
+  return join(getCacheDir(), "plugins");
+}
+
+function parseGithubRepoFromUrl(url: string): { repo: string; ref: string } | null {
+  const rawMatch = url.match(/raw\.githubusercontent\.com\/([^/]+\/[^/]+)\/([^/]+)/);
+  if (rawMatch) return { repo: rawMatch[1], ref: rawMatch[2] };
+
+  const gitMatch = url.match(/github\.com\/([^/]+\/[^/.]+)(?:\.git)?/);
+  if (gitMatch) return { repo: gitMatch[1], ref: "main" };
+
+  return null;
+}
+
+export async function downloadPlugin(plugin: Plugin, marketplaceUrl: string): Promise<string | null> {
+  const pluginsDir = getPluginsCacheDir();
+  const pluginDir = join(pluginsDir, plugin.marketplace, plugin.name);
+
+  if (existsSync(pluginDir)) {
+    return pluginDir;
+  }
+
+  mkdirSync(pluginDir, { recursive: true });
+
+  let repoUrl: string | null = null;
+  let ref = "main";
+  let subPath = "";
+
+  const source = plugin.source;
+  if (typeof source === "object") {
+    if (source.source === "github" && source.repo) {
+      repoUrl = `https://github.com/${source.repo}.git`;
+      ref = source.ref || "main";
+    } else if (source.source === "url" && source.url) {
+      const parsed = parseGithubRepoFromUrl(source.url);
+      if (parsed) {
+        repoUrl = `https://github.com/${parsed.repo}.git`;
+        ref = parsed.ref;
+      }
+    }
+  } else if (typeof source === "string" && source.startsWith("./")) {
+    const parsed = parseGithubRepoFromUrl(marketplaceUrl);
+    if (parsed) {
+      repoUrl = `https://github.com/${parsed.repo}.git`;
+      ref = parsed.ref;
+      subPath = source.replace(/^\.\//, "");
+    }
+  }
+
+  if (!repoUrl) {
+    rmSync(pluginDir, { recursive: true, force: true });
+    return null;
+  }
+
+  try {
+    const tempDir = join(tmpdir(), `blackbook-clone-${Date.now()}`);
+    await execAsync(`git clone --depth 1 --branch "${ref}" "${repoUrl}" "${tempDir}"`);
+
+    const sourceDir = subPath ? join(tempDir, subPath) : tempDir;
+
+    if (!existsSync(sourceDir)) {
+      rmSync(tempDir, { recursive: true, force: true });
+      rmSync(pluginDir, { recursive: true, force: true });
+      return null;
+    }
+
+    cpSync(sourceDir, pluginDir, { recursive: true });
+
+    rmSync(tempDir, { recursive: true, force: true });
+
+    return pluginDir;
+  } catch {
+    rmSync(pluginDir, { recursive: true, force: true });
+    return null;
+  }
+}
+
+export function getPluginSourcePath(plugin: Plugin): string | null {
+  const pluginDir = join(getPluginsCacheDir(), plugin.marketplace, plugin.name);
+  if (existsSync(pluginDir)) {
+    return pluginDir;
+  }
+  return null;
+}
+
+export function manifestPath(cacheDir?: string): string {
+  return join(cacheDir || getCacheDir(), "installed_items.json");
+}
+
+interface Manifest {
+  tools: Record<string, { items: Record<string, InstalledItem> }>;
+}
+
+export function loadManifest(cacheDir?: string): Manifest {
+  const path = manifestPath(cacheDir);
+  if (!existsSync(path)) return { tools: {} };
+  try {
+    return JSON.parse(readFileSync(path, "utf-8"));
+  } catch {
+    return { tools: {} };
+  }
+}
+
+export function saveManifest(manifest: Manifest, cacheDir?: string): void {
+  const path = manifestPath(cacheDir);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(manifest, null, 2));
+}
+
+export function createSymlink(source: string, target: string, backup = true): boolean {
+  if (!existsSync(source)) return false;
+
+  mkdirSync(dirname(target), { recursive: true });
+
+  if (existsSync(target) || isSymlink(target)) {
+    if (isSymlink(target)) {
+      try {
+        const actual = realpathSync(target);
+        const expected = realpathSync(source);
+        if (actual === expected) return true;
+      } catch {
+        // Broken symlink
+      }
+    }
+
+    if (!backup) return false;
+
+    let backupPath = `${target}.bak`;
+    let i = 1;
+    while (existsSync(backupPath) || isSymlink(backupPath)) {
+      backupPath = `${target}.bak.${i}`;
+      i++;
+    }
+    renameSync(target, backupPath);
+  }
+
+  const tmpPath = join(tmpdir(), `.tmp_${Date.now()}`);
+  try {
+    symlinkSync(source, tmpPath);
+    renameSync(tmpPath, target);
+    return true;
+  } catch {
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      // Ignore
+    }
+    return false;
+  }
+}
+
+export function isSymlink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+export function removeSymlink(target: string): boolean {
+  if (!isSymlink(target)) return false;
+  unlinkSync(target);
+  return true;
+}
+
+export function isPluginInstalled(plugin: Plugin): boolean {
+  const claudePluginsDir = join(TOOLS["claude-code"].configDir, "plugins/cache");
+  if (!existsSync(claudePluginsDir)) return false;
+
+  for (const marketplace of readdirSync(claudePluginsDir)) {
+    const mpDir = join(claudePluginsDir, marketplace);
+    if (!existsSync(mpDir)) continue;
+
+    for (const pluginName of readdirSync(mpDir)) {
+      if (pluginName === plugin.name) return true;
+    }
+  }
+
+  return false;
+}
+
+export interface InstallResult {
+  success: boolean;
+  claudeInstalled: boolean;
+  linkedTools: Record<string, number>;
+  errors: string[];
+}
+
+export async function installPlugin(plugin: Plugin, marketplaceUrl: string): Promise<InstallResult> {
+  const result: InstallResult = {
+    success: false,
+    claudeInstalled: false,
+    linkedTools: {},
+    errors: [],
+  };
+
+  try {
+    await execAsync(`claude plugin install "${plugin.name}"`);
+    result.claudeInstalled = true;
+  } catch (e) {
+    result.errors.push(`Claude install failed: ${e instanceof Error ? e.message : "unknown error"}`);
+  }
+
+  const sourcePath = await downloadPlugin(plugin, marketplaceUrl);
+  
+  if (!sourcePath) {
+    if (!result.claudeInstalled) {
+      result.errors.push(`Failed to download plugin ${plugin.name}`);
+      return result;
+    }
+  } else {
+    for (const toolId of Object.keys(TOOLS)) {
+      if (toolId === "claude-code") continue;
+      const { count } = installPluginItemsToTool(plugin.name, sourcePath, toolId);
+      result.linkedTools[toolId] = count;
+    }
+  }
+
+  result.success = result.claudeInstalled || Object.values(result.linkedTools).some(n => n > 0);
+  return result;
+}
+
+export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
+  let claudeSuccess = false;
+  
+  try {
+    await execAsync(`claude plugin uninstall "${plugin.name}"`);
+    claudeSuccess = true;
+  } catch { /* ignore */ }
+
+  for (const toolId of Object.keys(TOOLS)) {
+    if (toolId === "claude-code") continue;
+    uninstallPluginItemsFromTool(plugin.name, toolId);
+  }
+
+  const pluginDir = join(getPluginsCacheDir(), plugin.marketplace, plugin.name);
+  try {
+    rmSync(pluginDir, { recursive: true, force: true });
+  } catch { /* ignore */ }
+
+  return claudeSuccess;
+}
+
+export interface EnableResult {
+  success: boolean;
+  claudeEnabled: boolean;
+  linkedTools: Record<string, number>;
+  errors: string[];
+}
+
+function copyWithBackup(
+  src: string,
+  dest: string,
+  pluginName: string,
+  itemKind: string,
+  itemName: string
+): { dest: string; backup: string | null } {
+  let backupPath: string | null = null;
+  
+  if (existsSync(dest) || isSymlink(dest)) {
+    const backupDir = join(getCacheDir(), "backups", pluginName, itemKind);
+    mkdirSync(backupDir, { recursive: true });
+    const backup = join(backupDir, itemName);
+    
+    if (existsSync(backup) || isSymlink(backup)) {
+      rmSync(backup, { recursive: true, force: true });
+    }
+    
+    renameSync(dest, backup);
+    backupPath = backup;
+  }
+  
+  mkdirSync(dirname(dest), { recursive: true });
+  
+  const srcStat = lstatSync(src);
+  if (srcStat.isDirectory()) {
+    cpSync(src, dest, { recursive: true });
+  } else {
+    copyFileSync(src, dest);
+  }
+  
+  return { dest, backup: backupPath };
+}
+
+function installPluginItemsToTool(
+  pluginName: string,
+  sourcePath: string,
+  toolId: string
+): { count: number; items: InstalledItem[] } {
+  const tool = TOOLS[toolId];
+  if (!tool) return { count: 0, items: [] };
+  
+  const items: InstalledItem[] = [];
+  let count = 0;
+  
+  if (tool.skillsSubdir) {
+    const skillsDir = join(sourcePath, "skills");
+    if (existsSync(skillsDir)) {
+      try {
+        for (const entry of readdirSync(skillsDir)) {
+          const src = join(skillsDir, entry);
+          if (existsSync(join(src, "SKILL.md"))) {
+            const dest = join(tool.configDir, tool.skillsSubdir, entry);
+            const result = copyWithBackup(src, dest, pluginName, "skill", entry);
+            items.push({
+              kind: "skill",
+              name: entry,
+              source: src,
+              dest: result.dest,
+              backup: result.backup,
+            });
+            count++;
+          }
+        }
+      } catch { /* ignore */ }
+    }
+  }
+  
+  if (tool.commandsSubdir) {
+    const commandsDir = join(sourcePath, "commands");
+    if (existsSync(commandsDir)) {
+      try {
+        for (const entry of readdirSync(commandsDir)) {
+          if (entry.endsWith(".md")) {
+            const src = join(commandsDir, entry);
+            const dest = join(tool.configDir, tool.commandsSubdir, entry);
+            const result = copyWithBackup(src, dest, pluginName, "command", entry);
+            items.push({
+              kind: "command",
+              name: entry.replace(/\.md$/, ""),
+              source: src,
+              dest: result.dest,
+              backup: result.backup,
+            });
+            count++;
+          }
+        }
+      } catch { /* ignore */ }
+    }
+  }
+  
+  if (tool.agentsSubdir) {
+    const agentsDir = join(sourcePath, "agents");
+    if (existsSync(agentsDir)) {
+      try {
+        for (const entry of readdirSync(agentsDir)) {
+          if (entry.endsWith(".md")) {
+            const src = join(agentsDir, entry);
+            const dest = join(tool.configDir, tool.agentsSubdir, entry);
+            const result = copyWithBackup(src, dest, pluginName, "agent", entry);
+            items.push({
+              kind: "agent",
+              name: entry.replace(/\.md$/, ""),
+              source: src,
+              dest: result.dest,
+              backup: result.backup,
+            });
+            count++;
+          }
+        }
+      } catch { /* ignore */ }
+    }
+  }
+  
+  if (items.length > 0) {
+    const manifest = loadManifest();
+    if (!manifest.tools[toolId]) {
+      manifest.tools[toolId] = { items: {} };
+    }
+    const pluginKey = `plugin:${pluginName}`;
+    manifest.tools[toolId].items[pluginKey] = items[0];
+    for (const item of items) {
+      manifest.tools[toolId].items[`${item.kind}:${item.name}`] = item;
+    }
+    saveManifest(manifest);
+  }
+  
+  return { count, items };
+}
+
+function uninstallPluginItemsFromTool(pluginName: string, toolId: string): number {
+  const manifest = loadManifest();
+  const toolManifest = manifest.tools[toolId];
+  if (!toolManifest) return 0;
+  
+  let removed = 0;
+  const keysToRemove: string[] = [];
+  const processedDests = new Set<string>();
+  
+  for (const [key, item] of Object.entries(toolManifest.items)) {
+    if (item.source.includes(pluginName)) {
+      const dest = item.dest;
+      const backup = item.backup;
+      
+      if (!processedDests.has(dest)) {
+        processedDests.add(dest);
+        try {
+          if (existsSync(dest) || isSymlink(dest)) {
+            const stat = lstatSync(dest);
+            if (stat.isDirectory() && !stat.isSymbolicLink()) {
+              rmSync(dest, { recursive: true });
+            } else {
+              unlinkSync(dest);
+            }
+            removed++;
+          }
+          
+          if (backup && (existsSync(backup) || isSymlink(backup))) {
+            renameSync(backup, dest);
+          }
+        } catch { /* ignore */ }
+      }
+      
+      keysToRemove.push(key);
+    }
+  }
+  
+  for (const key of keysToRemove) {
+    delete toolManifest.items[key];
+  }
+  saveManifest(manifest);
+  
+  return removed;
+}
+
+export async function enablePlugin(plugin: Plugin, marketplaceUrl?: string): Promise<EnableResult> {
+  const result: EnableResult = {
+    success: false,
+    claudeEnabled: false,
+    linkedTools: {},
+    errors: [],
+  };
+
+  try {
+    await execAsync(`claude plugin enable "${plugin.name}"`);
+    result.claudeEnabled = true;
+  } catch { /* ignore */ }
+
+  let sourcePath = getPluginSourcePath(plugin);
+  
+  if (!sourcePath && marketplaceUrl) {
+    sourcePath = await downloadPlugin(plugin, marketplaceUrl);
+  }
+  
+  if (sourcePath) {
+    for (const toolId of Object.keys(TOOLS)) {
+      if (toolId === "claude-code") continue;
+      const { count } = installPluginItemsToTool(plugin.name, sourcePath, toolId);
+      result.linkedTools[toolId] = count;
+    }
+  } else {
+    result.errors.push(`Plugin source not found for ${plugin.name}`);
+  }
+
+  result.success = result.claudeEnabled || Object.values(result.linkedTools).some(n => n > 0);
+  return result;
+}
+
+export async function disablePlugin(plugin: Plugin): Promise<EnableResult> {
+  const result: EnableResult = {
+    success: false,
+    claudeEnabled: false,
+    linkedTools: {},
+    errors: [],
+  };
+
+  try {
+    await execAsync(`claude plugin disable "${plugin.name}"`);
+    result.claudeEnabled = true;
+  } catch { /* ignore */ }
+
+  for (const toolId of Object.keys(TOOLS)) {
+    if (toolId === "claude-code") continue;
+    const removed = uninstallPluginItemsFromTool(plugin.name, toolId);
+    result.linkedTools[toolId] = removed;
+  }
+
+  result.success = result.claudeEnabled || Object.values(result.linkedTools).some(n => n > 0);
+  return result;
+}
+
+export async function updatePlugin(plugin: Plugin, marketplaceUrl: string): Promise<EnableResult> {
+  const result: EnableResult = {
+    success: false,
+    claudeEnabled: false,
+    linkedTools: {},
+    errors: [],
+  };
+
+  try {
+    await execAsync(`claude plugin update "${plugin.name}"`);
+    result.claudeEnabled = true;
+  } catch { /* ignore */ }
+
+  for (const toolId of Object.keys(TOOLS)) {
+    if (toolId === "claude-code") continue;
+    uninstallPluginItemsFromTool(plugin.name, toolId);
+  }
+
+  const pluginDir = join(getPluginsCacheDir(), plugin.marketplace, plugin.name);
+  try {
+    rmSync(pluginDir, { recursive: true, force: true });
+  } catch { /* ignore */ }
+
+  const sourcePath = await downloadPlugin(plugin, marketplaceUrl);
+  
+  if (sourcePath) {
+    for (const toolId of Object.keys(TOOLS)) {
+      if (toolId === "claude-code") continue;
+      const { count } = installPluginItemsToTool(plugin.name, sourcePath, toolId);
+      result.linkedTools[toolId] = count;
+    }
+  } else {
+    if (!result.claudeEnabled) {
+      result.errors.push(`Failed to download plugin update for ${plugin.name}`);
+    }
+  }
+
+  result.success = result.claudeEnabled || Object.values(result.linkedTools).some(n => n > 0);
+  return result;
+}
+
+export function linkPluginToTool(
+  plugin: Plugin,
+  toolId: string,
+  sourcePath: string
+): number {
+  const tool = TOOLS[toolId];
+  if (!tool) return 0;
+
+  let linked = 0;
+  const manifest = loadManifest();
+  if (!manifest.tools[toolId]) {
+    manifest.tools[toolId] = { items: {} };
+  }
+
+  for (const skill of plugin.skills) {
+    const source = join(sourcePath, "skills", skill);
+    if (!existsSync(source)) continue;
+
+    if (tool.skillsSubdir) {
+      const target = join(tool.configDir, tool.skillsSubdir, skill);
+      if (createSymlink(source, target)) {
+        manifest.tools[toolId].items[`skill:${skill}`] = {
+          kind: "skill",
+          name: skill,
+          source,
+          dest: join(tool.skillsSubdir, skill),
+          backup: null,
+        };
+        linked++;
+      }
+    }
+  }
+
+  for (const cmd of plugin.commands) {
+    const source = join(sourcePath, "commands", `${cmd}.md`);
+    if (!existsSync(source)) continue;
+
+    if (tool.commandsSubdir) {
+      const target = join(tool.configDir, tool.commandsSubdir, `${cmd}.md`);
+      if (createSymlink(source, target)) {
+        manifest.tools[toolId].items[`command:${cmd}`] = {
+          kind: "command",
+          name: cmd,
+          source,
+          dest: join(tool.commandsSubdir, `${cmd}.md`),
+          backup: null,
+        };
+        linked++;
+      }
+    }
+  }
+
+  for (const agent of plugin.agents) {
+    const source = join(sourcePath, "agents", `${agent}.md`);
+    if (!existsSync(source)) continue;
+
+    if (tool.agentsSubdir) {
+      const target = join(tool.configDir, tool.agentsSubdir, `${agent}.md`);
+      if (createSymlink(source, target)) {
+        manifest.tools[toolId].items[`agent:${agent}`] = {
+          kind: "agent",
+          name: agent,
+          source,
+          dest: join(tool.agentsSubdir, `${agent}.md`),
+          backup: null,
+        };
+        linked++;
+      }
+    }
+  }
+
+  saveManifest(manifest);
+  return linked;
+}
+
+export function getInstalledPlugins(): Plugin[] {
+  const claudePluginsDir = join(TOOLS["claude-code"].configDir, "plugins/cache");
+  const plugins: Plugin[] = [];
+
+  if (!existsSync(claudePluginsDir)) return plugins;
+
+  try {
+    const marketplaceDirs = readdirSync(claudePluginsDir);
+    
+    for (const marketplace of marketplaceDirs) {
+      const mpDir = join(claudePluginsDir, marketplace);
+      
+      try {
+        const stat = lstatSync(mpDir);
+        if (!stat.isDirectory()) continue;
+      } catch {
+        continue;
+      }
+
+      const pluginDirs = readdirSync(mpDir);
+      
+      for (const pluginName of pluginDirs) {
+        const pluginDir = join(mpDir, pluginName);
+        
+        try {
+          const stat = lstatSync(pluginDir);
+          if (!stat.isDirectory()) continue;
+        } catch {
+          continue;
+        }
+
+        let contentDir = pluginDir;
+        const subDirs = readdirSync(pluginDir).filter(d => {
+          const p = join(pluginDir, d);
+          try {
+            return lstatSync(p).isDirectory() && !d.startsWith(".");
+          } catch {
+            return false;
+          }
+        });
+        
+        if (subDirs.length > 0 && subDirs.every(d => /^[a-f0-9]+$/.test(d))) {
+          subDirs.sort();
+          contentDir = join(pluginDir, subDirs[subDirs.length - 1]);
+        }
+
+        const skills: string[] = [];
+        const commands: string[] = [];
+        const agents: string[] = [];
+        const hooks: string[] = [];
+        let hasMcp = false;
+        let description = "";
+
+        const skillsDir = join(contentDir, "skills");
+        if (existsSync(skillsDir)) {
+          try {
+            for (const item of readdirSync(skillsDir)) {
+              const itemPath = join(skillsDir, item);
+              if (existsSync(join(itemPath, "SKILL.md"))) {
+                skills.push(item);
+              }
+            }
+          } catch { /* ignore */ }
+        }
+
+        const commandsDir = join(contentDir, "commands");
+        if (existsSync(commandsDir)) {
+          try {
+            for (const item of readdirSync(commandsDir)) {
+              if (item.endsWith(".md")) {
+                commands.push(item.replace(/\.md$/, ""));
+              }
+            }
+          } catch { /* ignore */ }
+        }
+
+        const agentsDir = join(contentDir, "agents");
+        if (existsSync(agentsDir)) {
+          try {
+            for (const item of readdirSync(agentsDir)) {
+              if (item.endsWith(".md")) {
+                agents.push(item.replace(/\.md$/, ""));
+              }
+            }
+          } catch { /* ignore */ }
+        }
+
+        const hooksDir = join(contentDir, "hooks");
+        if (existsSync(hooksDir)) {
+          try {
+            for (const item of readdirSync(hooksDir)) {
+              hooks.push(item.replace(/\.(md|json)$/, ""));
+            }
+          } catch { /* ignore */ }
+        }
+
+        if (existsSync(join(contentDir, "mcp.json")) || 
+            existsSync(join(contentDir, ".claude-plugin", "mcp.json"))) {
+          hasMcp = true;
+        }
+
+        const manifestPath = join(contentDir, ".claude-plugin", "manifest.json");
+        if (existsSync(manifestPath)) {
+          try {
+            const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+            description = manifest.description || "";
+          } catch { /* ignore */ }
+        }
+
+        plugins.push({
+          name: pluginName,
+          marketplace,
+          description,
+          source: contentDir,
+          skills,
+          commands,
+          agents,
+          hooks,
+          hasMcp,
+          hasLsp: false,
+          homepage: "",
+          installed: true,
+          scope: "user",
+        });
+      }
+    }
+  } catch (e) {
+    // Directory scanning failed
+  }
+
+  return plugins;
+}
+
+export function getInstalledPluginsForTool(toolId: string): Plugin[] {
+  const tool = TOOLS[toolId];
+  if (!tool) return [];
+
+  const plugins: Plugin[] = [];
+  const seen = new Set<string>();
+
+  if (tool.skillsSubdir) {
+    const skillsDir = join(tool.configDir, tool.skillsSubdir);
+    if (existsSync(skillsDir)) {
+      try {
+        for (const item of readdirSync(skillsDir)) {
+          const itemPath = join(skillsDir, item);
+          try {
+            const stat = lstatSync(itemPath);
+            if (stat.isDirectory() || stat.isSymbolicLink()) {
+              if (existsSync(join(itemPath, "SKILL.md"))) {
+                if (!seen.has(item)) {
+                  seen.add(item);
+                  plugins.push({
+                    name: item,
+                    marketplace: "local",
+                    description: "",
+                    source: stat.isSymbolicLink() ? realpathSync(itemPath) : itemPath,
+                    skills: [item],
+                    commands: [],
+                    agents: [],
+                    hooks: [],
+                    hasMcp: false,
+                    hasLsp: false,
+                    homepage: "",
+                    installed: true,
+                    scope: "user",
+                  });
+                }
+              }
+            }
+          } catch { /* ignore */ }
+        }
+      } catch { /* ignore */ }
+    }
+  }
+
+  if (tool.commandsSubdir) {
+    const commandsDir = join(tool.configDir, tool.commandsSubdir);
+    if (existsSync(commandsDir)) {
+      try {
+        for (const item of readdirSync(commandsDir)) {
+          if (item.endsWith(".md")) {
+            const name = item.replace(/\.md$/, "");
+            if (!seen.has(name)) {
+              seen.add(name);
+              const itemPath = join(commandsDir, item);
+              const stat = lstatSync(itemPath);
+              plugins.push({
+                name,
+                marketplace: "local",
+                description: "",
+                source: stat.isSymbolicLink() ? realpathSync(itemPath) : itemPath,
+                skills: [],
+                commands: [name],
+                agents: [],
+                hooks: [],
+                hasMcp: false,
+                hasLsp: false,
+                homepage: "",
+                installed: true,
+                scope: "user",
+              });
+            }
+          }
+        }
+      } catch { /* ignore */ }
+    }
+  }
+
+  return plugins;
+}
+
+export function getAllInstalledPlugins(): { plugins: Plugin[]; byTool: Record<string, Plugin[]> } {
+  const byTool: Record<string, Plugin[]> = {};
+  const allPlugins: Plugin[] = [];
+  const seen = new Set<string>();
+
+  const claudePlugins = getInstalledPlugins();
+  byTool["claude-code"] = claudePlugins;
+  for (const p of claudePlugins) {
+    if (!seen.has(p.name)) {
+      seen.add(p.name);
+      allPlugins.push(p);
+    }
+  }
+
+  for (const toolId of Object.keys(TOOLS)) {
+    if (toolId === "claude-code") continue;
+    
+    const toolPlugins = getInstalledPluginsForTool(toolId);
+    byTool[toolId] = toolPlugins;
+    
+    for (const p of toolPlugins) {
+      if (!seen.has(p.name)) {
+        seen.add(p.name);
+        allPlugins.push(p);
+      }
+    }
+  }
+
+  return { plugins: allPlugins, byTool };
+}
+
+export interface ToolInstallStatus {
+  toolId: string;
+  toolName: string;
+  installed: boolean;
+  supported: boolean;
+}
+
+export function getPluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
+  const statuses: ToolInstallStatus[] = [];
+  
+  for (const [toolId, tool] of Object.entries(TOOLS)) {
+    const hasSkills = plugin.skills.length > 0;
+    const hasCommands = plugin.commands.length > 0;
+    const hasAgents = plugin.agents.length > 0;
+    
+    const canInstallSkills = hasSkills && tool.skillsSubdir !== null;
+    const canInstallCommands = hasCommands && tool.commandsSubdir !== null;
+    const canInstallAgents = hasAgents && tool.agentsSubdir !== null;
+    
+    const supported = canInstallSkills || canInstallCommands || canInstallAgents || 
+                      (toolId === "claude-code" && (plugin.hasMcp || plugin.hasLsp));
+    
+    let installed = false;
+    
+    if (supported) {
+      if (toolId === "claude-code") {
+        installed = isPluginInstalled(plugin);
+      } else {
+        if (canInstallSkills && tool.skillsSubdir) {
+          for (const skill of plugin.skills) {
+            const skillPath = join(tool.configDir, tool.skillsSubdir, skill);
+            if (existsSync(skillPath)) {
+              installed = true;
+              break;
+            }
+          }
+        }
+        if (!installed && canInstallCommands && tool.commandsSubdir) {
+          for (const cmd of plugin.commands) {
+            const cmdPath = join(tool.configDir, tool.commandsSubdir, `${cmd}.md`);
+            if (existsSync(cmdPath)) {
+              installed = true;
+              break;
+            }
+          }
+        }
+        if (!installed && canInstallAgents && tool.agentsSubdir) {
+          for (const agent of plugin.agents) {
+            const agentPath = join(tool.configDir, tool.agentsSubdir, `${agent}.md`);
+            if (existsSync(agentPath)) {
+              installed = true;
+              break;
+            }
+          }
+        }
+      }
+    }
+    
+    statuses.push({
+      toolId,
+      toolName: tool.name,
+      installed,
+      supported,
+    });
+  }
+  
+  return statuses;
+}
