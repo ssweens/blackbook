@@ -11,13 +11,15 @@ import { MarketplaceDetail } from "./components/MarketplaceDetail.js";
 import { AddMarketplaceModal } from "./components/AddMarketplaceModal.js";
 import { EditToolModal } from "./components/EditToolModal.js";
 import { ToolsList } from "./components/ToolsList.js";
+import { SyncList } from "./components/SyncList.js";
+import { SyncPreview } from "./components/SyncPreview.js";
 import { HintBar } from "./components/HintBar.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { Notifications } from "./components/Notifications.js";
 import { getPluginToolStatus } from "./lib/install.js";
-import type { Tab } from "./lib/types.js";
+import type { Tab, SyncPreviewItem } from "./lib/types.js";
 
-const TABS: Tab[] = ["discover", "installed", "marketplaces", "tools"];
+const TABS: Tab[] = ["discover", "installed", "marketplaces", "tools", "sync"];
 
 export function App() {
   const { exit } = useApp();
@@ -46,6 +48,8 @@ export function App() {
     addMarketplace,
     toggleToolEnabled,
     updateToolConfigDir,
+    getSyncPreview,
+    syncTools,
     notifications,
     clearNotification,
   } = useStore();
@@ -53,6 +57,8 @@ export function App() {
   const [actionIndex, setActionIndex] = useState(0);
   const [showAddMarketplace, setShowAddMarketplace] = useState(false);
   const [editingToolId, setEditingToolId] = useState<string | null>(null);
+  const [syncPreview, setSyncPreview] = useState<SyncPreviewItem[]>([]);
+  const [syncArmed, setSyncArmed] = useState(false);
   const [sortBy, setSortBy] = useState<"name" | "installed">("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [searchFocused, setSearchFocused] = useState(false);
@@ -70,6 +76,21 @@ export function App() {
   useEffect(() => {
     loadMarketplaces();
   }, []);
+
+  useEffect(() => {
+    if (tab === "sync") {
+      setSyncPreview(getSyncPreview());
+      setSyncArmed(false);
+    }
+  }, [tab, marketplaces, installedPlugins]);
+
+  useEffect(() => {
+    if (!syncArmed) return;
+    const timeoutId = setTimeout(() => {
+      setSyncArmed(false);
+    }, 1500);
+    return () => clearTimeout(timeoutId);
+  }, [syncArmed]);
 
 
 
@@ -112,8 +133,11 @@ export function App() {
     if (tab === "tools") {
       return Math.max(0, tools.length - 1);
     }
+    if (tab === "sync") {
+      return Math.max(0, syncPreview.length - 1);
+    }
     return Math.max(0, filteredPlugins.length - 1);
-  }, [tab, marketplaces, tools, filteredPlugins]);
+  }, [tab, marketplaces, tools, syncPreview, filteredPlugins]);
 
   const getPluginActions = (plugin: typeof detailPlugin) => {
     if (!plugin) return [] as string[];
@@ -179,6 +203,9 @@ export function App() {
         setActionIndex((i) => Math.max(0, i - 1));
       } else {
         setSelectedIndex(Math.max(0, selectedIndex - 1));
+        if (tab === "sync") {
+          setSyncArmed(false);
+        }
       }
       return;
     }
@@ -191,6 +218,9 @@ export function App() {
         setActionIndex((i) => Math.min(maxActions, i + 1));
       } else {
         setSelectedIndex(Math.min(maxIndex, selectedIndex + 1));
+        if (tab === "sync") {
+          setSyncArmed(false);
+        }
       }
       return;
     }
@@ -276,6 +306,16 @@ export function App() {
       return;
     }
 
+    if (input === "y" && tab === "sync" && !detailPlugin && !detailMarketplace) {
+      if (syncArmed) {
+        void syncTools(syncPreview);
+        setSyncArmed(false);
+        return;
+      }
+      setSyncArmed(true);
+      return;
+    }
+
     // Sort shortcuts (s to cycle sort, r to reverse) - only when search not focused
     if ((tab === "discover" || tab === "installed") && !detailPlugin && !searchFocused) {
       if (input === "s") {
@@ -355,6 +395,7 @@ export function App() {
     setEditingToolId(null);
   };
 
+
   return (
     <Box flexDirection="column" padding={1}>
       <TabBar activeTab={tab} onTabChange={setTab} />
@@ -382,7 +423,7 @@ export function App() {
           selectedIndex={actionIndex}
         />
       ) : (
-        <Box flexDirection="column" height={18}>
+        <Box flexDirection="column" height={(tab === "discover" || tab === "installed" || tab === "sync") ? 18 : 23}>
           {(tab === "discover" || tab === "installed") && (
             <Box flexDirection="row" justifyContent="space-between">
               <Box flexGrow={1}>
@@ -464,11 +505,28 @@ export function App() {
           {tab === "tools" && (
             <ToolsList tools={tools} selectedIndex={selectedIndex} />
           )}
+
+          {tab === "sync" && (
+            <>
+              <Box>
+                <Text color={syncArmed ? "yellow" : "gray"}>
+                  {syncArmed
+                    ? "Press y again to confirm sync"
+                    : "Press y to sync missing plugins across enabled instances"}
+                </Text>
+              </Box>
+              <SyncList items={syncPreview} selectedIndex={selectedIndex} />
+            </>
+          )}
         </Box>
       )}
 
       {(tab === "discover" || tab === "installed") && !detailPlugin && !detailMarketplace && (
         <PluginPreview plugin={filteredPlugins[selectedIndex] ?? null} />
+      )}
+
+      {tab === "sync" && !detailPlugin && !detailMarketplace && (
+        <SyncPreview item={syncPreview[selectedIndex] ?? null} />
       )}
 
       <Notifications notifications={notifications} onClear={clearNotification} />

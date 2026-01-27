@@ -331,6 +331,12 @@ export interface EnableResult {
   skippedInstances: string[];
 }
 
+export interface SyncResult {
+  success: boolean;
+  syncedInstances: Record<string, number>;
+  errors: string[];
+}
+
 function copyWithBackup(
   src: string,
   dest: string,
@@ -995,6 +1001,59 @@ export interface ToolInstallStatus {
   installed: boolean;
   supported: boolean;
   enabled: boolean;
+}
+
+function findInstance(toolId: string, instanceId: string): ToolInstance | null {
+  const instances = getToolInstances();
+  return instances.find(
+    (instance) => instance.toolId === toolId && instance.instanceId === instanceId
+  ) || null;
+}
+
+export async function syncPluginInstances(
+  plugin: Plugin,
+  marketplaceUrl: string | undefined,
+  missingStatuses: ToolInstallStatus[]
+): Promise<SyncResult> {
+  const result: SyncResult = { success: false, syncedInstances: {}, errors: [] };
+  if (missingStatuses.length === 0) return result;
+
+  const missingInstances = missingStatuses
+    .map((status) => findInstance(status.toolId, status.instanceId))
+    .filter((instance): instance is ToolInstance => Boolean(instance));
+
+  const claudeInstances = missingInstances.filter((instance) => instance.toolId === "claude-code");
+  const nonClaudeInstances = missingInstances.filter((instance) => instance.toolId !== "claude-code");
+
+  for (const instance of claudeInstances) {
+    try {
+      await execClaudeCommand(instance, `install "${plugin.name}"`);
+      result.syncedInstances[instanceKey(instance)] = 1;
+    } catch (e) {
+      result.errors.push(
+        `Claude sync failed for ${instance.name}: ${e instanceof Error ? e.message : "unknown error"}`
+      );
+    }
+  }
+
+  if (nonClaudeInstances.length > 0) {
+    let sourcePath = getPluginSourcePath(plugin);
+    if (!sourcePath && marketplaceUrl) {
+      sourcePath = await downloadPlugin(plugin, marketplaceUrl);
+    }
+
+    if (!sourcePath) {
+      result.errors.push(`Failed to locate plugin source for ${plugin.name}`);
+    } else {
+      for (const instance of nonClaudeInstances) {
+        const { count } = installPluginItemsToInstance(plugin.name, sourcePath, instance);
+        result.syncedInstances[instanceKey(instance)] = count;
+      }
+    }
+  }
+
+  result.success = Object.values(result.syncedInstances).some((n) => n > 0);
+  return result;
 }
 
 export function getPluginToolStatus(plugin: Plugin): ToolInstallStatus[] {

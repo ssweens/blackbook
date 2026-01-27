@@ -21,7 +21,7 @@ export function PluginPreview({ plugin }: PluginPreviewProps) {
   if (plugin.hasLsp) indicators.push("LSP");
 
   return (
-    <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="gray" paddingX={1}>
+    <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="gray" paddingX={1} height={4}>
       <Box>
         <Text color="gray">Skills: </Text>
         <Text color="cyan">{skillsText ?? "—"}</Text>

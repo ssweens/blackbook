@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useStore } from "./store.js";
 import { getToolInstances, updateToolInstanceConfig, getEnabledToolInstances } from "./config.js";
-import { getAllInstalledPlugins } from "./install.js";
+import { getAllInstalledPlugins, getPluginToolStatus, syncPluginInstances } from "./install.js";
 import type { Plugin, Marketplace, ToolInstance } from "./types.js";
 
 // Mock config functions to avoid writing to real config file
@@ -23,6 +23,8 @@ vi.mock("./install.js", async (importOriginal) => {
   return {
     ...actual,
     getAllInstalledPlugins: vi.fn(),
+    getPluginToolStatus: vi.fn(),
+    syncPluginInstances: vi.fn(),
   };
 });
 
@@ -300,5 +302,41 @@ describe("Store tool management", () => {
       { configDir: "/tmp/opencode" }
     );
     expect(refreshAll).toHaveBeenCalled();
+  });
+});
+
+describe("Store sync tools", () => {
+  beforeEach(() => {
+    vi.mocked(getAllInstalledPlugins).mockReset();
+    vi.mocked(getPluginToolStatus).mockReset();
+    vi.mocked(syncPluginInstances).mockReset();
+  });
+
+  it("builds a sync preview for partial plugins", () => {
+    const plugin = createMockPlugin({ name: "partial-plugin" });
+    vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [plugin], byTool: {} });
+    vi.mocked(getPluginToolStatus).mockReturnValue([
+      {
+        toolId: "opencode",
+        instanceId: "default",
+        name: "OpenCode",
+        installed: true,
+        supported: true,
+        enabled: true,
+      },
+      {
+        toolId: "opencode",
+        instanceId: "secondary",
+        name: "OpenCode Secondary",
+        installed: false,
+        supported: true,
+        enabled: true,
+      },
+    ]);
+
+    const preview = useStore.getState().getSyncPreview();
+    expect(preview).toHaveLength(1);
+    expect(preview[0].plugin.name).toBe("partial-plugin");
+    expect(preview[0].missingInstances).toContain("OpenCode Secondary");
   });
 });

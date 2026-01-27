@@ -42,10 +42,11 @@ export function MarketplaceList({
     }
 
     const adjustedIndex = selectedIndex - offset;
-    let start = Math.max(0, adjustedIndex - Math.floor(maxHeight / 2));
-    if (start + maxHeight > marketplaces.length) {
-      start = Math.max(0, marketplaces.length - maxHeight);
-    }
+    const maxStart = Math.max(0, marketplaces.length - maxHeight);
+    const start = Math.min(
+      Math.max(0, adjustedIndex - (maxHeight - 1)),
+      maxStart
+    );
 
     return {
       visibleMarketplaces: marketplaces.slice(start, start + maxHeight),

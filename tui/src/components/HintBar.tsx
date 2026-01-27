@@ -12,6 +12,7 @@ const HINTS: Record<Tab, string> = {
   installed: "/ search · Space toggle · Enter details · s sort · r reverse · q quit",
   marketplaces: "Enter select · u update · r remove · q quit",
   tools: "Enter toggle · Space toggle · e edit config dir · q quit",
+  sync: "y to sync (press twice) · Enter details · q quit",
 };
 
 export function HintBar({ tab, hasDetail }: HintBarProps) {
