@@ -145,7 +145,19 @@ export const useStore = create<Store>((set, get) => ({
   detailMarketplace: null,
   notifications: [],
 
-  setTab: (tab) => set({ tab, selectedIndex: 0, search: "", detailPlugin: null, detailAsset: null, detailMarketplace: null }),
+  setTab: (tab) =>
+    set((state) =>
+      state.tab === tab
+        ? state
+        : {
+            tab,
+            selectedIndex: 0,
+            search: "",
+            detailPlugin: null,
+            detailAsset: null,
+            detailMarketplace: null,
+          }
+    ),
   setSearch: (search) => set({ search, selectedIndex: 0 }),
   setSelectedIndex: (index) => set({ selectedIndex: index }),
   setDetailPlugin: (plugin) => set({ detailPlugin: plugin }),

@@ -285,6 +285,17 @@ export function App() {
     return actions;
   };
 
+  const refreshDetailPlugin = (plugin: Plugin) => {
+    const state = useStore.getState();
+    const fromMarketplace = state.marketplaces
+      .find((m) => m.name === plugin.marketplace)
+      ?.plugins.find((p) => p.name === plugin.name);
+    const fromInstalled = state.installedPlugins.find(
+      (p) => p.name === plugin.name && p.marketplace === plugin.marketplace
+    );
+    setDetailPlugin(fromMarketplace || fromInstalled || plugin);
+  };
+
   useInput((input, key) => {
     // Don't handle input when modal is open (modal handles its own input)
     if (showAddMarketplace || editingToolId) {
@@ -509,12 +520,15 @@ export function App() {
         setDetailPlugin(null);
         break;
       case "Update now":
-        await doUpdate(detailPlugin);
+        if (await doUpdate(detailPlugin)) {
+          refreshDetailPlugin(detailPlugin);
+        }
         break;
       case "Install to all tools":
       case "Install":
-        await doInstall(detailPlugin);
-        setDetailPlugin(null);
+        if (await doInstall(detailPlugin)) {
+          refreshDetailPlugin(detailPlugin);
+        }
         break;
       case "Back to plugin list":
         setDetailPlugin(null);

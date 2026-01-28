@@ -10,7 +10,7 @@ interface PluginDetailProps {
 }
 
 export function PluginDetail({ plugin, selectedAction }: PluginDetailProps) {
-  const toolStatuses = useMemo(() => getPluginToolStatus(plugin), [plugin]);
+  const toolStatuses = getPluginToolStatus(plugin);
   
   const supportedTools = toolStatuses.filter(t => t.supported && t.enabled);
   const installedCount = supportedTools.filter(t => t.installed).length;

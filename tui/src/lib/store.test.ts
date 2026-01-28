@@ -1,8 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useStore } from "./store.js";
 import { getToolInstances, updateToolInstanceConfig, getEnabledToolInstances } from "./config.js";
-import { getAllInstalledPlugins, getPluginToolStatus, syncPluginInstances } from "./install.js";
-import type { Plugin, Marketplace, ToolInstance } from "./types.js";
+import {
+  getAllInstalledPlugins,
+  getPluginToolStatus,
+  syncPluginInstances,
+  getAssetToolStatus,
+  getAssetSourceInfo,
+} from "./install.js";
+import type { Plugin, Marketplace, ToolInstance, Asset } from "./types.js";
 
 // Mock config functions to avoid writing to real config file
 vi.mock("./config.js", async (importOriginal) => {
@@ -25,6 +31,8 @@ vi.mock("./install.js", async (importOriginal) => {
     getAllInstalledPlugins: vi.fn(),
     getPluginToolStatus: vi.fn(),
     syncPluginInstances: vi.fn(),
+    getAssetToolStatus: vi.fn(),
+    getAssetSourceInfo: vi.fn(),
   };
 });
 
@@ -71,6 +79,18 @@ function createMockTool(overrides: Partial<ToolInstance> = {}): ToolInstance {
     commandsSubdir: "commands",
     agentsSubdir: "agents",
     enabled: true,
+    ...overrides,
+  };
+}
+
+function createMockAsset(overrides: Partial<Asset> = {}): Asset {
+  return {
+    name: "test-asset",
+    source: "./assets/test-asset",
+    installed: true,
+    scope: "user",
+    sourceExists: true,
+    sourceError: null,
     ...overrides,
   };
 }
@@ -310,9 +330,12 @@ describe("Store sync tools", () => {
     vi.mocked(getAllInstalledPlugins).mockReset();
     vi.mocked(getPluginToolStatus).mockReset();
     vi.mocked(syncPluginInstances).mockReset();
+    vi.mocked(getAssetToolStatus).mockReset();
+    vi.mocked(getAssetSourceInfo).mockReset();
   });
 
   it("builds a sync preview for partial plugins", () => {
+    useStore.setState({ assets: [createMockAsset()] });
     const plugin = createMockPlugin({ name: "partial-plugin" });
     vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [plugin], byTool: {} });
     vi.mocked(getPluginToolStatus).mockReturnValue([
@@ -333,6 +356,14 @@ describe("Store sync tools", () => {
         enabled: true,
       },
     ]);
+    vi.mocked(getAssetSourceInfo).mockReturnValue({
+      sourcePath: "/tmp/test-asset",
+      exists: false,
+      isDirectory: false,
+      hash: null,
+      error: "Asset source not found.",
+    });
+    vi.mocked(getAssetToolStatus).mockReturnValue([]);
 
     const preview = useStore.getState().getSyncPreview();
     expect(preview).toHaveLength(1);
