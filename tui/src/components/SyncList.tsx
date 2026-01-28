@@ -5,10 +5,18 @@ import type { SyncPreviewItem } from "../lib/types.js";
 interface SyncListProps {
   items: SyncPreviewItem[];
   selectedIndex: number;
+  selectedKeys: Set<string>;
+  getItemKey: (item: SyncPreviewItem) => string;
   maxHeight?: number;
 }
 
-export function SyncList({ items, selectedIndex, maxHeight = 12 }: SyncListProps) {
+export function SyncList({
+  items,
+  selectedIndex,
+  selectedKeys,
+  getItemKey,
+  maxHeight = 12,
+}: SyncListProps) {
   const { visibleItems, startIndex, hasMore, hasPrev } = useMemo(() => {
     if (items.length <= maxHeight) {
       return { visibleItems: items, startIndex: 0, hasMore: false, hasPrev: false };
@@ -48,11 +56,10 @@ export function SyncList({ items, selectedIndex, maxHeight = 12 }: SyncListProps
         const actualIndex = startIndex + visibleIdx;
         const isSelected = actualIndex === selectedIndex;
         const indicator = isSelected ? "❯" : " ";
+        const key = getItemKey(item);
+        const isChecked = selectedKeys.has(key);
 
         const name = item.kind === "plugin" ? item.plugin.name : item.asset.name;
-        const key = item.kind === "plugin"
-          ? `${item.plugin.marketplace}:${item.plugin.name}`
-          : item.asset.name;
         const missingCount = item.missingInstances.length;
         const driftedCount = item.kind === "asset" ? item.driftedInstances.length : 0;
         const missingLabel = item.kind === "asset"
@@ -63,6 +70,7 @@ export function SyncList({ items, selectedIndex, maxHeight = 12 }: SyncListProps
           <Box key={`${item.kind}:${key}`} flexDirection="column">
             <Box>
               <Text color={isSelected ? "cyan" : "white"}>{indicator} </Text>
+              <Text color={isChecked ? "green" : "gray"}>[{isChecked ? "x" : " "}] </Text>
               <Text bold={isSelected} color="white">{name}</Text>
               <Text color="gray"> · </Text>
               <Text color="gray">{missingLabel}</Text>

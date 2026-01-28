@@ -13,13 +13,14 @@ import {
   rmSync,
 } from "fs";
 import { promisify } from "util";
-import { execFile } from "child_process";
+import { execFile, execFileSync } from "child_process";
 import { createHash } from "crypto";
 
 const execFileAsync = promisify(execFile);
 import { join, dirname } from "path";
 import { tmpdir } from "os";
 import { expandPath, getCacheDir, getEnabledToolInstances, getToolInstances } from "./config.js";
+import { getGitHubToken, isGitHubHost } from "./github.js";
 import type { Asset, AssetConfig, Plugin, InstalledItem, ToolInstance } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
 import {
@@ -59,6 +60,47 @@ function hashPath(path: string): { hash: string; isDirectory: boolean } {
     return { hash: hashDirectory(path), isDirectory: true };
   }
   return { hash: hashFile(path), isDirectory: false };
+}
+
+function hashString(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function getUrlCachePath(url: string): string {
+  const cacheDir = join(getCacheDir(), "assets");
+  mkdirSync(cacheDir, { recursive: true });
+  let filename = "asset";
+  try {
+    const { pathname } = new URL(url);
+    const base = pathname.split("/").filter(Boolean).pop();
+    if (base) filename = base;
+  } catch {
+    // ignore
+  }
+  const prefix = hashString(url).slice(0, 12);
+  return join(cacheDir, `${prefix}-${filename}`);
+}
+
+function fetchUrlToCache(url: string): { path: string; error?: string } {
+  const cachePath = getUrlCachePath(url);
+  try {
+    const args = ["-fsSL"];
+    const token = getGitHubToken();
+    if (token && isGitHubHost(url)) {
+      args.push("-H", `Authorization: token ${token}`);
+    }
+    if (existsSync(cachePath)) {
+      args.push("-z", cachePath);
+    }
+    args.push("-o", cachePath, url);
+    execFileSync("curl", args);
+    return { path: cachePath };
+  } catch (error) {
+    return {
+      path: cachePath,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 function hashDirectory(path: string): string {
@@ -140,13 +182,28 @@ function resolveAssetTarget(asset: AssetConfig, instance: ToolInstance): string 
 export function getAssetSourceInfo(asset: AssetConfig): AssetSourceInfo {
   const sourcePath = expandPath(asset.source);
   if (sourcePath.startsWith("http://") || sourcePath.startsWith("https://")) {
-    return {
-      sourcePath,
-      exists: false,
-      isDirectory: false,
-      hash: null,
-      error: "Asset source URLs are not supported yet.",
-    };
+    const result = fetchUrlToCache(sourcePath);
+    if (result.error) {
+      return {
+        sourcePath,
+        exists: false,
+        isDirectory: false,
+        hash: null,
+        error: `Failed to fetch asset source: ${result.error}`,
+      };
+    }
+    try {
+      const { hash, isDirectory } = hashPath(result.path);
+      return { sourcePath: result.path, exists: true, isDirectory, hash };
+    } catch (error) {
+      return {
+        sourcePath: result.path,
+        exists: false,
+        isDirectory: false,
+        hash: null,
+        error: `Failed to read asset source: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
   }
 
   if (!existsSync(sourcePath)) {
@@ -487,7 +544,12 @@ function isPluginInstalledInClaudeInstance(plugin: Plugin, instance: ToolInstanc
 
   for (const marketplace of readdirSync(claudePluginsDir)) {
     const mpDir = join(claudePluginsDir, marketplace);
-    if (!existsSync(mpDir)) continue;
+    try {
+      if (!lstatSync(mpDir).isDirectory()) continue;
+    } catch (error) {
+      logError(`Failed to stat ${mpDir}`, error);
+      continue;
+    }
 
     for (const pluginName of readdirSync(mpDir)) {
       if (pluginName === plugin.name) return true;

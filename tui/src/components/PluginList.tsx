@@ -5,23 +5,30 @@ import type { Plugin } from "../lib/types.js";
 interface PluginListProps {
   plugins: Plugin[];
   selectedIndex: number;
+  nameColumnWidth?: number;
+  marketplaceColumnWidth?: number;
   maxHeight?: number;
 }
 
 export function PluginList({
   plugins,
   selectedIndex,
+  nameColumnWidth,
+  marketplaceColumnWidth,
   maxHeight = 12,
 }: PluginListProps) {
   const hasSelection = selectedIndex >= 0;
   const effectiveIndex = hasSelection ? selectedIndex : 0;
   // Calculate max lengths for column alignment
   const { maxNameLen, maxMarketplaceLen } = useMemo(() => {
+    if (nameColumnWidth && marketplaceColumnWidth) {
+      return { maxNameLen: nameColumnWidth, maxMarketplaceLen: marketplaceColumnWidth };
+    }
     return {
       maxNameLen: Math.min(30, Math.max(...plugins.map(p => p.name.length), 10)),
       maxMarketplaceLen: Math.max(...plugins.map(p => p.marketplace.length), 10),
     };
-  }, [plugins]);
+  }, [plugins, nameColumnWidth, marketplaceColumnWidth]);
 
   const { visiblePlugins, startIndex, hasMore, hasPrev } = useMemo(() => {
     if (plugins.length <= maxHeight) {
@@ -72,6 +79,8 @@ export function PluginList({
         const statusIcon = plugin.installed ? "✔" : " ";
         const statusColor = plugin.installed ? "green" : "gray";
         const showPartial = Boolean(plugin.installed && plugin.partial);
+        const statusLabel = plugin.installed ? "installed" : "";
+        const statusWidth = 9;
 
         const paddedName = plugin.name.padEnd(maxNameLen);
 
@@ -89,7 +98,7 @@ export function PluginList({
               <Text color="gray"> </Text>
               <Text color={statusColor}>{statusIcon}</Text>
               <Text color={statusColor}>
-                {plugin.installed ? " installed" : ""}
+                {" " + statusLabel.padEnd(statusWidth)}
               </Text>
               {showPartial && (
                 <>

@@ -4,6 +4,7 @@ import { createHash } from "crypto";
 import { homedir } from "os";
 import { fileURLToPath } from "url";
 import { getCacheDir } from "./config.js";
+import { getGitHubToken, isGitHubHost } from "./github.js";
 import type { Marketplace, Plugin } from "./types.js";
 
 function getCachePath(key: string): string {
@@ -72,22 +73,6 @@ interface GitHubTreeResponse {
   };
 }
 
-function isGitHubHost(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    const validHosts = new Set([
-      "github.com",
-      "raw.githubusercontent.com",
-      "api.github.com",
-      "gist.github.com",
-      "gist.githubusercontent.com",
-    ]);
-    return validHosts.has(parsed.hostname);
-  } catch {
-    return false;
-  }
-}
-
 function resolveLocalMarketplacePath(url: string, isLocal: boolean): string | null {
   if (!url) return null;
   if (url.startsWith("file://")) {
@@ -130,9 +115,9 @@ async function fetchGitHubTree(repo: string, branch: string, path: string): Prom
 
   try {
     const headers: Record<string, string> = { Accept: "application/json" };
-    const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+    const token = getGitHubToken();
     if (token && isGitHubHost(url)) {
-      headers["Authorization"] = `token ${token}`;
+      headers.Authorization = `token ${token}`;
     }
     const res = await fetch(url, { headers });
     if (!res.ok) {
@@ -274,9 +259,9 @@ export async function fetchMarketplace(marketplace: Marketplace): Promise<Plugin
         data = JSON.parse(readFileSync(targetPath, "utf-8"));
       } else {
         const headers: Record<string, string> = {};
-        const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+        const token = getGitHubToken();
         if (token && isGitHubHost(marketplace.url)) {
-          headers["Authorization"] = `token ${token}`;
+          headers.Authorization = `token ${token}`;
         }
         const res = await fetch(marketplace.url, { headers });
         if (!res.ok) {

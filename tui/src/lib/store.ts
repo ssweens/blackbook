@@ -34,7 +34,7 @@ interface Actions {
   setSelectedIndex: (index: number) => void;
   loadMarketplaces: () => Promise<void>;
   loadInstalledPlugins: () => void;
-  loadAssets: () => void;
+  loadAssets: () => Asset[];
   loadTools: () => void;
   refreshAll: () => Promise<void>;
   installPlugin: (plugin: Plugin) => Promise<boolean>;

@@ -56,6 +56,7 @@ export function App() {
     updateToolConfigDir,
     getSyncPreview,
     syncTools,
+    notify,
     notifications,
     clearNotification,
   } = useStore();
@@ -64,10 +65,18 @@ export function App() {
   const [showAddMarketplace, setShowAddMarketplace] = useState(false);
   const [editingToolId, setEditingToolId] = useState<string | null>(null);
   const [syncPreview, setSyncPreview] = useState<SyncPreviewItem[]>([]);
+  const [syncSelection, setSyncSelection] = useState<Set<string>>(new Set());
   const [syncArmed, setSyncArmed] = useState(false);
   const [sortBy, setSortBy] = useState<"name" | "installed">("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [searchFocused, setSearchFocused] = useState(false);
+
+  const getSyncItemKey = (item: SyncPreviewItem) => {
+    if (item.kind === "plugin") {
+      return `plugin:${item.plugin.marketplace}:${item.plugin.name}`;
+    }
+    return `asset:${item.asset.name}`;
+  };
 
   const enabledToolNames = useMemo(
     () => tools.filter((tool) => tool.enabled).map((tool) => tool.name),
@@ -110,6 +119,18 @@ export function App() {
         });
       return isSame ? current : preview;
     });
+    setSyncSelection((current) => {
+      const next = new Set<string>();
+      for (const item of preview) {
+        const key = getSyncItemKey(item);
+        if (current.has(key)) {
+          next.add(key);
+        } else {
+          next.add(key);
+        }
+      }
+      return next;
+    });
     setSyncArmed(false);
   }, [tab, marketplaces, installedPlugins, assets, getSyncPreview]);
 
@@ -121,6 +142,13 @@ export function App() {
     return () => clearTimeout(timeoutId);
   }, [syncArmed]);
 
+  const selectedSyncCount = useMemo(() => {
+    let count = 0;
+    for (const item of syncPreview) {
+      if (syncSelection.has(getSyncItemKey(item))) count += 1;
+    }
+    return count;
+  }, [syncPreview, syncSelection]);
 
 
   const allPlugins = useMemo(() => {
@@ -179,6 +207,21 @@ export function App() {
 
     return sorted;
   }, [tab, assets, search, sortBy, sortDir]);
+
+  const maxLength = (values: number[], fallback: number) => {
+    if (values.length === 0) return fallback;
+    return Math.max(...values, fallback);
+  };
+
+  const libraryNameWidth = useMemo(() => {
+    const pluginWidth = Math.min(30, maxLength(filteredPlugins.map((p) => p.name.length), 10));
+    const assetWidth = Math.min(30, maxLength(filteredAssets.map((a) => a.name.length), 10));
+    return Math.max(pluginWidth, assetWidth);
+  }, [filteredPlugins, filteredAssets]);
+
+  const marketplaceWidth = useMemo(() => {
+    return maxLength(filteredPlugins.map((p) => p.marketplace.length), 10);
+  }, [filteredPlugins]);
 
   const assetCount = filteredAssets.length;
   const pluginCount = filteredPlugins.length;
@@ -368,6 +411,23 @@ export function App() {
 
     // Space - toggle install/uninstall
     if (input === " " && !detailPlugin && !detailAsset && !detailMarketplace) {
+      if (tab === "sync") {
+        const item = syncPreview[selectedIndex];
+        if (!item) return;
+        const key = getSyncItemKey(item);
+        setSyncSelection((current) => {
+          const next = new Set(current);
+          if (next.has(key)) {
+            next.delete(key);
+          } else {
+            next.add(key);
+          }
+          return next;
+        });
+        setSyncArmed(false);
+        return;
+      }
+
       if (tab === "tools") {
         const tool = tools[selectedIndex];
         if (tool) {
@@ -410,7 +470,13 @@ export function App() {
 
     if (input === "y" && tab === "sync" && !detailPlugin && !detailAsset && !detailMarketplace) {
       if (syncArmed) {
-        void syncTools(syncPreview);
+        const items = syncPreview.filter((item) => syncSelection.has(getSyncItemKey(item)));
+        if (items.length === 0) {
+          notify("Select at least one item to sync.", "warning");
+          setSyncArmed(false);
+          return;
+        }
+        void syncTools(items);
         setSyncArmed(false);
         return;
       }
@@ -591,12 +657,17 @@ export function App() {
                     assets={filteredAssets}
                     selectedIndex={selectedIndex < assetCount ? selectedIndex : -1}
                     maxHeight={5}
+                    nameColumnWidth={libraryNameWidth}
+                    typeColumnWidth={6}
+                    marketplaceColumnWidth={marketplaceWidth}
                   />
                   <Text color="gray">Plugins</Text>
                   <PluginList
                     plugins={filteredPlugins}
                     selectedIndex={selectedIndex >= assetCount ? selectedIndex - assetCount : -1}
                     maxHeight={7}
+                    nameColumnWidth={libraryNameWidth}
+                    marketplaceColumnWidth={marketplaceWidth}
                   />
                 </>
               )}
@@ -616,12 +687,17 @@ export function App() {
                     assets={filteredAssets}
                     selectedIndex={selectedIndex < assetCount ? selectedIndex : -1}
                     maxHeight={5}
+                    nameColumnWidth={libraryNameWidth}
+                    typeColumnWidth={6}
+                    marketplaceColumnWidth={marketplaceWidth}
                   />
                   <Text color="gray">Plugins</Text>
                   <PluginList
                     plugins={filteredPlugins}
                     selectedIndex={selectedIndex >= assetCount ? selectedIndex - assetCount : -1}
                     maxHeight={7}
+                    nameColumnWidth={libraryNameWidth}
+                    marketplaceColumnWidth={marketplaceWidth}
                   />
                 </>
               )}
@@ -652,11 +728,16 @@ export function App() {
               <Box>
                 <Text color={syncArmed ? "yellow" : "gray"}>
                   {syncArmed
-                    ? "Press y again to confirm sync"
-                    : "Press y to sync missing or drifted items"}
+                    ? `Press y again to confirm sync (${selectedSyncCount} selected)`
+                    : `Space to toggle · Press y to sync (${selectedSyncCount} selected)`}
                 </Text>
               </Box>
-              <SyncList items={syncPreview} selectedIndex={selectedIndex} />
+              <SyncList
+                items={syncPreview}
+                selectedIndex={selectedIndex}
+                selectedKeys={syncSelection}
+                getItemKey={getSyncItemKey}
+              />
             </>
           )}
         </Box>

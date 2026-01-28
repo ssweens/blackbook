@@ -143,7 +143,7 @@ describe("createSymlink", () => {
     const result = createSymlink(source, target);
 
     expect(result.success).toBe(false);
-    expect(result.code).toBe("SOURCE_NOT_FOUND");
+    expect(!result.success && result.code).toBe("SOURCE_NOT_FOUND");
     expect(existsSync(target)).toBe(false);
   });
 
@@ -238,7 +238,7 @@ describe("removeSymlink", () => {
     const result = removeSymlink(file);
 
     expect(result.success).toBe(false);
-    expect(result.code).toBe("TARGET_MISSING");
+    expect(!result.success && result.code).toBe("TARGET_MISSING");
     expect(existsSync(file)).toBe(true); // File unchanged
   });
 
@@ -249,14 +249,14 @@ describe("removeSymlink", () => {
     const result = removeSymlink(dir);
 
     expect(result.success).toBe(false);
-    expect(result.code).toBe("TARGET_MISSING");
+    expect(!result.success && result.code).toBe("TARGET_MISSING");
     expect(existsSync(dir)).toBe(true);
   });
 
   it("returns false for nonexistent paths", () => {
     const result = removeSymlink(join(TEST_DIR, "nonexistent"));
     expect(result.success).toBe(false);
-    expect(result.code).toBe("TARGET_MISSING");
+    expect(!result.success && result.code).toBe("TARGET_MISSING");
   });
 });
 

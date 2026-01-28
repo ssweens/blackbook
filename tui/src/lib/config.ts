@@ -212,7 +212,7 @@ export function loadConfig(configPath?: string): TomlConfig {
           (currentInstance as Record<string, string>)[normalizedKey] = value;
         } else if (currentSection === "assets" && currentAsset) {
           const normalizedKey = key === "default_target" ? "defaultTarget" : key;
-          (currentAsset as Record<string, string>)[normalizedKey] = value;
+          (currentAsset as unknown as Record<string, string>)[normalizedKey] = value;
         } else if (currentSection === "asset_overrides" && currentAsset) {
           if (!currentAsset.overrides) currentAsset.overrides = {};
           currentAsset.overrides[key] = value;
