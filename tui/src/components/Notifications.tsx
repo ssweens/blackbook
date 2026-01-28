@@ -10,6 +10,7 @@ interface NotificationsProps {
 const COLORS: Record<Notification["type"], string> = {
   info: "cyan",
   success: "green",
+  warning: "yellow",
   error: "red",
 };
 

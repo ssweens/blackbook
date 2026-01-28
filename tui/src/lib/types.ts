@@ -99,7 +99,7 @@ export type Tab = "discover" | "installed" | "marketplaces" | "tools" | "sync";
 export interface Notification {
   id: string;
   message: string;
-  type: "info" | "success" | "error";
+  type: "info" | "success" | "warning" | "error";
   timestamp: number;
 }
 
