@@ -53,9 +53,10 @@ vi.mock("./lib/install.js", async (importOriginal) => {
 const downArrow = "\u001B[B";
 const enterKey = "\r";
 
-const waitForFrame = async (getFrame: () => string, predicate: (frame: string) => boolean) => {
+const waitForFrame = async (getFrame: () => string | undefined, predicate: (frame: string) => boolean) => {
   for (let i = 0; i < 40; i += 1) {
-    if (predicate(getFrame())) return;
+    const frame = getFrame();
+    if (frame && predicate(frame)) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(`Timed out waiting for frame.\nLast frame:\n${getFrame()}`);
@@ -100,7 +101,6 @@ const createToolInstances = (): ToolInstance[] => [
     skillsSubdir: "skills",
     commandsSubdir: "commands",
     agentsSubdir: "agents",
-    hooksSubdir: "hooks",
   },
   {
     toolId: "opencode",
@@ -111,7 +111,6 @@ const createToolInstances = (): ToolInstance[] => [
     skillsSubdir: "skills",
     commandsSubdir: "commands",
     agentsSubdir: "agents",
-    hooksSubdir: "hooks",
   },
 ];
 
