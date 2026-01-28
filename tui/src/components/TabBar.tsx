@@ -18,7 +18,7 @@ const TABS: { id: Tab; label: string }[] = [
 export function TabBar({ activeTab }: TabBarProps) {
   return (
     <Box marginBottom={1}>
-      <Text bold color="cyan">Plugins</Text>
+      <Text bold color="cyan">Library</Text>
       <Text>  </Text>
       {TABS.map((tab, i) => (
         <React.Fragment key={tab.id}>

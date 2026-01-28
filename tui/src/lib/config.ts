@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import type { ToolTarget, ToolInstance, Marketplace } from "./types.js";
+import type { ToolTarget, ToolInstance, Marketplace, AssetConfig } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
 
 const DEFAULT_TOOLS: Record<string, ToolTarget> = {
@@ -120,22 +120,24 @@ export interface ToolConfig {
 export interface TomlConfig {
   marketplaces?: Record<string, string>;
   tools?: Record<string, ToolConfig>;
+  assets?: AssetConfig[];
 }
 
 export function loadConfig(configPath?: string): TomlConfig {
   const path = configPath || getConfigPath();
   
   if (!existsSync(path)) {
-    return { marketplaces: {}, tools: {} };
+    return { marketplaces: {}, tools: {}, assets: [] };
   }
 
   return withFileLockSync(path, () => {
     const content = readFileSync(path, "utf-8");
-    const result: TomlConfig = { marketplaces: {}, tools: {} };
+    const result: TomlConfig = { marketplaces: {}, tools: {}, assets: [] };
 
     let currentSection = "";
     let currentTool = "";
     let currentInstance: ToolInstanceConfig | null = null;
+    let currentAsset: AssetConfig | null = null;
     
     for (const line of content.split("\n")) {
       const trimmed = line.trim();
@@ -153,10 +155,20 @@ export function loadConfig(configPath?: string): TomlConfig {
           toolConfig.instances.push(instance);
           result.tools![currentTool] = toolConfig;
           currentInstance = instance;
+          currentAsset = null;
+        } else if (section === "assets") {
+          currentSection = "assets";
+          currentTool = "";
+          currentInstance = null;
+          const asset: AssetConfig = { name: "", source: "" };
+          result.assets = result.assets || [];
+          result.assets.push(asset);
+          currentAsset = asset;
         } else {
           currentSection = "";
           currentTool = "";
           currentInstance = null;
+          currentAsset = null;
         }
         continue;
       }
@@ -169,18 +181,27 @@ export function loadConfig(configPath?: string): TomlConfig {
           currentTool = section.replace("tools.", "");
           result.tools![currentTool] = result.tools![currentTool] || {};
           currentInstance = null;
+          currentAsset = null;
+        } else if (section === "assets.overrides") {
+          currentSection = "asset_overrides";
+          currentTool = "";
+          currentInstance = null;
         } else {
           currentSection = section;
           currentTool = "";
           currentInstance = null;
+          currentAsset = null;
         }
         continue;
       }
 
-      const kvStringMatch = trimmed.match(/^(\S+)\s*=\s*"(.+)"$/);
+      const kvStringMatch = trimmed.match(/^(".+"|\S+)\s*=\s*"(.*)"$/);
       const kvBoolMatch = trimmed.match(/^(\S+)\s*=\s*(true|false)$/);
       if (kvStringMatch) {
-        const [, key, value] = kvStringMatch;
+        let [, key, value] = kvStringMatch;
+        if (key.startsWith("\"") && key.endsWith("\"")) {
+          key = key.slice(1, -1);
+        }
         if (currentSection === "marketplaces") {
           result.marketplaces![key] = value;
         } else if (currentSection === "tools" && currentTool) {
@@ -189,6 +210,12 @@ export function loadConfig(configPath?: string): TomlConfig {
         } else if (currentSection === "tool_instances" && currentTool && currentInstance) {
           const normalizedKey = key === "config_dir" ? "configDir" : key;
           (currentInstance as Record<string, string>)[normalizedKey] = value;
+        } else if (currentSection === "assets" && currentAsset) {
+          const normalizedKey = key === "default_target" ? "defaultTarget" : key;
+          (currentAsset as unknown as Record<string, string>)[normalizedKey] = value;
+        } else if (currentSection === "asset_overrides" && currentAsset) {
+          if (!currentAsset.overrides) currentAsset.overrides = {};
+          currentAsset.overrides[key] = value;
         }
       } else if (kvBoolMatch) {
         const [, key, rawValue] = kvBoolMatch;
@@ -218,6 +245,7 @@ export function saveConfig(config: TomlConfig, configPath?: string): void {
 
   const hasMarketplaces = config.marketplaces && Object.keys(config.marketplaces).length > 0;
   const hasTools = config.tools && Object.keys(config.tools).length > 0;
+  const hasAssets = config.assets && config.assets.length > 0;
 
   lines.push("[marketplaces]");
   if (hasMarketplaces) {
@@ -229,6 +257,25 @@ export function saveConfig(config: TomlConfig, configPath?: string): void {
     lines.push("# my-plugins = \"https://raw.githubusercontent.com/my-org/plugins/main/.claude-plugin/marketplace.json\"");
   }
   lines.push("");
+
+  if (hasAssets) {
+    for (const asset of config.assets!) {
+      lines.push("[[assets]]");
+      lines.push(`name = "${asset.name}"`);
+      lines.push(`source = "${asset.source}"`);
+      if (asset.defaultTarget) {
+        lines.push(`default_target = "${asset.defaultTarget}"`);
+      }
+      if (asset.overrides && Object.keys(asset.overrides).length > 0) {
+        lines.push("");
+        lines.push("[assets.overrides]");
+        for (const [key, value] of Object.entries(asset.overrides)) {
+          lines.push(`"${key}" = "${value}"`);
+        }
+      }
+      lines.push("");
+    }
+  }
 
   if (hasTools) {
     for (const [toolId, toolConfig] of Object.entries(config.tools!)) {
@@ -451,7 +498,7 @@ export function parseMarketplaces(config?: TomlConfig): Marketplace[] {
   return marketplaces;
 }
 
-function expandPath(pathValue: string): string {
+export function expandPath(pathValue: string): string {
   if (pathValue === "~") {
     return homedir();
   }

@@ -8,11 +8,11 @@ interface HintBarProps {
 }
 
 const HINTS: Record<Tab, string> = {
-  discover: "/ search · Space toggle · Enter details · s sort · r reverse · q quit",
-  installed: "/ search · Space toggle · Enter details · s sort · r reverse · q quit",
+  discover: "/ search · Space plugin toggle · Enter details · s sort · r reverse · q quit",
+  installed: "/ search · Space plugin toggle · Enter details · s sort · r reverse · q quit",
   marketplaces: "Enter select · u update · r remove · q quit",
   tools: "Enter toggle · Space toggle · e edit config dir · q quit",
-  sync: "y to sync (press twice) · Enter details · q quit",
+  sync: "y to sync missing/drifted items (press twice) · Enter details · q quit",
 };
 
 export function HintBar({ tab, hasDetail }: HintBarProps) {

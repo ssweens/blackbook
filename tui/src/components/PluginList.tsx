@@ -5,21 +5,30 @@ import type { Plugin } from "../lib/types.js";
 interface PluginListProps {
   plugins: Plugin[];
   selectedIndex: number;
+  nameColumnWidth?: number;
+  marketplaceColumnWidth?: number;
   maxHeight?: number;
 }
 
 export function PluginList({
   plugins,
   selectedIndex,
+  nameColumnWidth,
+  marketplaceColumnWidth,
   maxHeight = 12,
 }: PluginListProps) {
+  const hasSelection = selectedIndex >= 0;
+  const effectiveIndex = hasSelection ? selectedIndex : 0;
   // Calculate max lengths for column alignment
   const { maxNameLen, maxMarketplaceLen } = useMemo(() => {
+    if (nameColumnWidth && marketplaceColumnWidth) {
+      return { maxNameLen: nameColumnWidth, maxMarketplaceLen: marketplaceColumnWidth };
+    }
     return {
       maxNameLen: Math.min(30, Math.max(...plugins.map(p => p.name.length), 10)),
       maxMarketplaceLen: Math.max(...plugins.map(p => p.marketplace.length), 10),
     };
-  }, [plugins]);
+  }, [plugins, nameColumnWidth, marketplaceColumnWidth]);
 
   const { visiblePlugins, startIndex, hasMore, hasPrev } = useMemo(() => {
     if (plugins.length <= maxHeight) {
@@ -33,7 +42,7 @@ export function PluginList({
 
     const maxStart = Math.max(0, plugins.length - maxHeight);
     const start = Math.min(
-      Math.max(0, selectedIndex - (maxHeight - 1)),
+      Math.max(0, effectiveIndex - (maxHeight - 1)),
       maxStart
     );
 
@@ -43,7 +52,7 @@ export function PluginList({
       hasMore: start + maxHeight < plugins.length,
       hasPrev: start > 0,
     };
-  }, [plugins, selectedIndex, maxHeight]);
+  }, [plugins, effectiveIndex, maxHeight]);
 
   if (plugins.length === 0) {
     return (
@@ -63,13 +72,15 @@ export function PluginList({
 
       {visiblePlugins.map((plugin, visibleIdx) => {
         const actualIndex = startIndex + visibleIdx;
-        const isSelected = actualIndex === selectedIndex;
+        const isSelected = hasSelection && actualIndex === selectedIndex;
         const indicator = isSelected ? "❯" : " ";
 
         const typeLabel = plugin.hasMcp ? "MCP" : "Plugin";
         const statusIcon = plugin.installed ? "✔" : " ";
         const statusColor = plugin.installed ? "green" : "gray";
         const showPartial = Boolean(plugin.installed && plugin.partial);
+        const statusLabel = plugin.installed ? "installed" : "";
+        const statusWidth = 9;
 
         const paddedName = plugin.name.padEnd(maxNameLen);
 
@@ -87,7 +98,7 @@ export function PluginList({
               <Text color="gray"> </Text>
               <Text color={statusColor}>{statusIcon}</Text>
               <Text color={statusColor}>
-                {plugin.installed ? " installed" : ""}
+                {" " + statusLabel.padEnd(statusWidth)}
               </Text>
               {showPartial && (
                 <>
