@@ -1,6 +1,6 @@
 {
   "name": "@ssweens/blackbook",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Plugin manager for AI coding tools",
   "license": "Apache-2.0",
   "repository": {
@@ -55,6 +55,7 @@
   "devDependencies": {
     "@types/node": "^22.15.21",
     "@types/react": "^18.3.20",
+    "ink-testing-library": "^4.0.0",
     "react-devtools-core": "^7.0.1",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",

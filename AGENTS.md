@@ -26,12 +26,13 @@
 ## Commit & Pull Request Guidelines
 - Use Conventional Commits (e.g., `feat:`, `fix:`, `docs:`, `chore:`).
 - PRs should include a clear summary, list affected tools/paths, and note validation performed (e.g., `./blackbook status`).
+- After any `git push`, run `git push --tags` (per `RELEASING.md`) so CI picks up tags.
 - If you change deployment behavior or config mappings, update `README.md` and any affected skill docs.
 
 ## Pre-commit Checklist
 Before committing, verify:
 1. **Run tests**: `cd tui && pnpm test` - all tests must pass.
-2. **Version bump**: Update `tui/package.json` version (`feat:` = minor, `fix:` = patch).
+2. **Version bump**: Use `npm version` to update `tui/package.json` version (`feat:` = minor, `fix:` = patch).
 3. **Changelog**: Update `CHANGELOG.md`:
    - Add new version section below `[Unreleased]` with date (YYYY-MM-DD).
    - Categorize under `### Added`, `### Changed`, `### Fixed`, `### Removed`.
@@ -46,3 +47,4 @@ Before committing, verify:
 ## Configuration & Deployment Notes
 - `tools.toml` is the authoritative mapping for what gets deployed.
 - Avoid storing secrets in this repo; deploy only files intended to be symlinked into user config directories.
+- `docs/API_ENDPOINTS.md` is not required for this repo because it is a client-only app.

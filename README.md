@@ -232,6 +232,8 @@ pnpm typecheck    # Type check
 pnpm build        # Build for production
 ```
 
+See `docs/TEST_COVERAGE.md` for the user-flow checklist and coverage status.
+
 ```bash
 cd tui
 npm install
