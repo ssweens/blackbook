@@ -36,6 +36,14 @@ vi.mock("./install.js", async (importOriginal) => {
   };
 });
 
+vi.mock("./marketplace.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./marketplace.js")>();
+  return {
+    ...actual,
+    fetchMarketplace: vi.fn().mockResolvedValue([]),
+  };
+});
+
 function createMockPlugin(overrides: Partial<Plugin> = {}): Plugin {
   return {
     name: "test-plugin",
@@ -372,5 +380,16 @@ describe("Store sync tools", () => {
       expect(preview[0].plugin.name).toBe("partial-plugin");
       expect(preview[0].missingInstances).toContain("OpenCode Secondary");
     }
+  });
+
+  it("notifies when no items need sync", async () => {
+    useStore.setState({ notifications: [] });
+
+    await useStore.getState().syncTools([]);
+
+    const { notifications } = useStore.getState();
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0].message).toBe("All enabled instances are in sync.");
+    expect(notifications[0].type).toBe("success");
   });
 });

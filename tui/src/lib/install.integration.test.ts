@@ -61,9 +61,11 @@ function cleanupTestEnvironment(): void {
 
 beforeEach(() => {
   setupTestEnvironment();
+  vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   cleanupTestEnvironment();
 });
 

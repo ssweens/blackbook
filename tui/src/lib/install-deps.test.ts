@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("child_process", () => ({
   execFile: (_cmd: string, _args: string[], _opts: unknown, cb: (err: Error | null) => void) => {
@@ -60,6 +60,11 @@ const basePlugin: Plugin = {
 describe("dependency checks", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("surfaces missing Claude CLI as error", async () => {

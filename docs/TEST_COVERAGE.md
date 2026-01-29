@@ -14,7 +14,7 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Marketplace fetch (remote marketplace.json)
 - [x] Tool config loading and updates
 - [x] Plugin install/uninstall/update adapters
-- [ ] Asset sync adapters (hashing + drift detection)
+- [x] Asset sync adapters (hashing + drift detection)
 - [ ] Marketplace add/remove persistence
 
 ## User Journeys (Happy Paths)
@@ -33,7 +33,7 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Install failure surfaces error notification without leaving detail view
 - [ ] Update failure surfaces error notification with context
 - [ ] Install with no enabled tools shows error notification
-- [ ] Sync with no drift/missing shows “All enabled instances are in sync”
+- [x] Sync with no drift/missing shows “All enabled instances are in sync”
 - [ ] Marketplace fetch failure shows error notification
 - [ ] Invalid marketplace URL rejected in add flow
 - [ ] Asset source missing shows error status and blocks sync

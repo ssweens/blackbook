@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { vi } from "vitest";
 import {
   existsSync,
   mkdirSync,
@@ -12,7 +13,7 @@ import {
 import { dirname } from "path";
 import { join } from "path";
 import { tmpdir } from "os";
-import type { Plugin, ToolInstance } from "./types.js";
+import type { Asset, Plugin, ToolInstance } from "./types.js";
 import {
   createSymlink,
   removeSymlink,
@@ -20,7 +21,10 @@ import {
   loadManifest,
   saveManifest,
   manifestPath,
+  getAssetSourceInfo,
+  getAssetToolStatus,
 } from "./install.js";
+import * as config from "./config.js";
 
 const TEST_DIR = join(tmpdir(), "blackbook-test-" + Date.now());
 const TEST_CACHE_DIR = join(TEST_DIR, "cache");
@@ -831,5 +835,57 @@ describe("Full install/uninstall workflow", () => {
 
     // Since it's a symlink, the content is automatically updated
     expect(readFileSync(join(target, "SKILL.md"), "utf-8")).toBe("# Updated skill");
+  });
+});
+
+describe("Asset sync adapters", () => {
+  beforeEach(setupTestDirs);
+  afterEach(() => {
+    vi.restoreAllMocks();
+    cleanupTestDirs();
+  });
+
+  it("hashes asset sources and detects content changes", () => {
+    const sourcePath = join(TEST_DIR, "asset.txt");
+    writeFileSync(sourcePath, "hello");
+    const asset = { name: "asset-one", source: sourcePath };
+
+    const first = getAssetSourceInfo(asset);
+    expect(first.exists).toBe(true);
+    expect(first.isDirectory).toBe(false);
+    expect(first.hash).not.toBeNull();
+
+    writeFileSync(sourcePath, "hello world");
+    const second = getAssetSourceInfo(asset);
+    expect(second.hash).not.toBeNull();
+    expect(second.hash).not.toBe(first.hash);
+  });
+
+  it("marks drifted assets when target hash diverges", () => {
+    const sourcePath = join(TEST_DIR, "asset-source.txt");
+    writeFileSync(sourcePath, "source content");
+    const asset: Asset = {
+      name: "asset-drift",
+      source: sourcePath,
+      installed: true,
+      scope: "user",
+    };
+
+    const tool = createMockTool({ configDir: join(TEST_CONFIG_DIR, "tool-a") });
+    mkdirSync(tool.configDir, { recursive: true });
+    const targetPath = join(tool.configDir, "AGENTS.md");
+    writeFileSync(targetPath, "source content");
+
+    vi.spyOn(config, "getToolInstances").mockReturnValue([tool]);
+
+    const sourceInfo = getAssetSourceInfo(asset);
+    const initial = getAssetToolStatus(asset, sourceInfo);
+    expect(initial).toHaveLength(1);
+    expect(initial[0].installed).toBe(true);
+    expect(initial[0].drifted).toBe(false);
+
+    writeFileSync(targetPath, "changed content");
+    const afterChange = getAssetToolStatus(asset, sourceInfo);
+    expect(afterChange[0].drifted).toBe(true);
   });
 });

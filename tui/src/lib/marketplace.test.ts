@@ -21,6 +21,7 @@ describe("marketplace", () => {
     mkdirSync(testCache, { recursive: true });
     process.env.XDG_CACHE_HOME = testCache;
     vi.clearAllMocks();
+    vi.spyOn(console, "error").mockImplementation(() => {});
     clearHttpCache();
   });
 
