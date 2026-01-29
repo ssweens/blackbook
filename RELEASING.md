@@ -2,14 +2,16 @@
 
 ## Prerequisites
 
-### NPM Token
+### NPM Trusted Publisher (OIDC)
 
-1. Create an npm access token at https://www.npmjs.com/settings/~/tokens
-2. Select "Automation" token type (for CI/CD)
-3. Add as `NPM_TOKEN` secret in GitHub repo settings:
-   - Go to Settings → Secrets and variables → Actions
-   - Click "New repository secret"
-   - Name: `NPM_TOKEN`, Value: your token
+Trusted publishing is configured for secure, token-free publishing from GitHub Actions:
+
+1. Visit https://www.npmjs.com/package/@ssweens/blackbook/access
+2. Under "Trusted publishers", verify GitHub Actions is configured:
+   - Organization: `ssweens`
+   - Repository: `blackbook`
+   - Workflow: `release.yml`
+3. No npm tokens needed - authentication uses OpenID Connect (OIDC)
 
 ## Release Process
 
