@@ -19,7 +19,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '23'
           cache: 'pnpm'
           cache-dependency-path: tui/pnpm-lock.yaml
 

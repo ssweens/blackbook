@@ -4,6 +4,8 @@ Thank you for your interest in contributing to Blackbook!
 
 ## Getting Started
 
+Prerequisites for development: Node.js 23.x and pnpm.
+
 1. Fork the repository
 2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/blackbook.git`
 3. Install dependencies: `cd tui && pnpm install`

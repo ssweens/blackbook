@@ -35,6 +35,8 @@ Everything is a plugin. Plugins can include skills, commands, agents, hooks, MCP
 
 ## Installation
 
+For local development, use Node.js 23.x and pnpm.
+
 ```bash
 # Install from npm
 npm install -g @ssweens/blackbook
