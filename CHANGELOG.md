@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-01-28
+
+### Fixed
+- Missing vi import in integration test that caused build failures
+
 ## [0.5.5] - 2026-01-28
 
 ### Added
@@ -177,7 +182,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Symlink handling for plugin assets
 
-[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.5.5...HEAD
+[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.5.6...HEAD
+[0.5.6]: https://github.com/ssweens/blackbook/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/ssweens/blackbook/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/ssweens/blackbook/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/ssweens/blackbook/compare/v0.5.2...v0.5.3
