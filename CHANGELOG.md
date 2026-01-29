@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-01-28
+
+### Added
+- Expanded test coverage for sync functionality and asset status helpers
+
+### Changed
+- Migrated to npm trusted publishers with OIDC for secure, token-free publishing
+- Silenced expected stderr output in tests for cleaner test runs
+
 ## [0.5.4] - 2026-01-27
 
 ### Fixed
@@ -168,7 +177,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Symlink handling for plugin assets
 
-[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.5.4...HEAD
+[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.5.5...HEAD
+[0.5.5]: https://github.com/ssweens/blackbook/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/ssweens/blackbook/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/ssweens/blackbook/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/ssweens/blackbook/compare/v0.5.1...v0.5.2
