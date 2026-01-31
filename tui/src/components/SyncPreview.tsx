@@ -34,6 +34,31 @@ export function SyncPreview({ item }: SyncPreviewProps) {
     );
   }
 
+  if (item.kind === "config") {
+    return (
+      <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="gray" paddingX={1} height={5}>
+        <Box>
+          <Text color="gray">Config: </Text>
+          <Text color="white">{item.config.name}</Text>
+          <Text color="gray"> · </Text>
+          <Text color="magenta">{item.config.toolId}</Text>
+        </Box>
+        <Box>
+          <Text color="gray">Source: </Text>
+          <Text color="cyan">{item.config.sourcePath}</Text>
+          <Text color="gray"> → </Text>
+          <Text color="cyan">{item.config.targetPath}</Text>
+        </Box>
+        <Box>
+          <Text color="gray">Status: </Text>
+          <Text color="yellow">
+            {item.missing && item.drifted ? "Missing & Drifted" : item.missing ? "Missing" : "Drifted"}
+          </Text>
+        </Box>
+      </Box>
+    );
+  }
+
   return (
     <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="gray" paddingX={1} height={5}>
       <Box>

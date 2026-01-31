@@ -7,6 +7,7 @@ import {
   syncPluginInstances,
   getAssetToolStatus,
   getAssetSourceInfo,
+  getConfigToolStatus,
 } from "./install.js";
 import type { Plugin, Marketplace, ToolInstance, Asset } from "./types.js";
 
@@ -33,6 +34,7 @@ vi.mock("./install.js", async (importOriginal) => {
     syncPluginInstances: vi.fn(),
     getAssetToolStatus: vi.fn(),
     getAssetSourceInfo: vi.fn(),
+    getConfigToolStatus: vi.fn(),
   };
 });
 
@@ -340,6 +342,7 @@ describe("Store sync tools", () => {
     vi.mocked(syncPluginInstances).mockReset();
     vi.mocked(getAssetToolStatus).mockReset();
     vi.mocked(getAssetSourceInfo).mockReset();
+    vi.mocked(getConfigToolStatus).mockReturnValue([]);
   });
 
   it("builds a sync preview for partial plugins", () => {

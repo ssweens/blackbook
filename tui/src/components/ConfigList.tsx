@@ -1,9 +1,9 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
-import type { Asset } from "../lib/types.js";
+import type { ConfigFile } from "../lib/types.js";
 
-interface AssetListProps {
-  assets: Asset[];
+interface ConfigListProps {
+  configs: ConfigFile[];
   selectedIndex: number;
   nameColumnWidth?: number;
   typeColumnWidth?: number;
@@ -11,53 +11,53 @@ interface AssetListProps {
   maxHeight?: number;
 }
 
-export function AssetList({
-  assets,
+export function ConfigList({
+  configs,
   selectedIndex,
   nameColumnWidth,
   typeColumnWidth,
   marketplaceColumnWidth,
   maxHeight = 8,
-}: AssetListProps) {
+}: ConfigListProps) {
   const hasSelection = selectedIndex >= 0;
   const effectiveIndex = hasSelection ? selectedIndex : 0;
 
   const maxNameLen = useMemo(() => {
     if (nameColumnWidth) return nameColumnWidth;
-    return Math.min(30, Math.max(...assets.map((a) => a.name.length), 10));
-  }, [assets, nameColumnWidth]);
+    return Math.min(30, Math.max(...configs.map((c) => c.name.length), 10));
+  }, [configs, nameColumnWidth]);
 
   const typeWidth = typeColumnWidth ?? 6;
   const marketplaceWidth = marketplaceColumnWidth ?? 0;
 
-  const { visibleAssets, startIndex, hasMore, hasPrev } = useMemo(() => {
-    if (assets.length <= maxHeight) {
+  const { visibleConfigs, startIndex, hasMore, hasPrev } = useMemo(() => {
+    if (configs.length <= maxHeight) {
       return {
-        visibleAssets: assets,
+        visibleConfigs: configs,
         startIndex: 0,
         hasMore: false,
         hasPrev: false,
       };
     }
 
-    const maxStart = Math.max(0, assets.length - maxHeight);
+    const maxStart = Math.max(0, configs.length - maxHeight);
     const start = Math.min(
       Math.max(0, effectiveIndex - (maxHeight - 1)),
       maxStart
     );
 
     return {
-      visibleAssets: assets.slice(start, start + maxHeight),
+      visibleConfigs: configs.slice(start, start + maxHeight),
       startIndex: start,
-      hasMore: start + maxHeight < assets.length,
+      hasMore: start + maxHeight < configs.length,
       hasPrev: start > 0,
     };
-  }, [assets, effectiveIndex, maxHeight]);
+  }, [configs, effectiveIndex, maxHeight]);
 
-  if (assets.length === 0) {
+  if (configs.length === 0) {
     return (
       <Box>
-        <Text color="gray">No assets configured</Text>
+        <Text color="gray">No configs configured</Text>
       </Box>
     );
   }
@@ -70,47 +70,36 @@ export function AssetList({
         </Box>
       )}
 
-      {visibleAssets.map((asset, visibleIdx) => {
+      {visibleConfigs.map((config, visibleIdx) => {
         const actualIndex = startIndex + visibleIdx;
         const isSelected = hasSelection && actualIndex === selectedIndex;
         const indicator = isSelected ? "❯" : " ";
 
-        const statusIcon = asset.installed ? "✔" : " ";
-        const statusColor = asset.installed ? "green" : "gray";
-        const showPartial = Boolean(asset.installed && asset.partial);
-        const showDrifted = Boolean(asset.installed && asset.drifted);
-        const showSourceMissing = asset.sourceExists === false;
-        const statusLabel = asset.installed ? "synced" : "";
+        const statusIcon = config.installed ? "✔" : " ";
+        const statusColor = config.installed ? "green" : "gray";
+        const showDrifted = Boolean(config.installed && config.drifted);
+        const showSourceMissing = config.sourceExists === false;
+        const statusLabel = config.installed ? "synced" : "";
         const statusWidth = 9;
 
-        const paddedName = asset.name.padEnd(maxNameLen);
+        const paddedName = config.name.padEnd(maxNameLen);
 
         return (
-          <Box key={asset.name} flexDirection="column">
+          <Box key={config.name} flexDirection="column">
             <Box>
               <Text color={isSelected ? "cyan" : "white"}>{indicator} </Text>
               <Text bold={isSelected} color="white">
                 {paddedName}
               </Text>
               <Text color="gray"> </Text>
-              <Text color="blue">{"Asset".padEnd(typeWidth)}</Text>
-              {marketplaceWidth > 0 && (
-                <>
-                  <Text color="gray"> · </Text>
-                  <Text color="gray">{"".padEnd(marketplaceWidth)}</Text>
-                </>
-              )}
+              <Text color="magenta">{"Config".padEnd(typeWidth)}</Text>
+              <Text color="gray"> · </Text>
+              <Text color="gray">{config.toolId.padEnd(marketplaceWidth)}</Text>
               <Text color="gray"> </Text>
               <Text color={statusColor}>{statusIcon}</Text>
               <Text color={statusColor}>
                 {" " + statusLabel.padEnd(statusWidth)}
               </Text>
-              {showPartial && (
-                <>
-                  <Text color="gray"> · </Text>
-                  <Text color="yellow">partial</Text>
-                </>
-              )}
               {showDrifted && (
                 <>
                   <Text color="gray"> · </Text>
@@ -130,7 +119,7 @@ export function AssetList({
 
       {hasMore && (
         <Box>
-          <Text color="gray">  ↓ {assets.length - startIndex - maxHeight} more below</Text>
+          <Text color="gray">  ↓ {configs.length - startIndex - maxHeight} more below</Text>
         </Box>
       )}
     </Box>

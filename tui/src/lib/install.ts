@@ -19,9 +19,9 @@ import { createHash } from "crypto";
 const execFileAsync = promisify(execFile);
 import { join, dirname } from "path";
 import { tmpdir } from "os";
-import { expandPath, getCacheDir, getEnabledToolInstances, getToolInstances } from "./config.js";
+import { expandPath, getCacheDir, getEnabledToolInstances, getToolInstances, getConfigRepoPath } from "./config.js";
 import { getGitHubToken, isGitHubHost } from "./github.js";
-import type { Asset, AssetConfig, Plugin, InstalledItem, ToolInstance } from "./types.js";
+import type { Asset, AssetConfig, Plugin, InstalledItem, ToolInstance, ConfigSyncConfig, ConfigFile } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
 import {
   safePath,
@@ -539,6 +539,25 @@ export function removeSymlink(target: string): SymlinkResult {
 }
 
 function isPluginInstalledInClaudeInstance(plugin: Plugin, instance: ToolInstance): boolean {
+  // Check installed_plugins.json for the authoritative list of installed plugins
+  const installedPluginsPath = join(instance.configDir, "plugins/installed_plugins.json");
+  if (existsSync(installedPluginsPath)) {
+    try {
+      const content = readFileSync(installedPluginsPath, "utf-8");
+      const data = JSON.parse(content);
+      if (data.plugins && typeof data.plugins === "object") {
+        // Keys are in format "pluginName@marketplace"
+        for (const key of Object.keys(data.plugins)) {
+          const pluginName = key.split("@")[0];
+          if (pluginName === plugin.name) return true;
+        }
+      }
+    } catch (error) {
+      logError(`Failed to read installed_plugins.json for ${instance.name}`, error);
+    }
+  }
+
+  // Fallback to checking cache directory if installed_plugins.json doesn't exist
   const claudePluginsDir = join(instance.configDir, "plugins/cache");
   if (!existsSync(claudePluginsDir)) return false;
 
@@ -948,6 +967,7 @@ function uninstallPluginItemsFromInstance(pluginName: string, instance: ToolInst
       const dest = item.dest;
       const backup = item.backup;
 
+      // Only do file operations once per dest (handles duplicate entries)
       if (!processedDests.has(dest)) {
         processedDests.add(dest);
         try {
@@ -964,15 +984,16 @@ function uninstallPluginItemsFromInstance(pluginName: string, instance: ToolInst
           if (backup && (existsSync(backup) || isSymlink(backup))) {
             renameSync(backup, dest);
           }
-
-          if (item.previous) {
-            toolManifest.items[entryKey] = item.previous;
-          } else {
-            keysToRemove.push(entryKey);
-          }
         } catch (error) {
           logError(`Failed to uninstall ${item.kind}:${item.name}`, error);
         }
+      }
+
+      // Always update manifest for matching entries (even duplicates)
+      if (item.previous) {
+        toolManifest.items[entryKey] = item.previous;
+      } else {
+        keysToRemove.push(entryKey);
       }
     }
   }
@@ -1251,17 +1272,38 @@ export function linkPluginToInstance(
 }
 
 function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] {
-  const claudePluginsDir = join(instance.configDir, "plugins/cache");
   const plugins: Plugin[] = [];
 
+  // Read installed_plugins.json for the authoritative list of installed plugins
+  const installedPluginsPath = join(instance.configDir, "plugins/installed_plugins.json");
+  const installedPluginKeys = new Set<string>();
+
+  if (existsSync(installedPluginsPath)) {
+    try {
+      const content = readFileSync(installedPluginsPath, "utf-8");
+      const data = JSON.parse(content);
+      if (data.plugins && typeof data.plugins === "object") {
+        // Keys are in format "pluginName@marketplace"
+        for (const key of Object.keys(data.plugins)) {
+          installedPluginKeys.add(key);
+        }
+      }
+    } catch (error) {
+      logError(`Failed to read installed_plugins.json for ${instance.name}`, error);
+    }
+  }
+
+  // If no installed_plugins.json or it's empty, fall back to scanning cache
+  // (for backwards compatibility with older Claude versions)
+  const claudePluginsDir = join(instance.configDir, "plugins/cache");
   if (!existsSync(claudePluginsDir)) return plugins;
 
   try {
     const marketplaceDirs = readdirSync(claudePluginsDir);
-    
+
     for (const marketplace of marketplaceDirs) {
       const mpDir = join(claudePluginsDir, marketplace);
-      
+
       try {
         const stat = lstatSync(mpDir);
         if (!stat.isDirectory()) continue;
@@ -1271,10 +1313,19 @@ function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] 
       }
 
       const pluginDirs = readdirSync(mpDir);
-      
+
       for (const pluginName of pluginDirs) {
+        // Check if this plugin is actually installed (in installed_plugins.json)
+        // If we have installed_plugins.json data, use it as the filter
+        if (installedPluginKeys.size > 0) {
+          const pluginKey = `${pluginName}@${marketplace}`;
+          if (!installedPluginKeys.has(pluginKey)) {
+            continue; // Skip plugins that are cached but not installed
+          }
+        }
+
         const pluginDir = join(mpDir, pluginName);
-        
+
         try {
           const stat = lstatSync(pluginDir);
           if (!stat.isDirectory()) continue;
@@ -1293,7 +1344,7 @@ function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] 
             return false;
           }
         });
-        
+
         if (subDirs.length > 0 && subDirs.every(d => /^[a-f0-9]+$/.test(d))) {
           subDirs.sort();
           contentDir = join(pluginDir, subDirs[subDirs.length - 1]);
@@ -1357,7 +1408,7 @@ function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] 
           }
         }
 
-        if (existsSync(join(contentDir, "mcp.json")) || 
+        if (existsSync(join(contentDir, "mcp.json")) ||
             existsSync(join(contentDir, ".claude-plugin", "mcp.json"))) {
           hasMcp = true;
         }
@@ -1718,6 +1769,182 @@ export function getPluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
       enabled,
     });
   }
-  
+
   return statuses;
+}
+
+// Config sync types and functions
+
+export interface ConfigToolStatus {
+  toolId: string;
+  instanceId: string;
+  name: string;
+  enabled: boolean;
+  installed: boolean;
+  drifted: boolean;
+  targetPath: string;
+}
+
+export interface ConfigSourceInfo {
+  sourcePath: string;
+  exists: boolean;
+  hash: string | null;
+  error?: string;
+}
+
+export interface ConfigSyncResult {
+  success: boolean;
+  syncedInstances: Record<string, number>;
+  errors: string[];
+}
+
+export function getConfigSourceInfo(config: ConfigSyncConfig): ConfigSourceInfo {
+  const configRepo = getConfigRepoPath();
+  if (!configRepo) {
+    return {
+      sourcePath: config.sourcePath,
+      exists: false,
+      hash: null,
+      error: "Config repo not configured. Add [sync] config_repo to your config.toml",
+    };
+  }
+
+  const sourcePath = join(configRepo, config.sourcePath);
+  if (!existsSync(sourcePath)) {
+    return {
+      sourcePath,
+      exists: false,
+      hash: null,
+      error: `Config source not found: ${sourcePath}`,
+    };
+  }
+
+  try {
+    const hash = hashFile(sourcePath);
+    return { sourcePath, exists: true, hash };
+  } catch (error) {
+    return {
+      sourcePath,
+      exists: false,
+      hash: null,
+      error: `Failed to read config source: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+export function getConfigToolStatus(config: ConfigSyncConfig, sourceInfo?: ConfigSourceInfo): ConfigToolStatus[] {
+  const statuses: ConfigToolStatus[] = [];
+  const instances = getToolInstances();
+  const resolvedSource = sourceInfo || getConfigSourceInfo(config);
+
+  // Only get instances that match the config's toolId
+  const matchingInstances = instances.filter((instance) => instance.toolId === config.toolId);
+
+  for (const instance of matchingInstances) {
+    const enabled = instance.enabled;
+    let installed = false;
+    let drifted = false;
+    const targetPath = join(instance.configDir, config.targetPath);
+
+    if (enabled && existsSync(targetPath)) {
+      installed = true;
+      if (resolvedSource.exists && resolvedSource.hash) {
+        try {
+          const targetHash = hashFile(targetPath);
+          drifted = targetHash !== resolvedSource.hash;
+        } catch {
+          drifted = true;
+        }
+      }
+    }
+
+    statuses.push({
+      toolId: instance.toolId,
+      instanceId: instance.instanceId,
+      name: instance.name,
+      enabled,
+      installed,
+      drifted,
+      targetPath,
+    });
+  }
+
+  return statuses;
+}
+
+function installConfigToInstance(
+  config: ConfigSyncConfig,
+  instance: ToolInstance,
+  sourceInfo: ConfigSourceInfo
+): { count: number; error?: string } {
+  if (!instance.enabled) return { count: 0 };
+  if (instance.toolId !== config.toolId) return { count: 0 };
+
+  try {
+    const targetPath = join(instance.configDir, config.targetPath);
+    if (!sourceInfo.exists || !sourceInfo.hash) {
+      return { count: 0, error: sourceInfo.error || "Config source not found." };
+    }
+
+    const manifest = loadManifest();
+    const key = instanceKey(instance);
+    if (!manifest.tools[key]) {
+      manifest.tools[key] = { items: {} };
+    }
+
+    const itemKey = `config:${config.name}`;
+    const previous = manifest.tools[key].items[itemKey] || null;
+    const backupName = `${config.name}-${instance.toolId}-${instance.instanceId}`;
+    const result = copyWithBackup(sourceInfo.sourcePath, targetPath, config.name, "config", backupName);
+
+    const item: InstalledItem = {
+      kind: "asset", // reuse asset kind since configs are similar
+      name: config.name,
+      source: sourceInfo.sourcePath,
+      dest: result.dest,
+      backup: result.backup,
+      owner: config.name,
+      previous,
+    };
+
+    manifest.tools[key].items[itemKey] = item;
+    saveManifest(manifest);
+
+    return { count: 1 };
+  } catch (error) {
+    return { count: 0, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+export function syncConfigInstances(
+  config: ConfigFile,
+  targetStatuses: ConfigToolStatus[]
+): ConfigSyncResult {
+  const result: ConfigSyncResult = { success: false, syncedInstances: {}, errors: [] };
+  if (targetStatuses.length === 0) return result;
+
+  const sourceInfo = getConfigSourceInfo(config);
+  if (!sourceInfo.exists || !sourceInfo.hash) {
+    result.errors.push(sourceInfo.error || `Config source not found for ${config.name}`);
+    return result;
+  }
+
+  for (const status of targetStatuses) {
+    const instance = getToolInstances().find(
+      (inst) => inst.toolId === status.toolId && inst.instanceId === status.instanceId
+    );
+    if (!instance) continue;
+    if (!instance.enabled) continue;
+
+    const installResult = installConfigToInstance(config, instance, sourceInfo);
+    if (installResult.count > 0) {
+      result.syncedInstances[instanceKey(instance)] = installResult.count;
+    }
+    if (installResult.error) {
+      result.errors.push(`Config sync failed for ${instance.name}: ${installResult.error}`);
+    }
+  }
+
+  result.success = Object.values(result.syncedInstances).some((n) => n > 0);
+  return result;
 }

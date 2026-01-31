@@ -166,6 +166,45 @@ default_target = "AGENTS.md"
 
 Assets are synced to enabled instances and show drift if the target differs from the source.
 
+### Configs
+
+Configs let you sync tool-specific configuration files from a central repository to each tool's config directory. Unlike assets (which sync to all enabled tools), configs only sync to matching tool instances.
+
+```toml
+# Set the central config repository location
+[sync]
+config_repo = "~/src/playbook/config"
+
+# Define configs to sync (each targets a specific tool)
+[[configs]]
+name = "Claude Settings"
+tool_id = "claude-code"
+source_path = "claude-code/settings.json"     # relative to config_repo
+target_path = "settings.json"                  # relative to tool's config_dir
+
+[[configs]]
+name = "OpenCode Config"
+tool_id = "opencode"
+source_path = "opencode/opencode.json"
+target_path = "opencode.json"
+```
+
+**Central Repository Structure:**
+```
+~/src/playbook/config/
+├── blackbook/
+│   └── config.toml
+├── claude-code/
+│   ├── settings.json
+│   └── CLAUDE.md
+├── opencode/
+│   └── opencode.json
+└── amp-code/
+    └── config.json
+```
+
+Configs appear in the Discover and Installed tabs with "Config" badge and tool association. Use the Sync tab to sync missing or drifted configs to their target tools.
+
 ### Private Repositories
 
 For private GitHub repos, set a token in your environment (optional for public URLs):

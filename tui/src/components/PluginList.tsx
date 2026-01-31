@@ -56,14 +56,14 @@ export function PluginList({
 
   if (plugins.length === 0) {
     return (
-      <Box marginY={1}>
+      <Box>
         <Text color="gray">No plugins found</Text>
       </Box>
     );
   }
 
   return (
-    <Box flexDirection="column" marginY={1}>
+    <Box flexDirection="column">
       {hasPrev && (
         <Box>
           <Text color="gray">  ↑ {startIndex} more above</Text>

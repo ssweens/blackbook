@@ -5,10 +5,13 @@ import { TabBar } from "./components/TabBar.js";
 import { SearchBox } from "./components/SearchBox.js";
 import { PluginList } from "./components/PluginList.js";
 import { AssetList } from "./components/AssetList.js";
+import { ConfigList } from "./components/ConfigList.js";
 import { PluginPreview } from "./components/PluginPreview.js";
 import { AssetPreview } from "./components/AssetPreview.js";
+import { ConfigPreview } from "./components/ConfigPreview.js";
 import { PluginDetail } from "./components/PluginDetail.js";
 import { AssetDetail } from "./components/AssetDetail.js";
+import { ConfigDetail } from "./components/ConfigDetail.js";
 import { MarketplaceList } from "./components/MarketplaceList.js";
 import { MarketplaceDetail } from "./components/MarketplaceDetail.js";
 import { AddMarketplaceModal } from "./components/AddMarketplaceModal.js";
@@ -19,8 +22,8 @@ import { SyncPreview } from "./components/SyncPreview.js";
 import { HintBar } from "./components/HintBar.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { Notifications } from "./components/Notifications.js";
-import { getPluginToolStatus } from "./lib/install.js";
-import type { Tab, SyncPreviewItem, Plugin, Asset } from "./lib/types.js";
+import { getPluginToolStatus, getConfigToolStatus } from "./lib/install.js";
+import type { Tab, SyncPreviewItem, Plugin, Asset, ConfigFile } from "./lib/types.js";
 
 const TABS: Tab[] = ["discover", "installed", "marketplaces", "tools", "sync"];
 
@@ -32,6 +35,7 @@ export function App() {
     marketplaces,
     installedPlugins,
     assets,
+    configs,
     tools,
     search,
     setSearch,
@@ -41,9 +45,11 @@ export function App() {
     error,
     detailPlugin,
     detailAsset,
+    detailConfig,
     detailMarketplace,
     setDetailPlugin,
     setDetailAsset,
+    setDetailConfig,
     setDetailMarketplace,
     loadMarketplaces,
     installPlugin: doInstall,
@@ -74,6 +80,9 @@ export function App() {
   const getSyncItemKey = (item: SyncPreviewItem) => {
     if (item.kind === "plugin") {
       return `plugin:${item.plugin.marketplace}:${item.plugin.name}`;
+    }
+    if (item.kind === "config") {
+      return `config:${item.config.toolId}:${item.config.name}`;
     }
     return `asset:${item.asset.name}`;
   };
@@ -208,6 +217,33 @@ export function App() {
     return sorted;
   }, [tab, assets, search, sortBy, sortDir]);
 
+  const filteredConfigs = useMemo(() => {
+    const lowerSearch = search.toLowerCase();
+    const base = tab === "installed" ? configs.filter((c) => c.installed) : configs;
+    let filtered = base;
+    if (search) {
+      filtered = base.filter(
+        (c) => c.name.toLowerCase().includes(lowerSearch) ||
+               c.toolId.toLowerCase().includes(lowerSearch) ||
+               c.sourcePath.toLowerCase().includes(lowerSearch)
+      );
+    }
+
+    const sorted = [...filtered].sort((a, b) => {
+      if (sortBy === "name") {
+        const cmp = a.name.localeCompare(b.name);
+        return sortDir === "asc" ? cmp : -cmp;
+      }
+      const aInstalled = a.installed ? 1 : 0;
+      const bInstalled = b.installed ? 1 : 0;
+      const cmp = bInstalled - aInstalled;
+      if (cmp !== 0) return sortDir === "asc" ? cmp : -cmp;
+      return a.name.localeCompare(b.name);
+    });
+
+    return sorted;
+  }, [tab, configs, search, sortBy, sortDir]);
+
   const maxLength = (values: number[], fallback: number) => {
     if (values.length === 0) return fallback;
     return Math.max(...values, fallback);
@@ -216,16 +252,18 @@ export function App() {
   const libraryNameWidth = useMemo(() => {
     const pluginWidth = Math.min(30, maxLength(filteredPlugins.map((p) => p.name.length), 10));
     const assetWidth = Math.min(30, maxLength(filteredAssets.map((a) => a.name.length), 10));
-    return Math.max(pluginWidth, assetWidth);
-  }, [filteredPlugins, filteredAssets]);
+    const configWidth = Math.min(30, maxLength(filteredConfigs.map((c) => c.name.length), 10));
+    return Math.max(pluginWidth, assetWidth, configWidth);
+  }, [filteredPlugins, filteredAssets, filteredConfigs]);
 
   const marketplaceWidth = useMemo(() => {
     return maxLength(filteredPlugins.map((p) => p.marketplace.length), 10);
   }, [filteredPlugins]);
 
+  const configCount = filteredConfigs.length;
   const assetCount = filteredAssets.length;
   const pluginCount = filteredPlugins.length;
-  const libraryCount = assetCount + pluginCount;
+  const libraryCount = configCount + assetCount + pluginCount;
 
   const maxIndex = useMemo(() => {
     if (tab === "marketplaces") {
@@ -244,17 +282,23 @@ export function App() {
     ():
       | { kind: "plugin"; plugin: Plugin }
       | { kind: "asset"; asset: Asset }
+      | { kind: "config"; config: ConfigFile }
       | null => {
       if (tab !== "discover" && tab !== "installed") return null;
-      if (selectedIndex < assetCount) {
-        const asset = filteredAssets[selectedIndex];
+      // Order: configs first, then assets, then plugins
+      if (selectedIndex < configCount) {
+        const config = filteredConfigs[selectedIndex];
+        return config ? { kind: "config", config } : null;
+      }
+      if (selectedIndex < configCount + assetCount) {
+        const asset = filteredAssets[selectedIndex - configCount];
         return asset ? { kind: "asset", asset } : null;
       }
-      const pluginIndex = selectedIndex - assetCount;
+      const pluginIndex = selectedIndex - configCount - assetCount;
       const plugin = filteredPlugins[pluginIndex];
       return plugin ? { kind: "plugin", plugin } : null;
     },
-    [tab, selectedIndex, filteredPlugins, filteredAssets, assetCount]
+    [tab, selectedIndex, filteredPlugins, filteredAssets, filteredConfigs, configCount, assetCount]
   );
 
   const getPluginActions = (plugin: typeof detailPlugin) => {
@@ -285,6 +329,19 @@ export function App() {
     return actions;
   };
 
+  const getConfigActions = (config: typeof detailConfig) => {
+    if (!config) return [] as string[];
+    const actions = [] as string[];
+    const statuses = getConfigToolStatus(config);
+    const enabledStatuses = statuses.filter((s) => s.enabled);
+    const needsSync = enabledStatuses.some((s) => !s.installed || s.drifted);
+    if (needsSync) {
+      actions.push("Sync to tool");
+    }
+    actions.push("Back to list");
+    return actions;
+  };
+
   const refreshDetailPlugin = (plugin: Plugin) => {
     const state = useStore.getState();
     const fromMarketplace = state.marketplaces
@@ -294,6 +351,20 @@ export function App() {
       (p) => p.name === plugin.name && p.marketplace === plugin.marketplace
     );
     setDetailPlugin(fromMarketplace || fromInstalled || plugin);
+  };
+
+  const refreshDetailAsset = (asset: Asset) => {
+    const state = useStore.getState();
+    const refreshed = state.assets.find((a) => a.name === asset.name);
+    setDetailAsset(refreshed || asset);
+  };
+
+  const refreshDetailConfig = (config: ConfigFile) => {
+    const state = useStore.getState();
+    const refreshed = state.configs.find(
+      (c) => c.name === config.name && c.toolId === config.toolId
+    );
+    setDetailConfig(refreshed || config);
   };
 
   useInput((input, key) => {
@@ -310,14 +381,14 @@ export function App() {
 
     // Tab navigation
     if (key.tab || key.rightArrow) {
-      if (!detailPlugin && !detailAsset && !detailMarketplace) {
+      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace) {
         const idx = TABS.indexOf(tab);
         setTab(TABS[(idx + 1) % TABS.length]);
         return;
       }
     }
     if (key.leftArrow) {
-      if (!detailPlugin && !detailAsset && !detailMarketplace) {
+      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace) {
         const idx = TABS.indexOf(tab);
         setTab(TABS[(idx - 1 + TABS.length) % TABS.length]);
         return;
@@ -332,6 +403,9 @@ export function App() {
       } else if (detailAsset) {
         setDetailAsset(null);
         setActionIndex(0);
+      } else if (detailConfig) {
+        setDetailConfig(null);
+        setActionIndex(0);
       } else if (detailMarketplace) {
         setDetailMarketplace(null);
         setActionIndex(0);
@@ -343,7 +417,7 @@ export function App() {
     if (key.upArrow) {
       if (detailPlugin || detailMarketplace) {
         setActionIndex((i) => Math.max(0, i - 1));
-      } else if (detailAsset) {
+      } else if (detailAsset || detailConfig) {
         setActionIndex((i) => Math.max(0, i - 1));
       } else {
         setSelectedIndex(Math.max(0, selectedIndex - 1));
@@ -359,6 +433,9 @@ export function App() {
         setActionIndex((i) => Math.min(actionCount - 1, i + 1));
       } else if (detailAsset) {
         const actionCount = getAssetActions(detailAsset).length;
+        setActionIndex((i) => Math.min(actionCount - 1, i + 1));
+      } else if (detailConfig) {
+        const actionCount = getConfigActions(detailConfig).length;
         setActionIndex((i) => Math.min(actionCount - 1, i + 1));
       } else if (detailMarketplace) {
         const maxActions = detailMarketplace.source === "claude" ? 2 : 3;
@@ -381,6 +458,11 @@ export function App() {
 
       if (detailAsset) {
         handleAssetAction(actionIndex);
+        return;
+      }
+
+      if (detailConfig) {
+        handleConfigAction(actionIndex);
         return;
       }
 
@@ -416,12 +498,15 @@ export function App() {
       } else if (selectedLibraryItem?.kind === "asset") {
         setDetailAsset(selectedLibraryItem.asset);
         setActionIndex(0);
+      } else if (selectedLibraryItem?.kind === "config") {
+        setDetailConfig(selectedLibraryItem.config);
+        setActionIndex(0);
       }
       return;
     }
 
     // Space - toggle install/uninstall
-    if (input === " " && !detailPlugin && !detailAsset && !detailMarketplace) {
+    if (input === " " && !detailPlugin && !detailAsset && !detailConfig && !detailMarketplace) {
       if (tab === "sync") {
         const item = syncPreview[selectedIndex];
         if (!item) return;
@@ -517,18 +602,16 @@ export function App() {
     switch (action) {
       case "Uninstall":
         await doUninstall(detailPlugin);
-        setDetailPlugin(null);
+        refreshDetailPlugin(detailPlugin);
         break;
       case "Update now":
-        if (await doUpdate(detailPlugin)) {
-          refreshDetailPlugin(detailPlugin);
-        }
+        await doUpdate(detailPlugin);
+        refreshDetailPlugin(detailPlugin);
         break;
       case "Install to all tools":
       case "Install":
-        if (await doInstall(detailPlugin)) {
-          refreshDetailPlugin(detailPlugin);
-        }
+        await doInstall(detailPlugin);
+        refreshDetailPlugin(detailPlugin);
         break;
       case "Back to plugin list":
         setDetailPlugin(null);
@@ -548,10 +631,30 @@ export function App() {
     switch (action) {
       case "Sync to all tools":
         await syncTools([{ kind: "asset", asset: detailAsset, missingInstances: [], driftedInstances: [] }]);
-        setDetailAsset(null);
+        refreshDetailAsset(detailAsset);
         break;
       case "Back to list":
         setDetailAsset(null);
+        setActionIndex(0);
+        break;
+      default:
+        break;
+    }
+  };
+
+  const handleConfigAction = async (index: number) => {
+    if (!detailConfig) return;
+    const actions = getConfigActions(detailConfig);
+    const action = actions[index];
+    if (!action) return;
+
+    switch (action) {
+      case "Sync to tool":
+        await syncTools([{ kind: "config", config: detailConfig, drifted: Boolean(detailConfig.drifted), missing: !detailConfig.installed }]);
+        refreshDetailConfig(detailConfig);
+        break;
+      case "Back to list":
+        setDetailConfig(null);
         setActionIndex(0);
         break;
       default:
@@ -585,7 +688,7 @@ export function App() {
 
   const statusMessage = loading
     ? "Loading..."
-    : `${allPlugins.length} plugins, ${assets.length} assets from ${marketplaces.length} marketplaces`;
+    : `${allPlugins.length} plugins, ${assets.length} assets, ${configs.length} configs from ${marketplaces.length} marketplaces`;
 
   const handleAddMarketplace = (name: string, url: string) => {
     addMarketplace(name, url);
@@ -624,6 +727,11 @@ export function App() {
           asset={detailAsset}
           selectedAction={actionIndex}
         />
+      ) : detailConfig ? (
+        <ConfigDetail
+          config={detailConfig}
+          selectedAction={actionIndex}
+        />
       ) : detailMarketplace ? (
         <MarketplaceDetail
           marketplace={detailMarketplace}
@@ -639,8 +747,8 @@ export function App() {
                   onChange={setSearch}
                   placeholder={
                     tab === "discover"
-                      ? "Search plugins and assets..."
-                      : "Search installed plugins and assets..."
+                      ? "Search plugins, assets, and configs..."
+                      : "Search installed plugins, assets, and configs..."
                   }
                   focus={searchFocused}
                   onFocus={() => setSearchFocused(true)}
@@ -666,20 +774,39 @@ export function App() {
                 </Box>
               ) : (
                 <>
-                  <Text color="gray">Assets</Text>
+                  {filteredConfigs.length > 0 && (
+                    <>
+                      <Box marginTop={1}>
+                        <Text color="gray">  Configs</Text>
+                      </Box>
+                      <ConfigList
+                        configs={filteredConfigs}
+                        selectedIndex={selectedIndex < configCount ? selectedIndex : -1}
+                        maxHeight={3}
+                        nameColumnWidth={libraryNameWidth}
+                        typeColumnWidth={6}
+                        marketplaceColumnWidth={marketplaceWidth}
+                      />
+                    </>
+                  )}
+                  <Box marginTop={1}>
+                    <Text color="gray">  Assets</Text>
+                  </Box>
                   <AssetList
                     assets={filteredAssets}
-                    selectedIndex={selectedIndex < assetCount ? selectedIndex : -1}
-                    maxHeight={5}
+                    selectedIndex={selectedIndex >= configCount && selectedIndex < configCount + assetCount ? selectedIndex - configCount : -1}
+                    maxHeight={4}
                     nameColumnWidth={libraryNameWidth}
                     typeColumnWidth={6}
                     marketplaceColumnWidth={marketplaceWidth}
                   />
-                  <Text color="gray">Plugins</Text>
+                  <Box marginTop={1}>
+                    <Text color="gray">  Plugins</Text>
+                  </Box>
                   <PluginList
                     plugins={filteredPlugins}
-                    selectedIndex={selectedIndex >= assetCount ? selectedIndex - assetCount : -1}
-                    maxHeight={7}
+                    selectedIndex={selectedIndex >= configCount + assetCount ? selectedIndex - configCount - assetCount : -1}
+                    maxHeight={5}
                     nameColumnWidth={libraryNameWidth}
                     marketplaceColumnWidth={marketplaceWidth}
                   />
@@ -696,20 +823,39 @@ export function App() {
                 </Box>
               ) : (
                 <>
-                  <Text color="gray">Assets</Text>
+                  {filteredConfigs.length > 0 && (
+                    <>
+                      <Box marginTop={1}>
+                        <Text color="gray">  Configs</Text>
+                      </Box>
+                      <ConfigList
+                        configs={filteredConfigs}
+                        selectedIndex={selectedIndex < configCount ? selectedIndex : -1}
+                        maxHeight={3}
+                        nameColumnWidth={libraryNameWidth}
+                        typeColumnWidth={6}
+                        marketplaceColumnWidth={marketplaceWidth}
+                      />
+                    </>
+                  )}
+                  <Box marginTop={1}>
+                    <Text color="gray">  Assets</Text>
+                  </Box>
                   <AssetList
                     assets={filteredAssets}
-                    selectedIndex={selectedIndex < assetCount ? selectedIndex : -1}
-                    maxHeight={5}
+                    selectedIndex={selectedIndex >= configCount && selectedIndex < configCount + assetCount ? selectedIndex - configCount : -1}
+                    maxHeight={4}
                     nameColumnWidth={libraryNameWidth}
                     typeColumnWidth={6}
                     marketplaceColumnWidth={marketplaceWidth}
                   />
-                  <Text color="gray">Plugins</Text>
+                  <Box marginTop={1}>
+                    <Text color="gray">  Plugins</Text>
+                  </Box>
                   <PluginList
                     plugins={filteredPlugins}
-                    selectedIndex={selectedIndex >= assetCount ? selectedIndex - assetCount : -1}
-                    maxHeight={7}
+                    selectedIndex={selectedIndex >= configCount + assetCount ? selectedIndex - configCount - assetCount : -1}
+                    maxHeight={5}
                     nameColumnWidth={libraryNameWidth}
                     marketplaceColumnWidth={marketplaceWidth}
                   />
@@ -757,20 +903,22 @@ export function App() {
         </Box>
       )}
 
-      {(tab === "discover" || tab === "installed") && !detailPlugin && !detailAsset && !detailMarketplace && (
+      {(tab === "discover" || tab === "installed") && !detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && (
         selectedLibraryItem?.kind === "plugin" ? (
           <PluginPreview plugin={selectedLibraryItem.plugin} />
-        ) : (
-          <AssetPreview asset={selectedLibraryItem?.kind === "asset" ? selectedLibraryItem.asset : null} />
-        )
+        ) : selectedLibraryItem?.kind === "asset" ? (
+          <AssetPreview asset={selectedLibraryItem.asset} />
+        ) : selectedLibraryItem?.kind === "config" ? (
+          <ConfigPreview config={selectedLibraryItem.config} />
+        ) : null
       )}
 
-      {tab === "sync" && !detailPlugin && !detailAsset && !detailMarketplace && (
+      {tab === "sync" && !detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && (
         <SyncPreview item={syncPreview[selectedIndex] ?? null} />
       )}
 
       <Notifications notifications={notifications} onClear={clearNotification} />
-      <HintBar tab={tab} hasDetail={Boolean(detailPlugin || detailAsset || detailMarketplace)} />
+      <HintBar tab={tab} hasDetail={Boolean(detailPlugin || detailAsset || detailConfig || detailMarketplace)} />
       <StatusBar
         loading={loading}
         message={statusMessage}

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { existsSync, watch } from "fs";
-import type { Tab, Marketplace, Plugin, Asset, AppState, Notification, SyncPreviewItem } from "./types.js";
+import type { Tab, Marketplace, Plugin, Asset, ConfigFile, AppState, Notification, SyncPreviewItem } from "./types.js";
 import {
   parseMarketplaces,
   addMarketplace as addMarketplaceToConfig,
@@ -25,6 +25,9 @@ import {
   getAssetToolStatus,
   getAssetSourceInfo,
   syncAssetInstances,
+  getConfigSourceInfo,
+  getConfigToolStatus,
+  syncConfigInstances,
   manifestPath,
 } from "./install.js";
 
@@ -35,6 +38,7 @@ interface Actions {
   loadMarketplaces: () => Promise<void>;
   loadInstalledPlugins: () => void;
   loadAssets: () => Asset[];
+  loadConfigs: () => ConfigFile[];
   loadTools: () => void;
   refreshAll: () => Promise<void>;
   installPlugin: (plugin: Plugin) => Promise<boolean>;
@@ -42,6 +46,7 @@ interface Actions {
   updatePlugin: (plugin: Plugin) => Promise<boolean>;
   setDetailPlugin: (plugin: Plugin | null) => void;
   setDetailAsset: (asset: Asset | null) => void;
+  setDetailConfig: (config: ConfigFile | null) => void;
   setDetailMarketplace: (marketplace: Marketplace | null) => void;
   addMarketplace: (name: string, url: string) => void;
   removeMarketplace: (name: string) => void;
@@ -90,6 +95,24 @@ function getAssetInstallStatus(
   return { installed: true, partial: missing, drifted };
 }
 
+function getConfigInstallStatus(
+  config: ConfigFile,
+  sourceInfo = getConfigSourceInfo(config)
+): { installed: boolean; drifted: boolean } {
+  const statuses = getConfigToolStatus(config, sourceInfo).filter((status) => status.enabled);
+  if (statuses.length === 0) {
+    return { installed: false, drifted: false };
+  }
+
+  const installedAny = statuses.some((status) => status.installed);
+  if (!installedAny) {
+    return { installed: false, drifted: false };
+  }
+
+  const drifted = statuses.some((status) => status.drifted);
+  return { installed: true, drifted };
+}
+
 function buildSyncPreview(plugins: Plugin[]): SyncPreviewItem[] {
   const preview: SyncPreviewItem[] = [];
   for (const plugin of plugins) {
@@ -130,11 +153,33 @@ function buildAssetSyncPreview(assets: Asset[]): SyncPreviewItem[] {
   return preview;
 }
 
+function buildConfigSyncPreview(configs: ConfigFile[]): SyncPreviewItem[] {
+  const preview: SyncPreviewItem[] = [];
+  for (const config of configs) {
+    const sourceInfo = getConfigSourceInfo(config);
+    const statuses = getConfigToolStatus(config, sourceInfo).filter((status) => status.enabled);
+    if (statuses.length === 0) continue;
+
+    const installedAny = statuses.some((status) => status.installed);
+    const missing = statuses.some((status) => !status.installed);
+    const drifted = statuses.some((status) => status.drifted);
+
+    // Only include if there's something to sync
+    if (!missing && !drifted) continue;
+    // Don't show if not installed anywhere and source is missing
+    if (!installedAny && !sourceInfo.exists) continue;
+
+    preview.push({ kind: "config", config, drifted, missing });
+  }
+  return preview;
+}
+
 export const useStore = create<Store>((set, get) => ({
   tab: "discover",
   marketplaces: [],
   installedPlugins: [],
   assets: [],
+  configs: [],
   tools: getToolInstances(),
   search: "",
   selectedIndex: 0,
@@ -142,6 +187,7 @@ export const useStore = create<Store>((set, get) => ({
   error: null,
   detailPlugin: null,
   detailAsset: null,
+  detailConfig: null,
   detailMarketplace: null,
   notifications: [],
 
@@ -155,6 +201,7 @@ export const useStore = create<Store>((set, get) => ({
             search: "",
             detailPlugin: null,
             detailAsset: null,
+            detailConfig: null,
             detailMarketplace: null,
           }
     ),
@@ -162,6 +209,7 @@ export const useStore = create<Store>((set, get) => ({
   setSelectedIndex: (index) => set({ selectedIndex: index }),
   setDetailPlugin: (plugin) => set({ detailPlugin: plugin }),
   setDetailAsset: (asset) => set({ detailAsset: asset }),
+  setDetailConfig: (config) => set({ detailConfig: config }),
   setDetailMarketplace: (marketplace) => set({ detailMarketplace: marketplace }),
 
   notify: (message, type = "info") => {
@@ -185,6 +233,7 @@ export const useStore = create<Store>((set, get) => ({
       const marketplaces = parseMarketplaces();
       const { plugins: installedPlugins } = getAllInstalledPlugins();
       const assets = get().loadAssets();
+      const configs = get().loadConfigs();
       const tools = getToolInstances();
 
       const enrichedMarketplaces: Marketplace[] = await Promise.all(
@@ -215,6 +264,7 @@ export const useStore = create<Store>((set, get) => ({
         marketplaces: enrichedMarketplaces,
         installedPlugins: installedWithStatus,
         assets,
+        configs,
         tools,
         loading: false,
       });
@@ -236,7 +286,8 @@ export const useStore = create<Store>((set, get) => ({
       ({ ...plugin, ...getInstallStatus(plugin, true) })
     );
     const assets = get().loadAssets();
-    set({ installedPlugins: installedWithStatus, marketplaces, assets, tools: getToolInstances() });
+    const configs = get().loadConfigs();
+    set({ installedPlugins: installedWithStatus, marketplaces, assets, configs, tools: getToolInstances() });
   },
 
   loadAssets: () => {
@@ -264,6 +315,32 @@ export const useStore = create<Store>((set, get) => ({
 
     set({ assets });
     return assets;
+  },
+
+  loadConfigs: () => {
+    const config = loadConfig();
+    const configs = (config.configs || []).map((cfg) => {
+      const sourceInfo = getConfigSourceInfo(cfg);
+      const status = getConfigInstallStatus(
+        {
+          ...cfg,
+          installed: false,
+          scope: "user",
+        },
+        sourceInfo
+      );
+      return {
+        ...cfg,
+        installed: status.installed,
+        drifted: status.drifted,
+        scope: "user" as const,
+        sourceExists: sourceInfo.exists,
+        sourceError: sourceInfo.error || null,
+      };
+    });
+
+    set({ configs });
+    return configs;
   },
 
   refreshAll: async () => {
@@ -402,7 +479,12 @@ export const useStore = create<Store>((set, get) => ({
   getSyncPreview: () => {
     const { plugins } = getAllInstalledPlugins();
     const assets = get().assets.length > 0 ? get().assets : get().loadAssets();
-    return [...buildAssetSyncPreview(assets), ...buildSyncPreview(plugins)];
+    const configs = get().configs.length > 0 ? get().configs : get().loadConfigs();
+    return [
+      ...buildConfigSyncPreview(configs),
+      ...buildAssetSyncPreview(assets),
+      ...buildSyncPreview(plugins),
+    ];
   },
 
   syncTools: async (items) => {
@@ -428,12 +510,20 @@ export const useStore = create<Store>((set, get) => ({
         const result = await syncPluginInstances(item.plugin, marketplaceUrl, statuses);
         if (result.success) syncedItems += 1;
         errors.push(...result.errors);
-      } else {
+      } else if (item.kind === "asset") {
         const statuses = getAssetToolStatus(item.asset)
           .filter((status) => status.enabled && (!status.installed || status.drifted));
         if (statuses.length === 0) continue;
 
         const result = syncAssetInstances(item.asset, statuses);
+        if (result.success) syncedItems += 1;
+        errors.push(...result.errors);
+      } else if (item.kind === "config") {
+        const statuses = getConfigToolStatus(item.config)
+          .filter((status) => status.enabled && (!status.installed || status.drifted));
+        if (statuses.length === 0) continue;
+
+        const result = syncConfigInstances(item.config, statuses);
         if (result.success) syncedItems += 1;
         errors.push(...result.errors);
       }

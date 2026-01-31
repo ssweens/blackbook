@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-01-31
+
+### Added
+- Config file syncing for tool-specific configurations via `[sync]` and `[[configs]]` TOML sections
+- Configs appear in Discover/Installed tabs with sync status and in Sync tab for batch operations
+- SHA256-based drift detection for configs (same as assets)
+
+### Fixed
+- Plugin uninstall not removing duplicate manifest entries (entries with same dest but different keys)
+- Claude plugin status incorrectly showing installed after uninstall (now checks installed_plugins.json)
+- Detail view closing after plugin/asset/config actions (now stays on detail and refreshes)
+- UI section header alignment in Discover/Installed tabs
+
 ## [0.5.6] - 2026-01-28
 
 ### Fixed

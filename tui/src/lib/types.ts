@@ -59,6 +59,21 @@ export interface Asset extends AssetConfig {
   sourceError?: string | null;
 }
 
+export interface ConfigSyncConfig {
+  name: string;
+  toolId: string;
+  sourcePath: string;  // relative to config_repo
+  targetPath: string;  // relative to tool's configDir
+}
+
+export interface ConfigFile extends ConfigSyncConfig {
+  installed: boolean;
+  drifted?: boolean;
+  scope: "user";
+  sourceExists?: boolean;
+  sourceError?: string | null;
+}
+
 export type SyncPreviewItem =
   | {
       kind: "plugin";
@@ -70,6 +85,12 @@ export type SyncPreviewItem =
       asset: Asset;
       missingInstances: string[];
       driftedInstances: string[];
+    }
+  | {
+      kind: "config";
+      config: ConfigFile;
+      drifted: boolean;
+      missing: boolean;
     };
 
 export interface Marketplace {
@@ -108,6 +129,7 @@ export interface AppState {
   marketplaces: Marketplace[];
   installedPlugins: Plugin[];
   assets: Asset[];
+  configs: ConfigFile[];
   tools: ToolInstance[];
   search: string;
   selectedIndex: number;
@@ -115,6 +137,7 @@ export interface AppState {
   error: string | null;
   detailPlugin: Plugin | null;
   detailAsset: Asset | null;
+  detailConfig: ConfigFile | null;
   detailMarketplace: Marketplace | null;
   notifications: Notification[];
 }
