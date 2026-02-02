@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, readdirSync } from "fs";
 import { join, dirname, resolve } from "path";
 import { createHash } from "crypto";
 import { homedir } from "os";
@@ -231,6 +231,68 @@ async function fetchPluginContents(
   }
 }
 
+/**
+ * Scan a local plugin directory for skills, commands, agents, hooks, and MCP.
+ */
+function scanLocalPluginContents(pluginDir: string): {
+  skills: string[];
+  commands: string[];
+  agents: string[];
+  hooks: string[];
+  hasMcp: boolean;
+} {
+  const result = { skills: [] as string[], commands: [] as string[], agents: [] as string[], hooks: [] as string[], hasMcp: false };
+
+  if (!existsSync(pluginDir)) return result;
+
+  try {
+    const skillsDir = join(pluginDir, "skills");
+    if (existsSync(skillsDir)) {
+      for (const item of readdirSync(skillsDir)) {
+        const itemPath = join(skillsDir, item);
+        if (statSync(itemPath).isDirectory() && existsSync(join(itemPath, "SKILL.md"))) {
+          result.skills.push(item);
+        }
+      }
+    }
+
+    const commandsDir = join(pluginDir, "commands");
+    if (existsSync(commandsDir)) {
+      for (const item of readdirSync(commandsDir)) {
+        if (item.endsWith(".md")) {
+          result.commands.push(item.replace(/\.md$/, ""));
+        }
+      }
+    }
+
+    const agentsDir = join(pluginDir, "agents");
+    if (existsSync(agentsDir)) {
+      for (const item of readdirSync(agentsDir)) {
+        if (item.endsWith(".md")) {
+          result.agents.push(item.replace(/\.md$/, ""));
+        }
+      }
+    }
+
+    const hooksDir = join(pluginDir, "hooks");
+    if (existsSync(hooksDir)) {
+      for (const item of readdirSync(hooksDir)) {
+        if (item.endsWith(".md") || item.endsWith(".json")) {
+          result.hooks.push(item.replace(/\.(md|json)$/, ""));
+        }
+      }
+    }
+
+    if (existsSync(join(pluginDir, "mcp.json")) || existsSync(join(pluginDir, ".mcp.json"))) {
+      result.hasMcp = true;
+    }
+  } catch (error) {
+    console.error(`Failed to scan local plugin ${pluginDir}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  return result;
+}
+
 export async function fetchMarketplace(marketplace: Marketplace): Promise<Plugin[]> {
   const cacheKey = `marketplace:${marketplace.url}`;
   let data = cacheGet(cacheKey, 3600) as MarketplaceJson | null;
@@ -278,6 +340,20 @@ export async function fetchMarketplace(marketplace: Marketplace): Promise<Plugin
   }
 
   const repoInfo = parseGithubRepoFromUrl(marketplace.url);
+  const localMarketplacePath = resolveLocalMarketplacePath(marketplace.url, marketplace.isLocal);
+
+  // For local marketplaces, determine the base directory for resolving relative plugin sources
+  // If the path is a directory, use it directly; if it's a file (marketplace.json), use its parent
+  let localBaseDir: string | null = null;
+  if (localMarketplacePath) {
+    try {
+      localBaseDir = statSync(localMarketplacePath).isDirectory()
+        ? localMarketplacePath
+        : dirname(localMarketplacePath);
+    } catch {
+      localBaseDir = dirname(localMarketplacePath);
+    }
+  }
 
   // Fetch all plugin contents in parallel
   const pluginPromises = (data?.plugins || []).map(async (p) => {
@@ -288,7 +364,17 @@ export async function fetchMarketplace(marketplace: Marketplace): Promise<Plugin
     let hasMcp = false;
 
     const source = p.source || "";
-    if (repoInfo && typeof source === "string" && source.startsWith("./")) {
+
+    // Local marketplace: scan plugin directory for contents
+    if (localBaseDir && typeof source === "string" && source.startsWith("./")) {
+      const pluginDir = resolve(localBaseDir, source);
+      const contents = scanLocalPluginContents(pluginDir);
+      skills = contents.skills;
+      commands = contents.commands;
+      agents = contents.agents;
+      hooks = contents.hooks;
+      hasMcp = contents.hasMcp;
+    } else if (repoInfo && typeof source === "string" && source.startsWith("./")) {
       const [repo, branch] = repoInfo;
       const contents = await fetchPluginContents(repo, branch, source);
       skills = contents.skills;

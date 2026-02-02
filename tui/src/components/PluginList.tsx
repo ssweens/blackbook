@@ -78,7 +78,7 @@ export function PluginList({
         const typeLabel = plugin.hasMcp ? "MCP" : "Plugin";
         const statusIcon = plugin.installed ? "✔" : " ";
         const statusColor = plugin.installed ? "green" : "gray";
-        const showPartial = Boolean(plugin.installed && plugin.partial);
+        const showIncomplete = Boolean(plugin.installed && plugin.incomplete);
         const statusLabel = plugin.installed ? "installed" : "";
         const statusWidth = 9;
 
@@ -100,10 +100,10 @@ export function PluginList({
               <Text color={statusColor}>
                 {" " + statusLabel.padEnd(statusWidth)}
               </Text>
-              {showPartial && (
+              {showIncomplete && (
                 <>
                   <Text color="gray"> · </Text>
-                  <Text color="yellow">partial</Text>
+                  <Text color="yellow">incomplete</Text>
                 </>
               )}
             </Box>

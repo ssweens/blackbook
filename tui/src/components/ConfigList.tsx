@@ -77,9 +77,10 @@ export function ConfigList({
 
         const statusIcon = config.installed ? "✔" : " ";
         const statusColor = config.installed ? "green" : "gray";
+        const showIncomplete = Boolean(config.installed && config.incomplete);
         const showDrifted = Boolean(config.installed && config.drifted);
         const showSourceMissing = config.sourceExists === false;
-        const statusLabel = config.installed ? "synced" : "";
+        const statusLabel = config.installed ? "installed" : "";
         const statusWidth = 9;
 
         const paddedName = config.name.padEnd(maxNameLen);
@@ -100,6 +101,12 @@ export function ConfigList({
               <Text color={statusColor}>
                 {" " + statusLabel.padEnd(statusWidth)}
               </Text>
+              {showIncomplete && (
+                <>
+                  <Text color="gray"> · </Text>
+                  <Text color="yellow">incomplete</Text>
+                </>
+              )}
               {showDrifted && (
                 <>
                   <Text color="gray"> · </Text>

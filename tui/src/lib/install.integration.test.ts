@@ -705,9 +705,11 @@ describe("getInstalledPluginsForInstance", () => {
 
     const plugins = getInstalledPluginsForInstance(getInstance("opencode"));
 
-    const testPlugin = plugins.find((p) => p.name === TEST_SKILL_NAME);
+    // Plugin is grouped by its actual name from the cache path, not the skill name
+    const testPlugin = plugins.find((p) => p.name === TEST_PLUGIN_NAME);
     expect(testPlugin).toBeDefined();
     expect(testPlugin!.skills).toContain(TEST_SKILL_NAME);
+    expect(testPlugin!.marketplace).toBe(TEST_MARKETPLACE);
   });
 
   it("returns empty array for unknown tool", () => {

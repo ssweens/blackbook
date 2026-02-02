@@ -67,10 +67,10 @@ describe("dependency checks", () => {
     vi.restoreAllMocks();
   });
 
-  it("surfaces missing Claude CLI as error", async () => {
+  it("surfaces missing plugin source as error", async () => {
     const plugin = { ...basePlugin, name: "claude-plugin" };
     const result = await enablePlugin(plugin);
-    expect(result.errors.join(" ")).toContain("Claude CLI was not found");
+    expect(result.errors.join(" ")).toContain("Plugin source not found");
   });
 
   it("fails install when git is missing", async () => {

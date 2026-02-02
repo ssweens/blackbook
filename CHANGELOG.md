@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-02-02
+
+### Added
+- Multi-file config sync mappings via `[[configs.files]]` TOML sections
+- Directory sync support (trailing `/` convention) and glob patterns for config sources
+- Pi tool support (`~/.pi` config directory, config sync only)
+- Tests for config parsing and multi-file mapping expansion
+
+### Changed
+- Config sources flatten to target directory (no subdirectory structure preserved)
+- Partial config installs now show as installed but drifted (for sync visibility)
+- ConfigPreview and SyncPreview show mapping summaries with file counts
+
+### Fixed
+- Config names with spaces now use safe backup labels
+- Empty or missing config mappings throw clear errors
+
 ## [0.6.0] - 2026-01-31
 
 ### Added
@@ -195,7 +212,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Symlink handling for plugin assets
 
-[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.5.6...HEAD
+[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/ssweens/blackbook/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/ssweens/blackbook/compare/v0.5.6...v0.6.0
 [0.5.6]: https://github.com/ssweens/blackbook/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/ssweens/blackbook/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/ssweens/blackbook/compare/v0.5.3...v0.5.4

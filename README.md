@@ -32,6 +32,7 @@ Everything is a plugin. Plugins can include skills, commands, agents, hooks, MCP
 | OpenAI Codex | `~/.codex` | ✓ | — | — |
 | OpenCode | `~/.config/opencode` | ✓ | ✓ | ✓ |
 | Amp Code | `~/.config/amp` | ✓ | ✓ | ✓ |
+| Pi | `~/.pi` | — | — | — |
 
 ## Installation
 
@@ -170,6 +171,8 @@ Assets are synced to enabled instances and show drift if the target differs from
 
 Configs let you sync tool-specific configuration files from a central repository to each tool's config directory. Unlike assets (which sync to all enabled tools), configs only sync to matching tool instances.
 
+#### Single File Config (Legacy Format)
+
 ```toml
 # Set the central config repository location
 [sync]
@@ -181,13 +184,39 @@ name = "Claude Settings"
 tool_id = "claude-code"
 source_path = "claude-code/settings.json"     # relative to config_repo
 target_path = "settings.json"                  # relative to tool's config_dir
-
-[[configs]]
-name = "OpenCode Config"
-tool_id = "opencode"
-source_path = "opencode/opencode.json"
-target_path = "opencode.json"
 ```
+
+#### Multi-File Config (New Format)
+
+For tools with multiple config files (like `pi` with `config.toml`, `keybindings.toml`, themes, etc.), use the `[[configs.files]]` array:
+
+```toml
+[[configs]]
+name = "Pi Config"
+tool_id = "pi"
+
+[[configs.files]]
+source = "pi/config.toml"
+target = "config.toml"
+
+[[configs.files]]
+source = "pi/keybindings.toml"
+target = "keybindings.toml"
+
+[[configs.files]]
+source = "pi/themes/"           # trailing slash = sync directory contents
+target = "themes/"
+
+[[configs.files]]
+source = "pi/*.json"            # glob pattern - sync all matching files
+target = "."
+```
+
+**Source/Target Behavior:**
+- `source` can be a single file, directory (with trailing `/`), or glob pattern
+- `target` is the destination directory or filename (relative to tool's config_dir)
+- Directory/glob sources are **flattened** to the target directory (files go directly in target, not subdirectories)
+- Files removed from the source are **NOT** deleted from the target (safety feature)
 
 **Central Repository Structure:**
 ```
@@ -234,6 +263,7 @@ Tools are only managed when enabled in config. On first run, Blackbook enables t
 - OpenCode — `~/.config/opencode`
 - Amp — `~/.config/amp`
 - Codex — `~/.codex`
+- Pi — `~/.pi`
 
 **Supported plugin types:** skills, commands, agents, hooks, MCP servers, LSP servers.
 

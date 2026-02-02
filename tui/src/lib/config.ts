@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import type { ToolTarget, ToolInstance, Marketplace, AssetConfig, ConfigSyncConfig } from "./types.js";
+import type { ToolTarget, ToolInstance, Marketplace, AssetConfig, ConfigSyncConfig, ConfigMapping } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
 
 const DEFAULT_TOOLS: Record<string, ToolTarget> = {
@@ -34,6 +34,14 @@ const DEFAULT_TOOLS: Record<string, ToolTarget> = {
     name: "Codex",
     configDir: join(homedir(), ".codex"),
     skillsSubdir: "skills",
+    commandsSubdir: null,
+    agentsSubdir: null,
+  },
+  pi: {
+    id: "pi",
+    name: "Pi",
+    configDir: join(homedir(), ".pi"),
+    skillsSubdir: null,
     commandsSubdir: null,
     agentsSubdir: null,
   },
@@ -177,10 +185,21 @@ export function loadConfig(configPath?: string): TomlConfig {
           currentTool = "";
           currentInstance = null;
           currentAsset = null;
-          const config: ConfigSyncConfig = { name: "", toolId: "", sourcePath: "", targetPath: "" };
+          const config: ConfigSyncConfig = { name: "", toolId: "" };
           result.configs = result.configs || [];
           result.configs.push(config);
           currentConfig = config;
+        } else if (section === "configs.files" && currentConfig) {
+          currentSection = "config_files";
+          currentTool = "";
+          currentInstance = null;
+          currentAsset = null;
+          // Initialize mappings array and add new mapping
+          if (!currentConfig.mappings) {
+            currentConfig.mappings = [];
+          }
+          const mapping = { source: "", target: "" };
+          currentConfig.mappings.push(mapping);
         } else {
           currentSection = "";
           currentTool = "";
@@ -250,6 +269,11 @@ export function loadConfig(configPath?: string): TomlConfig {
                                key === "source_path" ? "sourcePath" :
                                key === "target_path" ? "targetPath" : key;
           (currentConfig as unknown as Record<string, string>)[normalizedKey] = value;
+        } else if (currentSection === "config_files" && currentConfig && currentConfig.mappings) {
+          const currentMapping = currentConfig.mappings[currentConfig.mappings.length - 1];
+          if (currentMapping) {
+            (currentMapping as unknown as Record<string, string>)[key] = value;
+          }
         }
       } else if (kvBoolMatch) {
         const [, key, rawValue] = kvBoolMatch;
@@ -324,8 +348,20 @@ export function saveConfig(config: TomlConfig, configPath?: string): void {
       lines.push("[[configs]]");
       lines.push(`name = "${cfg.name}"`);
       lines.push(`tool_id = "${cfg.toolId}"`);
-      lines.push(`source_path = "${cfg.sourcePath}"`);
-      lines.push(`target_path = "${cfg.targetPath}"`);
+
+      // New format: mappings array
+      if (cfg.mappings && cfg.mappings.length > 0) {
+        for (const mapping of cfg.mappings) {
+          lines.push("[[configs.files]]");
+          lines.push(`source = "${mapping.source}"`);
+          lines.push(`target = "${mapping.target}"`);
+        }
+      } else if (cfg.sourcePath && cfg.targetPath) {
+        // Legacy format: single source/target
+        lines.push(`source_path = "${cfg.sourcePath}"`);
+        lines.push(`target_path = "${cfg.targetPath}"`);
+      }
+
       lines.push("");
     }
   }

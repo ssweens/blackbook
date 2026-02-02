@@ -15,7 +15,7 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Tool config loading and updates
 - [x] Plugin install/uninstall/update adapters
 - [x] Asset sync adapters (hashing + drift detection)
-- [x] Config sync adapters (hashing + drift detection, tool-specific filtering)
+- [x] Config sync adapters (hashing + drift detection, tool-specific filtering, multi-file mappings)
 - [ ] Marketplace add/remove persistence
 
 ## User Journeys (Happy Paths)

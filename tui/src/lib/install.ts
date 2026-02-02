@@ -17,11 +17,11 @@ import { execFile, execFileSync } from "child_process";
 import { createHash } from "crypto";
 
 const execFileAsync = promisify(execFile);
-import { join, dirname } from "path";
-import { tmpdir } from "os";
+import { join, dirname, resolve, basename } from "path";
+import { tmpdir, homedir } from "os";
 import { expandPath, getCacheDir, getEnabledToolInstances, getToolInstances, getConfigRepoPath } from "./config.js";
 import { getGitHubToken, isGitHubHost } from "./github.js";
-import type { Asset, AssetConfig, Plugin, InstalledItem, ToolInstance, ConfigSyncConfig, ConfigFile } from "./types.js";
+import type { Asset, AssetConfig, Plugin, InstalledItem, ToolInstance, ConfigSyncConfig, ConfigFile, ConfigSourceFile, ConfigMapping } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
 import {
   safePath,
@@ -32,9 +32,40 @@ import {
   validateRepoUrl,
   validateRelativeSubPath,
 } from "./validation.js";
+import fastGlob from "fast-glob";
 
 export function getPluginsCacheDir(): string {
   return join(getCacheDir(), "plugins");
+}
+
+/**
+ * Extract marketplace and plugin name from a source path.
+ * Handles multiple cache formats:
+ * - Blackbook cache: ~/.cache/blackbook/plugins/{marketplace}/{plugin}/...
+ * - Claude cache: ~/.claude/plugins/cache/{marketplace}/{plugin}/...
+ * - Claude cache with hash: ~/.claude/plugins/cache/{marketplace}/{plugin}/{hash}/...
+ * Returns null if the path doesn't match any expected pattern.
+ */
+function extractPluginInfoFromSource(sourcePath: string): { marketplace: string; pluginName: string } | null {
+  // Try blackbook cache first: ~/.cache/blackbook/plugins/{marketplace}/{plugin}/...
+  const blackbookCacheDir = getPluginsCacheDir();
+  if (sourcePath.startsWith(blackbookCacheDir)) {
+    const relativePath = sourcePath.slice(blackbookCacheDir.length + 1);
+    const parts = relativePath.split("/");
+    // Expected: {marketplace}/{plugin}/{componentType}/{componentName} (4+ parts)
+    if (parts.length >= 4) {
+      return { marketplace: parts[0], pluginName: parts[1] };
+    }
+  }
+
+  // Try Claude cache: ~/.claude/plugins/cache/{marketplace}/{plugin}/...
+  // or ~/.claude*/plugins/cache/{marketplace}/{plugin}/...
+  const claudeCacheMatch = sourcePath.match(/\.claude[^/]*\/plugins\/cache\/([^/]+)\/([^/]+)/);
+  if (claudeCacheMatch) {
+    return { marketplace: claudeCacheMatch[1], pluginName: claudeCacheMatch[2] };
+  }
+
+  return null;
 }
 
 function instanceKey(instance: ToolInstance): string {
@@ -236,7 +267,6 @@ export type SymlinkResult =
   | { success: false; code: SymlinkErrorCode; message: string };
 
 let cachedGitAvailable: boolean | null = null;
-let cachedClaudeAvailable: boolean | null = null;
 
 function logError(context: string, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
@@ -254,26 +284,12 @@ async function ensureGitAvailable(): Promise<void> {
   }
 }
 
-async function ensureClaudeAvailable(): Promise<void> {
-  if (cachedClaudeAvailable === true) return;
-  try {
-    await execFileAsync("claude", ["--version"]);
-    cachedClaudeAvailable = true;
-  } catch (error) {
-    cachedClaudeAvailable = false;
-    throw new Error(
-      "Claude CLI was not found. Install it or disable Claude instances in your config."
-    );
-  }
-}
-
 async function execClaudeCommand(
   instance: ToolInstance,
   command: "install" | "uninstall" | "enable" | "disable" | "update",
   pluginName: string
 ): Promise<void> {
   validatePluginName(pluginName);
-  await ensureClaudeAvailable();
   await execFileAsync("claude", ["plugin", command, pluginName], {
     env: {
       ...process.env,
@@ -353,11 +369,54 @@ export async function downloadPlugin(plugin: Plugin, marketplaceUrl: string): Pr
 
   mkdirSync(pluginDir, { recursive: true });
 
+  const source = plugin.source;
+
+  // Handle local marketplace (path-based)
+  const isLocalMarketplace = marketplaceUrl.startsWith("/") ||
+    marketplaceUrl.startsWith("./") ||
+    marketplaceUrl.startsWith("../") ||
+    marketplaceUrl.startsWith("~");
+
+  if (isLocalMarketplace && typeof source === "string" && source.startsWith("./")) {
+    // Resolve marketplace base directory
+    let marketplaceBase = marketplaceUrl;
+    if (marketplaceBase.startsWith("~")) {
+      marketplaceBase = join(homedir(), marketplaceBase.slice(1));
+    }
+    if (!marketplaceBase.startsWith("/")) {
+      marketplaceBase = resolve(process.cwd(), marketplaceBase);
+    }
+    // If marketplace points to a file, use its directory
+    if (existsSync(marketplaceBase) && lstatSync(marketplaceBase).isFile()) {
+      marketplaceBase = dirname(marketplaceBase);
+    }
+
+    const sourceDir = resolve(marketplaceBase, source);
+
+    if (!existsSync(sourceDir)) {
+      logError(
+        `Local plugin source not found: ${sourceDir}`,
+        new Error(`source=${source}, marketplaceBase=${marketplaceBase}`)
+      );
+      rmSync(pluginDir, { recursive: true, force: true });
+      return null;
+    }
+
+    try {
+      cpSync(sourceDir, pluginDir, { recursive: true });
+      return pluginDir;
+    } catch (error) {
+      logError(`Failed to copy local plugin ${plugin.name}`, error);
+      rmSync(pluginDir, { recursive: true, force: true });
+      return null;
+    }
+  }
+
+  // Handle remote (GitHub) marketplace
   let repoUrl: string | null = null;
   let ref = "main";
   let subPath = "";
 
-  const source = plugin.source;
   if (typeof source === "object") {
     if (source.source === "github" && source.repo) {
       repoUrl = `https://github.com/${source.repo}.git`;
@@ -379,6 +438,10 @@ export async function downloadPlugin(plugin: Plugin, marketplaceUrl: string): Pr
   }
 
   if (!repoUrl) {
+    logError(
+      `Cannot determine repo URL for plugin ${plugin.name}`,
+      new Error(`source=${JSON.stringify(source)}, marketplaceUrl=${marketplaceUrl}`)
+    );
     rmSync(pluginDir, { recursive: true, force: true });
     return null;
   }
@@ -538,45 +601,7 @@ export function removeSymlink(target: string): SymlinkResult {
   }
 }
 
-function isPluginInstalledInClaudeInstance(plugin: Plugin, instance: ToolInstance): boolean {
-  // Check installed_plugins.json for the authoritative list of installed plugins
-  const installedPluginsPath = join(instance.configDir, "plugins/installed_plugins.json");
-  if (existsSync(installedPluginsPath)) {
-    try {
-      const content = readFileSync(installedPluginsPath, "utf-8");
-      const data = JSON.parse(content);
-      if (data.plugins && typeof data.plugins === "object") {
-        // Keys are in format "pluginName@marketplace"
-        for (const key of Object.keys(data.plugins)) {
-          const pluginName = key.split("@")[0];
-          if (pluginName === plugin.name) return true;
-        }
-      }
-    } catch (error) {
-      logError(`Failed to read installed_plugins.json for ${instance.name}`, error);
-    }
-  }
 
-  // Fallback to checking cache directory if installed_plugins.json doesn't exist
-  const claudePluginsDir = join(instance.configDir, "plugins/cache");
-  if (!existsSync(claudePluginsDir)) return false;
-
-  for (const marketplace of readdirSync(claudePluginsDir)) {
-    const mpDir = join(claudePluginsDir, marketplace);
-    try {
-      if (!lstatSync(mpDir).isDirectory()) continue;
-    } catch (error) {
-      logError(`Failed to stat ${mpDir}`, error);
-      continue;
-    }
-
-    for (const pluginName of readdirSync(mpDir)) {
-      if (pluginName === plugin.name) return true;
-    }
-  }
-
-  return false;
-}
 
 export interface InstallResult {
   success: boolean;
@@ -605,6 +630,7 @@ export async function installPlugin(plugin: Plugin, marketplaceUrl: string): Pro
   const claudeInstances = enabledInstances.filter((instance) => instance.toolId === "claude-code");
   const nonClaudeInstances = enabledInstances.filter((instance) => instance.toolId !== "claude-code");
 
+  // For Claude instances, use the native CLI
   for (const instance of claudeInstances) {
     try {
       await execClaudeCommand(instance, "install", plugin.name);
@@ -616,11 +642,12 @@ export async function installPlugin(plugin: Plugin, marketplaceUrl: string): Pro
     }
   }
 
+  // For non-Claude instances, download and create symlinks
   if (nonClaudeInstances.length > 0) {
     const sourcePath = await downloadPlugin(plugin, marketplaceUrl);
 
     if (!sourcePath) {
-      if (Object.values(result.linkedInstances).every((count) => count === 0)) {
+      if (claudeInstances.length === 0) {
         result.errors.push(`Failed to download plugin ${plugin.name}`);
         return result;
       }
@@ -647,26 +674,14 @@ export async function installPlugin(plugin: Plugin, marketplaceUrl: string): Pro
 export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
   validatePluginMetadata(plugin);
   const enabledInstances = getEnabledToolInstances();
-  let claudeSuccess = false;
   let removedCount = 0;
 
   if (enabledInstances.length === 0) {
     return false;
   }
 
-  const claudeInstances = enabledInstances.filter((instance) => instance.toolId === "claude-code");
-  const nonClaudeInstances = enabledInstances.filter((instance) => instance.toolId !== "claude-code");
-
-  for (const instance of claudeInstances) {
-    try {
-      await execClaudeCommand(instance, "uninstall", plugin.name);
-      claudeSuccess = true;
-    } catch (error) {
-      logError(`Claude uninstall failed for ${instance.name}`, error);
-    }
-  }
-
-  for (const instance of nonClaudeInstances) {
+  // Uninstall from all enabled instances using the same method
+  for (const instance of enabledInstances) {
     removedCount += uninstallPluginItemsFromInstance(plugin.name, instance);
   }
 
@@ -677,7 +692,7 @@ export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
     logError(`Failed to remove plugin dir for ${plugin.name}`, error);
   }
 
-  return claudeSuccess || removedCount > 0;
+  return removedCount > 0;
 }
 
 export interface EnableResult {
@@ -1023,42 +1038,30 @@ export async function enablePlugin(plugin: Plugin, marketplaceUrl?: string): Pro
     return result;
   }
 
-  const claudeInstances = enabledInstances.filter((instance) => instance.toolId === "claude-code");
-  const nonClaudeInstances = enabledInstances.filter((instance) => instance.toolId !== "claude-code");
-
-  for (const instance of claudeInstances) {
-    try {
-      await execClaudeCommand(instance, "enable", plugin.name);
-      result.linkedInstances[instanceKey(instance)] = 1;
-    } catch (error) {
-      logError(`Claude enable failed for ${instance.name}`, error);
-      result.errors.push(
-        `Claude enable failed for ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`
-      );
-    }
-  }
-
+  // Get or download plugin source
   let sourcePath = getPluginSourcePath(plugin);
   
   if (!sourcePath && marketplaceUrl) {
     sourcePath = await downloadPlugin(plugin, marketplaceUrl);
   }
   
-  if (sourcePath) {
-    for (const instance of nonClaudeInstances) {
-      try {
-        const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance);
-        result.linkedInstances[instanceKey(instance)] = count;
-        result.errors.push(...errors);
-      } catch (error) {
-        logError(`Enable failed for ${plugin.name} in ${instance.name}`, error);
-        result.errors.push(
-          `Enable failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`
-        );
-      }
-    }
-  } else if (nonClaudeInstances.length > 0) {
+  if (!sourcePath) {
     result.errors.push(`Plugin source not found for ${plugin.name}`);
+    return result;
+  }
+
+  // Enable (install) to all enabled instances using the same method
+  for (const instance of enabledInstances) {
+    try {
+      const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance);
+      result.linkedInstances[instanceKey(instance)] = count;
+      result.errors.push(...errors);
+    } catch (error) {
+      logError(`Enable failed for ${plugin.name} in ${instance.name}`, error);
+      result.errors.push(
+        `Enable failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`
+      );
+    }
   }
 
   result.success = Object.values(result.linkedInstances).some((n) => n > 0);
@@ -1082,22 +1085,8 @@ export async function disablePlugin(plugin: Plugin): Promise<EnableResult> {
     return result;
   }
 
-  const claudeInstances = enabledInstances.filter((instance) => instance.toolId === "claude-code");
-  const nonClaudeInstances = enabledInstances.filter((instance) => instance.toolId !== "claude-code");
-
-  for (const instance of claudeInstances) {
-    try {
-      await execClaudeCommand(instance, "disable", plugin.name);
-      result.linkedInstances[instanceKey(instance)] = 1;
-    } catch (error) {
-      logError(`Claude disable failed for ${instance.name}`, error);
-      result.errors.push(
-        `Claude disable failed for ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`
-      );
-    }
-  }
-
-  for (const instance of nonClaudeInstances) {
+  // Disable (uninstall) from all enabled instances using the same method
+  for (const instance of enabledInstances) {
     const removed = uninstallPluginItemsFromInstance(plugin.name, instance);
     result.linkedInstances[instanceKey(instance)] = removed;
   }
@@ -1123,25 +1112,12 @@ export async function updatePlugin(plugin: Plugin, marketplaceUrl: string): Prom
     return result;
   }
 
-  const claudeInstances = enabledInstances.filter((instance) => instance.toolId === "claude-code");
-  const nonClaudeInstances = enabledInstances.filter((instance) => instance.toolId !== "claude-code");
-
-  for (const instance of claudeInstances) {
-    try {
-      await execClaudeCommand(instance, "update", plugin.name);
-      result.linkedInstances[instanceKey(instance)] = 1;
-    } catch (error) {
-      logError(`Claude update failed for ${instance.name}`, error);
-      result.errors.push(
-        `Claude update failed for ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`
-      );
-    }
-  }
-
-  for (const instance of nonClaudeInstances) {
+  // Uninstall from all enabled instances first
+  for (const instance of enabledInstances) {
     uninstallPluginItemsFromInstance(plugin.name, instance);
   }
 
+  // Clear cached plugin
   try {
     const pluginDir = safePath(getPluginsCacheDir(), plugin.marketplace, plugin.name);
     rmSync(pluginDir, { recursive: true, force: true });
@@ -1149,25 +1125,24 @@ export async function updatePlugin(plugin: Plugin, marketplaceUrl: string): Prom
     logError(`Failed to remove plugin dir for ${plugin.name}`, error);
   }
 
-  if (nonClaudeInstances.length > 0) {
-    const sourcePath = await downloadPlugin(plugin, marketplaceUrl);
+  // Download fresh copy and install to all enabled instances
+  const sourcePath = await downloadPlugin(plugin, marketplaceUrl);
 
-    if (sourcePath) {
-      for (const instance of nonClaudeInstances) {
-        try {
-          const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance);
-          result.linkedInstances[instanceKey(instance)] = count;
-          result.errors.push(...errors);
-        } catch (error) {
-          logError(`Update failed for ${plugin.name} in ${instance.name}`, error);
-          result.errors.push(
-            `Update failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`
-          );
-        }
+  if (sourcePath) {
+    for (const instance of enabledInstances) {
+      try {
+        const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance);
+        result.linkedInstances[instanceKey(instance)] = count;
+        result.errors.push(...errors);
+      } catch (error) {
+        logError(`Update failed for ${plugin.name} in ${instance.name}`, error);
+        result.errors.push(
+          `Update failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`
+        );
       }
-    } else if (Object.values(result.linkedInstances).every((count) => count === 0)) {
-      result.errors.push(`Failed to download plugin update for ${plugin.name}`);
     }
+  } else {
+    result.errors.push(`Failed to download plugin update for ${plugin.name}`);
   }
 
   result.success = Object.values(result.linkedInstances).some((n) => n > 0);
@@ -1189,9 +1164,18 @@ export function linkPluginToInstance(
     manifest.tools[key] = { items: {} };
   }
 
+  // Debug logging
+  console.error(`[DEBUG] linkPluginToInstance: ${plugin.name} -> ${instance.name}`);
+  console.error(`[DEBUG] sourcePath: ${sourcePath}`);
+  console.error(`[DEBUG] skillsSubdir: ${instance.skillsSubdir}, commandsSubdir: ${instance.commandsSubdir}, agentsSubdir: ${instance.agentsSubdir}`);
+  console.error(`[DEBUG] plugin.skills: ${JSON.stringify(plugin.skills)}`);
+  console.error(`[DEBUG] plugin.commands: ${JSON.stringify(plugin.commands)}`);
+  console.error(`[DEBUG] plugin.agents: ${JSON.stringify(plugin.agents)}`);
+
   for (const skill of plugin.skills) {
     validateItemName("skill", skill);
     const source = safePath(join(sourcePath, "skills"), skill);
+    console.error(`[DEBUG] Checking skill source: ${source}, exists: ${existsSync(source)}`);
     if (!existsSync(source)) continue;
 
     if (instance.skillsSubdir) {
@@ -1268,6 +1252,7 @@ export function linkPluginToInstance(
   }
 
   saveManifest(manifest);
+  console.error(`[DEBUG] linkPluginToInstance completed: ${linked} items linked for ${instance.name}`);
   return linked;
 }
 
@@ -1453,9 +1438,57 @@ export function getInstalledPluginsForInstance(instance: ToolInstance): Plugin[]
     return getInstalledPluginsForClaudeInstance(instance);
   }
 
-  const plugins: Plugin[] = [];
-  const seen = new Set<string>();
+  // Load manifest to get authoritative source paths
+  // Manifest may have items under both "toolId" and "toolId:instanceId" keys
+  const manifest = loadManifest();
+  const toolKeys = [
+    instance.toolId,
+    `${instance.toolId}:${instance.instanceId}`,
+  ];
+  const toolManifest: Record<string, InstalledItem> = {};
+  for (const key of toolKeys) {
+    const items = manifest.tools[key]?.items || {};
+    Object.assign(toolManifest, items);
+  }
 
+  // Build map of dest path -> source path from manifest
+  const destToSource = new Map<string, string>();
+  for (const item of Object.values(toolManifest)) {
+    if (item.dest && item.source) {
+      destToSource.set(item.dest, item.source);
+    }
+  }
+
+  // Collect all components and group by actual plugin name (from source path)
+  interface ComponentInfo {
+    type: "skill" | "command" | "agent";
+    name: string;
+    source: string;
+  }
+
+  const components: ComponentInfo[] = [];
+
+  // Helper to get source: prefer manifest, fall back to symlink resolution, then itemPath
+  function getSource(itemPath: string): string {
+    // First try manifest
+    const manifestSource = destToSource.get(itemPath);
+    if (manifestSource) return manifestSource;
+
+    // Then try symlink resolution
+    try {
+      const stat = lstatSync(itemPath);
+      if (stat.isSymbolicLink()) {
+        return realpathSync(itemPath);
+      }
+    } catch {
+      // Ignore errors
+    }
+
+    // Fall back to item path itself
+    return itemPath;
+  }
+
+  // Scan skills
   if (instance.skillsSubdir) {
     const skillsDir = join(instance.configDir, instance.skillsSubdir);
     if (existsSync(skillsDir)) {
@@ -1466,24 +1499,8 @@ export function getInstalledPluginsForInstance(instance: ToolInstance): Plugin[]
             const stat = lstatSync(itemPath);
             if (stat.isDirectory() || stat.isSymbolicLink()) {
               if (existsSync(join(itemPath, "SKILL.md"))) {
-                if (!seen.has(item)) {
-                  seen.add(item);
-                  plugins.push({
-                    name: item,
-                    marketplace: "local",
-                    description: "",
-                    source: stat.isSymbolicLink() ? realpathSync(itemPath) : itemPath,
-                    skills: [item],
-                    commands: [],
-                    agents: [],
-                    hooks: [],
-                    hasMcp: false,
-                    hasLsp: false,
-                    homepage: "",
-                    installed: true,
-                    scope: "user",
-                  });
-                }
+                const source = getSource(itemPath);
+                components.push({ type: "skill", name: item, source });
               }
             }
           } catch (error) {
@@ -1496,6 +1513,7 @@ export function getInstalledPluginsForInstance(instance: ToolInstance): Plugin[]
     }
   }
 
+  // Scan commands
   if (instance.commandsSubdir) {
     const commandsDir = join(instance.configDir, instance.commandsSubdir);
     if (existsSync(commandsDir)) {
@@ -1503,26 +1521,9 @@ export function getInstalledPluginsForInstance(instance: ToolInstance): Plugin[]
         for (const item of readdirSync(commandsDir)) {
           if (item.endsWith(".md")) {
             const name = item.replace(/\.md$/, "");
-            if (!seen.has(name)) {
-              seen.add(name);
-              const itemPath = join(commandsDir, item);
-              const stat = lstatSync(itemPath);
-              plugins.push({
-                name,
-                marketplace: "local",
-                description: "",
-                source: stat.isSymbolicLink() ? realpathSync(itemPath) : itemPath,
-                skills: [],
-                commands: [name],
-                agents: [],
-                hooks: [],
-                hasMcp: false,
-                hasLsp: false,
-                homepage: "",
-                installed: true,
-                scope: "user",
-              });
-            }
+            const itemPath = join(commandsDir, item);
+            const source = getSource(itemPath);
+            components.push({ type: "command", name, source });
           }
         }
       } catch (error) {
@@ -1531,6 +1532,7 @@ export function getInstalledPluginsForInstance(instance: ToolInstance): Plugin[]
     }
   }
 
+  // Scan agents
   if (instance.agentsSubdir) {
     const agentsDir = join(instance.configDir, instance.agentsSubdir);
     if (existsSync(agentsDir)) {
@@ -1538,32 +1540,98 @@ export function getInstalledPluginsForInstance(instance: ToolInstance): Plugin[]
         for (const item of readdirSync(agentsDir)) {
           if (item.endsWith(".md")) {
             const name = item.replace(/\.md$/, "");
-            if (!seen.has(name)) {
-              seen.add(name);
-              const itemPath = join(agentsDir, item);
-              const stat = lstatSync(itemPath);
-              plugins.push({
-                name,
-                marketplace: "local",
-                description: "",
-                source: stat.isSymbolicLink() ? realpathSync(itemPath) : itemPath,
-                skills: [],
-                commands: [],
-                agents: [name],
-                hooks: [],
-                hasMcp: false,
-                hasLsp: false,
-                homepage: "",
-                installed: true,
-                scope: "user",
-              });
-            }
+            const itemPath = join(agentsDir, item);
+            const source = getSource(itemPath);
+            components.push({ type: "agent", name, source });
           }
         }
       } catch (error) {
         logError(`Failed to read agents in ${agentsDir}`, error);
       }
     }
+  }
+
+  // Group components by plugin (using source path to determine actual plugin)
+  // Key format: "marketplace:pluginName" or "local:componentName" for truly local items
+  const pluginGroups = new Map<string, {
+    marketplace: string;
+    pluginName: string;
+    source: string;
+    skills: string[];
+    commands: string[];
+    agents: string[];
+  }>();
+
+  for (const component of components) {
+    const pluginInfo = extractPluginInfoFromSource(component.source);
+
+    let key: string;
+    let marketplace: string;
+    let pluginName: string;
+
+    if (pluginInfo) {
+      // Component came from a marketplace plugin
+      key = `${pluginInfo.marketplace}:${pluginInfo.pluginName}`;
+      marketplace = pluginInfo.marketplace;
+      pluginName = pluginInfo.pluginName;
+    } else {
+      // Truly local component - treat it as its own plugin
+      key = `local:${component.name}`;
+      marketplace = "local";
+      pluginName = component.name;
+    }
+
+    let group = pluginGroups.get(key);
+    if (!group) {
+      group = {
+        marketplace,
+        pluginName,
+        source: component.source,
+        skills: [],
+        commands: [],
+        agents: [],
+      };
+      pluginGroups.set(key, group);
+    }
+
+    // Add component to appropriate list
+    switch (component.type) {
+      case "skill":
+        if (!group.skills.includes(component.name)) {
+          group.skills.push(component.name);
+        }
+        break;
+      case "command":
+        if (!group.commands.includes(component.name)) {
+          group.commands.push(component.name);
+        }
+        break;
+      case "agent":
+        if (!group.agents.includes(component.name)) {
+          group.agents.push(component.name);
+        }
+        break;
+    }
+  }
+
+  // Convert groups to Plugin objects
+  const plugins: Plugin[] = [];
+  for (const group of pluginGroups.values()) {
+    plugins.push({
+      name: group.pluginName,
+      marketplace: group.marketplace,
+      description: "",
+      source: group.source,
+      skills: group.skills,
+      commands: group.commands,
+      agents: group.agents,
+      hooks: [],
+      hasMcp: false,
+      hasLsp: false,
+      homepage: "",
+      installed: true,
+      scope: "user",
+    });
   }
 
   return plugins;
@@ -1625,41 +1693,28 @@ export async function syncPluginInstances(
     .map((status) => findInstance(status.toolId, status.instanceId))
     .filter((instance): instance is ToolInstance => Boolean(instance));
 
-  const claudeInstances = missingInstances.filter((instance) => instance.toolId === "claude-code");
-  const nonClaudeInstances = missingInstances.filter((instance) => instance.toolId !== "claude-code");
-
-  for (const instance of claudeInstances) {
-    try {
-      await execClaudeCommand(instance, "install", plugin.name);
-      result.syncedInstances[instanceKey(instance)] = 1;
-    } catch (e) {
-      result.errors.push(
-        `Claude sync failed for ${instance.name}: ${e instanceof Error ? e.message : "unknown error"}`
-      );
-    }
+  // Get or download plugin source once for all instances
+  let sourcePath = getPluginSourcePath(plugin);
+  if (!sourcePath && marketplaceUrl) {
+    sourcePath = await downloadPlugin(plugin, marketplaceUrl);
   }
 
-  if (nonClaudeInstances.length > 0) {
-    let sourcePath = getPluginSourcePath(plugin);
-    if (!sourcePath && marketplaceUrl) {
-      sourcePath = await downloadPlugin(plugin, marketplaceUrl);
-    }
+  if (!sourcePath) {
+    result.errors.push(`Failed to locate plugin source for ${plugin.name}`);
+    return result;
+  }
 
-    if (!sourcePath) {
-      result.errors.push(`Failed to locate plugin source for ${plugin.name}`);
-    } else {
-      for (const instance of nonClaudeInstances) {
-        try {
-          const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance);
-          result.syncedInstances[instanceKey(instance)] = count;
-          result.errors.push(...errors);
-        } catch (error) {
-          logError(`Sync failed for ${plugin.name} in ${instance.name}`, error);
-          result.errors.push(
-            `Sync failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`
-          );
-        }
-      }
+  // Sync (install) to all missing instances using the same method
+  for (const instance of missingInstances) {
+    try {
+      const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance);
+      result.syncedInstances[instanceKey(instance)] = count;
+      result.errors.push(...errors);
+    } catch (error) {
+      logError(`Sync failed for ${plugin.name} in ${instance.name}`, error);
+      result.errors.push(
+        `Sync failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`
+      );
     }
   }
 
@@ -1724,37 +1779,57 @@ export function getPluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
     const enabled = instance.enabled;
 
     if (enabled && supported) {
-      if (instance.toolId === "claude-code") {
-        installed = isPluginInstalledInClaudeInstance(plugin, instance);
-      } else {
-        if (canInstallSkills && instance.skillsSubdir) {
-          for (const skill of plugin.skills) {
-            const base = join(instance.configDir, instance.skillsSubdir);
-            const skillPath = safePath(base, skill);
-            if (existsSync(skillPath)) {
-              installed = true;
-              break;
-            }
+      // Check for installed components by looking at actual files/symlinks
+      // This works for all tools including Claude
+      if (canInstallSkills && instance.skillsSubdir) {
+        for (const skill of plugin.skills) {
+          const base = join(instance.configDir, instance.skillsSubdir);
+          const skillPath = safePath(base, skill);
+          if (existsSync(skillPath)) {
+            installed = true;
+            break;
           }
         }
-        if (!installed && canInstallCommands && instance.commandsSubdir) {
-          for (const cmd of plugin.commands) {
-            const base = join(instance.configDir, instance.commandsSubdir);
-            const cmdPath = safePath(base, `${cmd}.md`);
-            if (existsSync(cmdPath)) {
-              installed = true;
-              break;
-            }
+      }
+      if (!installed && canInstallCommands && instance.commandsSubdir) {
+        for (const cmd of plugin.commands) {
+          const base = join(instance.configDir, instance.commandsSubdir);
+          const cmdPath = safePath(base, `${cmd}.md`);
+          if (existsSync(cmdPath)) {
+            installed = true;
+            break;
           }
         }
-        if (!installed && canInstallAgents && instance.agentsSubdir) {
-          for (const agent of plugin.agents) {
-            const base = join(instance.configDir, instance.agentsSubdir);
-            const agentPath = safePath(base, `${agent}.md`);
-            if (existsSync(agentPath)) {
-              installed = true;
-              break;
+      }
+      if (!installed && canInstallAgents && instance.agentsSubdir) {
+        for (const agent of plugin.agents) {
+          const base = join(instance.configDir, instance.agentsSubdir);
+          const agentPath = safePath(base, `${agent}.md`);
+          if (existsSync(agentPath)) {
+            installed = true;
+            break;
+          }
+        }
+      }
+      
+      // For MCP-only plugins on Claude, check installed_plugins.json
+      if (!installed && plugin.hasMcp && instance.toolId === "claude-code") {
+        const installedPluginsPath = join(instance.configDir, "plugins/installed_plugins.json");
+        if (existsSync(installedPluginsPath)) {
+          try {
+            const content = readFileSync(installedPluginsPath, "utf-8");
+            const data = JSON.parse(content);
+            if (data.plugins && typeof data.plugins === "object") {
+              for (const key of Object.keys(data.plugins)) {
+                const pluginName = key.split("@")[0];
+                if (pluginName === plugin.name) {
+                  installed = true;
+                  break;
+                }
+              }
             }
+          } catch {
+            // Ignore parse errors
           }
         }
       }
@@ -1785,77 +1860,271 @@ export interface ConfigToolStatus {
   targetPath: string;
 }
 
-export interface ConfigSourceInfo {
-  sourcePath: string;
-  exists: boolean;
-  hash: string | null;
-  error?: string;
-}
-
 export interface ConfigSyncResult {
   success: boolean;
   syncedInstances: Record<string, number>;
   errors: string[];
 }
 
-export function getConfigSourceInfo(config: ConfigSyncConfig): ConfigSourceInfo {
-  const configRepo = getConfigRepoPath();
-  if (!configRepo) {
-    return {
-      sourcePath: config.sourcePath,
-      exists: false,
-      hash: null,
-      error: "Config repo not configured. Add [sync] config_repo to your config.toml",
-    };
-  }
 
-  const sourcePath = join(configRepo, config.sourcePath);
-  if (!existsSync(sourcePath)) {
-    return {
-      sourcePath,
-      exists: false,
-      hash: null,
-      error: `Config source not found: ${sourcePath}`,
-    };
-  }
-
-  try {
-    const hash = hashFile(sourcePath);
-    return { sourcePath, exists: true, hash };
-  } catch (error) {
-    return {
-      sourcePath,
-      exists: false,
-      hash: null,
-      error: `Failed to read config source: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
+// Helper to check if a path is a directory sync (ends with / or \)
+function isDirectorySyncPath(path: string): boolean {
+  return path.endsWith("/") || path.endsWith("\\");
 }
 
-export function getConfigToolStatus(config: ConfigSyncConfig, sourceInfo?: ConfigSourceInfo): ConfigToolStatus[] {
+// Helper to check if a path contains glob patterns
+function isGlobPattern(path: string): boolean {
+  return fastGlob.isDynamicPattern(path);
+}
+
+function normalizeConfigSource(source: string): string {
+  const trimmed = source.trim();
+  if (!trimmed) {
+    throw new Error("Config source cannot be empty.");
+  }
+  const normalized = trimmed.replace(/\\/g, "/").replace(/^\.\//, "");
+  const validationPath = normalized.replace(/\/+$/, "");
+  validateRelativeSubPath(validationPath);
+  return normalized;
+}
+
+interface NormalizedConfigTarget {
+  path: string;
+  isDir: boolean;
+}
+
+function normalizeConfigTarget(target: string): NormalizedConfigTarget {
+  const trimmed = target.trim();
+  if (!trimmed) {
+    throw new Error("Config target cannot be empty.");
+  }
+  const isDir = trimmed === "." || trimmed === "./" || isDirectorySyncPath(trimmed);
+  const cleaned = trimmed.replace(/\\/g, "/").replace(/\/+$/, "");
+  const withoutDot = cleaned.replace(/^\.\//, "");
+  const normalized = withoutDot === "." ? "" : withoutDot;
+  if (normalized) {
+    validateRelativeSubPath(normalized);
+  }
+  return { path: normalized, isDir };
+}
+
+function buildConfigTargetPath(
+  target: NormalizedConfigTarget,
+  fileName: string,
+  sourceIsMultiFile: boolean
+): string {
+  const useDir = sourceIsMultiFile || target.isDir;
+  if (useDir) {
+    return target.path ? join(target.path, fileName) : fileName;
+  }
+  return target.path;
+}
+
+function normalizeBackupLabel(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error("Config name cannot be empty.");
+  }
+  const normalized = trimmed.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9._-]/g, "-");
+  if (!normalized) {
+    throw new Error(`Invalid backup label: ${value}`);
+  }
+  return normalized;
+}
+
+// Expand a mapping to list of source files
+async function expandConfigMapping(
+  mapping: ConfigMapping,
+  configRepo: string
+): Promise<Array<{ sourcePath: string; targetPath: string; hash: string }>> {
+  const sourcePattern = normalizeConfigSource(mapping.source);
+  const targetInfo = normalizeConfigTarget(mapping.target);
+  const results: Array<{ sourcePath: string; targetPath: string; hash: string }> = [];
+
+  const addEntry = (sourcePath: string, fileName: string, sourceIsMultiFile: boolean) => {
+    const targetPath = buildConfigTargetPath(targetInfo, fileName, sourceIsMultiFile);
+    const hash = hashFile(sourcePath);
+    results.push({ sourcePath, targetPath, hash });
+  };
+
+  // Handle directory sync (trailing slash convention)
+  if (isDirectorySyncPath(sourcePattern)) {
+    const sourceDir = join(configRepo, sourcePattern.replace(/[\\/]+$/, ""));
+    if (!existsSync(sourceDir)) {
+      return [];
+    }
+
+    const stat = lstatSync(sourceDir);
+    if (!stat.isDirectory()) {
+      return [];
+    }
+
+    // Get all files in directory recursively
+    const entries = await fastGlob("**/*", {
+      cwd: sourceDir,
+      absolute: false,
+      onlyFiles: true,
+      dot: true,
+    });
+
+    for (const entry of entries) {
+      const fullSourcePath = join(sourceDir, entry);
+      addEntry(fullSourcePath, basename(entry), true);
+    }
+
+    return results;
+  }
+
+  // Handle glob patterns
+  if (isGlobPattern(sourcePattern)) {
+    const entries = await fastGlob(sourcePattern, {
+      cwd: configRepo,
+      absolute: true,
+      onlyFiles: true,
+      dot: true,
+    });
+
+    for (const entry of entries) {
+      addEntry(entry, basename(entry), true);
+    }
+
+    return results;
+  }
+
+  const sourceFullPath = join(configRepo, sourcePattern);
+  if (!existsSync(sourceFullPath)) {
+    return [];
+  }
+
+  const stat = lstatSync(sourceFullPath);
+  if (stat.isDirectory()) {
+    const entries = await fastGlob("**/*", {
+      cwd: sourceFullPath,
+      absolute: false,
+      onlyFiles: true,
+      dot: true,
+    });
+
+    for (const entry of entries) {
+      const fullSourcePath = join(sourceFullPath, entry);
+      addEntry(fullSourcePath, basename(entry), true);
+    }
+  } else {
+    addEntry(sourceFullPath, basename(sourceFullPath), false);
+  }
+
+  return results;
+}
+
+// Get all source files for a config (handles both legacy and new formats)
+export async function getConfigSourceFiles(config: ConfigSyncConfig): Promise<ConfigSourceFile[]> {
+  const configRepo = getConfigRepoPath();
+  if (!configRepo) {
+    throw new Error("Config repo not configured. Add [sync] config_repo to your config.toml");
+  }
+
+  if (!config.name || !config.name.trim()) {
+    throw new Error("Config name cannot be empty.");
+  }
+
+  const mappings: ConfigMapping[] = config.mappings && config.mappings.length > 0
+    ? config.mappings
+    : config.sourcePath && config.targetPath
+      ? [{ source: config.sourcePath, target: config.targetPath }]
+      : [];
+
+  if (mappings.length === 0) {
+    throw new Error(`Config ${config.name || "(unnamed)"} has no mappings. Add [[configs.files]] or source_path/target_path.`);
+  }
+
+  const results: ConfigSourceFile[] = [];
+  const seenTargets = new Set<string>();
+
+  for (const mapping of mappings) {
+    if (!mapping.source || !mapping.target) {
+      throw new Error(`Config ${config.name || "(unnamed)"} mapping requires both source and target.`);
+    }
+
+    const expanded = await expandConfigMapping(mapping, configRepo);
+    if (expanded.length === 0) {
+      throw new Error(`No files found for config ${config.name || "(unnamed)"} mapping ${mapping.source} → ${mapping.target}`);
+    }
+
+    for (const file of expanded) {
+      const targetKey = file.targetPath.replace(/\\/g, "/");
+      if (seenTargets.has(targetKey)) {
+        throw new Error(`Config ${config.name || "(unnamed)"} has duplicate target path: ${file.targetPath}`);
+      }
+      seenTargets.add(targetKey);
+      results.push({
+        sourcePath: file.sourcePath,
+        targetPath: file.targetPath,
+        hash: file.hash,
+        isDirectory: false,
+      });
+    }
+  }
+
+  return results;
+}
+
+// Compute aggregated hash for all source files
+function hashSourceFiles(files: ConfigSourceFile[]): string {
+  if (files.length === 0) return "";
+  if (files.length === 1) return files[0].hash;
+
+  const hasher = createHash("sha256");
+  for (const file of files.sort((a, b) => a.sourcePath.localeCompare(b.sourcePath))) {
+    hasher.update(file.targetPath);
+    hasher.update("\0");
+    hasher.update(file.hash);
+    hasher.update("\0");
+  }
+  return hasher.digest("hex");
+}
+
+// Updated status check for multi-file configs
+export function getConfigToolStatus(config: ConfigSyncConfig, sourceFiles?: ConfigSourceFile[]): ConfigToolStatus[] {
   const statuses: ConfigToolStatus[] = [];
   const instances = getToolInstances();
-  const resolvedSource = sourceInfo || getConfigSourceInfo(config);
 
   // Only get instances that match the config's toolId
   const matchingInstances = instances.filter((instance) => instance.toolId === config.toolId);
 
   for (const instance of matchingInstances) {
     const enabled = instance.enabled;
+    const files = sourceFiles || [];
+    const hasFiles = files.length > 0;
+
     let installed = false;
     let drifted = false;
-    const targetPath = join(instance.configDir, config.targetPath);
+    const targetBase = join(instance.configDir, config.targetPath || ".");
 
-    if (enabled && existsSync(targetPath)) {
-      installed = true;
-      if (resolvedSource.exists && resolvedSource.hash) {
+    if (enabled && hasFiles) {
+      let anyExist = false;
+      let anyMissing = false;
+      let anyDrifted = false;
+
+      for (const file of files) {
+        const targetPath = join(instance.configDir, file.targetPath);
+        if (!existsSync(targetPath)) {
+          anyMissing = true;
+          continue;
+        }
+
+        anyExist = true;
         try {
           const targetHash = hashFile(targetPath);
-          drifted = targetHash !== resolvedSource.hash;
+          if (targetHash !== file.hash) {
+            anyDrifted = true;
+          }
         } catch {
-          drifted = true;
+          anyDrifted = true;
         }
       }
+
+      installed = anyExist;
+      drifted = anyExist && (anyDrifted || anyMissing);
     }
 
     statuses.push({
@@ -1865,44 +2134,67 @@ export function getConfigToolStatus(config: ConfigSyncConfig, sourceInfo?: Confi
       enabled,
       installed,
       drifted,
-      targetPath,
+      targetPath: targetBase,
     });
   }
 
   return statuses;
 }
 
-function installConfigToInstance(
+// Install multi-file config to instance
+async function installConfigToInstance(
   config: ConfigSyncConfig,
   instance: ToolInstance,
-  sourceInfo: ConfigSourceInfo
-): { count: number; error?: string } {
+  sourceFiles: ConfigSourceFile[]
+): Promise<{ count: number; error?: string }> {
   if (!instance.enabled) return { count: 0 };
   if (instance.toolId !== config.toolId) return { count: 0 };
 
-  try {
-    const targetPath = join(instance.configDir, config.targetPath);
-    if (!sourceInfo.exists || !sourceInfo.hash) {
-      return { count: 0, error: sourceInfo.error || "Config source not found." };
-    }
+  if (sourceFiles.length === 0) {
+    return { count: 0, error: "No source files found for config." };
+  }
 
+  try {
     const manifest = loadManifest();
     const key = instanceKey(instance);
     if (!manifest.tools[key]) {
       manifest.tools[key] = { items: {} };
     }
 
+    let syncedCount = 0;
     const itemKey = `config:${config.name}`;
     const previous = manifest.tools[key].items[itemKey] || null;
-    const backupName = `${config.name}-${instance.toolId}-${instance.instanceId}`;
-    const result = copyWithBackup(sourceInfo.sourcePath, targetPath, config.name, "config", backupName);
+    const backupOwner = normalizeBackupLabel(config.name);
 
+    for (const file of sourceFiles) {
+      const targetPath = join(instance.configDir, file.targetPath);
+
+      // Check if target exists and matches (skip if already in sync)
+      if (existsSync(targetPath)) {
+        try {
+          const targetHash = hashFile(targetPath);
+          if (targetHash === file.hash) {
+            continue; // Already in sync
+          }
+        } catch {
+          // Target exists but can't be hashed, continue with sync
+        }
+      }
+
+      const backupName = normalizeBackupLabel(
+        `${config.name}-${basename(file.targetPath)}-${instance.toolId}-${instance.instanceId}`
+      );
+      copyWithBackup(file.sourcePath, targetPath, backupOwner, "config", backupName);
+      syncedCount++;
+    }
+
+    // Update manifest with aggregate info
     const item: InstalledItem = {
-      kind: "asset", // reuse asset kind since configs are similar
+      kind: "asset",
       name: config.name,
-      source: sourceInfo.sourcePath,
-      dest: result.dest,
-      backup: result.backup,
+      source: hashSourceFiles(sourceFiles),
+      dest: instance.configDir,
+      backup: null,
       owner: config.name,
       previous,
     };
@@ -1910,22 +2202,24 @@ function installConfigToInstance(
     manifest.tools[key].items[itemKey] = item;
     saveManifest(manifest);
 
-    return { count: 1 };
+    return { count: syncedCount };
   } catch (error) {
     return { count: 0, error: error instanceof Error ? error.message : String(error) };
   }
 }
 
-export function syncConfigInstances(
+export async function syncConfigInstances(
   config: ConfigFile,
   targetStatuses: ConfigToolStatus[]
-): ConfigSyncResult {
+): Promise<ConfigSyncResult> {
   const result: ConfigSyncResult = { success: false, syncedInstances: {}, errors: [] };
   if (targetStatuses.length === 0) return result;
 
-  const sourceInfo = getConfigSourceInfo(config);
-  if (!sourceInfo.exists || !sourceInfo.hash) {
-    result.errors.push(sourceInfo.error || `Config source not found for ${config.name}`);
+  let sourceFiles: ConfigSourceFile[] = [];
+  try {
+    sourceFiles = config.sourceFiles || await getConfigSourceFiles(config);
+  } catch (error) {
+    result.errors.push(error instanceof Error ? error.message : String(error));
     return result;
   }
 
@@ -1936,7 +2230,7 @@ export function syncConfigInstances(
     if (!instance) continue;
     if (!instance.enabled) continue;
 
-    const installResult = installConfigToInstance(config, instance, sourceInfo);
+    const installResult = await installConfigToInstance(config, instance, sourceFiles);
     if (installResult.count > 0) {
       result.syncedInstances[instanceKey(instance)] = installResult.count;
     }

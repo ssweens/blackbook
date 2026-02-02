@@ -12,21 +12,20 @@ interface PluginDetailProps {
 export function PluginDetail({ plugin, selectedAction }: PluginDetailProps) {
   const toolStatuses = getPluginToolStatus(plugin);
   
-  const supportedTools = toolStatuses.filter(t => t.supported && t.enabled);
-  const installedCount = supportedTools.filter(t => t.installed).length;
-  const needsRepair = plugin.installed && installedCount < supportedTools.length && supportedTools.length > 0;
+  // Use store-calculated incomplete status for consistency with list views
+  const isIncomplete = plugin.installed && plugin.incomplete;
   
   const actions = useMemo(() => {
     if (plugin.installed) {
       const base = ["Uninstall", "Update now"];
-      if (needsRepair) {
+      if (isIncomplete) {
         base.push("Install to all tools");
       }
       base.push("Back to plugin list");
       return base;
     }
     return ["Install", "Back to plugin list"];
-  }, [plugin.installed, needsRepair]);
+  }, [plugin.installed, isIncomplete]);
 
   return (
     <Box flexDirection="column">
@@ -56,7 +55,7 @@ export function PluginDetail({ plugin, selectedAction }: PluginDetailProps) {
         <Text color={plugin.installed ? "green" : "yellow"}>
           {plugin.installed ? "Installed" : "Not Installed"}
         </Text>
-        {needsRepair && (
+        {isIncomplete && (
           <Text color="yellow"> (incomplete)</Text>
         )}
       </Box>

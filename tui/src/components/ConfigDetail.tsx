@@ -1,7 +1,7 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
 import type { ConfigFile } from "../lib/types.js";
-import { getConfigToolStatus, getConfigSourceInfo } from "../lib/install.js";
+import { getConfigToolStatus } from "../lib/install.js";
 import { getConfigRepoPath } from "../lib/config.js";
 
 interface ConfigDetailProps {
@@ -10,10 +10,10 @@ interface ConfigDetailProps {
 }
 
 export function ConfigDetail({ config, selectedAction }: ConfigDetailProps) {
-  const sourceInfo = useMemo(() => getConfigSourceInfo(config), [config]);
+  const sourceFiles = config.sourceFiles || [];
   const toolStatuses = useMemo(
-    () => getConfigToolStatus(config, sourceInfo),
-    [config, sourceInfo]
+    () => getConfigToolStatus(config, sourceFiles),
+    [config, sourceFiles]
   );
   const configRepo = useMemo(() => getConfigRepoPath(), []);
 
@@ -28,6 +28,16 @@ export function ConfigDetail({ config, selectedAction }: ConfigDetailProps) {
     base.push("Back to list");
     return base;
   }, [needsSync]);
+
+  const sourceDisplay = useMemo(() => {
+    if (config.mappings && config.mappings.length > 0) {
+      return config.mappings.map(m => `${m.source} → ${m.target}`).join(", ");
+    }
+    if (config.sourcePath && config.targetPath) {
+      return `${config.sourcePath} → ${config.targetPath}`;
+    }
+    return "(not configured)";
+  }, [config]);
 
   return (
     <Box flexDirection="column">
@@ -47,13 +57,13 @@ export function ConfigDetail({ config, selectedAction }: ConfigDetailProps) {
       </Box>
 
       <Box marginBottom={1}>
-        <Text color="gray">Source path: </Text>
-        <Text>{config.sourcePath}</Text>
+        <Text color="gray">Source(s): </Text>
+        <Text>{sourceDisplay}</Text>
       </Box>
 
       <Box marginBottom={1}>
-        <Text color="gray">Target path: </Text>
-        <Text>{config.targetPath}</Text>
+        <Text color="gray">Files: </Text>
+        <Text>{sourceFiles.length > 0 ? `${sourceFiles.length} file(s)` : "(none)"}</Text>
       </Box>
 
       <Box marginBottom={1}>
@@ -64,9 +74,9 @@ export function ConfigDetail({ config, selectedAction }: ConfigDetailProps) {
         {config.drifted && <Text color="yellow"> (drifted)</Text>}
       </Box>
 
-      {!sourceInfo.exists && (
+      {!config.sourceExists && (
         <Box marginBottom={1}>
-          <Text color="red">Source unavailable: {sourceInfo.error || "Missing"}</Text>
+          <Text color="red">Source unavailable: {config.sourceError || "Missing"}</Text>
         </Box>
       )}
 

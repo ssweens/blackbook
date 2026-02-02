@@ -59,9 +59,9 @@ export function AssetDetail({ asset, selectedAction }: AssetDetailProps) {
       <Box marginBottom={1}>
         <Text color="gray">Status: </Text>
         <Text color={asset.installed ? "green" : "yellow"}>
-          {asset.installed ? "Synced" : "Not synced"}
+          {asset.installed ? "Installed" : "Not installed"}
         </Text>
-        {asset.partial && <Text color="yellow"> (incomplete)</Text>}
+        {asset.incomplete && <Text color="yellow"> (incomplete)</Text>}
         {asset.drifted && <Text color="yellow"> (drifted)</Text>}
       </Box>
 

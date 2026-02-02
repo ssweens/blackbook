@@ -225,7 +225,8 @@ export function App() {
       filtered = base.filter(
         (c) => c.name.toLowerCase().includes(lowerSearch) ||
                c.toolId.toLowerCase().includes(lowerSearch) ||
-               c.sourcePath.toLowerCase().includes(lowerSearch)
+               (c.sourcePath || "").toLowerCase().includes(lowerSearch) ||
+               (c.mappings?.map(m => `${m.source} ${m.target}`).join(" ") || "").toLowerCase().includes(lowerSearch)
       );
     }
 
@@ -322,7 +323,7 @@ export function App() {
   const getAssetActions = (asset: typeof detailAsset) => {
     if (!asset) return [] as string[];
     const actions = [] as string[];
-    if (asset.partial || asset.drifted || !asset.installed) {
+    if (asset.incomplete || asset.drifted || !asset.installed) {
       actions.push("Sync to all tools");
     }
     actions.push("Back to list");

@@ -77,10 +77,10 @@ export function AssetList({
 
         const statusIcon = asset.installed ? "✔" : " ";
         const statusColor = asset.installed ? "green" : "gray";
-        const showPartial = Boolean(asset.installed && asset.partial);
+        const showIncomplete = Boolean(asset.installed && asset.incomplete);
         const showDrifted = Boolean(asset.installed && asset.drifted);
         const showSourceMissing = asset.sourceExists === false;
-        const statusLabel = asset.installed ? "synced" : "";
+        const statusLabel = asset.installed ? "installed" : "";
         const statusWidth = 9;
 
         const paddedName = asset.name.padEnd(maxNameLen);
@@ -105,10 +105,10 @@ export function AssetList({
               <Text color={statusColor}>
                 {" " + statusLabel.padEnd(statusWidth)}
               </Text>
-              {showPartial && (
+              {showIncomplete && (
                 <>
                   <Text color="gray"> · </Text>
-                  <Text color="yellow">partial</Text>
+                  <Text color="yellow">incomplete</Text>
                 </>
               )}
               {showDrifted && (

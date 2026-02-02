@@ -38,7 +38,7 @@ export interface Plugin {
   hasLsp: boolean;
   homepage: string;
   installed: boolean;
-  partial?: boolean;
+  incomplete?: boolean;
   scope: "user" | "project";
   updatedAt?: Date;
 }
@@ -52,26 +52,44 @@ export interface AssetConfig {
 
 export interface Asset extends AssetConfig {
   installed: boolean;
-  partial?: boolean;
+  incomplete?: boolean;
   drifted?: boolean;
   scope: "user" | "project";
   sourceExists?: boolean;
   sourceError?: string | null;
 }
 
+export interface ConfigMapping {
+  source: string;  // relative to config_repo; can be file, dir (trailing /), or glob
+  target: string;  // relative to tool's configDir; destination file or directory
+}
+
 export interface ConfigSyncConfig {
   name: string;
   toolId: string;
-  sourcePath: string;  // relative to config_repo
-  targetPath: string;  // relative to tool's configDir
+  // Legacy single-file support
+  sourcePath?: string;  // relative to config_repo
+  targetPath?: string;  // relative to tool's configDir
+  // New multi-file support
+  mappings?: ConfigMapping[];
 }
 
 export interface ConfigFile extends ConfigSyncConfig {
   installed: boolean;
+  incomplete?: boolean;
   drifted?: boolean;
   scope: "user";
   sourceExists?: boolean;
   sourceError?: string | null;
+  // Expanded source info for multi-file configs
+  sourceFiles?: ConfigSourceFile[];
+}
+
+export interface ConfigSourceFile {
+  sourcePath: string;
+  targetPath: string;
+  hash: string;
+  isDirectory: boolean;
 }
 
 export type SyncPreviewItem =
