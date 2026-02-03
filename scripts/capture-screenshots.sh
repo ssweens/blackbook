@@ -90,10 +90,9 @@ take_screenshot() {
         width=$(echo $dims | cut -d'x' -f1)
         height=$(echo $dims | cut -d'x' -f2)
         
-        # Crop: remove title bar and shell prompt area at top, trim padding at bottom
-        # These values work for retina displays (2x)
-        local crop_top=96     # Remove title bar + shell prompt lines
-        local crop_bottom=0   # No bottom crop needed
+        # Crop: remove only the iTerm title bar (traffic lights + tab bar)
+        local crop_top=52     # Title bar only (~26px * 2 for retina)
+        local crop_bottom=0
         local new_height=$((height - crop_top - crop_bottom))
         
         $CONVERT_CMD "$tmp_file" -crop "${width}x${new_height}+0+${crop_top}" +repage "$output_file"
