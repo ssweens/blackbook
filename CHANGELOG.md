@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Instance picker when multiple tool instances are drifted
 - Scrollable diff detail view with unified diff format (green/red coloring)
 - `diff` npm dependency for line-based diffing
+- `assets_repo` config option (defaults to `config_repo` if not set)
+- Multi-file asset mappings via `[[assets.files]]` TOML sections with per-file overrides
+- Flexible asset source path resolution (URLs, absolute, home-relative, relative to assets_repo)
+- Enter key in Sync tab opens detail view for selected item
+- Regression tests for asset path resolution and multi-file assets (14 new tests)
+
+### Fixed
+- UI section spacing between Configs/Assets/Plugins in Discover and Installed tabs
+- Asset filtering crash when asset has no source (multi-file mode)
 
 ## [0.7.0] - 2026-02-02
 
