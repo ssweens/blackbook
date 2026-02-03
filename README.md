@@ -40,7 +40,7 @@ Everything is a plugin. Plugins can include skills, commands, agents, hooks, MCP
 | Amp Code | `~/.config/amp` | ✓ | ✓ | ✓ | ✓ |
 | Pi | `~/.pi` | ✓ | ✓* | — | ✓ |
 
-\* Pi uses "prompt templates" (`/name` syntax) stored in `agent/prompts/`
+\* Pi uses `agent/skills/` for skills and `agent/prompts/` for prompt templates (`/name` syntax)
 
 ## Installation
 

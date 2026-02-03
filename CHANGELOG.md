@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-02-02
+
+### Added
+- Pi skills support at `~/.pi/agent/skills/`
+- Pi prompt templates (commands) support at `~/.pi/agent/prompts/`
+- Screenshot capture script (`scripts/capture-screenshots.sh`) using iTerm + imagemagick
+- Screenshots for all 5 tabs in README (Discover, Installed, Marketplaces, Tools, Sync)
+
+### Changed
+- README updated with new features: config sync, drift detection, diff view, multi-file sync
+- Supported Tools table now shows Config Sync column and Pi capabilities
+
 ## [0.8.0] - 2026-02-02
 
 ### Added
@@ -232,7 +244,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Symlink handling for plugin assets
 
-[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/ssweens/blackbook/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/ssweens/blackbook/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/ssweens/blackbook/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/ssweens/blackbook/compare/v0.5.6...v0.6.0
