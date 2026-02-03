@@ -8,7 +8,11 @@ Plugin manager for agentic coding tools built with React/Ink. Install skills, co
 
 ![Blackbook TUI - Discover tab](assets/discover-tab.png)
 
-![Blackbook TUI- Tools tab](assets/tools-tab.png)
+![Blackbook TUI - Installed tab](assets/installed-tab.png)
+
+![Blackbook TUI - Marketplaces tab](assets/marketplaces-tab.png)
+
+![Blackbook TUI - Tools tab](assets/tools-tab.png)
 
 ![Blackbook TUI - Sync tab](assets/sync-tab.png)
 
