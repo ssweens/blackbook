@@ -24,8 +24,13 @@ import { StatusBar } from "./components/StatusBar.js";
 import { Notifications } from "./components/Notifications.js";
 import { DiffView } from "./components/DiffView.js";
 import { MissingSummaryView } from "./components/MissingSummary.js";
+import { PluginSummary } from "./components/PluginSummary.js";
+import { PiPackageSummary } from "./components/PiPackageSummary.js";
+import { PiPackageList } from "./components/PiPackageList.js";
+import { PiPackagePreview } from "./components/PiPackagePreview.js";
+import { PiPackageDetail, getPiPackageActions } from "./components/PiPackageDetail.js";
 import { getPluginToolStatus, getConfigToolStatus } from "./lib/install.js";
-import type { Tab, SyncPreviewItem, Plugin, Asset, ConfigFile, DiffInstanceRef } from "./lib/types.js";
+import type { Tab, SyncPreviewItem, Plugin, Asset, ConfigFile, PiPackage, DiffInstanceRef, DiscoverSection, DiscoverSubView } from "./lib/types.js";
 
 const TABS: Tab[] = ["discover", "installed", "marketplaces", "tools", "sync"];
 
@@ -80,6 +85,20 @@ export function App() {
     closeDiff,
     closeMissingSummary,
     getMissingInstances,
+    // Pi packages
+    piPackages,
+    detailPiPackage,
+    setDetailPiPackage,
+    loadPiPackages,
+    refreshAll,
+    installPiPackage: doInstallPiPkg,
+    uninstallPiPackage: doUninstallPiPkg,
+    updatePiPackage: doUpdatePiPkg,
+    // Section navigation
+    currentSection,
+    setCurrentSection,
+    discoverSubView,
+    setDiscoverSubView,
   } = useStore();
 
   const [actionIndex, setActionIndex] = useState(0);
@@ -88,9 +107,10 @@ export function App() {
   const [syncPreview, setSyncPreview] = useState<SyncPreviewItem[]>([]);
   const [syncSelection, setSyncSelection] = useState<Set<string>>(new Set());
   const [syncArmed, setSyncArmed] = useState(false);
-  const [sortBy, setSortBy] = useState<"name" | "installed">("name");
+  const [sortBy, setSortBy] = useState<"default" | "name" | "installed" | "popularity">("default");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [searchFocused, setSearchFocused] = useState(false);
+  const [subViewIndex, setSubViewIndex] = useState(0);
 
   const getSyncItemKey = (item: SyncPreviewItem) => {
     if (item.kind === "plugin") {
@@ -113,7 +133,7 @@ export function App() {
   );
 
   useEffect(() => {
-    loadMarketplaces();
+    refreshAll();
   }, []);
 
   useEffect(() => {
@@ -260,6 +280,67 @@ export function App() {
     return sorted;
   }, [tab, configs, search, sortBy, sortDir]);
 
+  const filteredPiPackages = useMemo(() => {
+    const lowerSearch = search.toLowerCase();
+    const base = tab === "installed" ? piPackages.filter((p) => p.installed) : piPackages;
+    let filtered = base;
+    if (search) {
+      filtered = base.filter(
+        (p) =>
+          p.name.toLowerCase().includes(lowerSearch) ||
+          p.description.toLowerCase().includes(lowerSearch) ||
+          p.marketplace.toLowerCase().includes(lowerSearch)
+      );
+    }
+
+    const sorted = [...filtered].sort((a, b) => {
+      if (sortBy === "default") {
+        // Default sort: installed first (alpha), then local/git (alpha), then npm (by popularity)
+        // 1. Installed packages first
+        if (a.installed !== b.installed) {
+          return a.installed ? -1 : 1;
+        }
+        // 2. Among non-installed: local/git before npm
+        if (!a.installed && !b.installed) {
+          const aIsNpm = a.sourceType === "npm";
+          const bIsNpm = b.sourceType === "npm";
+          if (aIsNpm !== bIsNpm) {
+            return aIsNpm ? 1 : -1; // local/git comes first
+          }
+          // 3. Within same source type
+          if (aIsNpm && bIsNpm) {
+            // npm: sort by popularity (most popular first)
+            const aDownloads = a.weeklyDownloads ?? 0;
+            const bDownloads = b.weeklyDownloads ?? 0;
+            if (aDownloads !== bDownloads) return bDownloads - aDownloads;
+          }
+        }
+        // Fallback: alphabetical
+        return a.name.localeCompare(b.name);
+      }
+      if (sortBy === "name") {
+        const cmp = a.name.localeCompare(b.name);
+        return sortDir === "asc" ? cmp : -cmp;
+      }
+      if (sortBy === "popularity") {
+        // Sort by weekly downloads (desc = most popular first, asc = least popular first)
+        const aDownloads = a.weeklyDownloads ?? 0;
+        const bDownloads = b.weeklyDownloads ?? 0;
+        const cmp = bDownloads - aDownloads;
+        if (cmp !== 0) return sortDir === "desc" ? cmp : -cmp;
+        return a.name.localeCompare(b.name);
+      }
+      // installed sort
+      const aInstalled = a.installed ? 1 : 0;
+      const bInstalled = b.installed ? 1 : 0;
+      const cmp = bInstalled - aInstalled;
+      if (cmp !== 0) return sortDir === "asc" ? cmp : -cmp;
+      return a.name.localeCompare(b.name);
+    });
+
+    return sorted;
+  }, [tab, piPackages, search, sortBy, sortDir]);
+
   const maxLength = (values: number[], fallback: number) => {
     if (values.length === 0) return fallback;
     return Math.max(...values, fallback);
@@ -269,8 +350,9 @@ export function App() {
     const pluginWidth = Math.min(30, maxLength(filteredPlugins.map((p) => p.name.length), 10));
     const assetWidth = Math.min(30, maxLength(filteredAssets.map((a) => a.name.length), 10));
     const configWidth = Math.min(30, maxLength(filteredConfigs.map((c) => c.name.length), 10));
-    return Math.max(pluginWidth, assetWidth, configWidth);
-  }, [filteredPlugins, filteredAssets, filteredConfigs]);
+    const piPkgWidth = Math.min(30, maxLength(filteredPiPackages.map((p) => p.name.length), 10));
+    return Math.max(pluginWidth, assetWidth, configWidth, piPkgWidth);
+  }, [filteredPlugins, filteredAssets, filteredConfigs, filteredPiPackages]);
 
   const marketplaceWidth = useMemo(() => {
     return maxLength(filteredPlugins.map((p) => p.marketplace.length), 10);
@@ -279,7 +361,41 @@ export function App() {
   const configCount = filteredConfigs.length;
   const assetCount = filteredAssets.length;
   const pluginCount = filteredPlugins.length;
-  const libraryCount = configCount + assetCount + pluginCount;
+  const piPkgCount = filteredPiPackages.length;
+
+  // In Discover tab: Plugins and PiPackages are summary cards (1 item each if they have content)
+  // In Installed tab: All sections are inline lists
+  const pluginSectionCount = tab === "discover" ? (pluginCount > 0 ? 1 : 0) : pluginCount;
+  const piPkgSectionCount = tab === "discover" ? (piPkgCount > 0 ? 1 : 0) : piPkgCount;
+  const libraryCount = configCount + assetCount + pluginSectionCount + piPkgSectionCount;
+
+  // Section boundaries for Tab/Shift+Tab navigation
+  const sections = useMemo(() => {
+    const result: Array<{ id: DiscoverSection; start: number; end: number }> = [];
+    let offset = 0;
+
+    if (configCount > 0) {
+      result.push({ id: "configs", start: offset, end: offset + configCount - 1 });
+      offset += configCount;
+    }
+    if (assetCount > 0) {
+      result.push({ id: "assets", start: offset, end: offset + assetCount - 1 });
+      offset += assetCount;
+    }
+    if (pluginSectionCount > 0) {
+      result.push({ id: "plugins", start: offset, end: offset + pluginSectionCount - 1 });
+      offset += pluginSectionCount;
+    }
+    if (piPkgSectionCount > 0) {
+      result.push({ id: "piPackages", start: offset, end: offset + piPkgSectionCount - 1 });
+    }
+
+    return result;
+  }, [configCount, assetCount, pluginSectionCount, piPkgSectionCount]);
+
+  const currentSectionInfo = useMemo(() => {
+    return sections.find((s) => selectedIndex >= s.start && selectedIndex <= s.end);
+  }, [sections, selectedIndex]);
 
   const maxIndex = useMemo(() => {
     if (tab === "marketplaces") {
@@ -299,9 +415,13 @@ export function App() {
       | { kind: "plugin"; plugin: Plugin }
       | { kind: "asset"; asset: Asset }
       | { kind: "config"; config: ConfigFile }
+      | { kind: "piPackage"; piPackage: PiPackage }
+      | { kind: "pluginSummary" }
+      | { kind: "piPackageSummary" }
       | null => {
       if (tab !== "discover" && tab !== "installed") return null;
-      // Order: configs first, then assets, then plugins
+
+      // Order: configs first, then assets, then plugins, then piPackages
       if (selectedIndex < configCount) {
         const config = filteredConfigs[selectedIndex];
         return config ? { kind: "config", config } : null;
@@ -310,11 +430,32 @@ export function App() {
         const asset = filteredAssets[selectedIndex - configCount];
         return asset ? { kind: "asset", asset } : null;
       }
-      const pluginIndex = selectedIndex - configCount - assetCount;
-      const plugin = filteredPlugins[pluginIndex];
-      return plugin ? { kind: "plugin", plugin } : null;
+
+      // In Discover: plugins/piPackages are summary cards
+      // In Installed: they're inline lists
+      if (tab === "discover") {
+        if (pluginSectionCount > 0 && selectedIndex === configCount + assetCount) {
+          return { kind: "pluginSummary" };
+        }
+        if (piPkgSectionCount > 0 && selectedIndex === configCount + assetCount + pluginSectionCount) {
+          return { kind: "piPackageSummary" };
+        }
+      } else {
+        // Installed tab - inline lists
+        if (selectedIndex < configCount + assetCount + pluginCount) {
+          const pluginIndex = selectedIndex - configCount - assetCount;
+          const plugin = filteredPlugins[pluginIndex];
+          return plugin ? { kind: "plugin", plugin } : null;
+        }
+        const piPkgIndex = selectedIndex - configCount - assetCount - pluginCount;
+        const piPkg = filteredPiPackages[piPkgIndex];
+        return piPkg ? { kind: "piPackage", piPackage: piPkg } : null;
+      }
+
+      return null;
     },
-    [tab, selectedIndex, filteredPlugins, filteredAssets, filteredConfigs, configCount, assetCount]
+    [tab, selectedIndex, filteredPlugins, filteredAssets, filteredConfigs, filteredPiPackages,
+     configCount, assetCount, pluginCount, pluginSectionCount, piPkgSectionCount]
   );
 
   const getPluginActions = (plugin: typeof detailPlugin) => {
@@ -382,16 +523,35 @@ export function App() {
       return;
     }
 
-    // Tab navigation (blocked when overlays are open)
-    if (key.tab || key.rightArrow) {
-      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !diffTarget && !missingSummary) {
+    // Tab/Shift+Tab for section navigation in Discover/Installed tabs
+    if (key.tab && (tab === "discover" || tab === "installed") && !discoverSubView) {
+      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && !diffTarget && !missingSummary) {
+        if (sections.length > 0) {
+          const currentIdx = sections.findIndex((s) => selectedIndex >= s.start && selectedIndex <= s.end);
+          if (key.shift) {
+            // Shift+Tab: go to previous section
+            const prevIdx = currentIdx <= 0 ? sections.length - 1 : currentIdx - 1;
+            setSelectedIndex(sections[prevIdx].start);
+          } else {
+            // Tab: go to next section
+            const nextIdx = currentIdx >= sections.length - 1 ? 0 : currentIdx + 1;
+            setSelectedIndex(sections[nextIdx].start);
+          }
+          return;
+        }
+      }
+    }
+
+    // Left/Right arrows for main tab navigation (blocked when overlays are open)
+    if (key.rightArrow) {
+      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && !diffTarget && !missingSummary && !discoverSubView) {
         const idx = TABS.indexOf(tab);
         setTab(TABS[(idx + 1) % TABS.length]);
         return;
       }
     }
     if (key.leftArrow) {
-      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !diffTarget && !missingSummary) {
+      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && !diffTarget && !missingSummary && !discoverSubView) {
         const idx = TABS.indexOf(tab);
         setTab(TABS[(idx - 1 + TABS.length) % TABS.length]);
         return;
@@ -412,16 +572,26 @@ export function App() {
       } else if (detailMarketplace) {
         setDetailMarketplace(null);
         setActionIndex(0);
+      } else if (detailPiPackage) {
+        setDetailPiPackage(null);
+        setActionIndex(0);
+      } else if (discoverSubView) {
+        // Close sub-view and return to Discover dashboard
+        setDiscoverSubView(null);
+        setSubViewIndex(0);
       }
       return;
     }
 
     // Up/Down navigation
     if (key.upArrow) {
-      if (detailPlugin || detailMarketplace) {
+      if (detailPlugin || detailMarketplace || detailPiPackage) {
         setActionIndex((i) => Math.max(0, i - 1));
       } else if (detailAsset || detailConfig) {
         setActionIndex((i) => Math.max(0, i - 1));
+      } else if (discoverSubView) {
+        // Navigate within sub-view
+        setSubViewIndex((i) => Math.max(0, i - 1));
       } else {
         setSelectedIndex(Math.max(0, selectedIndex - 1));
         if (tab === "sync") {
@@ -438,9 +608,16 @@ export function App() {
         setActionIndex((i) => Math.min(assetActions.length - 1, i + 1));
       } else if (detailConfig) {
         setActionIndex((i) => Math.min(configActions.length - 1, i + 1));
+      } else if (detailPiPackage) {
+        const actions = getPiPackageActions(detailPiPackage);
+        setActionIndex((i) => Math.min(actions.length - 1, i + 1));
       } else if (detailMarketplace) {
         const maxActions = detailMarketplace.source === "claude" ? 2 : 3;
         setActionIndex((i) => Math.min(maxActions, i + 1));
+      } else if (discoverSubView) {
+        // Navigate within sub-view
+        const maxSubViewIndex = discoverSubView === "plugins" ? filteredPlugins.length - 1 : filteredPiPackages.length - 1;
+        setSubViewIndex((i) => Math.min(maxSubViewIndex, i + 1));
       } else {
         setSelectedIndex(Math.min(maxIndex, selectedIndex + 1));
         if (tab === "sync") {
@@ -467,8 +644,31 @@ export function App() {
         return;
       }
 
+      if (detailPiPackage) {
+        handlePiPackageAction(actionIndex);
+        return;
+      }
+
       if (detailMarketplace) {
         handleMarketplaceAction(actionIndex);
+        return;
+      }
+
+      // Handle sub-view selection (Enter on item in sub-view opens detail)
+      if (discoverSubView) {
+        if (discoverSubView === "plugins") {
+          const plugin = filteredPlugins[subViewIndex];
+          if (plugin) {
+            setDetailPlugin(plugin);
+            setActionIndex(0);
+          }
+        } else if (discoverSubView === "piPackages") {
+          const pkg = filteredPiPackages[subViewIndex];
+          if (pkg) {
+            setDetailPiPackage(pkg);
+            setActionIndex(0);
+          }
+        }
         return;
       }
 
@@ -519,12 +719,23 @@ export function App() {
       } else if (selectedLibraryItem?.kind === "config") {
         setDetailConfig(selectedLibraryItem.config);
         setActionIndex(0);
+      } else if (selectedLibraryItem?.kind === "piPackage") {
+        setDetailPiPackage(selectedLibraryItem.piPackage);
+        setActionIndex(0);
+      } else if (selectedLibraryItem?.kind === "pluginSummary") {
+        // Open plugins sub-view
+        setDiscoverSubView("plugins");
+        setSubViewIndex(0);
+      } else if (selectedLibraryItem?.kind === "piPackageSummary") {
+        // Open Pi packages sub-view
+        setDiscoverSubView("piPackages");
+        setSubViewIndex(0);
       }
       return;
     }
 
     // Space - toggle install/uninstall
-    if (input === " " && !detailPlugin && !detailAsset && !detailConfig && !detailMarketplace) {
+    if (input === " " && !detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage) {
       if (tab === "sync") {
         const item = syncPreview[selectedIndex];
         if (!item) return;
@@ -550,12 +761,44 @@ export function App() {
         return;
       }
 
+      // Handle Space in sub-views
+      if (discoverSubView === "plugins") {
+        const plugin = filteredPlugins[subViewIndex];
+        if (plugin) {
+          if (plugin.installed) {
+            doUninstall(plugin);
+          } else {
+            doInstall(plugin);
+          }
+        }
+        return;
+      }
+
+      if (discoverSubView === "piPackages") {
+        const pkg = filteredPiPackages[subViewIndex];
+        if (pkg) {
+          if (pkg.installed) {
+            doUninstallPiPkg(pkg);
+          } else {
+            doInstallPiPkg(pkg);
+          }
+        }
+        return;
+      }
+
       if (selectedLibraryItem?.kind === "plugin") {
         const plugin = selectedLibraryItem.plugin;
         if (plugin.installed) {
           doUninstall(plugin);
         } else {
           doInstall(plugin);
+        }
+      } else if (selectedLibraryItem?.kind === "piPackage") {
+        const pkg = selectedLibraryItem.piPackage;
+        if (pkg.installed) {
+          doUninstallPiPkg(pkg);
+        } else {
+          doInstallPiPkg(pkg);
         }
       }
       return;
@@ -610,7 +853,21 @@ export function App() {
     // Sort shortcuts (s to cycle sort, r to reverse) - only when search not focused
     if ((tab === "discover" || tab === "installed") && !detailPlugin && !searchFocused) {
       if (input === "s") {
-        setSortBy((prev) => (prev === "name" ? "installed" : "name"));
+        setSortBy((prev) => {
+          if (prev === "default") {
+            setSortDir("asc");
+            return "name";
+          }
+          if (prev === "name") return "installed";
+          if (prev === "installed") {
+            // Default to descending for popularity (most popular first)
+            setSortDir("desc");
+            return "popularity";
+          }
+          // Back to default
+          setSortDir("asc");
+          return "default";
+        });
         return;
       }
       if (input === "r") {
@@ -699,6 +956,36 @@ export function App() {
     }
   };
 
+  const handlePiPackageAction = async (index: number) => {
+    if (!detailPiPackage) return;
+    const actions = getPiPackageActions(detailPiPackage);
+    const action = actions[index];
+    if (!action) return;
+
+    switch (action.type) {
+      case "install":
+        await doInstallPiPkg(detailPiPackage);
+        // Refresh the package after action
+        const afterInstall = piPackages.find((p) => p.source === detailPiPackage.source);
+        if (afterInstall) setDetailPiPackage(afterInstall);
+        break;
+      case "uninstall":
+        await doUninstallPiPkg(detailPiPackage);
+        const afterUninstall = piPackages.find((p) => p.source === detailPiPackage.source);
+        if (afterUninstall) setDetailPiPackage(afterUninstall);
+        break;
+      case "update":
+        await doUpdatePiPkg(detailPiPackage);
+        const afterUpdate = piPackages.find((p) => p.source === detailPiPackage.source);
+        if (afterUpdate) setDetailPiPackage(afterUpdate);
+        break;
+      case "back":
+        setDetailPiPackage(null);
+        setActionIndex(0);
+        break;
+    }
+  };
+
   const handleMarketplaceAction = (index: number) => {
     if (!detailMarketplace) return;
     const isReadOnly = detailMarketplace.source === "claude";
@@ -725,7 +1012,7 @@ export function App() {
 
   const statusMessage = loading
     ? "Loading..."
-    : `${allPlugins.length} plugins, ${assets.length} assets, ${configs.length} configs from ${marketplaces.length} marketplaces`;
+    : `${allPlugins.length} plugins, ${piPackages.length} pi-pkgs, ${assets.length} assets, ${configs.length} configs from ${marketplaces.length} marketplaces`;
 
   const handleAddMarketplace = (name: string, url: string) => {
     addMarketplace(name, url);
@@ -808,6 +1095,11 @@ export function App() {
           marketplace={detailMarketplace}
           selectedIndex={actionIndex}
         />
+      ) : detailPiPackage ? (
+        <PiPackageDetail
+          pkg={detailPiPackage}
+          selectedIndex={actionIndex}
+        />
       ) : (
         <Box flexDirection="column" height={tab === "sync" ? 19 : (tab === "discover" || tab === "installed") ? 20 : 25}>
           {(tab === "discover" || tab === "installed") && (
@@ -831,7 +1123,7 @@ export function App() {
               </Box>
               <Box marginLeft={2}>
                 <Text color="gray">
-                  Sort: {sortBy === "name" ? "Name" : "Installed"} {sortDir === "asc" ? "↑" : "↓"}
+                  Sort: {sortBy === "default" ? "Default" : sortBy === "name" ? "Name" : sortBy === "installed" ? "Installed" : "Popular"} {sortBy !== "default" ? (sortDir === "asc" ? "↑" : "↓") : ""}
                 </Text>
               </Box>
             </Box>
@@ -843,7 +1135,38 @@ export function App() {
                 <Box marginY={1}>
                   <Text color="cyan">⠋ Loading plugins from marketplaces...</Text>
                 </Box>
+              ) : discoverSubView === "plugins" ? (
+                // Plugins sub-view - full list
+                <Box flexDirection="column">
+                  <Box marginBottom={1}>
+                    <Text color="cyan" bold>Plugins</Text>
+                    <Text color="gray"> · Press Esc to go back</Text>
+                  </Box>
+                  <PluginList
+                    plugins={filteredPlugins}
+                    selectedIndex={subViewIndex}
+                    maxHeight={12}
+                    nameColumnWidth={libraryNameWidth}
+                    marketplaceColumnWidth={marketplaceWidth}
+                  />
+                </Box>
+              ) : discoverSubView === "piPackages" ? (
+                // Pi Packages sub-view - full list
+                <Box flexDirection="column">
+                  <Box marginBottom={1}>
+                    <Text color="cyan" bold>Pi Packages</Text>
+                    <Text color="gray"> · Press Esc to go back</Text>
+                  </Box>
+                  <PiPackageList
+                    packages={filteredPiPackages}
+                    selectedIndex={subViewIndex}
+                    maxHeight={12}
+                    nameColumnWidth={libraryNameWidth}
+                    marketplaceColumnWidth={marketplaceWidth}
+                  />
+                </Box>
               ) : (
+                // Dashboard view - inline lists for Configs/Assets, summary cards for Plugins/PiPackages
                 <Box flexDirection="column">
                   {filteredConfigs.length > 0 && (
                     <Box flexDirection="column">
@@ -873,13 +1196,17 @@ export function App() {
                   )}
                   {filteredPlugins.length > 0 && (
                     <Box flexDirection="column" marginTop={(filteredConfigs.length > 0 || filteredAssets.length > 0) ? 1 : 0}>
-                      <Box><Text color="gray">  Plugins</Text></Box>
-                      <PluginList
+                      <PluginSummary
                         plugins={filteredPlugins}
-                        selectedIndex={selectedIndex >= configCount + assetCount ? selectedIndex - configCount - assetCount : -1}
-                        maxHeight={4}
-                        nameColumnWidth={libraryNameWidth}
-                        marketplaceColumnWidth={marketplaceWidth}
+                        selected={selectedLibraryItem?.kind === "pluginSummary"}
+                      />
+                    </Box>
+                  )}
+                  {filteredPiPackages.length > 0 && (
+                    <Box flexDirection="column" marginTop={(filteredConfigs.length > 0 || filteredAssets.length > 0 || filteredPlugins.length > 0) ? 1 : 0}>
+                      <PiPackageSummary
+                        packages={filteredPiPackages}
+                        selected={selectedLibraryItem?.kind === "piPackageSummary"}
                       />
                     </Box>
                   )}
@@ -927,8 +1254,20 @@ export function App() {
                       <Box><Text color="gray">  Plugins</Text></Box>
                       <PluginList
                         plugins={filteredPlugins}
-                        selectedIndex={selectedIndex >= configCount + assetCount ? selectedIndex - configCount - assetCount : -1}
+                        selectedIndex={selectedIndex >= configCount + assetCount && selectedIndex < configCount + assetCount + pluginCount ? selectedIndex - configCount - assetCount : -1}
                         maxHeight={4}
+                        nameColumnWidth={libraryNameWidth}
+                        marketplaceColumnWidth={marketplaceWidth}
+                      />
+                    </Box>
+                  )}
+                  {filteredPiPackages.length > 0 && (
+                    <Box flexDirection="column" marginTop={(filteredConfigs.length > 0 || filteredAssets.length > 0 || filteredPlugins.length > 0) ? 1 : 0}>
+                      <Box><Text color="gray">  Pi Packages</Text></Box>
+                      <PiPackageList
+                        packages={filteredPiPackages}
+                        selectedIndex={selectedIndex >= configCount + assetCount + pluginCount ? selectedIndex - configCount - assetCount - pluginCount : -1}
+                        maxHeight={3}
                         nameColumnWidth={libraryNameWidth}
                         marketplaceColumnWidth={marketplaceWidth}
                       />
@@ -978,22 +1317,28 @@ export function App() {
         </Box>
       )}
 
-      {(tab === "discover" || tab === "installed") && !detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && (
-        selectedLibraryItem?.kind === "plugin" ? (
+      {(tab === "discover" || tab === "installed") && !detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && (
+        discoverSubView === "plugins" ? (
+          <PluginPreview plugin={filteredPlugins[subViewIndex] ?? null} />
+        ) : discoverSubView === "piPackages" ? (
+          <PiPackagePreview pkg={filteredPiPackages[subViewIndex] ?? null} />
+        ) : selectedLibraryItem?.kind === "plugin" ? (
           <PluginPreview plugin={selectedLibraryItem.plugin} />
         ) : selectedLibraryItem?.kind === "asset" ? (
           <AssetPreview asset={selectedLibraryItem.asset} />
         ) : selectedLibraryItem?.kind === "config" ? (
           <ConfigPreview config={selectedLibraryItem.config} />
+        ) : selectedLibraryItem?.kind === "piPackage" ? (
+          <PiPackagePreview pkg={selectedLibraryItem.piPackage} />
         ) : null
       )}
 
-      {tab === "sync" && !detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && (
+      {tab === "sync" && !detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && (
         <SyncPreview item={syncPreview[selectedIndex] ?? null} />
       )}
 
       <Notifications notifications={notifications} onClear={clearNotification} />
-      <HintBar tab={tab} hasDetail={Boolean(detailPlugin || detailAsset || detailConfig || detailMarketplace)} />
+      <HintBar tab={tab} hasDetail={Boolean(detailPlugin || detailAsset || detailConfig || detailMarketplace || detailPiPackage)} />
       <StatusBar
         loading={loading}
         message={statusMessage}

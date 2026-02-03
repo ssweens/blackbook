@@ -130,8 +130,13 @@ export interface SyncConfig {
   assetsRepo?: string;  // defaults to configRepo if not specified
 }
 
+export interface PiMarketplacesConfig {
+  [name: string]: string;  // name -> local path or git URL
+}
+
 export interface TomlConfig {
   marketplaces?: Record<string, string>;
+  piMarketplaces?: PiMarketplacesConfig;
   tools?: Record<string, ToolConfig>;
   assets?: AssetConfig[];
   sync?: SyncConfig;
@@ -265,6 +270,9 @@ export function loadConfig(configPath?: string): TomlConfig {
         }
         if (currentSection === "marketplaces") {
           result.marketplaces![key] = value;
+        } else if (currentSection === "pi-marketplaces") {
+          if (!result.piMarketplaces) result.piMarketplaces = {};
+          result.piMarketplaces[key] = value;
         } else if (currentSection === "tools" && currentTool) {
           const normalizedKey = key === "config_dir" ? "configDir" : key;
           (result.tools![currentTool] as Record<string, string>)[normalizedKey] = value;
@@ -669,4 +677,13 @@ export function resolveAssetSourcePath(source: string): string {
   
   // No assets_repo configured - try to expand as-is
   return expandPath(source);
+}
+
+/**
+ * Get configured Pi marketplaces from [pi-marketplaces] section.
+ * Returns a map of marketplace name -> source (local path or git URL).
+ */
+export function getPiMarketplaces(): PiMarketplacesConfig {
+  const config = loadConfig();
+  return config.piMarketplaces ?? {};
 }

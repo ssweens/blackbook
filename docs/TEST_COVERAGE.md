@@ -3,8 +3,8 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 143
-- **Test Files:** 10
+- **Total Tests:** 151
+- **Test Files:** 11
 
 ## Critical Paths
 - [x] Plugin discovery list loads
@@ -26,6 +26,8 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Asset repo config parsing (`sync.assets_repo`)
 - [x] Multi-file asset mappings (`[[assets.files]]`, `[assets.files.overrides]`)
 - [x] Asset source path resolution (`resolveAssetSourcePath`)
+- [x] Pi package source type detection (`getSourceType`)
+- [x] Pi local marketplace scanning (`scanLocalMarketplace`)
 - [ ] Marketplace add/remove persistence
 
 ## Config & Asset Path Tests (asset-paths.test.ts)

@@ -166,6 +166,7 @@ export interface AppState {
   detailAsset: Asset | null;
   detailConfig: ConfigFile | null;
   detailMarketplace: Marketplace | null;
+  detailPiPackage: PiPackage | null;
   notifications: Notification[];
   // Diff view state
   diffTarget: DiffTarget | null;
@@ -174,6 +175,12 @@ export interface AppState {
   missingSummary: MissingSummary | null;
   missingSummarySourceAsset: Asset | null;
   missingSummarySourceConfig: ConfigFile | null;
+  // Pi packages state
+  piPackages: PiPackage[];
+  piMarketplaces: PiMarketplace[];
+  // Section navigation
+  currentSection: DiscoverSection;
+  discoverSubView: DiscoverSubView;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -239,3 +246,52 @@ export interface MissingSummary {
   missingFiles: string[];   // relative paths
   extraFiles: string[];     // relative paths (for directory assets)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pi Package Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type PiPackageSourceType = "npm" | "git" | "local";
+
+export interface PiPackage {
+  name: string;
+  description: string;
+  version: string;
+  source: string;           // e.g., "npm:@foo/bar", "git:github.com/user/repo", "/local/path"
+  sourceType: PiPackageSourceType;
+  marketplace: string;      // marketplace name (e.g., "npm", "playbook")
+  installed: boolean;
+  installedVersion?: string;
+  hasUpdate?: boolean;
+  // Package contents
+  extensions: string[];
+  skills: string[];
+  prompts: string[];
+  themes: string[];
+  // Metadata
+  homepage?: string;
+  repository?: string;
+  author?: string;
+  license?: string;
+  // Popularity (npm only)
+  weeklyDownloads?: number;
+  monthlyDownloads?: number;
+  popularity?: number;      // 0-1 score from npm
+}
+
+export interface PiMarketplace {
+  name: string;
+  source: string;           // URL or local path
+  sourceType: PiPackageSourceType;
+  packages: PiPackage[];
+}
+
+export interface PiSettings {
+  packages: string[];       // installed package sources
+}
+
+// Section navigation for Discover/Installed tabs
+export type DiscoverSection = "configs" | "assets" | "plugins" | "piPackages";
+
+// Sub-view state for drilling into Plugins or Pi Packages
+export type DiscoverSubView = "plugins" | "piPackages" | null;

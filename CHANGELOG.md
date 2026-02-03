@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-02-03
+
+### Added
+- Pi packages marketplace support for discovering, installing, and managing Pi packages
+- npm registry integration fetching up to 250 packages with `pi-package` keyword
+- Local directory marketplace support via `[pi-marketplaces]` config section
+- Download counts and popularity data from npm (weekly/monthly downloads)
+- Summary cards for Plugins and Pi Packages in Discover tab (drill down with Enter)
+- Sub-views for browsing full Plugins and Pi Packages lists
+- Tab/Shift+Tab navigation to jump between sections in Discover/Installed tabs
+- Detail view fetches full package info from npm (description, pi manifest, etc.)
+- Sort options: Default, Name, Installed, Popular (press `s` to cycle)
+- Default sort: installed first, then local/git alphabetically, then npm by popularity
+- Install/uninstall/update Pi packages via `pi` CLI wrapper
+- 8 new tests for Pi marketplace functionality (151 total)
+
+### Changed
+- Discover tab now shows summary cards for Plugins/Pi Packages instead of inline lists
+- Left/Right arrows for main tab navigation (Tab now used for section navigation)
+- Status bar shows Pi packages count
+
 ## [0.9.0] - 2026-02-02
 
 ### Added

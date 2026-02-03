@@ -12,7 +12,13 @@ import type {
   DiffTarget,
   DiffInstanceRef,
   MissingSummary,
+  PiPackage,
+  PiMarketplace,
+  DiscoverSection,
+  DiscoverSubView,
 } from "./types.js";
+import { loadAllPiMarketplaces, getAllPiPackages, loadPiSettings, isPackageInstalled, fetchNpmPackageDetails } from "./pi-marketplace.js";
+import { installPiPackage, removePiPackage, updatePiPackage } from "./pi-install.js";
 import {
   getDriftedAssetInstances,
   getMissingAssetInstances,
@@ -79,6 +85,15 @@ interface Actions {
   syncTools: (items: SyncPreviewItem[]) => Promise<void>;
   notify: (message: string, type?: Notification["type"]) => void;
   clearNotification: (id: string) => void;
+  // Pi package actions
+  loadPiPackages: () => Promise<void>;
+  installPiPackage: (pkg: PiPackage) => Promise<boolean>;
+  uninstallPiPackage: (pkg: PiPackage) => Promise<boolean>;
+  updatePiPackage: (pkg: PiPackage) => Promise<boolean>;
+  setDetailPiPackage: (pkg: PiPackage | null) => Promise<void>;
+  // Section navigation
+  setCurrentSection: (section: DiscoverSection) => void;
+  setDiscoverSubView: (subView: DiscoverSubView) => void;
   // Diff view actions
   openDiffForAsset: (asset: Asset, instance?: DiffInstanceRef) => void;
   openDiffForConfig: (config: ConfigFile, instance?: DiffInstanceRef) => void;
@@ -240,6 +255,7 @@ export const useStore = create<Store>((set, get) => ({
   detailAsset: null,
   detailConfig: null,
   detailMarketplace: null,
+  detailPiPackage: null,
   notifications: [],
   diffTarget: null,
   diffSourceAsset: null,
@@ -247,6 +263,12 @@ export const useStore = create<Store>((set, get) => ({
   missingSummary: null,
   missingSummarySourceAsset: null,
   missingSummarySourceConfig: null,
+  // Pi packages state
+  piPackages: [],
+  piMarketplaces: [],
+  // Section navigation
+  currentSection: "configs" as DiscoverSection,
+  discoverSubView: null as DiscoverSubView,
 
   setTab: (tab) =>
     set((state) =>
@@ -268,6 +290,30 @@ export const useStore = create<Store>((set, get) => ({
   setDetailAsset: (asset) => set({ detailAsset: asset }),
   setDetailConfig: (config) => set({ detailConfig: config }),
   setDetailMarketplace: (marketplace) => set({ detailMarketplace: marketplace }),
+  setDetailPiPackage: async (pkg) => {
+    if (!pkg) {
+      set({ detailPiPackage: null });
+      return;
+    }
+    
+    // Set immediately so UI shows something
+    set({ detailPiPackage: pkg });
+    
+    // Fetch full details for npm packages
+    if (pkg.sourceType === "npm") {
+      const details = await fetchNpmPackageDetails(pkg.source);
+      if (details) {
+        // Merge details into the package
+        set((state) => ({
+          detailPiPackage: state.detailPiPackage?.source === pkg.source
+            ? { ...state.detailPiPackage, ...details }
+            : state.detailPiPackage,
+        }));
+      }
+    }
+  },
+  setCurrentSection: (section) => set({ currentSection: section }),
+  setDiscoverSubView: (subView) => set({ discoverSubView: subView }),
 
   notify: (message, type = "info") => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -281,6 +327,79 @@ export const useStore = create<Store>((set, get) => ({
 
   loadTools: () => {
     set({ tools: getToolInstances() });
+  },
+
+  loadPiPackages: async () => {
+    // Check if Pi tool is enabled before loading packages
+    const tools = get().tools;
+    const piEnabled = tools.some((t) => t.toolId === "pi" && t.enabled);
+    if (!piEnabled) {
+      set({ piPackages: [], piMarketplaces: [] });
+      return;
+    }
+
+    try {
+      const marketplaces = await loadAllPiMarketplaces();
+      const packages = getAllPiPackages(marketplaces);
+      set({ piPackages: packages, piMarketplaces: marketplaces });
+    } catch (error) {
+      console.error("Failed to load Pi packages:", error);
+      set({ piPackages: [], piMarketplaces: [] });
+    }
+  },
+
+  installPiPackage: async (pkg) => {
+    const { notify } = get();
+    try {
+      const result = await installPiPackage(pkg);
+      if (result.success) {
+        notify(`Installed ${pkg.name}`, "success");
+        await get().loadPiPackages();
+        return true;
+      } else {
+        notify(`Failed to install ${pkg.name}: ${result.error}`, "error");
+        return false;
+      }
+    } catch (error) {
+      notify(`Error installing ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
+      return false;
+    }
+  },
+
+  uninstallPiPackage: async (pkg) => {
+    const { notify } = get();
+    try {
+      const result = await removePiPackage(pkg);
+      if (result.success) {
+        notify(`Uninstalled ${pkg.name}`, "success");
+        await get().loadPiPackages();
+        return true;
+      } else {
+        notify(`Failed to uninstall ${pkg.name}: ${result.error}`, "error");
+        return false;
+      }
+    } catch (error) {
+      notify(`Error uninstalling ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
+      return false;
+    }
+  },
+
+  updatePiPackage: async (pkg) => {
+    const { notify } = get();
+    try {
+      const result = await updatePiPackage(pkg);
+      if (result.success) {
+        notify(`Updated ${pkg.name}`, "success");
+        await get().loadPiPackages();
+        return true;
+      } else {
+        notify(`Failed to update ${pkg.name}: ${result.error}`, "error");
+        return false;
+      }
+    } catch (error) {
+      notify(`Error updating ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
+      return false;
+    }
   },
 
   loadMarketplaces: async () => {
@@ -449,6 +568,7 @@ export const useStore = create<Store>((set, get) => ({
 
   refreshAll: async () => {
     await get().loadMarketplaces();
+    await get().loadPiPackages();
   },
 
   installPlugin: async (plugin) => {
