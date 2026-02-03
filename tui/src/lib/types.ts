@@ -43,11 +43,20 @@ export interface Plugin {
   updatedAt?: Date;
 }
 
+export interface AssetMapping {
+  source: string;  // relative to assets_repo; can be file, dir (trailing /), or glob
+  target: string;  // relative to tool's configDir; destination file or directory
+  overrides?: Record<string, string>;  // per-instance target overrides
+}
+
 export interface AssetConfig {
   name: string;
-  source: string;
+  // Simple single-source syntax (backward compatible)
+  source?: string;
   defaultTarget?: string;
   overrides?: Record<string, string>;
+  // Multi-file syntax (new)
+  mappings?: AssetMapping[];
 }
 
 export interface Asset extends AssetConfig {

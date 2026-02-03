@@ -127,6 +127,7 @@ export interface ToolConfig {
 
 export interface SyncConfig {
   configRepo?: string;
+  assetsRepo?: string;  // defaults to configRepo if not specified
 }
 
 export interface TomlConfig {
@@ -176,10 +177,21 @@ export function loadConfig(configPath?: string): TomlConfig {
           currentTool = "";
           currentInstance = null;
           currentConfig = null;
-          const asset: AssetConfig = { name: "", source: "" };
+          const asset: AssetConfig = { name: "" };
           result.assets = result.assets || [];
           result.assets.push(asset);
           currentAsset = asset;
+        } else if (section === "assets.files" && currentAsset) {
+          currentSection = "asset_files";
+          currentTool = "";
+          currentInstance = null;
+          currentConfig = null;
+          // Initialize mappings array and add new mapping
+          if (!currentAsset.mappings) {
+            currentAsset.mappings = [];
+          }
+          const mapping = { source: "", target: "" };
+          currentAsset.mappings.push(mapping);
         } else if (section === "configs") {
           currentSection = "configs";
           currentTool = "";
@@ -223,6 +235,10 @@ export function loadConfig(configPath?: string): TomlConfig {
           currentSection = "asset_overrides";
           currentTool = "";
           currentInstance = null;
+        } else if (section === "assets.files.overrides" && currentAsset && currentAsset.mappings && currentAsset.mappings.length > 0) {
+          currentSection = "asset_file_overrides";
+          currentTool = "";
+          currentInstance = null;
         } else if (section === "sync") {
           currentSection = "sync";
           currentTool = "";
@@ -261,8 +277,20 @@ export function loadConfig(configPath?: string): TomlConfig {
         } else if (currentSection === "asset_overrides" && currentAsset) {
           if (!currentAsset.overrides) currentAsset.overrides = {};
           currentAsset.overrides[key] = value;
+        } else if (currentSection === "asset_files" && currentAsset && currentAsset.mappings) {
+          const currentMapping = currentAsset.mappings[currentAsset.mappings.length - 1];
+          if (currentMapping) {
+            (currentMapping as unknown as Record<string, string>)[key] = value;
+          }
+        } else if (currentSection === "asset_file_overrides" && currentAsset && currentAsset.mappings) {
+          const currentMapping = currentAsset.mappings[currentAsset.mappings.length - 1];
+          if (currentMapping) {
+            if (!currentMapping.overrides) currentMapping.overrides = {};
+            currentMapping.overrides[key] = value;
+          }
         } else if (currentSection === "sync") {
-          const normalizedKey = key === "config_repo" ? "configRepo" : key;
+          const normalizedKey = key === "config_repo" ? "configRepo" :
+                               key === "assets_repo" ? "assetsRepo" : key;
           (result.sync as Record<string, string>)[normalizedKey] = value;
         } else if (currentSection === "configs" && currentConfig) {
           const normalizedKey = key === "tool_id" ? "toolId" :
@@ -601,4 +629,44 @@ export function getConfigRepoPath(): string | null {
   const config = loadConfig();
   if (!config.sync?.configRepo) return null;
   return expandPath(config.sync.configRepo);
+}
+
+export function getAssetsRepoPath(): string | null {
+  const config = loadConfig();
+  // assets_repo defaults to config_repo if not specified
+  if (config.sync?.assetsRepo) {
+    return expandPath(config.sync.assetsRepo);
+  }
+  if (config.sync?.configRepo) {
+    return expandPath(config.sync.configRepo);
+  }
+  return null;
+}
+
+/**
+ * Resolve an asset source path. Supports:
+ * - Absolute paths (start with /)
+ * - Home-relative paths (start with ~)
+ * - URLs (http:// or https://)
+ * - Relative paths (resolved against assets_repo)
+ */
+export function resolveAssetSourcePath(source: string): string {
+  // URLs pass through unchanged
+  if (source.startsWith("http://") || source.startsWith("https://")) {
+    return source;
+  }
+  
+  // Absolute paths pass through with ~ expansion
+  if (source.startsWith("/") || source.startsWith("~")) {
+    return expandPath(source);
+  }
+  
+  // Relative paths resolve against assets_repo
+  const assetsRepo = getAssetsRepoPath();
+  if (assetsRepo) {
+    return join(assetsRepo, source);
+  }
+  
+  // No assets_repo configured - try to expand as-is
+  return expandPath(source);
 }

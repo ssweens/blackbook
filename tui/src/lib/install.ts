@@ -19,7 +19,7 @@ import { createHash } from "crypto";
 const execFileAsync = promisify(execFile);
 import { join, dirname, resolve, basename } from "path";
 import { tmpdir, homedir } from "os";
-import { expandPath, getCacheDir, getEnabledToolInstances, getToolInstances, getConfigRepoPath } from "./config.js";
+import { expandPath, getCacheDir, getEnabledToolInstances, getToolInstances, getConfigRepoPath, resolveAssetSourcePath } from "./config.js";
 import { getGitHubToken, isGitHubHost } from "./github.js";
 import type { Asset, AssetConfig, Plugin, InstalledItem, ToolInstance, ConfigSyncConfig, ConfigFile, ConfigSourceFile, ConfigMapping } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
@@ -212,7 +212,17 @@ export function resolveAssetTarget(asset: AssetConfig, instance: ToolInstance): 
 }
 
 export function getAssetSourceInfo(asset: AssetConfig): AssetSourceInfo {
-  const sourcePath = expandPath(asset.source);
+  // Handle simple single-source syntax
+  if (!asset.source) {
+    return {
+      sourcePath: "",
+      exists: false,
+      isDirectory: false,
+      hash: null,
+      error: "Asset has no source configured.",
+    };
+  }
+  const sourcePath = resolveAssetSourcePath(asset.source);
   if (sourcePath.startsWith("http://") || sourcePath.startsWith("https://")) {
     const result = fetchUrlToCache(sourcePath);
     if (result.error) {
@@ -774,7 +784,7 @@ function installAssetToInstance(
     const item: InstalledItem = {
       kind: "asset",
       name: asset.name,
-      source: asset.source,
+      source: asset.source || "",
       dest: result.dest,
       backup: result.backup,
       owner: asset.name,

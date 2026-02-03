@@ -213,7 +213,7 @@ export function App() {
     let filtered = base;
     if (search) {
       filtered = base.filter(
-        (a) => a.name.toLowerCase().includes(lowerSearch) || a.source.toLowerCase().includes(lowerSearch)
+        (a) => a.name.toLowerCase().includes(lowerSearch) || (a.source || "").toLowerCase().includes(lowerSearch)
       );
     }
 
@@ -489,6 +489,23 @@ export function App() {
         const tool = tools[selectedIndex];
         if (tool) {
           void toggleToolEnabled(tool.toolId, tool.instanceId);
+        }
+        return;
+      }
+
+      if (tab === "sync") {
+        const item = syncPreview[selectedIndex];
+        if (item) {
+          if (item.kind === "plugin") {
+            setDetailPlugin(item.plugin);
+            setActionIndex(0);
+          } else if (item.kind === "asset") {
+            setDetailAsset(item.asset);
+            setActionIndex(0);
+          } else if (item.kind === "config") {
+            setDetailConfig(item.config);
+            setActionIndex(0);
+          }
         }
         return;
       }
@@ -792,7 +809,7 @@ export function App() {
           selectedIndex={actionIndex}
         />
       ) : (
-        <Box flexDirection="column" height={(tab === "discover" || tab === "installed" || tab === "sync") ? 18 : 23}>
+        <Box flexDirection="column" height={tab === "sync" ? 19 : (tab === "discover" || tab === "installed") ? 20 : 25}>
           {(tab === "discover" || tab === "installed") && (
             <Box flexDirection="row" justifyContent="space-between">
               <Box flexGrow={1}>
@@ -827,44 +844,46 @@ export function App() {
                   <Text color="cyan">⠋ Loading plugins from marketplaces...</Text>
                 </Box>
               ) : (
-                <>
+                <Box flexDirection="column">
                   {filteredConfigs.length > 0 && (
-                    <>
-                      <Box marginTop={1}>
-                        <Text color="gray">  Configs</Text>
-                      </Box>
+                    <Box flexDirection="column">
+                      <Box><Text color="gray">  Configs</Text></Box>
                       <ConfigList
                         configs={filteredConfigs}
                         selectedIndex={selectedIndex < configCount ? selectedIndex : -1}
+                        maxHeight={2}
+                        nameColumnWidth={libraryNameWidth}
+                        typeColumnWidth={6}
+                        marketplaceColumnWidth={marketplaceWidth}
+                      />
+                    </Box>
+                  )}
+                  {filteredAssets.length > 0 && (
+                    <Box flexDirection="column" marginTop={filteredConfigs.length > 0 ? 1 : 0}>
+                      <Box><Text color="gray">  Assets</Text></Box>
+                      <AssetList
+                        assets={filteredAssets}
+                        selectedIndex={selectedIndex >= configCount && selectedIndex < configCount + assetCount ? selectedIndex - configCount : -1}
                         maxHeight={3}
                         nameColumnWidth={libraryNameWidth}
                         typeColumnWidth={6}
                         marketplaceColumnWidth={marketplaceWidth}
                       />
-                    </>
+                    </Box>
                   )}
-                  <Box marginTop={1}>
-                    <Text color="gray">  Assets</Text>
-                  </Box>
-                  <AssetList
-                    assets={filteredAssets}
-                    selectedIndex={selectedIndex >= configCount && selectedIndex < configCount + assetCount ? selectedIndex - configCount : -1}
-                    maxHeight={4}
-                    nameColumnWidth={libraryNameWidth}
-                    typeColumnWidth={6}
-                    marketplaceColumnWidth={marketplaceWidth}
-                  />
-                  <Box marginTop={1}>
-                    <Text color="gray">  Plugins</Text>
-                  </Box>
-                  <PluginList
-                    plugins={filteredPlugins}
-                    selectedIndex={selectedIndex >= configCount + assetCount ? selectedIndex - configCount - assetCount : -1}
-                    maxHeight={5}
-                    nameColumnWidth={libraryNameWidth}
-                    marketplaceColumnWidth={marketplaceWidth}
-                  />
-                </>
+                  {filteredPlugins.length > 0 && (
+                    <Box flexDirection="column" marginTop={(filteredConfigs.length > 0 || filteredAssets.length > 0) ? 1 : 0}>
+                      <Box><Text color="gray">  Plugins</Text></Box>
+                      <PluginList
+                        plugins={filteredPlugins}
+                        selectedIndex={selectedIndex >= configCount + assetCount ? selectedIndex - configCount - assetCount : -1}
+                        maxHeight={4}
+                        nameColumnWidth={libraryNameWidth}
+                        marketplaceColumnWidth={marketplaceWidth}
+                      />
+                    </Box>
+                  )}
+                </Box>
               )}
             </>
           )}
@@ -876,44 +895,46 @@ export function App() {
                   <Text color="cyan">⠋ Loading installed plugins...</Text>
                 </Box>
               ) : (
-                <>
+                <Box flexDirection="column">
                   {filteredConfigs.length > 0 && (
-                    <>
-                      <Box marginTop={1}>
-                        <Text color="gray">  Configs</Text>
-                      </Box>
+                    <Box flexDirection="column">
+                      <Box><Text color="gray">  Configs</Text></Box>
                       <ConfigList
                         configs={filteredConfigs}
                         selectedIndex={selectedIndex < configCount ? selectedIndex : -1}
+                        maxHeight={2}
+                        nameColumnWidth={libraryNameWidth}
+                        typeColumnWidth={6}
+                        marketplaceColumnWidth={marketplaceWidth}
+                      />
+                    </Box>
+                  )}
+                  {filteredAssets.length > 0 && (
+                    <Box flexDirection="column" marginTop={filteredConfigs.length > 0 ? 1 : 0}>
+                      <Box><Text color="gray">  Assets</Text></Box>
+                      <AssetList
+                        assets={filteredAssets}
+                        selectedIndex={selectedIndex >= configCount && selectedIndex < configCount + assetCount ? selectedIndex - configCount : -1}
                         maxHeight={3}
                         nameColumnWidth={libraryNameWidth}
                         typeColumnWidth={6}
                         marketplaceColumnWidth={marketplaceWidth}
                       />
-                    </>
+                    </Box>
                   )}
-                  <Box marginTop={1}>
-                    <Text color="gray">  Assets</Text>
-                  </Box>
-                  <AssetList
-                    assets={filteredAssets}
-                    selectedIndex={selectedIndex >= configCount && selectedIndex < configCount + assetCount ? selectedIndex - configCount : -1}
-                    maxHeight={4}
-                    nameColumnWidth={libraryNameWidth}
-                    typeColumnWidth={6}
-                    marketplaceColumnWidth={marketplaceWidth}
-                  />
-                  <Box marginTop={1}>
-                    <Text color="gray">  Plugins</Text>
-                  </Box>
-                  <PluginList
-                    plugins={filteredPlugins}
-                    selectedIndex={selectedIndex >= configCount + assetCount ? selectedIndex - configCount - assetCount : -1}
-                    maxHeight={5}
-                    nameColumnWidth={libraryNameWidth}
-                    marketplaceColumnWidth={marketplaceWidth}
-                  />
-                </>
+                  {filteredPlugins.length > 0 && (
+                    <Box flexDirection="column" marginTop={(filteredConfigs.length > 0 || filteredAssets.length > 0) ? 1 : 0}>
+                      <Box><Text color="gray">  Plugins</Text></Box>
+                      <PluginList
+                        plugins={filteredPlugins}
+                        selectedIndex={selectedIndex >= configCount + assetCount ? selectedIndex - configCount - assetCount : -1}
+                        maxHeight={4}
+                        nameColumnWidth={libraryNameWidth}
+                        marketplaceColumnWidth={marketplaceWidth}
+                      />
+                    </Box>
+                  )}
+                </Box>
               )}
             </>
           )}

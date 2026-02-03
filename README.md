@@ -142,54 +142,98 @@ config_dir = "~/.config/opencode"
 
 Paths in `config_dir` (and local marketplace paths) support `~` expansion to your home directory.
 
+### Sync Repositories
+
+Both assets and configs use central repositories for source files:
+
+```toml
+[sync]
+config_repo = "~/src/playbook/config"    # Base for config sources
+assets_repo = "~/src/playbook/assets"    # Base for asset sources (optional, defaults to config_repo)
+```
+
+If `assets_repo` is not specified, it defaults to `config_repo`. This allows a single repo for everything, or separate repos for different concerns.
+
+### Assets vs Configs: Key Distinction
+
+| Feature | Assets | Configs |
+|---------|--------|---------|
+| **Sync targets** | ALL enabled tools | Specific `tool_id` only |
+| **Use case** | Shared files (AGENTS.md, prompts) | Tool-specific settings |
+| **Per-instance overrides** | ✓ Different targets per tool | — |
+
 ### Assets
 
-Assets let you sync user-level instruction files or folders (like `AGENTS.md`) into tool config directories. Sources can be local paths or HTTPS URLs.
+Assets sync user-level files (like `AGENTS.md`) to **all enabled tool instances**. Use assets for content that should be available everywhere.
+
+#### Simple Asset (Single File)
 
 ```toml
 [[assets]]
 name = "AGENTS.md"
-source = "~/dotfiles/AGENTS.md"
+source = "AGENTS.md"                      # Relative to assets_repo
 default_target = "AGENTS.md"
 
+# Per-instance target overrides (optional)
 [assets.overrides]
-"claude-code:default" = "CLAUDE.md"
-
-[[assets]]
-name = "agent-pack"
-source = "~/dotfiles/agent-pack"
-default_target = "agent-assets"
-
-[[assets]]
-name = "remote-agents"
-source = "https://raw.githubusercontent.com/ssweens/my-private-repo/main/assets/AGENTS.md"
-default_target = "AGENTS.md"
+"claude-code:default" = "CLAUDE.md"       # Claude uses CLAUDE.md instead
+"claude-code:claude-learning" = "CLAUDE.md"
 ```
 
-Assets are synced to enabled instances and show drift if the target differs from the source.
+#### Multi-File Asset
+
+For multiple files, directories, or globs, use `[[assets.files]]`:
+
+```toml
+[[assets]]
+name = "Prompt Library"
+
+[[assets.files]]
+source = "prompts/"                       # Directory (trailing /)
+target = "prompts/"
+
+[[assets.files]]
+source = "templates/*.md"                 # Glob pattern
+target = "templates/"
+
+# Per-file overrides (optional)
+[assets.files.overrides]
+"claude-code:default" = "claude-templates/"
+```
+
+#### Path Resolution
+
+Asset `source` paths are resolved in order:
+1. **URLs** (`http://`, `https://`) — fetched and cached
+2. **Absolute paths** (`/path/to/file`) — used directly
+3. **Home-relative** (`~/path`) — expanded to home directory
+4. **Relative paths** — resolved against `assets_repo`
+
+```toml
+# All of these work:
+source = "AGENTS.md"                                    # Relative to assets_repo
+source = "~/dotfiles/AGENTS.md"                         # Home-relative
+source = "/absolute/path/to/AGENTS.md"                  # Absolute
+source = "https://example.com/AGENTS.md"                # URL (cached)
+```
 
 ### Configs
 
-Configs let you sync tool-specific configuration files from a central repository to each tool's config directory. Unlike assets (which sync to all enabled tools), configs only sync to matching tool instances.
+Configs sync tool-specific files to **only matching tool instances**. Use configs for settings that differ per tool.
 
-#### Single File Config (Legacy Format)
+#### Single File Config
 
 ```toml
-# Set the central config repository location
-[sync]
-config_repo = "~/src/playbook/config"
-
-# Define configs to sync (each targets a specific tool)
 [[configs]]
 name = "Claude Settings"
-tool_id = "claude-code"
-source_path = "claude-code/settings.json"     # relative to config_repo
-target_path = "settings.json"                  # relative to tool's config_dir
+tool_id = "claude-code"                   # Only syncs to claude-code instances
+source_path = "claude-code/settings.json" # Relative to config_repo
+target_path = "settings.json"             # Relative to tool's config_dir
 ```
 
-#### Multi-File Config (New Format)
+#### Multi-File Config
 
-For tools with multiple config files (like `pi` with `config.toml`, `keybindings.toml`, themes, etc.), use the `[[configs.files]]` array:
+For tools with multiple config files, use `[[configs.files]]`:
 
 ```toml
 [[configs]]
@@ -201,39 +245,80 @@ source = "pi/config.toml"
 target = "config.toml"
 
 [[configs.files]]
-source = "pi/keybindings.toml"
-target = "keybindings.toml"
-
-[[configs.files]]
-source = "pi/themes/"           # trailing slash = sync directory contents
+source = "pi/themes/"                     # Directory sync
 target = "themes/"
 
 [[configs.files]]
-source = "pi/*.json"            # glob pattern - sync all matching files
+source = "pi/*.json"                      # Glob pattern
 target = "."
 ```
 
-**Source/Target Behavior:**
-- `source` can be a single file, directory (with trailing `/`), or glob pattern
-- `target` is the destination directory or filename (relative to tool's config_dir)
-- Directory/glob sources are **flattened** to the target directory (files go directly in target, not subdirectories)
-- Files removed from the source are **NOT** deleted from the target (safety feature)
+### Source Patterns (Assets & Configs)
 
-**Central Repository Structure:**
+Both assets and configs support the same source patterns:
+
+| Pattern | Example | Behavior |
+|---------|---------|----------|
+| Single file | `settings.json` | Syncs one file |
+| Directory | `themes/` (trailing `/`) | Syncs all files recursively |
+| Glob | `*.json`, `prompts/*.md` | Syncs matching files |
+
+**Important behaviors:**
+- Directory/glob sources are **flattened** to target (files go directly in target, not subdirectories)
+- Files removed from source are **NOT** deleted from target (safety feature)
+- Drift detection uses SHA256 hashing
+
+### Example Repository Structure
+
 ```
-~/src/playbook/config/
-├── blackbook/
-│   └── config.toml
-├── claude-code/
-│   ├── settings.json
-│   └── CLAUDE.md
-├── opencode/
-│   └── opencode.json
-└── amp-code/
-    └── config.json
+~/src/playbook/
+├── config/                      # config_repo
+│   ├── claude-code/
+│   │   └── settings.json
+│   ├── pi/
+│   │   ├── config.toml
+│   │   └── themes/
+│   └── opencode/
+│       └── opencode.json
+└── assets/                      # assets_repo
+    ├── AGENTS.md
+    ├── prompts/
+    │   ├── review.md
+    │   └── triage.md
+    └── templates/
+        └── handoff.md
 ```
 
-Configs appear in the Discover and Installed tabs with "Config" badge and tool association. Use the Sync tab to sync missing or drifted configs to their target tools.
+Corresponding config:
+
+```toml
+[sync]
+config_repo = "~/src/playbook/config"
+assets_repo = "~/src/playbook/assets"
+
+[[assets]]
+name = "AGENTS.md"
+source = "AGENTS.md"
+default_target = "AGENTS.md"
+
+[assets.overrides]
+"claude-code:default" = "CLAUDE.md"
+
+[[assets]]
+name = "Prompts"
+
+[[assets.files]]
+source = "prompts/"
+target = "prompts/"
+
+[[configs]]
+name = "Pi Config"
+tool_id = "pi"
+
+[[configs.files]]
+source = "pi/"
+target = "agent"
+```
 
 ### Private Repositories
 
