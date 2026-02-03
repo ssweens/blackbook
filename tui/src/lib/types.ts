@@ -158,4 +158,75 @@ export interface AppState {
   detailConfig: ConfigFile | null;
   detailMarketplace: Marketplace | null;
   notifications: Notification[];
+  // Diff view state
+  diffTarget: DiffTarget | null;
+  diffSourceAsset: Asset | null;
+  diffSourceConfig: ConfigFile | null;
+  missingSummary: MissingSummary | null;
+  missingSummarySourceAsset: Asset | null;
+  missingSummarySourceConfig: ConfigFile | null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Diff View Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type DiffItemKind = "asset" | "config";
+
+export interface DiffInstanceRef {
+  toolId: string;
+  instanceId: string;
+  instanceName: string;
+  configDir: string;
+}
+
+export interface DiffInstanceSummary extends DiffInstanceRef {
+  totalAdded: number;
+  totalRemoved: number;
+}
+
+export type DiffFileStatus = "modified" | "missing" | "extra" | "binary";
+
+export interface DiffFileSummary {
+  id: string;              // stable key (e.g., relativePath)
+  displayPath: string;     // shown in list (e.g., themes/dark.json)
+  sourcePath: string | null;
+  targetPath: string | null;
+  status: DiffFileStatus;
+  linesAdded: number;
+  linesRemoved: number;
+}
+
+export interface DiffTarget {
+  kind: DiffItemKind;
+  title: string;           // e.g. "AGENTS.md" or "Pi Config"
+  instance: DiffInstanceRef;
+  files: DiffFileSummary[];
+}
+
+// Full render payload for DiffDetail
+export interface DiffFileDetail extends DiffFileSummary {
+  hunks: DiffHunk[];
+}
+
+export interface DiffHunk {
+  header: string;
+  lines: DiffLine[];
+}
+
+export interface DiffLine {
+  type: "add" | "remove" | "context";
+  content: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Missing Summary Types (for missing-only items, no drift)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface MissingSummary {
+  kind: DiffItemKind;
+  title: string;
+  instance: DiffInstanceRef;
+  missingFiles: string[];   // relative paths
+  extraFiles: string[];     // relative paths (for directory assets)
 }

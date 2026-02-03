@@ -76,6 +76,7 @@ cd ~/src/blackbook/tui && pnpm start
 | Enter | Select / open details |
 | Space | Install/uninstall selected plugin |
 | / | Focus search (Discover/Installed) |
+| d | View diff for drifted item (Sync tab) |
 | Esc | Back from details or exit search |
 | q | Quit |
 

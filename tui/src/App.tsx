@@ -10,8 +10,8 @@ import { PluginPreview } from "./components/PluginPreview.js";
 import { AssetPreview } from "./components/AssetPreview.js";
 import { ConfigPreview } from "./components/ConfigPreview.js";
 import { PluginDetail } from "./components/PluginDetail.js";
-import { AssetDetail } from "./components/AssetDetail.js";
-import { ConfigDetail } from "./components/ConfigDetail.js";
+import { AssetDetail, getAssetActions, type AssetAction } from "./components/AssetDetail.js";
+import { ConfigDetail, getConfigActions, type ConfigAction } from "./components/ConfigDetail.js";
 import { MarketplaceList } from "./components/MarketplaceList.js";
 import { MarketplaceDetail } from "./components/MarketplaceDetail.js";
 import { AddMarketplaceModal } from "./components/AddMarketplaceModal.js";
@@ -22,8 +22,10 @@ import { SyncPreview } from "./components/SyncPreview.js";
 import { HintBar } from "./components/HintBar.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { Notifications } from "./components/Notifications.js";
+import { DiffView } from "./components/DiffView.js";
+import { MissingSummaryView } from "./components/MissingSummary.js";
 import { getPluginToolStatus, getConfigToolStatus } from "./lib/install.js";
-import type { Tab, SyncPreviewItem, Plugin, Asset, ConfigFile } from "./lib/types.js";
+import type { Tab, SyncPreviewItem, Plugin, Asset, ConfigFile, DiffInstanceRef } from "./lib/types.js";
 
 const TABS: Tab[] = ["discover", "installed", "marketplaces", "tools", "sync"];
 
@@ -65,6 +67,19 @@ export function App() {
     notify,
     notifications,
     clearNotification,
+    // Diff view
+    diffTarget,
+    missingSummary,
+    missingSummarySourceAsset,
+    missingSummarySourceConfig,
+    openDiffForAsset,
+    openDiffForConfig,
+    openMissingSummaryForAsset,
+    openMissingSummaryForConfig,
+    openDiffFromSyncItem,
+    closeDiff,
+    closeMissingSummary,
+    getMissingInstances,
   } = useStore();
 
   const [actionIndex, setActionIndex] = useState(0);
@@ -320,28 +335,15 @@ export function App() {
     return getPluginActions(plugin).length;
   };
 
-  const getAssetActions = (asset: typeof detailAsset) => {
-    if (!asset) return [] as string[];
-    const actions = [] as string[];
-    if (asset.incomplete || asset.drifted || !asset.installed) {
-      actions.push("Sync to all tools");
-    }
-    actions.push("Back to list");
-    return actions;
-  };
+  // Asset and Config actions are now computed by the detail components
+  // These wrappers handle the null check
+  const assetActions = useMemo((): AssetAction[] => {
+    return detailAsset ? getAssetActions(detailAsset) : [];
+  }, [detailAsset]);
 
-  const getConfigActions = (config: typeof detailConfig) => {
-    if (!config) return [] as string[];
-    const actions = [] as string[];
-    const statuses = getConfigToolStatus(config);
-    const enabledStatuses = statuses.filter((s) => s.enabled);
-    const needsSync = enabledStatuses.some((s) => !s.installed || s.drifted);
-    if (needsSync) {
-      actions.push("Sync to tool");
-    }
-    actions.push("Back to list");
-    return actions;
-  };
+  const configActions = useMemo((): ConfigAction[] => {
+    return detailConfig ? getConfigActions(detailConfig) : [];
+  }, [detailConfig]);
 
   const refreshDetailPlugin = (plugin: Plugin) => {
     const state = useStore.getState();
@@ -380,16 +382,16 @@ export function App() {
       return;
     }
 
-    // Tab navigation
+    // Tab navigation (blocked when overlays are open)
     if (key.tab || key.rightArrow) {
-      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace) {
+      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !diffTarget && !missingSummary) {
         const idx = TABS.indexOf(tab);
         setTab(TABS[(idx + 1) % TABS.length]);
         return;
       }
     }
     if (key.leftArrow) {
-      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace) {
+      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !diffTarget && !missingSummary) {
         const idx = TABS.indexOf(tab);
         setTab(TABS[(idx - 1 + TABS.length) % TABS.length]);
         return;
@@ -433,11 +435,9 @@ export function App() {
         const actionCount = getPluginActionCount(detailPlugin);
         setActionIndex((i) => Math.min(actionCount - 1, i + 1));
       } else if (detailAsset) {
-        const actionCount = getAssetActions(detailAsset).length;
-        setActionIndex((i) => Math.min(actionCount - 1, i + 1));
+        setActionIndex((i) => Math.min(assetActions.length - 1, i + 1));
       } else if (detailConfig) {
-        const actionCount = getConfigActions(detailConfig).length;
-        setActionIndex((i) => Math.min(actionCount - 1, i + 1));
+        setActionIndex((i) => Math.min(configActions.length - 1, i + 1));
       } else if (detailMarketplace) {
         const maxActions = detailMarketplace.source === "claude" ? 2 : 3;
         setActionIndex((i) => Math.min(maxActions, i + 1));
@@ -565,7 +565,7 @@ export function App() {
       return;
     }
 
-    if (input === "y" && tab === "sync" && !detailPlugin && !detailAsset && !detailMarketplace) {
+    if (input === "y" && tab === "sync" && !detailPlugin && !detailAsset && !detailMarketplace && !detailConfig) {
       if (syncArmed) {
         const items = syncPreview.filter((item) => syncSelection.has(getSyncItemKey(item)));
         if (items.length === 0) {
@@ -578,6 +578,15 @@ export function App() {
         return;
       }
       setSyncArmed(true);
+      return;
+    }
+
+    // Open diff/missing summary for sync items
+    if (input === "d" && tab === "sync" && !detailPlugin && !detailAsset && !detailMarketplace && !detailConfig) {
+      const item = syncPreview[selectedIndex];
+      if (item) {
+        openDiffFromSyncItem(item);
+      }
       return;
     }
 
@@ -625,40 +634,50 @@ export function App() {
 
   const handleAssetAction = async (index: number) => {
     if (!detailAsset) return;
-    const actions = getAssetActions(detailAsset);
-    const action = actions[index];
+    const action = assetActions[index];
     if (!action) return;
 
-    switch (action) {
-      case "Sync to all tools":
+    switch (action.type) {
+      case "diff":
+        if (action.instance) {
+          openDiffForAsset(detailAsset, action.instance);
+        }
+        break;
+      case "sync":
         await syncTools([{ kind: "asset", asset: detailAsset, missingInstances: [], driftedInstances: [] }]);
         refreshDetailAsset(detailAsset);
         break;
-      case "Back to list":
+      case "back":
         setDetailAsset(null);
         setActionIndex(0);
         break;
-      default:
+      case "status":
+        // Non-clickable status row - do nothing
         break;
     }
   };
 
   const handleConfigAction = async (index: number) => {
     if (!detailConfig) return;
-    const actions = getConfigActions(detailConfig);
-    const action = actions[index];
+    const action = configActions[index];
     if (!action) return;
 
-    switch (action) {
-      case "Sync to tool":
+    switch (action.type) {
+      case "diff":
+        if (action.instance) {
+          openDiffForConfig(detailConfig, action.instance);
+        }
+        break;
+      case "sync":
         await syncTools([{ kind: "config", config: detailConfig, drifted: Boolean(detailConfig.drifted), missing: !detailConfig.installed }]);
         refreshDetailConfig(detailConfig);
         break;
-      case "Back to list":
+      case "back":
         setDetailConfig(null);
         setActionIndex(0);
         break;
-      default:
+      case "status":
+        // Non-clickable status row - do nothing
         break;
     }
   };
@@ -702,11 +721,43 @@ export function App() {
   };
 
 
+  // Memoize instances for missing summary view (instance picker still needed there)
+  const missingInstances = useMemo((): DiffInstanceRef[] => {
+    if (missingSummary && missingSummary.kind === "asset" && missingSummarySourceAsset) {
+      return getMissingInstances(missingSummarySourceAsset, "asset");
+    }
+    if (missingSummary && missingSummary.kind === "config" && missingSummarySourceConfig) {
+      return getMissingInstances(missingSummarySourceConfig, "config");
+    }
+    return [];
+  }, [missingSummary, missingSummarySourceAsset, missingSummarySourceConfig, getMissingInstances]);
+
+  const handleMissingInstanceSelect = (instance: DiffInstanceRef) => {
+    if (missingSummary?.kind === "asset" && missingSummarySourceAsset) {
+      openMissingSummaryForAsset(missingSummarySourceAsset, instance);
+    } else if (missingSummary?.kind === "config" && missingSummarySourceConfig) {
+      openMissingSummaryForConfig(missingSummarySourceConfig, instance);
+    }
+  };
+
   return (
     <Box flexDirection="column" padding={1}>
       <TabBar activeTab={tab} onTabChange={setTab} />
 
-      {editingToolId ? (
+      {/* Diff view overlay */}
+      {diffTarget ? (
+        <DiffView
+          target={diffTarget}
+          onClose={closeDiff}
+        />
+      ) : missingSummary ? (
+        <MissingSummaryView
+          summary={missingSummary}
+          instances={missingInstances}
+          onSelectInstance={handleMissingInstanceSelect}
+          onClose={closeMissingSummary}
+        />
+      ) : editingToolId ? (
         <EditToolModal
           tool={editingTool}
           onSubmit={handleToolConfigSave}
@@ -727,11 +778,13 @@ export function App() {
         <AssetDetail
           asset={detailAsset}
           selectedAction={actionIndex}
+          actions={assetActions}
         />
       ) : detailConfig ? (
         <ConfigDetail
           config={detailConfig}
           selectedAction={actionIndex}
+          actions={configActions}
         />
       ) : detailMarketplace ? (
         <MarketplaceDetail

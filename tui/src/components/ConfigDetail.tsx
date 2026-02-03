@@ -1,33 +1,27 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
-import type { ConfigFile } from "../lib/types.js";
+import type { ConfigFile, DiffInstanceSummary } from "../lib/types.js";
 import { getConfigToolStatus } from "../lib/install.js";
 import { getConfigRepoPath } from "../lib/config.js";
+import { getDriftedConfigInstancesWithCounts } from "../lib/diff.js";
+
+export interface ConfigAction {
+  label: string;
+  type: "diff" | "sync" | "back" | "status";
+  instance?: DiffInstanceSummary;
+  statusColor?: "green" | "yellow" | "gray";
+  statusLabel?: string;
+}
 
 interface ConfigDetailProps {
   config: ConfigFile;
   selectedAction: number;
+  actions: ConfigAction[];
 }
 
-export function ConfigDetail({ config, selectedAction }: ConfigDetailProps) {
+export function ConfigDetail({ config, selectedAction, actions }: ConfigDetailProps) {
   const sourceFiles = config.sourceFiles || [];
-  const toolStatuses = useMemo(
-    () => getConfigToolStatus(config, sourceFiles),
-    [config, sourceFiles]
-  );
   const configRepo = useMemo(() => getConfigRepoPath(), []);
-
-  const enabledStatuses = toolStatuses.filter((status) => status.enabled);
-  const missingCount = enabledStatuses.filter((status) => !status.installed).length;
-  const driftedCount = enabledStatuses.filter((status) => status.drifted).length;
-  const needsSync = missingCount > 0 || driftedCount > 0;
-
-  const actions = useMemo(() => {
-    const base = [] as string[];
-    if (needsSync) base.push("Sync to tool");
-    base.push("Back to list");
-    return base;
-  }, [needsSync]);
 
   const sourceDisplay = useMemo(() => {
     if (config.mappings && config.mappings.length > 0) {
@@ -80,46 +74,44 @@ export function ConfigDetail({ config, selectedAction }: ConfigDetailProps) {
         </Box>
       )}
 
-      {toolStatuses.length > 0 && (
-        <Box flexDirection="column" marginBottom={1}>
-          <Text bold>Tool Status:</Text>
-          {toolStatuses.map((status) => {
-            let label = "Not enabled";
-            let color: "green" | "yellow" | "gray" = "gray";
-            if (status.enabled) {
-              if (status.drifted) {
-                label = "Drifted";
-                color = "yellow";
-              } else if (status.installed) {
-                label = "Synced";
-                color = "green";
-              } else {
-                label = "Missing";
-                color = "yellow";
-              }
-            }
-
-            return (
-              <Box key={`${status.toolId}:${status.instanceId}`} marginLeft={1}>
-                <Text color="gray">• {status.name}: </Text>
-                <Text color={color}>{label}</Text>
-              </Box>
-            );
-          })}
-        </Box>
-      )}
-
       <Box flexDirection="column" marginTop={1}>
+        <Text bold>Tools:</Text>
         {actions.map((action, i) => {
           const isSelected = i === selectedAction;
-          const color = action === "Sync to tool" ? "green" : "white";
+
+          // Tool status row (diff or non-clickable status)
+          if (action.type === "diff" || action.type === "status") {
+            const isDiff = action.type === "diff";
+            return (
+              <Box key={action.label}>
+                <Text color={isSelected ? "cyan" : "gray"}>
+                  {isSelected ? "❯ " : "  "}
+                </Text>
+                <Text color={isSelected ? "white" : "gray"}>
+                  {action.label}:
+                </Text>
+                <Text color={action.statusColor || "gray"}> {action.statusLabel}</Text>
+                {isDiff && action.instance && (
+                  <>
+                    <Text color="green"> +{action.instance.totalAdded}</Text>
+                    <Text color="red"> -{action.instance.totalRemoved}</Text>
+                  </>
+                )}
+              </Box>
+            );
+          }
+
+          // Regular action (sync, back)
+          let color = "white";
+          if (action.type === "sync") color = "green";
+
           return (
-            <Box key={action}>
+            <Box key={action.label} marginTop={action.type === "sync" ? 1 : 0}>
               <Text color={isSelected ? "cyan" : "gray"}>
                 {isSelected ? "❯ " : "  "}
               </Text>
               <Text bold={isSelected} color={isSelected ? color : "gray"}>
-                {action}
+                {action.label}
               </Text>
             </Box>
           );
@@ -127,4 +119,65 @@ export function ConfigDetail({ config, selectedAction }: ConfigDetailProps) {
       </Box>
     </Box>
   );
+}
+
+export function getConfigActions(config: ConfigFile): ConfigAction[] {
+  const toolStatuses = getConfigToolStatus(config);
+  const driftedInstances = getDriftedConfigInstancesWithCounts(config);
+  const driftedMap = new Map(driftedInstances.map((d) => [`${d.toolId}:${d.instanceId}`, d]));
+
+  const actions: ConfigAction[] = [];
+
+  // Add tool status rows - drifted ones are clickable diff actions
+  for (const status of toolStatuses) {
+    const key = `${status.toolId}:${status.instanceId}`;
+    const driftedInstance = driftedMap.get(key);
+
+    let statusLabel = "Not enabled";
+    let statusColor: "green" | "yellow" | "gray" = "gray";
+
+    if (status.enabled) {
+      if (status.drifted) {
+        statusLabel = "Drifted";
+        statusColor = "yellow";
+      } else if (status.installed) {
+        statusLabel = "Synced";
+        statusColor = "green";
+      } else {
+        statusLabel = "Missing";
+        statusColor = "yellow";
+      }
+    }
+
+    if (driftedInstance) {
+      // Drifted - clickable diff action
+      actions.push({
+        label: status.name,
+        type: "diff",
+        instance: driftedInstance,
+        statusColor,
+        statusLabel,
+      });
+    } else {
+      // Not drifted - non-clickable status display
+      actions.push({
+        label: status.name,
+        type: "status",
+        statusColor,
+        statusLabel,
+      });
+    }
+  }
+
+  // Add sync action if needed
+  const enabledStatuses = toolStatuses.filter((s) => s.enabled);
+  const missingCount = enabledStatuses.filter((s) => !s.installed).length;
+  const needsSync = missingCount > 0 || driftedInstances.length > 0;
+
+  if (needsSync) {
+    actions.push({ label: "Sync to tool", type: "sync" });
+  }
+  actions.push({ label: "Back to list", type: "back" });
+
+  return actions;
 }

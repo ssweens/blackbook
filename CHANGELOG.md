@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Diff view for drifted assets and configs showing per-file changes with +N/-N line counts
+- Missing summary view for missing-only items showing file inventory
+- View diff action in asset/config detail views when items are drifted
+- `d` key in Sync tab to open diff/missing summary for selected item
+- Instance picker when multiple tool instances are drifted
+- Scrollable diff detail view with unified diff format (green/red coloring)
+- `diff` npm dependency for line-based diffing
+
 ## [0.7.0] - 2026-02-02
 
 ### Added

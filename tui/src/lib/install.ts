@@ -178,6 +178,7 @@ export interface AssetToolStatus {
   toolId: string;
   instanceId: string;
   name: string;
+  configDir: string;
   enabled: boolean;
   installed: boolean;
   drifted: boolean;
@@ -202,7 +203,7 @@ function normalizeAssetTarget(target: string): string {
   return cleaned;
 }
 
-function resolveAssetTarget(asset: AssetConfig, instance: ToolInstance): string {
+export function resolveAssetTarget(asset: AssetConfig, instance: ToolInstance): string {
   const overrideKey = `${instance.toolId}:${instance.instanceId}`;
   const override = asset.overrides?.[overrideKey];
   if (override) return normalizeAssetTarget(override);
@@ -825,6 +826,7 @@ export function getAssetToolStatus(asset: Asset, sourceInfo?: AssetSourceInfo): 
       toolId: instance.toolId,
       instanceId: instance.instanceId,
       name: instance.name,
+      configDir: instance.configDir,
       enabled,
       installed,
       drifted,
@@ -1854,6 +1856,7 @@ export interface ConfigToolStatus {
   toolId: string;
   instanceId: string;
   name: string;
+  configDir: string;
   enabled: boolean;
   installed: boolean;
   drifted: boolean;
@@ -2131,6 +2134,7 @@ export function getConfigToolStatus(config: ConfigSyncConfig, sourceFiles?: Conf
       toolId: instance.toolId,
       instanceId: instance.instanceId,
       name: instance.name,
+      configDir: instance.configDir,
       enabled,
       installed,
       drifted,

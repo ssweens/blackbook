@@ -16,6 +16,7 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Plugin install/uninstall/update adapters
 - [x] Asset sync adapters (hashing + drift detection)
 - [x] Config sync adapters (hashing + drift detection, tool-specific filtering, multi-file mappings)
+- [x] Diff computation (line counts, unified diff hunks, binary detection)
 - [ ] Marketplace add/remove persistence
 
 ## User Journeys (Happy Paths)
@@ -30,6 +31,10 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [ ] Marketplaces → update marketplace → updated timestamp shown
 - [ ] Tools → toggle enabled → tool list reflects new status
 - [ ] Search + sort → filters and ordering update list correctly
+- [ ] Drifted asset → View diff → shows file list with +N/-N counts
+- [ ] Drifted config → View diff → shows multi-file list with counts
+- [ ] Sync tab → press 'd' on drifted item → opens diff view
+- [ ] Sync tab → press 'd' on missing item → opens missing summary
 
 ## User Journeys (Problem Paths)
 - [x] Install failure surfaces error notification without leaving detail view

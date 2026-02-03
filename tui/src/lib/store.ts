@@ -1,6 +1,28 @@
 import { create } from "zustand";
 import { existsSync, watch } from "fs";
-import type { Tab, Marketplace, Plugin, Asset, ConfigFile, AppState, Notification, SyncPreviewItem } from "./types.js";
+import type {
+  Tab,
+  Marketplace,
+  Plugin,
+  Asset,
+  ConfigFile,
+  AppState,
+  Notification,
+  SyncPreviewItem,
+  DiffTarget,
+  DiffInstanceRef,
+  MissingSummary,
+} from "./types.js";
+import {
+  getDriftedAssetInstances,
+  getMissingAssetInstances,
+  buildAssetDiffTarget,
+  buildAssetMissingSummary,
+  getDriftedConfigInstances,
+  getMissingConfigInstances,
+  buildConfigDiffTarget,
+  buildConfigMissingSummary,
+} from "./diff.js";
 import {
   parseMarketplaces,
   addMarketplace as addMarketplaceToConfig,
@@ -57,6 +79,16 @@ interface Actions {
   syncTools: (items: SyncPreviewItem[]) => Promise<void>;
   notify: (message: string, type?: Notification["type"]) => void;
   clearNotification: (id: string) => void;
+  // Diff view actions
+  openDiffForAsset: (asset: Asset, instance?: DiffInstanceRef) => void;
+  openDiffForConfig: (config: ConfigFile, instance?: DiffInstanceRef) => void;
+  openMissingSummaryForAsset: (asset: Asset, instance?: DiffInstanceRef) => void;
+  openMissingSummaryForConfig: (config: ConfigFile, instance?: DiffInstanceRef) => void;
+  openDiffFromSyncItem: (item: SyncPreviewItem) => void;
+  closeDiff: () => void;
+  closeMissingSummary: () => void;
+  getDriftedInstances: (item: Asset | ConfigFile, kind: "asset" | "config") => DiffInstanceRef[];
+  getMissingInstances: (item: Asset | ConfigFile, kind: "asset" | "config") => DiffInstanceRef[];
 }
 
 export type Store = AppState & Actions;
@@ -209,6 +241,12 @@ export const useStore = create<Store>((set, get) => ({
   detailConfig: null,
   detailMarketplace: null,
   notifications: [],
+  diffTarget: null,
+  diffSourceAsset: null,
+  diffSourceConfig: null,
+  missingSummary: null,
+  missingSummarySourceAsset: null,
+  missingSummarySourceConfig: null,
 
   setTab: (tab) =>
     set((state) =>
@@ -700,6 +738,134 @@ export const useStore = create<Store>((set, get) => ({
           : m
       ),
     });
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Diff view actions
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  getDriftedInstances: (item, kind) => {
+    if (kind === "asset") {
+      return getDriftedAssetInstances(item as Asset);
+    }
+    return getDriftedConfigInstances(item as ConfigFile);
+  },
+
+  getMissingInstances: (item, kind) => {
+    if (kind === "asset") {
+      return getMissingAssetInstances(item as Asset);
+    }
+    return getMissingConfigInstances(item as ConfigFile);
+  },
+
+  openDiffForAsset: (asset, instance) => {
+    const instances = getDriftedAssetInstances(asset);
+    if (instances.length === 0) {
+      get().notify("No drifted instances found for this asset.", "warning");
+      return;
+    }
+    const targetInstance = instance || instances[0];
+    const diffTarget = buildAssetDiffTarget(asset, targetInstance);
+    set({
+      diffTarget,
+      diffSourceAsset: asset,
+      diffSourceConfig: null,
+      missingSummary: null,
+      missingSummarySourceAsset: null,
+      missingSummarySourceConfig: null,
+    });
+  },
+
+  openDiffForConfig: (config, instance) => {
+    const instances = getDriftedConfigInstances(config);
+    if (instances.length === 0) {
+      get().notify("No drifted instances found for this config.", "warning");
+      return;
+    }
+    const targetInstance = instance || instances[0];
+    const diffTarget = buildConfigDiffTarget(config, targetInstance);
+    set({
+      diffTarget,
+      diffSourceAsset: null,
+      diffSourceConfig: config,
+      missingSummary: null,
+      missingSummarySourceAsset: null,
+      missingSummarySourceConfig: null,
+    });
+  },
+
+  openMissingSummaryForAsset: (asset, instance) => {
+    const instances = getMissingAssetInstances(asset);
+    if (instances.length === 0) {
+      get().notify("No missing instances found for this asset.", "warning");
+      return;
+    }
+    const targetInstance = instance || instances[0];
+    const missingSummary = buildAssetMissingSummary(asset, targetInstance);
+    set({
+      missingSummary,
+      missingSummarySourceAsset: asset,
+      missingSummarySourceConfig: null,
+      diffTarget: null,
+      diffSourceAsset: null,
+      diffSourceConfig: null,
+    });
+  },
+
+  openMissingSummaryForConfig: (config, instance) => {
+    const instances = getMissingConfigInstances(config);
+    if (instances.length === 0) {
+      get().notify("No missing instances found for this config.", "warning");
+      return;
+    }
+    const targetInstance = instance || instances[0];
+    const missingSummary = buildConfigMissingSummary(config, targetInstance);
+    set({
+      missingSummary,
+      missingSummarySourceAsset: null,
+      missingSummarySourceConfig: config,
+      diffTarget: null,
+      diffSourceAsset: null,
+      diffSourceConfig: null,
+    });
+  },
+
+  openDiffFromSyncItem: (item) => {
+    if (item.kind === "plugin") {
+      get().notify("Plugins do not support drift diff.", "warning");
+      return;
+    }
+
+    if (item.kind === "asset") {
+      const asset = item.asset;
+      if (item.driftedInstances.length > 0) {
+        get().openDiffForAsset(asset);
+      } else if (item.missingInstances.length > 0) {
+        get().openMissingSummaryForAsset(asset);
+      } else {
+        get().notify("No diff or missing summary available for this asset.", "warning");
+      }
+      return;
+    }
+
+    if (item.kind === "config") {
+      const config = item.config;
+      if (item.drifted) {
+        get().openDiffForConfig(config);
+      } else if (item.missing) {
+        get().openMissingSummaryForConfig(config);
+      } else {
+        get().notify("No diff or missing summary available for this config.", "warning");
+      }
+    }
+  },
+
+  closeDiff: () => {
+    set({ diffTarget: null });
+  },
+
+  closeMissingSummary: () => {
+    set({ missingSummary: null });
   },
 }));
 
