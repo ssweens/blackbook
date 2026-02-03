@@ -41,8 +41,8 @@ const DEFAULT_TOOLS: Record<string, ToolTarget> = {
     id: "pi",
     name: "Pi",
     configDir: join(homedir(), ".pi"),
-    skillsSubdir: null,
-    commandsSubdir: null,
+    skillsSubdir: "agent/skills",
+    commandsSubdir: "agent/prompts",
     agentsSubdir: null,
   },
 };

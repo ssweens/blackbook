@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![CI](https://github.com/ssweens/blackbook/actions/workflows/ci.yml/badge.svg)](https://github.com/ssweens/blackbook/actions/workflows/ci.yml)
 
-Plugin manager for agentic coding tools built with React/Ink. Install skills, commands, agents, and synced assets from marketplaces to Claude Code, OpenAI Codex, OpenCode, and Amp.
+Plugin manager for agentic coding tools built with React/Ink. Install skills, commands, agents, and synced assets from marketplaces to Claude Code, OpenAI Codex, OpenCode, Amp, and Pi. Sync config files and shared instruction files (AGENTS.md/CLAUDE.md) across all your tools with drift detection and diff viewing.
 
 ![Blackbook TUI - Discover tab](assets/discover-tab.png)
 
@@ -17,12 +17,14 @@ Plugin manager for agentic coding tools built with React/Ink. Install skills, co
 ![Blackbook TUI - Sync tab](assets/sync-tab.png)
 
 ## Features
-- **Unified AGENTS.md/CLAUDE.md management** - Sync shared instruction files across tools
-- **Unified plugin management** across multiple AI coding tools
-- **Plugin conversion** - Automatically adapt plugins between different tool formats
-- **Marketplace support** - Browse and install from official and community marketplaces
-- **TUI interface** - Interactive terminal UI for plugin discovery and management
-- **Cross-tool sync** - Install plugins to multiple tools at once
+- **Unified AGENTS.md/CLAUDE.md management** — Sync shared instruction files across tools with per-tool target overrides
+- **Config file syncing** — Sync tool-specific configs (settings, themes, keybindings) from a central repository
+- **Drift detection & diff view** — SHA256-based drift detection with unified diff viewing for changed files
+- **Multi-file sync** — Directory and glob pattern support for syncing multiple files at once
+- **Unified plugin management** — Install skills, commands, agents, hooks, MCP/LSP servers across tools
+- **Marketplace support** — Browse and install from official and community marketplaces
+- **TUI interface** — Interactive terminal UI with tabs for Discover, Installed, Marketplaces, Tools, and Sync
+- **Cross-tool sync** — Install plugins to multiple tools at once, detect incomplete installs
 
 ## Plugin Model
 
@@ -30,13 +32,15 @@ Everything is a plugin. Plugins can include skills, commands, agents, hooks, MCP
 
 ## Supported Tools
 
-| Tool | Config Directory | Skills | Commands | Agents |
-|------|------------------|--------|----------|--------|
-| Claude Code | `~/.claude` | ✓ | ✓ | ✓ |
-| OpenAI Codex | `~/.codex` | ✓ | — | — |
-| OpenCode | `~/.config/opencode` | ✓ | ✓ | ✓ |
-| Amp Code | `~/.config/amp` | ✓ | ✓ | ✓ |
-| Pi | `~/.pi` | — | — | — |
+| Tool | Config Directory | Skills | Commands | Agents | Config Sync |
+|------|------------------|--------|----------|--------|-------------|
+| Claude Code | `~/.claude` | ✓ | ✓ | ✓ | ✓ |
+| OpenAI Codex | `~/.codex` | ✓ | — | — | ✓ |
+| OpenCode | `~/.config/opencode` | ✓ | ✓ | ✓ | ✓ |
+| Amp Code | `~/.config/amp` | ✓ | ✓ | ✓ | ✓ |
+| Pi | `~/.pi` | ✓ | ✓* | — | ✓ |
+
+\* Pi uses "prompt templates" (`/name` syntax) stored in `agent/prompts/`
 
 ## Installation
 

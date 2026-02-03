@@ -455,6 +455,7 @@ describe("plugin completeness across instances", () => {
     const primary = getInstance("opencode");
     updateToolInstanceConfig("amp-code", "default", { enabled: false });
     updateToolInstanceConfig("openai-codex", "default", { enabled: false });
+    updateToolInstanceConfig("pi", "default", { enabled: false });
     const secondaryDir = join(TEST_TOOL_DIR, "opencode-secondary-disabled");
     mkdirSync(secondaryDir, { recursive: true });
     updateToolInstanceConfig("opencode", "secondary-disabled", {
