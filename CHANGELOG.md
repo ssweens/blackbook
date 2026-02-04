@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-02-01
+
+### Added
+- Marketplace enable/disable toggle for both plugin and Pi marketplaces
+- Visual status indicators (● enabled, ○ disabled) in Marketplaces tab
+- npm Pi marketplace shown as built-in (non-deletable, but disableable)
+- Space key to toggle marketplace enabled state
+
+### Fixed
+- LSP-only plugins now correctly show as installed when in Claude's installed_plugins.json
+
 ## [0.10.0] - 2026-02-03
 
 ### Added
@@ -265,7 +276,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Symlink handling for plugin assets
 
-[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/ssweens/blackbook/compare/v0.10.0...v0.10.1
+[0.10.0]: https://github.com/ssweens/blackbook/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/ssweens/blackbook/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/ssweens/blackbook/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/ssweens/blackbook/compare/v0.6.0...v0.7.0

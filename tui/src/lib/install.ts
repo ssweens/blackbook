@@ -1824,8 +1824,8 @@ export function getPluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
         }
       }
       
-      // For MCP-only plugins on Claude, check installed_plugins.json
-      if (!installed && plugin.hasMcp && instance.toolId === "claude-code") {
+      // For MCP/LSP-only plugins on Claude, check installed_plugins.json
+      if (!installed && (plugin.hasMcp || plugin.hasLsp) && instance.toolId === "claude-code") {
         const installedPluginsPath = join(instance.configDir, "plugins/installed_plugins.json");
         if (existsSync(installedPluginsPath)) {
           try {

@@ -45,6 +45,7 @@ describe("marketplace", () => {
       installedCount: 0,
       autoUpdate: false,
       source: "blackbook",
+      enabled: true,
     };
   }
 
@@ -72,6 +73,7 @@ describe("marketplace", () => {
         installedCount: 0,
         autoUpdate: false,
         source: "blackbook",
+        enabled: true,
       };
 
       await fetchMarketplace(fakeMarketplace);

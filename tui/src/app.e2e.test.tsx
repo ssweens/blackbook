@@ -71,6 +71,7 @@ const createMarketplace = (overrides: Partial<Marketplace> = {}): Marketplace =>
   installedCount: 0,
   autoUpdate: false,
   source: "blackbook",
+  enabled: true,
   ...overrides,
 });
 

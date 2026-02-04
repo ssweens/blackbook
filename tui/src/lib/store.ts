@@ -40,6 +40,8 @@ import {
   getEnabledToolInstances,
   getCacheDir,
   loadConfig,
+  setMarketplaceEnabled,
+  setPiMarketplaceEnabled,
 } from "./config.js";
 import { fetchMarketplace } from "./marketplace.js";
 
@@ -79,6 +81,7 @@ interface Actions {
   addMarketplace: (name: string, url: string) => void;
   removeMarketplace: (name: string) => void;
   updateMarketplace: (name: string) => Promise<void>;
+  toggleMarketplaceEnabled: (name: string) => Promise<void>;
   toggleToolEnabled: (toolId: string, instanceId: string) => Promise<void>;
   updateToolConfigDir: (toolId: string, instanceId: string, configDir: string) => Promise<void>;
   getSyncPreview: () => SyncPreviewItem[];
@@ -91,6 +94,7 @@ interface Actions {
   uninstallPiPackage: (pkg: PiPackage) => Promise<boolean>;
   updatePiPackage: (pkg: PiPackage) => Promise<boolean>;
   setDetailPiPackage: (pkg: PiPackage | null) => Promise<void>;
+  togglePiMarketplaceEnabled: (name: string) => Promise<void>;
   // Section navigation
   setCurrentSection: (section: DiscoverSection) => void;
   setDiscoverSubView: (subView: DiscoverSubView) => void;
@@ -402,6 +406,17 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
+  togglePiMarketplaceEnabled: async (name) => {
+    const { piMarketplaces, notify } = get();
+    const marketplace = piMarketplaces.find((m) => m.name === name);
+    if (!marketplace) return;
+    
+    const newEnabled = !marketplace.enabled;
+    setPiMarketplaceEnabled(name, newEnabled);
+    notify(`${name} Pi marketplace ${newEnabled ? "enabled" : "disabled"}`, "info");
+    await get().loadPiPackages();
+  },
+
   loadMarketplaces: async () => {
     set({ loading: true, error: null });
 
@@ -414,6 +429,16 @@ export const useStore = create<Store>((set, get) => ({
 
       const enrichedMarketplaces: Marketplace[] = await Promise.all(
         marketplaces.map(async (m) => {
+          // Skip fetching plugins for disabled marketplaces
+          if (!m.enabled) {
+            return {
+              ...m,
+              plugins: [],
+              availableCount: 0,
+              installedCount: 0,
+            };
+          }
+          
           const plugins = await fetchMarketplace(m);
           const installedCount = plugins.filter((p) =>
             installedPlugins.some((ip) => ip.name === p.name)
@@ -802,6 +827,7 @@ export const useStore = create<Store>((set, get) => ({
           installedCount: 0,
           autoUpdate: false,
           source: "blackbook",
+          enabled: true,
         },
       ],
     });
@@ -858,6 +884,17 @@ export const useStore = create<Store>((set, get) => ({
           : m
       ),
     });
+  },
+
+  toggleMarketplaceEnabled: async (name) => {
+    const { marketplaces, notify } = get();
+    const marketplace = marketplaces.find((m) => m.name === name);
+    if (!marketplace) return;
+    
+    const newEnabled = !marketplace.enabled;
+    setMarketplaceEnabled(name, newEnabled);
+    notify(`${name} marketplace ${newEnabled ? "enabled" : "disabled"}`, "info");
+    await get().loadMarketplaces();
   },
 
   // ─────────────────────────────────────────────────────────────────────────────

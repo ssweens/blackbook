@@ -128,6 +128,8 @@ export interface ToolConfig {
 export interface SyncConfig {
   configRepo?: string;
   assetsRepo?: string;  // defaults to configRepo if not specified
+  disabledMarketplaces?: string;    // comma-separated list of disabled plugin marketplace names
+  disabledPiMarketplaces?: string;  // comma-separated list of disabled Pi marketplace names
 }
 
 export interface PiMarketplacesConfig {
@@ -298,7 +300,9 @@ export function loadConfig(configPath?: string): TomlConfig {
           }
         } else if (currentSection === "sync") {
           const normalizedKey = key === "config_repo" ? "configRepo" :
-                               key === "assets_repo" ? "assetsRepo" : key;
+                               key === "assets_repo" ? "assetsRepo" :
+                               key === "disabled_marketplaces" ? "disabledMarketplaces" :
+                               key === "disabled_pi_marketplaces" ? "disabledPiMarketplaces" : key;
           (result.sync as Record<string, string>)[normalizedKey] = value;
         } else if (currentSection === "configs" && currentConfig) {
           const normalizedKey = key === "tool_id" ? "toolId" :
@@ -357,6 +361,15 @@ export function saveConfig(config: TomlConfig, configPath?: string): void {
   if (hasSync) {
     lines.push("[sync]");
     lines.push(`config_repo = "${config.sync!.configRepo}"`);
+    if (config.sync!.assetsRepo) {
+      lines.push(`assets_repo = "${config.sync!.assetsRepo}"`);
+    }
+    if (config.sync!.disabledMarketplaces) {
+      lines.push(`disabled_marketplaces = "${config.sync!.disabledMarketplaces}"`);
+    }
+    if (config.sync!.disabledPiMarketplaces) {
+      lines.push(`disabled_pi_marketplaces = "${config.sync!.disabledPiMarketplaces}"`);
+    }
     lines.push("");
   }
 
@@ -584,6 +597,8 @@ export function parseMarketplaces(config?: TomlConfig): Marketplace[] {
   );
   const claudeUrls = hasEnabledClaudeInstance ? loadClaudeMarketplaces() : {};
   const marketplaces: Marketplace[] = [];
+  const disabledList = getDisabledMarketplaces();
+  const isDisabled = (name: string) => disabledList.includes(name);
 
   // Add Blackbook marketplaces first (they take precedence)
   for (const [name, url] of Object.entries(blackbookUrls)) {
@@ -598,6 +613,7 @@ export function parseMarketplaces(config?: TomlConfig): Marketplace[] {
       installedCount: 0,
       autoUpdate: false,
       source: "blackbook",
+      enabled: !isDisabled(name),
     });
   }
 
@@ -617,6 +633,7 @@ export function parseMarketplaces(config?: TomlConfig): Marketplace[] {
       installedCount: 0,
       autoUpdate: false,
       source: "claude",
+      enabled: !isDisabled(name),
     });
   }
 
@@ -686,4 +703,48 @@ export function resolveAssetSourcePath(source: string): string {
 export function getPiMarketplaces(): PiMarketplacesConfig {
   const config = loadConfig();
   return config.piMarketplaces ?? {};
+}
+
+export function getDisabledMarketplaces(): string[] {
+  const config = loadConfig();
+  const raw = config.sync?.disabledMarketplaces;
+  if (!raw) return [];
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+export function setMarketplaceEnabled(name: string, enabled: boolean): void {
+  const config = loadConfig();
+  const disabled = new Set(getDisabledMarketplaces());
+  
+  if (enabled) {
+    disabled.delete(name);
+  } else {
+    disabled.add(name);
+  }
+  
+  config.sync = config.sync || {};
+  config.sync.disabledMarketplaces = Array.from(disabled).join(",") || undefined;
+  saveConfig(config);
+}
+
+export function getDisabledPiMarketplaces(): string[] {
+  const config = loadConfig();
+  const raw = config.sync?.disabledPiMarketplaces;
+  if (!raw) return [];
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+export function setPiMarketplaceEnabled(name: string, enabled: boolean): void {
+  const config = loadConfig();
+  const disabled = new Set(getDisabledPiMarketplaces());
+  
+  if (enabled) {
+    disabled.delete(name);
+  } else {
+    disabled.add(name);
+  }
+  
+  config.sync = config.sync || {};
+  config.sync.disabledPiMarketplaces = Array.from(disabled).join(",") || undefined;
+  saveConfig(config);
 }

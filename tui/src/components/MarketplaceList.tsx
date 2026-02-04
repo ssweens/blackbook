@@ -83,6 +83,8 @@ export function MarketplaceList({
         const hasNew = m.installedCount > 0;
         const isReadOnly = m.source === "claude";
         const paddedName = m.name.padEnd(maxNameLen);
+        const statusIcon = m.enabled ? "●" : "○";
+        const statusColor = m.enabled ? "green" : "gray";
 
         return (
           <Box key={m.name} flexDirection="column" marginTop={visibleIdx === 0 && showAddOption && !hasPrev ? 1 : 0}>
@@ -90,13 +92,14 @@ export function MarketplaceList({
               <Text color={isSelected ? "cyan" : "gray"}>
                 {isSelected ? "❯ " : "  "}
               </Text>
-              <Text color="gray">● </Text>
+              <Text color={statusColor}>{statusIcon} </Text>
               {hasNew && <Text color="yellow">* </Text>}
-              <Text bold={isSelected} color="white">
+              <Text bold={isSelected} color={m.enabled ? "white" : "gray"}>
                 {paddedName}
               </Text>
               {hasNew && <Text color="yellow"> *</Text>}
               {isReadOnly && <Text color="magenta"> (Claude)</Text>}
+              {!m.enabled && <Text color="gray"> (disabled)</Text>}
             </Box>
 
             <Box marginLeft={4}>

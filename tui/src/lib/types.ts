@@ -130,6 +130,7 @@ export interface Marketplace {
   updatedAt?: Date;
   autoUpdate: boolean;
   source: "blackbook" | "claude";
+  enabled: boolean;
 }
 
 export interface InstalledItem {
@@ -284,6 +285,8 @@ export interface PiMarketplace {
   source: string;           // URL or local path
   sourceType: PiPackageSourceType;
   packages: PiPackage[];
+  enabled: boolean;
+  builtIn: boolean;         // true for npm (can't be deleted)
 }
 
 export interface PiSettings {

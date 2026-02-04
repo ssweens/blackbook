@@ -4,7 +4,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { join, resolve } from "path";
 import { homedir } from "os";
 import type { PiPackage, PiMarketplace, PiSettings, PiPackageSourceType } from "./types.js";
-import { getPiMarketplaces } from "./config.js";
+import { getPiMarketplaces, getDisabledPiMarketplaces } from "./config.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -251,28 +251,36 @@ export function scanLocalMarketplace(marketplaceName: string, dirPath: string): 
 
 export async function loadAllPiMarketplaces(): Promise<PiMarketplace[]> {
   const marketplaces: PiMarketplace[] = [];
+  const disabledList = getDisabledPiMarketplaces();
+  const isDisabled = (name: string) => disabledList.includes(name);
 
-  // Always include npm marketplace
-  const npmPackages = await fetchNpmPackages();
+  // Always include npm marketplace (built-in, but can be disabled)
+  const npmEnabled = !isDisabled("npm");
+  const npmPackages = npmEnabled ? await fetchNpmPackages() : [];
   marketplaces.push({
     name: "npm",
     source: "https://www.npmjs.com",
     sourceType: "npm",
     packages: npmPackages,
+    enabled: npmEnabled,
+    builtIn: true,
   });
 
   // Load configured marketplaces
   const configured = getPiMarketplaces();
   for (const [name, source] of Object.entries(configured)) {
     const sourceType = getSourceType(source);
+    const enabled = !isDisabled(name);
 
     if (sourceType === "local") {
-      const packages = scanLocalMarketplace(name, source);
+      const packages = enabled ? scanLocalMarketplace(name, source) : [];
       marketplaces.push({
         name,
         source,
         sourceType,
         packages,
+        enabled,
+        builtIn: false,
       });
     }
     // TODO: git marketplace support

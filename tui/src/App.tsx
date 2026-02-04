@@ -63,6 +63,7 @@ export function App() {
     uninstallPlugin: doUninstall,
     updatePlugin: doUpdate,
     updateMarketplace,
+    toggleMarketplaceEnabled,
     removeMarketplace,
     addMarketplace,
     toggleToolEnabled,
@@ -87,6 +88,7 @@ export function App() {
     getMissingInstances,
     // Pi packages
     piPackages,
+    piMarketplaces,
     detailPiPackage,
     setDetailPiPackage,
     loadPiPackages,
@@ -94,6 +96,7 @@ export function App() {
     installPiPackage: doInstallPiPkg,
     uninstallPiPackage: doUninstallPiPkg,
     updatePiPackage: doUpdatePiPkg,
+    togglePiMarketplaceEnabled,
     // Section navigation
     currentSection,
     setCurrentSection,
@@ -399,7 +402,8 @@ export function App() {
 
   const maxIndex = useMemo(() => {
     if (tab === "marketplaces") {
-      return marketplaces.length; // +1 for "Add Marketplace"
+      // Plugin marketplaces (0 = Add, 1..N = marketplaces) + Pi marketplaces
+      return marketplaces.length + piMarketplaces.length;
     }
     if (tab === "tools") {
       return Math.max(0, tools.length - 1);
@@ -408,7 +412,7 @@ export function App() {
       return Math.max(0, syncPreview.length - 1);
     }
     return Math.max(0, libraryCount - 1);
-  }, [tab, marketplaces, tools, syncPreview, libraryCount]);
+  }, [tab, marketplaces, piMarketplaces, tools, syncPreview, libraryCount]);
 
   const selectedLibraryItem = useMemo(
     ():
@@ -677,10 +681,20 @@ export function App() {
           setShowAddMarketplace(true);
           return;
         }
-        const m = marketplaces[selectedIndex - 1];
-        if (m) {
-          setDetailMarketplace(m);
-          setActionIndex(0);
+        // Check if it's a plugin marketplace
+        if (selectedIndex <= marketplaces.length) {
+          const m = marketplaces[selectedIndex - 1];
+          if (m) {
+            setDetailMarketplace(m);
+            setActionIndex(0);
+          }
+          return;
+        }
+        // It's a Pi marketplace - toggle enabled on Enter
+        const piIdx = selectedIndex - marketplaces.length - 1;
+        const pm = piMarketplaces[piIdx];
+        if (pm) {
+          void togglePiMarketplaceEnabled(pm.name);
         }
         return;
       }
@@ -759,6 +773,27 @@ export function App() {
           void toggleToolEnabled(tool.toolId, tool.instanceId);
         }
         return;
+      }
+
+      // Handle Space for marketplaces (toggle enabled)
+      if (tab === "marketplaces") {
+        // Plugin marketplaces (index 1 to marketplaces.length, 0 is "Add Marketplace")
+        if (selectedIndex >= 1 && selectedIndex <= marketplaces.length) {
+          const m = marketplaces[selectedIndex - 1];
+          if (m) {
+            void toggleMarketplaceEnabled(m.name);
+          }
+          return;
+        }
+        // Pi marketplaces
+        if (selectedIndex > marketplaces.length) {
+          const piIdx = selectedIndex - marketplaces.length - 1;
+          const pm = piMarketplaces[piIdx];
+          if (pm) {
+            void togglePiMarketplaceEnabled(pm.name);
+          }
+          return;
+        }
       }
 
       // Handle Space in sub-views
@@ -1285,10 +1320,48 @@ export function App() {
                   <Text color="cyan">⠋ Loading marketplaces...</Text>
                 </Box>
               ) : (
-                <MarketplaceList
-                  marketplaces={marketplaces}
-                  selectedIndex={selectedIndex}
-                />
+                <Box flexDirection="column">
+                  <MarketplaceList
+                    marketplaces={marketplaces}
+                    selectedIndex={selectedIndex <= marketplaces.length ? selectedIndex : -1}
+                  />
+                  
+                  {piMarketplaces.length > 0 && (
+                    <Box flexDirection="column" marginTop={1}>
+                      <Box marginBottom={1}>
+                        <Text bold>Pi Package Marketplaces</Text>
+                      </Box>
+                      {piMarketplaces.map((pm, i) => {
+                        const pmIndex = marketplaces.length + 1 + i;
+                        const isSelected = selectedIndex === pmIndex;
+                        const statusIcon = pm.enabled ? "●" : "○";
+                        const statusColor = pm.enabled ? "green" : "gray";
+                        
+                        return (
+                          <Box key={pm.name} flexDirection="column">
+                            <Box>
+                              <Text color={isSelected ? "cyan" : "gray"}>
+                                {isSelected ? "❯ " : "  "}
+                              </Text>
+                              <Text color={statusColor}>{statusIcon} </Text>
+                              <Text bold={isSelected} color="white">{pm.name}</Text>
+                              {pm.builtIn && <Text color="magenta"> (built-in)</Text>}
+                              {!pm.enabled && <Text color="gray"> (disabled)</Text>}
+                            </Box>
+                            <Box marginLeft={4}>
+                              <Text color="gray">{pm.source}</Text>
+                            </Box>
+                            <Box marginLeft={4}>
+                              <Text color="gray">
+                                {pm.packages.length} packages available
+                              </Text>
+                            </Box>
+                          </Box>
+                        );
+                      })}
+                    </Box>
+                  )}
+                </Box>
               )}
             </>
           )}

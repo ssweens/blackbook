@@ -75,6 +75,7 @@ function createMockMarketplace(overrides: Partial<Marketplace> = {}): Marketplac
     installedCount: 0,
     autoUpdate: false,
     source: "blackbook",
+    enabled: true,
     ...overrides,
   };
 }
