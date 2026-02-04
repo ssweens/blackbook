@@ -23,6 +23,7 @@ Plugin manager for agentic coding tools built with React/Ink. Install skills, co
 - **Multi-file sync** — Directory and glob pattern support for syncing multiple files at once
 - **Unified plugin management** — Install skills, commands, agents, hooks, MCP/LSP servers across tools
 - **Marketplace support** — Browse and install from official and community marketplaces
+- **Pi packages** — Built-in npm marketplace for Pi coding agent extensions, themes, and custom tools
 - **TUI interface** — Interactive terminal UI with tabs for Discover, Installed, Marketplaces, Tools, and Sync
 - **Cross-tool sync** — Install plugins to multiple tools at once, detect incomplete installs
 
@@ -347,6 +348,19 @@ The default config includes Anthropic's official marketplace:
 | `claude-plugins-official` | https://raw.githubusercontent.com/anthropics/claude-plugins-official/main/.claude-plugin/marketplace.json |
 
 If you already use Claude plugins, Blackbook also reads known marketplaces from `~/.claude/plugins/known_marketplaces.json`.
+
+### Pi Packages
+
+Blackbook includes a built-in npm marketplace for [Pi coding agent](https://github.com/anthropics/pi) packages. Packages tagged with the `pi-package` keyword on npm are automatically discovered and can be installed directly from the Discover tab.
+
+Pi packages can include extensions, themes, custom tools, and skills. Install/uninstall uses `pi install` and `pi remove` CLI commands.
+
+You can also add local Pi package directories as marketplaces:
+
+```toml
+[pi-marketplaces]
+my-packages = "~/src/my-pi-packages"
+```
 
 ### Tools
 

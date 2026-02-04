@@ -170,6 +170,48 @@ Before committing, verify:
 - Link to any related issues
 - Ensure CI passes (check GitHub Actions workflow)
 
+### Release Checklist
+For version releases, complete these steps in order:
+
+1. **Quality gates pass**
+   - `cd tui && pnpm test` - all tests pass
+   - `cd tui && pnpm typecheck` - no type errors
+   - `cd tui && pnpm build` - build succeeds
+
+2. **Update CHANGELOG.md**
+   - Add new version section below `[Unreleased]` with date (YYYY-MM-DD)
+   - Categorize changes under `### Added`, `### Changed`, `### Fixed`, `### Removed`
+   - Update links at bottom: add new version link, update `[Unreleased]` compare URL
+
+3. **Bump version** in `tui/package.json`
+   - `feat:` → minor version bump
+   - `fix:` → patch version bump
+
+4. **Update documentation**
+   - README.md: Document new features in appropriate sections
+   - New UI elements → Update screenshots
+
+5. **Update screenshots**: `./scripts/capture-screenshots.sh`
+
+6. **Commit changes**
+   ```bash
+   git add -A
+   git commit -m "feat: description of changes
+
+   v0.X.Y"
+   ```
+
+7. **Create git tag and push**
+   ```bash
+   git tag v0.X.Y
+   git push && git push --tags
+   ```
+
+8. **Publish to npm** (manual)
+   ```bash
+   cd tui && npm publish
+   ```
+
 ## Configuration
 
 ### Configuration File Location
