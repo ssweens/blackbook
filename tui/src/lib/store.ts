@@ -465,16 +465,20 @@ export const useStore = create<Store>((set, get) => ({
         const marketplacePlugin = allMarketplacePlugins.find((mp) => mp.name === scannedPlugin.name);
         if (marketplacePlugin) {
           // Use marketplace plugin entirely - has correct marketplace, description, components
-          // getInstallStatus returns { installed: true, incomplete: boolean } when second arg is true
+          // Plugin IS installed (it's in the scanned list), but may be incomplete
+          const status = getInstallStatus(marketplacePlugin, true);
           return {
             ...marketplacePlugin,
-            ...getInstallStatus(marketplacePlugin, true),
+            installed: true, // Always true since it was found on disk
+            incomplete: status.incomplete,
           };
         }
         // Local-only plugin - no marketplace version exists
+        const status = getInstallStatus(scannedPlugin, true);
         return {
           ...scannedPlugin,
-          ...getInstallStatus(scannedPlugin, true),
+          installed: true, // Always true since it was found on disk
+          incomplete: status.incomplete,
         };
       });
 
@@ -508,16 +512,20 @@ export const useStore = create<Store>((set, get) => ({
       const marketplacePlugin = allMarketplacePlugins.find((mp) => mp.name === scannedPlugin.name);
       if (marketplacePlugin) {
         // Use marketplace plugin entirely - has correct marketplace, description, components
-        // getInstallStatus returns { installed: true, incomplete: boolean } when second arg is true
+        // Plugin IS installed (it's in the scanned list), but may be incomplete
+        const status = getInstallStatus(marketplacePlugin, true);
         return {
           ...marketplacePlugin,
-          ...getInstallStatus(marketplacePlugin, true),
+          installed: true, // Always true since it was found on disk
+          incomplete: status.incomplete,
         };
       }
       // Local-only plugin - no marketplace version exists
+      const status = getInstallStatus(scannedPlugin, true);
       return {
         ...scannedPlugin,
-        ...getInstallStatus(scannedPlugin, true),
+        installed: true, // Always true since it was found on disk
+        incomplete: status.incomplete,
       };
     });
     const assets = get().loadAssets();
