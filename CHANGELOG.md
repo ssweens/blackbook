@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Use absolute paths when installing local Pi packages to ensure proper state detection
+- Fix path comparison for local package installation by resolving relative paths
+- Add name+marketplace fallback for package refresh in detail view
+- Compact PiPackageList to single line per package (removed second line showing contents)
+- Compact PiPackagePreview to match other previews (fixed 4-line height)
+- Move scroll indicators to section headings as range text (e.g., "Configs (showing 1-2 of 4)")
+- Remove layout-shifting ↑/↓ indicators from PluginList, AssetList, ConfigList, and PiPackageList
+
 ## [0.10.1] - 2026-02-01
 
 ### Added

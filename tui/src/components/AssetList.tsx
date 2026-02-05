@@ -30,13 +30,11 @@ export function AssetList({
   const typeWidth = typeColumnWidth ?? 6;
   const marketplaceWidth = marketplaceColumnWidth ?? 0;
 
-  const { visibleAssets, startIndex, hasMore, hasPrev } = useMemo(() => {
+  const { visibleAssets, startIndex } = useMemo(() => {
     if (assets.length <= maxHeight) {
       return {
         visibleAssets: assets,
         startIndex: 0,
-        hasMore: false,
-        hasPrev: false,
       };
     }
 
@@ -49,8 +47,6 @@ export function AssetList({
     return {
       visibleAssets: assets.slice(start, start + maxHeight),
       startIndex: start,
-      hasMore: start + maxHeight < assets.length,
-      hasPrev: start > 0,
     };
   }, [assets, effectiveIndex, maxHeight]);
 
@@ -64,12 +60,6 @@ export function AssetList({
 
   return (
     <Box flexDirection="column">
-      {hasPrev && (
-        <Box>
-          <Text color="gray">  ↑ {startIndex} more above</Text>
-        </Box>
-      )}
-
       {visibleAssets.map((asset, visibleIdx) => {
         const actualIndex = startIndex + visibleIdx;
         const isSelected = hasSelection && actualIndex === selectedIndex;
@@ -127,12 +117,6 @@ export function AssetList({
           </Box>
         );
       })}
-
-      {hasMore && (
-        <Box>
-          <Text color="gray">  ↓ {assets.length - startIndex - maxHeight} more below</Text>
-        </Box>
-      )}
     </Box>
   );
 }

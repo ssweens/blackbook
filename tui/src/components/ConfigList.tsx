@@ -30,13 +30,11 @@ export function ConfigList({
   const typeWidth = typeColumnWidth ?? 6;
   const marketplaceWidth = marketplaceColumnWidth ?? 0;
 
-  const { visibleConfigs, startIndex, hasMore, hasPrev } = useMemo(() => {
+  const { visibleConfigs, startIndex } = useMemo(() => {
     if (configs.length <= maxHeight) {
       return {
         visibleConfigs: configs,
         startIndex: 0,
-        hasMore: false,
-        hasPrev: false,
       };
     }
 
@@ -49,8 +47,6 @@ export function ConfigList({
     return {
       visibleConfigs: configs.slice(start, start + maxHeight),
       startIndex: start,
-      hasMore: start + maxHeight < configs.length,
-      hasPrev: start > 0,
     };
   }, [configs, effectiveIndex, maxHeight]);
 
@@ -64,12 +60,6 @@ export function ConfigList({
 
   return (
     <Box flexDirection="column">
-      {hasPrev && (
-        <Box>
-          <Text color="gray">  ↑ {startIndex} more above</Text>
-        </Box>
-      )}
-
       {visibleConfigs.map((config, visibleIdx) => {
         const actualIndex = startIndex + visibleIdx;
         const isSelected = hasSelection && actualIndex === selectedIndex;
@@ -123,12 +113,6 @@ export function ConfigList({
           </Box>
         );
       })}
-
-      {hasMore && (
-        <Box>
-          <Text color="gray">  ↓ {configs.length - startIndex - maxHeight} more below</Text>
-        </Box>
-      )}
     </Box>
   );
 }

@@ -30,13 +30,11 @@ export function PluginList({
     };
   }, [plugins, nameColumnWidth, marketplaceColumnWidth]);
 
-  const { visiblePlugins, startIndex, hasMore, hasPrev } = useMemo(() => {
+  const { visiblePlugins, startIndex } = useMemo(() => {
     if (plugins.length <= maxHeight) {
       return {
         visiblePlugins: plugins,
         startIndex: 0,
-        hasMore: false,
-        hasPrev: false,
       };
     }
 
@@ -49,8 +47,6 @@ export function PluginList({
     return {
       visiblePlugins: plugins.slice(start, start + maxHeight),
       startIndex: start,
-      hasMore: start + maxHeight < plugins.length,
-      hasPrev: start > 0,
     };
   }, [plugins, effectiveIndex, maxHeight]);
 
@@ -64,12 +60,6 @@ export function PluginList({
 
   return (
     <Box flexDirection="column">
-      {hasPrev && (
-        <Box>
-          <Text color="gray">  ↑ {startIndex} more above</Text>
-        </Box>
-      )}
-
       {visiblePlugins.map((plugin, visibleIdx) => {
         const actualIndex = startIndex + visibleIdx;
         const isSelected = hasSelection && actualIndex === selectedIndex;
@@ -110,12 +100,6 @@ export function PluginList({
           </Box>
         );
       })}
-
-      {hasMore && (
-        <Box>
-          <Text color="gray">  ↓ {plugins.length - startIndex - maxHeight} more below</Text>
-        </Box>
-      )}
     </Box>
   );
 }

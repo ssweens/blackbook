@@ -6,71 +6,28 @@ interface PiPackagePreviewProps {
   pkg: PiPackage | null;
 }
 
-export function PiPackagePreview({ pkg }: PiPackagePreviewProps): React.ReactElement {
+export function PiPackagePreview({ pkg }: PiPackagePreviewProps): React.ReactElement | null {
   if (!pkg) {
-    return (
-      <Box borderStyle="round" borderColor="gray" padding={1}>
-        <Text color="gray">Select a Pi package to view details</Text>
-      </Box>
-    );
+    return null;
   }
 
-  const status = pkg.installed
-    ? pkg.hasUpdate
-      ? "Update Available"
-      : "Installed"
-    : "Not Installed";
-  const statusColor = pkg.installed
-    ? pkg.hasUpdate
-      ? "blue"
-      : "green"
-    : "yellow";
-
   const contents: string[] = [];
-  if (pkg.extensions.length > 0) contents.push(`${pkg.extensions.length} extensions`);
-  if (pkg.skills.length > 0) contents.push(`${pkg.skills.length} skills`);
-  if (pkg.prompts.length > 0) contents.push(`${pkg.prompts.length} prompts`);
-  if (pkg.themes.length > 0) contents.push(`${pkg.themes.length} themes`);
+  if (pkg.extensions.length > 0) contents.push(`${pkg.extensions.length} ext`);
+  if (pkg.skills.length > 0) contents.push(`${pkg.skills.length} skill`);
+  if (pkg.prompts.length > 0) contents.push(`${pkg.prompts.length} prompt`);
+  if (pkg.themes.length > 0) contents.push(`${pkg.themes.length} theme`);
+
+  const contentsText = contents.length > 0 ? contents.join(", ") : "—";
 
   return (
-    <Box borderStyle="round" borderColor="gray" flexDirection="column" padding={1}>
-      <Text color="cyan" bold>{pkg.name}</Text>
-      <Text color="gray">{pkg.description || "No description"}</Text>
-      <Box marginTop={1}>
-        <Text color="gray">Version: </Text>
-        <Text>{pkg.version}</Text>
-      </Box>
+    <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="gray" paddingX={1} height={4}>
       <Box>
         <Text color="gray">Source: </Text>
-        <Text color="magenta">{pkg.marketplace}</Text>
+        <Text color="cyan">{pkg.marketplace}</Text>
       </Box>
       <Box>
-        <Text color="gray">Status: </Text>
-        <Text color={statusColor}>{status}</Text>
-      </Box>
-      {contents.length > 0 && (
-        <Box marginTop={1}>
-          <Text color="gray">Contains: </Text>
-          <Text>{contents.join(", ")}</Text>
-        </Box>
-      )}
-      {pkg.author && (
-        <Box>
-          <Text color="gray">Author: </Text>
-          <Text>{pkg.author}</Text>
-        </Box>
-      )}
-      {pkg.weeklyDownloads !== undefined && (
-        <Box>
-          <Text color="gray">Downloads: </Text>
-          <Text color="green">{pkg.weeklyDownloads.toLocaleString()}/week</Text>
-          {pkg.monthlyDownloads !== undefined && (
-            <Text color="gray"> ({pkg.monthlyDownloads.toLocaleString()}/month)</Text>
-          )}
-        </Box>
-      )}
-      <Box marginTop={1}>
-        <Text color="gray" dimColor>Press Enter to open, Space to install/uninstall</Text>
+        <Text color="gray">Contents: </Text>
+        <Text color="cyan">{contentsText}</Text>
       </Box>
     </Box>
   );

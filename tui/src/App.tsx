@@ -135,6 +135,19 @@ export function App() {
     [tools, editingToolId]
   );
 
+  // Helper to calculate visible range for section headings
+  const getRange = (selectedIdx: number, totalCount: number, maxHeight: number): string => {
+    if (totalCount === 0) return "";
+    if (totalCount <= maxHeight) return `(${totalCount})`;
+    
+    const effectiveIndex = selectedIdx >= 0 ? selectedIdx : 0;
+    const maxStart = Math.max(0, totalCount - maxHeight);
+    const start = Math.min(Math.max(0, effectiveIndex - (maxHeight - 1)), maxStart);
+    const end = Math.min(start + maxHeight, totalCount);
+    
+    return `(showing ${start + 1}-${end} of ${totalCount})`;
+  };
+
   useEffect(() => {
     refreshAll();
   }, []);
@@ -513,6 +526,17 @@ export function App() {
       (c) => c.name === config.name && c.toolId === config.toolId
     );
     setDetailConfig(refreshed || config);
+  };
+
+  const refreshDetailPiPackage = (pkg: PiPackage) => {
+    const state = useStore.getState();
+    // For local packages, compare by name and marketplace since source paths may differ
+    // due to symlink resolution or path normalization
+    const refreshed = state.piPackages.find((p) =>
+      p.source === pkg.source ||
+      (p.name === pkg.name && p.marketplace === pkg.marketplace)
+    );
+    setDetailPiPackage(refreshed || pkg);
   };
 
   useInput((input, key) => {
@@ -1000,19 +1024,15 @@ export function App() {
     switch (action.type) {
       case "install":
         await doInstallPiPkg(detailPiPackage);
-        // Refresh the package after action
-        const afterInstall = piPackages.find((p) => p.source === detailPiPackage.source);
-        if (afterInstall) setDetailPiPackage(afterInstall);
+        refreshDetailPiPackage(detailPiPackage);
         break;
       case "uninstall":
         await doUninstallPiPkg(detailPiPackage);
-        const afterUninstall = piPackages.find((p) => p.source === detailPiPackage.source);
-        if (afterUninstall) setDetailPiPackage(afterUninstall);
+        refreshDetailPiPackage(detailPiPackage);
         break;
       case "update":
         await doUpdatePiPkg(detailPiPackage);
-        const afterUpdate = piPackages.find((p) => p.source === detailPiPackage.source);
-        if (afterUpdate) setDetailPiPackage(afterUpdate);
+        refreshDetailPiPackage(detailPiPackage);
         break;
       case "back":
         setDetailPiPackage(null);
@@ -1174,7 +1194,8 @@ export function App() {
                 // Plugins sub-view - full list
                 <Box flexDirection="column">
                   <Box marginBottom={1}>
-                    <Text color="cyan" bold>Plugins</Text>
+                    <Text color="cyan" bold>Plugins </Text>
+                    <Text color="gray" dimColor>{getRange(subViewIndex, filteredPlugins.length, 12)}</Text>
                     <Text color="gray"> · Press Esc to go back</Text>
                   </Box>
                   <PluginList
@@ -1189,7 +1210,8 @@ export function App() {
                 // Pi Packages sub-view - full list
                 <Box flexDirection="column">
                   <Box marginBottom={1}>
-                    <Text color="cyan" bold>Pi Packages</Text>
+                    <Text color="cyan" bold>Pi Packages </Text>
+                    <Text color="gray" dimColor>{getRange(subViewIndex, filteredPiPackages.length, 12)}</Text>
                     <Text color="gray"> · Press Esc to go back</Text>
                   </Box>
                   <PiPackageList
@@ -1205,7 +1227,10 @@ export function App() {
                 <Box flexDirection="column">
                   {filteredConfigs.length > 0 && (
                     <Box flexDirection="column">
-                      <Box><Text color="gray">  Configs</Text></Box>
+                      <Box>
+                        <Text color="gray">  Configs </Text>
+                        <Text color="gray" dimColor>{getRange(selectedIndex < configCount ? selectedIndex : 0, filteredConfigs.length, 2)}</Text>
+                      </Box>
                       <ConfigList
                         configs={filteredConfigs}
                         selectedIndex={selectedIndex < configCount ? selectedIndex : -1}
@@ -1218,7 +1243,10 @@ export function App() {
                   )}
                   {filteredAssets.length > 0 && (
                     <Box flexDirection="column" marginTop={filteredConfigs.length > 0 ? 1 : 0}>
-                      <Box><Text color="gray">  Assets</Text></Box>
+                      <Box>
+                        <Text color="gray">  Assets </Text>
+                        <Text color="gray" dimColor>{getRange(selectedIndex >= configCount && selectedIndex < configCount + assetCount ? selectedIndex - configCount : 0, filteredAssets.length, 3)}</Text>
+                      </Box>
                       <AssetList
                         assets={filteredAssets}
                         selectedIndex={selectedIndex >= configCount && selectedIndex < configCount + assetCount ? selectedIndex - configCount : -1}
@@ -1260,7 +1288,10 @@ export function App() {
                 <Box flexDirection="column">
                   {filteredConfigs.length > 0 && (
                     <Box flexDirection="column">
-                      <Box><Text color="gray">  Configs</Text></Box>
+                      <Box>
+                        <Text color="gray">  Configs </Text>
+                        <Text color="gray" dimColor>{getRange(selectedIndex < configCount ? selectedIndex : 0, filteredConfigs.length, 2)}</Text>
+                      </Box>
                       <ConfigList
                         configs={filteredConfigs}
                         selectedIndex={selectedIndex < configCount ? selectedIndex : -1}
@@ -1273,7 +1304,10 @@ export function App() {
                   )}
                   {filteredAssets.length > 0 && (
                     <Box flexDirection="column" marginTop={filteredConfigs.length > 0 ? 1 : 0}>
-                      <Box><Text color="gray">  Assets</Text></Box>
+                      <Box>
+                        <Text color="gray">  Assets </Text>
+                        <Text color="gray" dimColor>{getRange(selectedIndex >= configCount && selectedIndex < configCount + assetCount ? selectedIndex - configCount : 0, filteredAssets.length, 3)}</Text>
+                      </Box>
                       <AssetList
                         assets={filteredAssets}
                         selectedIndex={selectedIndex >= configCount && selectedIndex < configCount + assetCount ? selectedIndex - configCount : -1}
@@ -1286,7 +1320,10 @@ export function App() {
                   )}
                   {filteredPlugins.length > 0 && (
                     <Box flexDirection="column" marginTop={(filteredConfigs.length > 0 || filteredAssets.length > 0) ? 1 : 0}>
-                      <Box><Text color="gray">  Plugins</Text></Box>
+                      <Box>
+                        <Text color="gray">  Plugins </Text>
+                        <Text color="gray" dimColor>{getRange(selectedIndex >= configCount + assetCount && selectedIndex < configCount + assetCount + pluginCount ? selectedIndex - configCount - assetCount : 0, filteredPlugins.length, 4)}</Text>
+                      </Box>
                       <PluginList
                         plugins={filteredPlugins}
                         selectedIndex={selectedIndex >= configCount + assetCount && selectedIndex < configCount + assetCount + pluginCount ? selectedIndex - configCount - assetCount : -1}
@@ -1298,7 +1335,10 @@ export function App() {
                   )}
                   {filteredPiPackages.length > 0 && (
                     <Box flexDirection="column" marginTop={(filteredConfigs.length > 0 || filteredAssets.length > 0 || filteredPlugins.length > 0) ? 1 : 0}>
-                      <Box><Text color="gray">  Pi Packages</Text></Box>
+                      <Box>
+                        <Text color="gray">  Pi Packages </Text>
+                        <Text color="gray" dimColor>{getRange(selectedIndex >= configCount + assetCount + pluginCount ? selectedIndex - configCount - assetCount - pluginCount : 0, filteredPiPackages.length, 3)}</Text>
+                      </Box>
                       <PiPackageList
                         packages={filteredPiPackages}
                         selectedIndex={selectedIndex >= configCount + assetCount + pluginCount ? selectedIndex - configCount - assetCount - pluginCount : -1}

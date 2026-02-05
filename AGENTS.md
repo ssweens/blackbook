@@ -149,14 +149,19 @@ Before committing, verify:
 1. **Tests pass**: `cd tui && pnpm test` - all tests must pass
 2. **Type check passes**: `cd tui && pnpm typecheck` - no type errors
 3. **Build succeeds**: `cd tui && pnpm build`
-4. **Version bump**: Use `npm version` to update `tui/package.json`
-   - `feat:` → minor version bump
-   - `fix:` → patch version bump
+
+**For `feat:` and `fix:` commits (REQUIRED):**
+4. **Version bump**: Update `tui/package.json` version
+   - `feat:` → minor version bump (0.X.0)
+   - `fix:` → patch version bump (0.0.X)
 5. **Changelog updated**: Update `CHANGELOG.md`
-   - Add new version section below `[Unreleased]` with date (YYYY-MM-DD)
+   - Add entry under `[Unreleased]` with date
    - Categorize under `### Added`, `### Changed`, `### Fixed`, `### Removed`
-   - Never overwrite previous versions - add new versions above them
-   - Update links at bottom: add new version link, update `[Unreleased]` compare URL
+
+**Optional for other commit types** (`refactor:`, `perf:`, `test:`, `docs:`, `chore:`):
+- Version bump only if releasing
+- Changelog entry only if user-facing change
+
 6. **Documentation updated**: Check if changes require documentation updates
    - New features → usage instructions
    - New keyboard shortcuts → Navigation section in README

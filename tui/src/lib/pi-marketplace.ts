@@ -1,7 +1,7 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { existsSync, readFileSync, readdirSync, statSync } from "fs";
-import { join, resolve } from "path";
+import { existsSync, readFileSync, readdirSync, statSync, realpathSync } from "fs";
+import { join, resolve, dirname } from "path";
 import { homedir } from "os";
 import type { PiPackage, PiMarketplace, PiSettings, PiPackageSourceType } from "./types.js";
 import { getPiMarketplaces, getDisabledPiMarketplaces } from "./config.js";
@@ -29,10 +29,41 @@ export function loadPiSettings(): PiSettings {
   }
 }
 
+/**
+ * Resolve a package path to absolute path for comparison.
+ * Handles relative paths (relative to PI_SETTINGS_PATH dir) and absolute paths.
+ */
+function resolvePackagePath(source: string): string {
+  // Only resolve local paths (not npm: or git: sources)
+  if (source.startsWith("npm:") || source.startsWith("git:") || source.startsWith("https://")) {
+    return source;
+  }
+  
+  // If already absolute, return as-is
+  if (source.startsWith("/")) {
+    try {
+      return realpathSync(source);
+    } catch {
+      return source;
+    }
+  }
+  
+  // Relative path - resolve from Pi agent directory
+  const piAgentDir = dirname(PI_SETTINGS_PATH);
+  const resolved = resolve(piAgentDir, source);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
 export function isPackageInstalled(source: string, settings: PiSettings): boolean {
-  // Normalize source for comparison
-  const normalizedSource = source.toLowerCase();
-  return settings.packages.some((pkg) => pkg.toLowerCase() === normalizedSource);
+  const normalizedSource = resolvePackagePath(source).toLowerCase();
+  return settings.packages.some((pkg) => {
+    const normalizedPkg = resolvePackagePath(pkg).toLowerCase();
+    return normalizedPkg === normalizedSource;
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
