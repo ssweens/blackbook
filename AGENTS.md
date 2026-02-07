@@ -287,8 +287,14 @@ export GH_TOKEN=ghp_xxxxxxxxxxxx
 - Check logs in `~/.cache/blackbook/` for troubleshooting
 - Use test watch mode to debug failing tests: `pnpm test:watch`
 
-## Release Process
+## Commit Process
+1. Follow conventional commit format (e.g., `feat: add new marketplace fetching logic`)
+2. Ensure tests pass and type check succeeds before committing
+3. Ask if version bump is needed based on commit type
+4. Update `CHANGELOG.md` if applicable
+5. Add only relevant files to the commit, never -A
 
+## Release Process
 See `RELEASING.md` for detailed release instructions:
 1. Update version in `tui/package.json`
 2. Update `CHANGELOG.md`
