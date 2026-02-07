@@ -405,7 +405,7 @@ export function buildAssetMissingSummary(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function getDriftedConfigInstances(config: ConfigFile): DiffInstanceRef[] {
-  const statuses = getConfigToolStatus(config);
+  const statuses = getConfigToolStatus(config, config.sourceFiles);
   return statuses
     .filter((s) => s.enabled && s.drifted)
     .map((s) => ({
@@ -417,7 +417,7 @@ export function getDriftedConfigInstances(config: ConfigFile): DiffInstanceRef[]
 }
 
 export function getDriftedConfigInstancesWithCounts(config: ConfigFile): DiffInstanceSummary[] {
-  const statuses = getConfigToolStatus(config);
+  const statuses = getConfigToolStatus(config, config.sourceFiles);
   return statuses
     .filter((s) => s.enabled && s.drifted)
     .map((s) => {
@@ -435,7 +435,7 @@ export function getDriftedConfigInstancesWithCounts(config: ConfigFile): DiffIns
 }
 
 export function getMissingConfigInstances(config: ConfigFile): DiffInstanceRef[] {
-  const statuses = getConfigToolStatus(config);
+  const statuses = getConfigToolStatus(config, config.sourceFiles);
   return statuses
     .filter((s) => s.enabled && !s.installed && !s.drifted)
     .map((s) => ({

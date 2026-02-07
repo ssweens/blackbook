@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Add `plans/tool-lifecycle.md` implementation plan for tool install/update/uninstall lifecycle, package-manager behavior, synthetic tool rows, and coverage updates.
+
+### Changed
+- Pi package detail now shows compact content counts (extensions, skills, prompts, themes) instead of rendering full item lists.
+
 ### Fixed
+- Prevent global key handling conflicts while Diff/Missing Summary overlays are open in Sync flow.
+- Asset detail now exposes missing-instance rows that open Missing Summary.
+- Config detail now exposes missing-instance rows that open Missing Summary.
+- Use `config.sourceFiles` when deriving drifted/missing config instances for accurate multi-file config status.
 - Use absolute paths when installing local Pi packages to ensure proper state detection
 - Fix path comparison for local package installation by resolving relative paths
 - Add name+marketplace fallback for package refresh in detail view

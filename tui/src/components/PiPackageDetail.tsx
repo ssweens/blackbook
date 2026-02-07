@@ -98,36 +98,22 @@ export function PiPackageDetail({ pkg, selectedIndex }: PiPackageDetailProps): R
       {/* Package contents */}
       <Box flexDirection="column" marginBottom={1}>
         <Text color="white" bold>Contents:</Text>
-        {pkg.extensions.length > 0 && (
-          <Box marginLeft={2}>
-            <Text color="gray">Extensions: </Text>
-            <Text>{pkg.extensions.join(", ")}</Text>
-          </Box>
-        )}
-        {pkg.skills.length > 0 && (
-          <Box marginLeft={2}>
-            <Text color="gray">Skills: </Text>
-            <Text>{pkg.skills.join(", ")}</Text>
-          </Box>
-        )}
-        {pkg.prompts.length > 0 && (
-          <Box marginLeft={2}>
-            <Text color="gray">Prompts: </Text>
-            <Text>{pkg.prompts.join(", ")}</Text>
-          </Box>
-        )}
-        {pkg.themes.length > 0 && (
-          <Box marginLeft={2}>
-            <Text color="gray">Themes: </Text>
-            <Text>{pkg.themes.join(", ")}</Text>
-          </Box>
-        )}
-        {pkg.extensions.length === 0 && pkg.skills.length === 0 && 
-         pkg.prompts.length === 0 && pkg.themes.length === 0 && (
-          <Box marginLeft={2}>
-            <Text color="gray" dimColor>No contents detected</Text>
-          </Box>
-        )}
+        <Box marginLeft={2}>
+          <Text color="gray">Extensions: </Text>
+          <Text color={pkg.extensions.length > 0 ? "cyan" : "gray"}>{pkg.extensions.length}</Text>
+        </Box>
+        <Box marginLeft={2}>
+          <Text color="gray">Skills: </Text>
+          <Text color={pkg.skills.length > 0 ? "cyan" : "gray"}>{pkg.skills.length}</Text>
+        </Box>
+        <Box marginLeft={2}>
+          <Text color="gray">Prompts: </Text>
+          <Text color={pkg.prompts.length > 0 ? "cyan" : "gray"}>{pkg.prompts.length}</Text>
+        </Box>
+        <Box marginLeft={2}>
+          <Text color="gray">Themes: </Text>
+          <Text color={pkg.themes.length > 0 ? "cyan" : "gray"}>{pkg.themes.length}</Text>
+        </Box>
       </Box>
 
       {/* Actions */}

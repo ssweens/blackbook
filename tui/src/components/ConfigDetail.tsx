@@ -1,14 +1,14 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
-import type { ConfigFile, DiffInstanceSummary } from "../lib/types.js";
+import type { ConfigFile, DiffInstanceRef, DiffInstanceSummary } from "../lib/types.js";
 import { getConfigToolStatus } from "../lib/install.js";
 import { getConfigRepoPath } from "../lib/config.js";
-import { getDriftedConfigInstancesWithCounts } from "../lib/diff.js";
+import { getDriftedConfigInstancesWithCounts, getMissingConfigInstances } from "../lib/diff.js";
 
 export interface ConfigAction {
   label: string;
-  type: "diff" | "sync" | "back" | "status";
-  instance?: DiffInstanceSummary;
+  type: "diff" | "missing" | "sync" | "back" | "status";
+  instance?: DiffInstanceSummary | DiffInstanceRef;
   statusColor?: "green" | "yellow" | "gray";
   statusLabel?: string;
 }
@@ -79,9 +79,9 @@ export function ConfigDetail({ config, selectedAction, actions }: ConfigDetailPr
         {actions.map((action, i) => {
           const isSelected = i === selectedAction;
 
-          // Tool status row (diff or non-clickable status)
-          if (action.type === "diff" || action.type === "status") {
-            const isDiff = action.type === "diff";
+          // Tool status row (diff, missing, or non-clickable status)
+          if (action.type === "diff" || action.type === "missing" || action.type === "status") {
+            const isClickable = action.type === "diff" || action.type === "missing";
             return (
               <Box key={action.label}>
                 <Text color={isSelected ? "cyan" : "gray"}>
@@ -91,11 +91,14 @@ export function ConfigDetail({ config, selectedAction, actions }: ConfigDetailPr
                   {action.label}:
                 </Text>
                 <Text color={action.statusColor || "gray"}> {action.statusLabel}</Text>
-                {isDiff && action.instance && (
+                {action.type === "diff" && action.instance && "totalAdded" in action.instance && (
                   <>
                     <Text color="green"> +{action.instance.totalAdded}</Text>
                     <Text color="red"> -{action.instance.totalRemoved}</Text>
                   </>
+                )}
+                {action.type === "missing" && (
+                  <Text color="yellow"> (click to view)</Text>
                 )}
               </Box>
             );
@@ -122,16 +125,19 @@ export function ConfigDetail({ config, selectedAction, actions }: ConfigDetailPr
 }
 
 export function getConfigActions(config: ConfigFile): ConfigAction[] {
-  const toolStatuses = getConfigToolStatus(config);
+  const toolStatuses = getConfigToolStatus(config, config.sourceFiles);
   const driftedInstances = getDriftedConfigInstancesWithCounts(config);
   const driftedMap = new Map(driftedInstances.map((d) => [`${d.toolId}:${d.instanceId}`, d]));
+  const missingInstances = getMissingConfigInstances(config);
+  const missingMap = new Map(missingInstances.map((m) => [`${m.toolId}:${m.instanceId}`, m]));
 
   const actions: ConfigAction[] = [];
 
-  // Add tool status rows - drifted ones are clickable diff actions
+  // Add tool status rows - drifted ones are clickable diff actions, missing ones are clickable missing actions
   for (const status of toolStatuses) {
     const key = `${status.toolId}:${status.instanceId}`;
     const driftedInstance = driftedMap.get(key);
+    const missingInstance = missingMap.get(key);
 
     let statusLabel = "Not enabled";
     let statusColor: "green" | "yellow" | "gray" = "gray";
@@ -158,8 +164,17 @@ export function getConfigActions(config: ConfigFile): ConfigAction[] {
         statusColor,
         statusLabel,
       });
+    } else if (missingInstance) {
+      // Missing - clickable missing action
+      actions.push({
+        label: status.name,
+        type: "missing",
+        instance: missingInstance,
+        statusColor,
+        statusLabel,
+      });
     } else {
-      // Not drifted - non-clickable status display
+      // Not drifted or missing - non-clickable status display
       actions.push({
         label: status.name,
         type: "status",

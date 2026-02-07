@@ -613,6 +613,10 @@ export function App() {
 
     // Up/Down navigation
     if (key.upArrow) {
+      if (diffTarget || missingSummary) {
+        // DiffView and MissingSummaryView handle their own navigation
+        return;
+      }
       if (detailPlugin || detailMarketplace || detailPiPackage) {
         setActionIndex((i) => Math.max(0, i - 1));
       } else if (detailAsset || detailConfig) {
@@ -629,6 +633,10 @@ export function App() {
       return;
     }
     if (key.downArrow) {
+      if (diffTarget || missingSummary) {
+        // DiffView and MissingSummaryView handle their own navigation
+        return;
+      }
       if (detailPlugin) {
         const actionCount = getPluginActionCount(detailPlugin);
         setActionIndex((i) => Math.min(actionCount - 1, i + 1));
@@ -731,7 +739,7 @@ export function App() {
         return;
       }
 
-      if (tab === "sync") {
+      if (tab === "sync" && !diffTarget && !missingSummary) {
         const item = syncPreview[selectedIndex];
         if (item) {
           if (item.kind === "plugin") {
@@ -773,7 +781,7 @@ export function App() {
     }
 
     // Space - toggle install/uninstall
-    if (input === " " && !detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage) {
+    if (input === " " && !detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && !diffTarget && !missingSummary) {
       if (tab === "sync") {
         const item = syncPreview[selectedIndex];
         if (!item) return;
@@ -884,7 +892,7 @@ export function App() {
       return;
     }
 
-    if (input === "y" && tab === "sync" && !detailPlugin && !detailAsset && !detailMarketplace && !detailConfig) {
+    if (input === "y" && tab === "sync" && !detailPlugin && !detailAsset && !detailMarketplace && !detailConfig && !diffTarget && !missingSummary) {
       if (syncArmed) {
         const items = syncPreview.filter((item) => syncSelection.has(getSyncItemKey(item)));
         if (items.length === 0) {
@@ -901,7 +909,7 @@ export function App() {
     }
 
     // Open diff/missing summary for sync items
-    if (input === "d" && tab === "sync" && !detailPlugin && !detailAsset && !detailMarketplace && !detailConfig) {
+    if (input === "d" && tab === "sync" && !detailPlugin && !detailAsset && !detailMarketplace && !detailConfig && !diffTarget && !missingSummary) {
       const item = syncPreview[selectedIndex];
       if (item) {
         openDiffFromSyncItem(item);
@@ -976,6 +984,11 @@ export function App() {
           openDiffForAsset(detailAsset, action.instance);
         }
         break;
+      case "missing":
+        if (action.instance) {
+          openMissingSummaryForAsset(detailAsset, action.instance);
+        }
+        break;
       case "sync":
         await syncTools([{ kind: "asset", asset: detailAsset, missingInstances: [], driftedInstances: [] }]);
         refreshDetailAsset(detailAsset);
@@ -999,6 +1012,11 @@ export function App() {
       case "diff":
         if (action.instance) {
           openDiffForConfig(detailConfig, action.instance);
+        }
+        break;
+      case "missing":
+        if (action.instance) {
+          openMissingSummaryForConfig(detailConfig, action.instance);
         }
         break;
       case "sync":
