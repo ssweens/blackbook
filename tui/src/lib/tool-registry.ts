@@ -19,7 +19,7 @@ const TOOL_METADATA: Record<string, Omit<ToolRegistryEntry, "toolId" | "displayN
   },
   opencode: {
     binaryName: "opencode",
-    npmPackage: "@opencode-ai/sdk",
+    npmPackage: "opencode-ai",
     versionArgs: ["--version"],
     homepage: "https://github.com/opencode-ai/opencode",
   },

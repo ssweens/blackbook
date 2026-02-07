@@ -378,7 +378,7 @@ If a tool has no configured instance yet, Blackbook shows a "Not configured" syn
 
 Detection runs per-tool and updates rows incrementally with a spinner while each tool's version/status is loading.
 
-For updates, Blackbook uses tool-native upgrade commands when available (e.g. `amp update`, `opencode upgrade`) to keep the active PATH binary in sync.
+For updates, Blackbook uses tool-native upgrade commands when available (e.g. `claude update`, `amp update`, `opencode upgrade`) to keep the active PATH binary in sync. Claude install uses the official installer script (`curl -fsSL https://claude.ai/install.sh | bash`).
 
 **Supported tools (default config paths):**
 - Claude — `~/.claude`
@@ -387,12 +387,18 @@ For updates, Blackbook uses tool-native upgrade commands when available (e.g. `a
 - Codex — `~/.codex`
 - Pi — `~/.pi`
 
-Choose package manager for lifecycle commands in config:
+Choose package manager for lifecycle commands in config (used by tools that install/update via npm/bun/pnpm):
 
 ```toml
 [sync]
 package_manager = "npm"   # "npm" | "bun" | "pnpm"
 ```
+
+Native command exceptions:
+- Claude install: `curl -fsSL https://claude.ai/install.sh | bash`
+- Claude update: `claude update`
+- Amp update: `amp update`
+- OpenCode update: `opencode upgrade`
 
 **Supported plugin types:** skills, commands, agents, hooks, MCP servers, LSP servers.
 

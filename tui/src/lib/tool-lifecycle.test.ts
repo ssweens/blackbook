@@ -92,12 +92,12 @@ describe("tool-lifecycle operations", () => {
     expect(events).toContain("done");
   });
 
-  it("uses tool-native update command for amp", async () => {
+  it("uses Claude install script for claude-code", async () => {
     mockWhichAll();
     const proc = createFakeProcess();
     spawnMock.mockReturnValue(proc);
 
-    const promise = updateTool("amp-code", "npm", () => {
+    const promise = installTool("claude-code", "npm", () => {
       // no-op
     });
 
@@ -106,7 +106,34 @@ describe("tool-lifecycle operations", () => {
     const ok = await promise;
 
     expect(ok).toBe(true);
-    expect(spawnMock).toHaveBeenCalledWith("amp", ["update"], expect.any(Object));
+    expect(spawnMock).toHaveBeenCalledWith("bash", ["-lc", "curl -fsSL https://claude.ai/install.sh | bash"], expect.any(Object));
+  });
+
+  it("uses tool-native update commands", async () => {
+    mockWhichAll();
+
+    const ampProc = createFakeProcess();
+    spawnMock.mockReturnValueOnce(ampProc);
+    const ampPromise = updateTool("amp-code", "npm", () => {
+      // no-op
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    ampProc.emit("close", 0);
+    const ampOk = await ampPromise;
+
+    const claudeProc = createFakeProcess();
+    spawnMock.mockReturnValueOnce(claudeProc);
+    const claudePromise = updateTool("claude-code", "npm", () => {
+      // no-op
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    claudeProc.emit("close", 0);
+    const claudeOk = await claudePromise;
+
+    expect(ampOk).toBe(true);
+    expect(claudeOk).toBe(true);
+    expect(spawnMock).toHaveBeenNthCalledWith(1, "amp", ["update"], expect.any(Object));
+    expect(spawnMock).toHaveBeenNthCalledWith(2, "claude", ["update"], expect.any(Object));
   });
 
   it("supports cancellation", async () => {

@@ -41,11 +41,25 @@ async function ensureCommandAvailable(command: string): Promise<boolean> {
   }
 }
 
+function buildInstallCommandForTool(
+  toolId: string,
+  packageManager: PackageManager,
+  npmPackage: string
+): { cmd: string; args: string[] } {
+  if (toolId === "claude-code") {
+    return { cmd: "bash", args: ["-lc", "curl -fsSL https://claude.ai/install.sh | bash"] };
+  }
+  return buildInstallCommand(packageManager, npmPackage);
+}
+
 function buildUpdateCommandForTool(
   toolId: string,
   packageManager: PackageManager,
   npmPackage: string
 ): { cmd: string; args: string[] } {
+  if (toolId === "claude-code") {
+    return { cmd: "claude", args: ["update"] };
+  }
   if (toolId === "amp-code") {
     return { cmd: "amp", args: ["update"] };
   }
@@ -157,7 +171,7 @@ export async function installTool(
   onProgress: (event: ProgressEvent) => void,
   options?: { timeoutMs?: number; signal?: AbortSignal }
 ): Promise<boolean> {
-  return runToolCommand(toolId, packageManager, (_toolId, pm, pkg) => buildInstallCommand(pm, pkg), onProgress, options);
+  return runToolCommand(toolId, packageManager, (id, pm, pkg) => buildInstallCommandForTool(id, pm, pkg), onProgress, options);
 }
 
 export async function updateTool(

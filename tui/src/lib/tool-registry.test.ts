@@ -13,11 +13,15 @@ describe("tool registry", () => {
   });
 
   it("provides required metadata", () => {
-    const entry = TOOL_REGISTRY["claude-code"];
-    expect(entry.binaryName).toBe("claude");
-    expect(entry.npmPackage).toBe("@anthropic-ai/claude-code");
-    expect(entry.versionArgs).toEqual(["--version"]);
-    expect(entry.defaultConfigDir.length).toBeGreaterThan(0);
+    const claude = TOOL_REGISTRY["claude-code"];
+    expect(claude.binaryName).toBe("claude");
+    expect(claude.npmPackage).toBe("@anthropic-ai/claude-code");
+    expect(claude.versionArgs).toEqual(["--version"]);
+    expect(claude.defaultConfigDir.length).toBeGreaterThan(0);
+
+    const opencode = TOOL_REGISTRY.opencode;
+    expect(opencode.binaryName).toBe("opencode");
+    expect(opencode.npmPackage).toBe("opencode-ai");
   });
 
   it("returns null for unknown tools", () => {

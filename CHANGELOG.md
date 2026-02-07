@@ -22,7 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pi package detail now shows compact content counts (extensions, skills, prompts, themes) instead of rendering full item lists.
 
 ### Fixed
-- Use tool-native update commands for Amp (`amp update`) and OpenCode (`opencode upgrade`) to update the active binary in PATH.
+- Use tool-native update commands for Claude (`claude update`), Amp (`amp update`), and OpenCode (`opencode upgrade`) to update the active binary in PATH.
+- Use Claude official installer script for lifecycle install (`curl -fsSL https://claude.ai/install.sh | bash`).
+- Use `opencode-ai` package mapping for OpenCode lifecycle install/uninstall detection.
 - Detect and warn when tool lifecycle commands succeed but the active binary version in PATH did not actually change (e.g., shadowed installs).
 - Include installed tools with available updates as selectable Sync tab items.
 - Prevent global key handling conflicts while Diff/Missing Summary overlays are open in Sync flow.

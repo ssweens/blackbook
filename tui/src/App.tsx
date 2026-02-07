@@ -1250,13 +1250,17 @@ export function App() {
     const packageManager = getPackageManager();
     const command =
       action === "install"
-        ? buildInstallCommand(packageManager, registryEntry.npmPackage)
+        ? tool.toolId === "claude-code"
+          ? { cmd: "bash", args: ["-lc", "curl -fsSL https://claude.ai/install.sh | bash"] }
+          : buildInstallCommand(packageManager, registryEntry.npmPackage)
         : action === "update"
-          ? tool.toolId === "amp-code"
-            ? { cmd: "amp", args: ["update"] }
-            : tool.toolId === "opencode"
-              ? { cmd: "opencode", args: ["upgrade"] }
-              : buildUpdateCommand(packageManager, registryEntry.npmPackage)
+          ? tool.toolId === "claude-code"
+            ? { cmd: "claude", args: ["update"] }
+            : tool.toolId === "amp-code"
+              ? { cmd: "amp", args: ["update"] }
+              : tool.toolId === "opencode"
+                ? { cmd: "opencode", args: ["upgrade"] }
+                : buildUpdateCommand(packageManager, registryEntry.npmPackage)
           : buildUninstallCommand(packageManager, registryEntry.npmPackage);
 
     return `${command.cmd} ${command.args.join(" ")}`;

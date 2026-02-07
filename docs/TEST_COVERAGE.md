@@ -3,7 +3,7 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 174
+- **Total Tests:** 175
 - **Test Files:** 16
 
 ## Critical Paths
