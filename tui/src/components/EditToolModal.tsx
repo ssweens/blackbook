@@ -1,10 +1,15 @@
 import React, { useEffect, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
-import type { ToolInstance } from "../lib/types.js";
+interface EditableTool {
+  toolId: string;
+  instanceId: string;
+  name: string;
+  configDir: string;
+}
 
 interface EditToolModalProps {
-  tool: ToolInstance | null;
+  tool: EditableTool | null;
   onSubmit: (toolId: string, instanceId: string, configDir: string) => void;
   onCancel: () => void;
 }

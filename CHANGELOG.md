@@ -8,12 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Tool lifecycle management modules: registry (`tool-registry`), managed tool rows (`tool-view`), binary/version detection (`tool-detect`), and lifecycle command runner (`tool-lifecycle`).
+- Tools tab detail view with install/update/uninstall shortcuts and progress modal.
+- Synthetic default tool rows for unconfigured tools so lifecycle actions are always reachable.
+- `sync.package_manager` config support (`npm`/`bun`/`pnpm`) with TOML parse/save round-trip.
+- New test coverage for tool registry, managed rows, detection, lifecycle commands, and package-manager config parsing.
+- App-level E2E coverage for tool lifecycle version refresh (install/update/uninstall) and Sync tool update item rendering; Vitest now includes `*.test.tsx`.
 - Add `plans/tool-lifecycle.md` implementation plan for tool install/update/uninstall lifecycle, package-manager behavior, synthetic tool rows, and coverage updates.
 
 ### Changed
+- Tools tab now displays install status/version/update badges and supports opening tool detail with `Enter` instead of toggling directly.
+- Tool detection now updates rows incrementally as each tool check completes (instead of waiting for all tools).
 - Pi package detail now shows compact content counts (extensions, skills, prompts, themes) instead of rendering full item lists.
 
 ### Fixed
+- Use tool-native update commands for Amp (`amp update`) and OpenCode (`opencode upgrade`) to update the active binary in PATH.
+- Detect and warn when tool lifecycle commands succeed but the active binary version in PATH did not actually change (e.g., shadowed installs).
+- Include installed tools with available updates as selectable Sync tab items.
 - Prevent global key handling conflicts while Diff/Missing Summary overlays are open in Sync flow.
 - Asset detail now exposes missing-instance rows that open Missing Summary.
 - Config detail now exposes missing-instance rows that open Missing Summary.

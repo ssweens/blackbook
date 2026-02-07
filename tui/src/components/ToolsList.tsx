@@ -1,14 +1,25 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
-import type { ToolInstance } from "../lib/types.js";
+import Spinner from "ink-spinner";
+import type { ManagedToolRow, ToolDetectionResult } from "../lib/types.js";
 
 interface ToolsListProps {
-  tools: ToolInstance[];
+  tools: ManagedToolRow[];
   selectedIndex: number;
+  detection: Record<string, ToolDetectionResult>;
+  detectionPending: Record<string, boolean>;
+  actionInProgress: string | null;
   maxHeight?: number;
 }
 
-export function ToolsList({ tools, selectedIndex, maxHeight = 12 }: ToolsListProps) {
+export function ToolsList({
+  tools,
+  selectedIndex,
+  detection,
+  detectionPending,
+  actionInProgress,
+  maxHeight = 12,
+}: ToolsListProps) {
   const { visibleTools, startIndex, hasMore, hasPrev } = useMemo(() => {
     if (tools.length <= maxHeight) {
       return {
@@ -20,10 +31,7 @@ export function ToolsList({ tools, selectedIndex, maxHeight = 12 }: ToolsListPro
     }
 
     const maxStart = Math.max(0, tools.length - maxHeight);
-    const start = Math.min(
-      Math.max(0, selectedIndex - (maxHeight - 1)),
-      maxStart
-    );
+    const start = Math.min(Math.max(0, selectedIndex - (maxHeight - 1)), maxStart);
 
     return {
       visibleTools: tools.slice(start, start + maxHeight),
@@ -32,6 +40,12 @@ export function ToolsList({ tools, selectedIndex, maxHeight = 12 }: ToolsListPro
       hasPrev: start > 0,
     };
   }, [tools, selectedIndex, maxHeight]);
+
+  const getStatusIcon = (result: ToolDetectionResult | undefined): { icon: string; color: string; label: string } => {
+    if (!result) return { icon: "⟳", color: "gray", label: "Checking" };
+    if (!result.installed) return { icon: "✗", color: "red", label: "Not installed" };
+    return { icon: "✓", color: "green", label: "Installed" };
+  };
 
   return (
     <Box flexDirection="column">
@@ -48,21 +62,43 @@ export function ToolsList({ tools, selectedIndex, maxHeight = 12 }: ToolsListPro
       {visibleTools.map((tool, visibleIdx) => {
         const actualIndex = startIndex + visibleIdx;
         const isSelected = selectedIndex === actualIndex;
-        const statusColor = tool.enabled ? "green" : "gray";
-        const statusLabel = tool.enabled ? "Enabled" : "Disabled";
+        const status = getStatusIcon(detection[tool.toolId]);
+        const result = detection[tool.toolId];
+        const installedVersion = result?.installedVersion;
+        const latestVersion = result?.latestVersion;
+        const hasUpdate = result?.hasUpdate;
+        const enabledLabel = tool.synthetic ? "Not configured" : tool.enabled ? "Enabled" : "Disabled";
+        const enabledColor = tool.synthetic ? "yellow" : tool.enabled ? "green" : "gray";
+        const running = actionInProgress === tool.toolId;
+        const pending = detectionPending[tool.toolId] === true;
+        const loading = running || pending;
 
         return (
           <Box key={`${tool.toolId}:${tool.instanceId}`} flexDirection="column" marginBottom={1}>
             <Box>
-              <Text color={isSelected ? "cyan" : "gray"}>
-                {isSelected ? "❯ " : "  "}
-              </Text>
+              <Text color={isSelected ? "cyan" : "gray"}>{isSelected ? "❯ " : "  "}</Text>
               <Text bold={isSelected} color="white">
-                {tool.name}
+                {tool.displayName}
               </Text>
               <Text color="gray"> ({tool.toolId}:{tool.instanceId})</Text>
               <Text> </Text>
-              <Text color={statusColor}>{statusLabel}</Text>
+              <Text color={enabledColor}>{enabledLabel}</Text>
+              <Text> </Text>
+              {loading ? (
+                <Text color="gray">
+                  <Spinner type="dots" />
+                </Text>
+              ) : (
+                <Text color={status.color}>{status.icon}</Text>
+              )}
+              {result?.installed ? (
+                <Text color="gray"> v{installedVersion || "?"}</Text>
+              ) : (
+                <Text color="gray"> v{loading ? "..." : "—"}</Text>
+              )}
+              <Text color={hasUpdate ? "yellow" : "gray"}>
+                {latestVersion ? ` · latest v${latestVersion}` : loading ? " · latest ..." : " · latest ?"}
+              </Text>
             </Box>
             <Box marginLeft={4}>
               <Text color="gray">{tool.configDir}</Text>

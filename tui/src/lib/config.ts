@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import type { ToolTarget, ToolInstance, Marketplace, AssetConfig, ConfigSyncConfig, ConfigMapping } from "./types.js";
+import type { ToolTarget, ToolInstance, Marketplace, AssetConfig, ConfigSyncConfig, ConfigMapping, PackageManager } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
 
 const DEFAULT_TOOLS: Record<string, ToolTarget> = {
@@ -130,6 +130,7 @@ export interface SyncConfig {
   assetsRepo?: string;  // defaults to configRepo if not specified
   disabledMarketplaces?: string;    // comma-separated list of disabled plugin marketplace names
   disabledPiMarketplaces?: string;  // comma-separated list of disabled Pi marketplace names
+  packageManager?: PackageManager;
 }
 
 export interface PiMarketplacesConfig {
@@ -302,7 +303,8 @@ export function loadConfig(configPath?: string): TomlConfig {
           const normalizedKey = key === "config_repo" ? "configRepo" :
                                key === "assets_repo" ? "assetsRepo" :
                                key === "disabled_marketplaces" ? "disabledMarketplaces" :
-                               key === "disabled_pi_marketplaces" ? "disabledPiMarketplaces" : key;
+                               key === "disabled_pi_marketplaces" ? "disabledPiMarketplaces" :
+                               key === "package_manager" ? "packageManager" : key;
           (result.sync as Record<string, string>)[normalizedKey] = value;
         } else if (currentSection === "configs" && currentConfig) {
           const normalizedKey = key === "tool_id" ? "toolId" :
@@ -344,7 +346,15 @@ export function saveConfig(config: TomlConfig, configPath?: string): void {
   const hasMarketplaces = config.marketplaces && Object.keys(config.marketplaces).length > 0;
   const hasTools = config.tools && Object.keys(config.tools).length > 0;
   const hasAssets = config.assets && config.assets.length > 0;
-  const hasSync = config.sync && config.sync.configRepo;
+  const hasSync = Boolean(
+    config.sync && (
+      config.sync.configRepo ||
+      config.sync.assetsRepo ||
+      config.sync.disabledMarketplaces ||
+      config.sync.disabledPiMarketplaces ||
+      config.sync.packageManager
+    )
+  );
   const hasConfigs = config.configs && config.configs.length > 0;
 
   lines.push("[marketplaces]");
@@ -369,6 +379,9 @@ export function saveConfig(config: TomlConfig, configPath?: string): void {
     }
     if (config.sync!.disabledPiMarketplaces) {
       lines.push(`disabled_pi_marketplaces = "${config.sync!.disabledPiMarketplaces}"`);
+    }
+    if (config.sync!.packageManager) {
+      lines.push(`package_manager = "${config.sync!.packageManager}"`);
     }
     lines.push("");
   }
@@ -666,6 +679,15 @@ export function getAssetsRepoPath(): string | null {
     return expandPath(config.sync.configRepo);
   }
   return null;
+}
+
+export function getPackageManager(): PackageManager {
+  const config = loadConfig();
+  const packageManager = config.sync?.packageManager;
+  if (packageManager === "bun" || packageManager === "pnpm") {
+    return packageManager;
+  }
+  return "npm";
 }
 
 /**

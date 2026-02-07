@@ -3,8 +3,8 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 151
-- **Test Files:** 11
+- **Total Tests:** 174
+- **Test Files:** 16
 
 ## Critical Paths
 - [x] Plugin discovery list loads
@@ -15,6 +15,9 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Install failure notification stays on detail (E2E)
 - [x] Config multi-file sync (directory, glob patterns)
 - [x] Asset path resolution (URLs, absolute, home-relative, relative)
+- [x] Tool lifecycle core flows (registry/view/detect/command adapters)
+- [x] Tools lifecycle UI refreshes version/status after install → update → uninstall (E2E)
+- [x] Sync tab shows tool update items with installed/latest version delta (E2E)
 
 ## Boundaries
 - [x] Marketplace fetch (remote marketplace.json)
@@ -28,6 +31,9 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Asset source path resolution (`resolveAssetSourcePath`)
 - [x] Pi package source type detection (`getSourceType`)
 - [x] Pi local marketplace scanning (`scanLocalMarketplace`)
+- [x] Tool lifecycle registry + managed tool rows (synthetic default rows)
+- [x] Tool binary/version detection adapters (`which`, `--version`, `npm view`)
+- [x] Tool lifecycle command adapters (install/update/uninstall with timeout/cancel)
 - [ ] Marketplace add/remove persistence
 
 ## Config & Asset Path Tests (asset-paths.test.ts)
@@ -74,6 +80,7 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [ ] Installed → open asset → sync to all tools → success notification
 - [ ] Installed → open config → sync to matching tool → success notification
 - [ ] Sync → select items → sync → success summary
+- [ ] Sync → tool update item selected → updates binary version status
 - [ ] Marketplaces → add marketplace → appears in list and discover results
 - [ ] Marketplaces → update marketplace → updated timestamp shown
 - [ ] Tools → toggle enabled → tool list reflects new status

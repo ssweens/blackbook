@@ -18,6 +18,27 @@ export interface ToolInstance {
   enabled: boolean;
 }
 
+export type PackageManager = "npm" | "bun" | "pnpm";
+
+export interface ToolDetectionResult {
+  toolId: string;
+  installed: boolean;
+  binaryPath: string | null;
+  installedVersion: string | null;
+  latestVersion: string | null;
+  hasUpdate: boolean;
+  error: string | null;
+}
+
+export interface ManagedToolRow {
+  toolId: string;
+  displayName: string;
+  instanceId: string;
+  configDir: string;
+  enabled: boolean;
+  synthetic: boolean;
+}
+
 export interface ItemStatus {
   linked: boolean;
   missing: boolean;
@@ -118,6 +139,13 @@ export type SyncPreviewItem =
       config: ConfigFile;
       drifted: boolean;
       missing: boolean;
+    }
+  | {
+      kind: "tool";
+      toolId: string;
+      name: string;
+      installedVersion: string;
+      latestVersion: string;
     };
 
 export interface Marketplace {
@@ -159,6 +187,11 @@ export interface AppState {
   assets: Asset[];
   configs: ConfigFile[];
   tools: ToolInstance[];
+  managedTools: ManagedToolRow[];
+  toolDetection: Record<string, ToolDetectionResult>;
+  toolDetectionPending: Record<string, boolean>;
+  toolActionInProgress: string | null;
+  toolActionOutput: string[];
   search: string;
   selectedIndex: number;
   loading: boolean;

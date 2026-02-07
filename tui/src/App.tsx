@@ -17,6 +17,8 @@ import { MarketplaceDetail } from "./components/MarketplaceDetail.js";
 import { AddMarketplaceModal } from "./components/AddMarketplaceModal.js";
 import { EditToolModal } from "./components/EditToolModal.js";
 import { ToolsList } from "./components/ToolsList.js";
+import { ToolDetail } from "./components/ToolDetail.js";
+import { ToolActionModal, type ToolModalAction } from "./components/ToolActionModal.js";
 import { SyncList } from "./components/SyncList.js";
 import { SyncPreview } from "./components/SyncPreview.js";
 import { HintBar } from "./components/HintBar.js";
@@ -30,9 +32,12 @@ import { PiPackageList } from "./components/PiPackageList.js";
 import { PiPackagePreview } from "./components/PiPackagePreview.js";
 import { PiPackageDetail, getPiPackageActions } from "./components/PiPackageDetail.js";
 import { getPluginToolStatus, getConfigToolStatus } from "./lib/install.js";
-import type { Tab, SyncPreviewItem, Plugin, Asset, ConfigFile, PiPackage, DiffInstanceRef, DiscoverSection, DiscoverSubView } from "./lib/types.js";
+import { buildInstallCommand, buildUpdateCommand, buildUninstallCommand } from "./lib/tool-lifecycle.js";
+import { getToolRegistryEntry } from "./lib/tool-registry.js";
+import { getPackageManager } from "./lib/config.js";
+import type { Tab, SyncPreviewItem, Plugin, Asset, ConfigFile, PiPackage, DiffInstanceRef, DiscoverSection, DiscoverSubView, ManagedToolRow } from "./lib/types.js";
 
-const TABS: Tab[] = ["discover", "installed", "marketplaces", "tools", "sync"];
+const TABS: Tab[] = ["tools", "sync", "discover", "installed", "marketplaces"];
 
 export function App() {
   const { exit } = useApp();
@@ -44,6 +49,11 @@ export function App() {
     assets,
     configs,
     tools,
+    managedTools,
+    toolDetection,
+    toolDetectionPending,
+    toolActionInProgress,
+    toolActionOutput,
     search,
     setSearch,
     selectedIndex,
@@ -68,6 +78,10 @@ export function App() {
     addMarketplace,
     toggleToolEnabled,
     updateToolConfigDir,
+    installToolAction,
+    updateToolAction,
+    uninstallToolAction,
+    cancelToolAction,
     getSyncPreview,
     syncTools,
     notify,
@@ -107,6 +121,11 @@ export function App() {
   const [actionIndex, setActionIndex] = useState(0);
   const [showAddMarketplace, setShowAddMarketplace] = useState(false);
   const [editingToolId, setEditingToolId] = useState<string | null>(null);
+  const [detailToolKey, setDetailToolKey] = useState<string | null>(null);
+  const [toolModalAction, setToolModalAction] = useState<ToolModalAction | null>(null);
+  const [toolModalRunning, setToolModalRunning] = useState(false);
+  const [toolModalDone, setToolModalDone] = useState(false);
+  const [toolModalSuccess, setToolModalSuccess] = useState(false);
   const [syncPreview, setSyncPreview] = useState<SyncPreviewItem[]>([]);
   const [syncSelection, setSyncSelection] = useState<Set<string>>(new Set());
   const [syncArmed, setSyncArmed] = useState(false);
@@ -122,6 +141,9 @@ export function App() {
     if (item.kind === "config") {
       return `config:${item.config.toolId}:${item.config.name}`;
     }
+    if (item.kind === "tool") {
+      return `tool:${item.toolId}`;
+    }
     return `asset:${item.asset.name}`;
   };
 
@@ -130,10 +152,16 @@ export function App() {
     [tools]
   );
 
-  const editingTool = useMemo(
-    () => tools.find((tool) => `${tool.toolId}:${tool.instanceId}` === editingToolId) || null,
-    [tools, editingToolId]
-  );
+  const editingTool = useMemo(() => {
+    const managed = managedTools.find((tool) => `${tool.toolId}:${tool.instanceId}` === editingToolId);
+    if (!managed) return null;
+    return {
+      toolId: managed.toolId,
+      instanceId: managed.instanceId,
+      name: managed.displayName,
+      configDir: managed.configDir,
+    };
+  }, [managedTools, editingToolId]);
 
   // Helper to calculate visible range for section headings
   const getRange = (selectedIdx: number, totalCount: number, maxHeight: number): string => {
@@ -175,6 +203,21 @@ export function App() {
               existing.driftedInstances.join("|") === item.driftedInstances.join("|")
             );
           }
+          if (item.kind === "config" && existing.kind === "config") {
+            return (
+              existing.config.name === item.config.name &&
+              existing.config.toolId === item.config.toolId &&
+              existing.missing === item.missing &&
+              existing.drifted === item.drifted
+            );
+          }
+          if (item.kind === "tool" && existing.kind === "tool") {
+            return (
+              existing.toolId === item.toolId &&
+              existing.installedVersion === item.installedVersion &&
+              existing.latestVersion === item.latestVersion
+            );
+          }
           return false;
         });
       return isSame ? current : preview;
@@ -192,7 +235,7 @@ export function App() {
       return next;
     });
     setSyncArmed(false);
-  }, [tab, marketplaces, installedPlugins, assets, getSyncPreview]);
+  }, [tab, marketplaces, installedPlugins, assets, managedTools, toolDetection, getSyncPreview]);
 
   useEffect(() => {
     if (!syncArmed) return;
@@ -419,13 +462,46 @@ export function App() {
       return marketplaces.length + piMarketplaces.length;
     }
     if (tab === "tools") {
-      return Math.max(0, tools.length - 1);
+      return Math.max(0, managedTools.length - 1);
     }
     if (tab === "sync") {
       return Math.max(0, syncPreview.length - 1);
     }
     return Math.max(0, libraryCount - 1);
-  }, [tab, marketplaces, piMarketplaces, tools, syncPreview, libraryCount]);
+  }, [tab, marketplaces, piMarketplaces, managedTools, syncPreview, libraryCount]);
+
+  const selectedManagedTool = useMemo(() => {
+    if (tab !== "tools") return null;
+    return managedTools[selectedIndex] || null;
+  }, [tab, managedTools, selectedIndex]);
+
+  const detailTool = useMemo(() => {
+    if (!detailToolKey) return null;
+    return managedTools.find((tool) => `${tool.toolId}:${tool.instanceId}` === detailToolKey) || null;
+  }, [detailToolKey, managedTools]);
+
+  const activeToolForModal = detailTool || selectedManagedTool;
+
+  const toolsHint = useMemo(() => {
+    if (tab !== "tools") return undefined;
+    if (toolActionInProgress) return "(Tool action running... Esc to cancel)";
+    if (detailTool) {
+      return "i Install · u Update · d Uninstall · e Edit · Space Toggle · Esc Back";
+    }
+
+    if (!selectedManagedTool) {
+      return "Enter detail · e edit · Space toggle · q quit";
+    }
+
+    const detection = toolDetection[selectedManagedTool.toolId];
+    if (!detection?.installed) {
+      return "Enter detail · i Install · e Edit · Space Toggle · q quit";
+    }
+    if (detection.hasUpdate) {
+      return "Enter detail · u Update · d Uninstall · e Edit · Space Toggle · q quit";
+    }
+    return "Enter detail · d Uninstall · e Edit · Space Toggle · q quit";
+  }, [tab, toolActionInProgress, detailTool, selectedManagedTool, toolDetection]);
 
   const selectedLibraryItem = useMemo(
     ():
@@ -540,6 +616,32 @@ export function App() {
   };
 
   useInput((input, key) => {
+    if (toolModalAction) {
+      if (toolModalDone) {
+        setToolModalAction(null);
+        setToolModalDone(false);
+        setToolModalSuccess(false);
+        return;
+      }
+
+      if (toolModalRunning) {
+        if (key.escape) {
+          cancelToolAction();
+        }
+        return;
+      }
+
+      if (key.escape) {
+        setToolModalAction(null);
+        return;
+      }
+
+      if (key.return && activeToolForModal) {
+        void runToolAction(activeToolForModal, toolModalAction);
+      }
+      return;
+    }
+
     // Don't handle input when modal is open (modal handles its own input)
     if (showAddMarketplace || editingToolId) {
       return;
@@ -553,7 +655,7 @@ export function App() {
 
     // Tab/Shift+Tab for section navigation in Discover/Installed tabs
     if (key.tab && (tab === "discover" || tab === "installed") && !discoverSubView) {
-      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && !diffTarget && !missingSummary) {
+      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary) {
         if (sections.length > 0) {
           const currentIdx = sections.findIndex((s) => selectedIndex >= s.start && selectedIndex <= s.end);
           if (key.shift) {
@@ -572,14 +674,14 @@ export function App() {
 
     // Left/Right arrows for main tab navigation (blocked when overlays are open)
     if (key.rightArrow) {
-      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && !diffTarget && !missingSummary && !discoverSubView) {
+      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary && !discoverSubView) {
         const idx = TABS.indexOf(tab);
         setTab(TABS[(idx + 1) % TABS.length]);
         return;
       }
     }
     if (key.leftArrow) {
-      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && !diffTarget && !missingSummary && !discoverSubView) {
+      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary && !discoverSubView) {
         const idx = TABS.indexOf(tab);
         setTab(TABS[(idx - 1 + TABS.length) % TABS.length]);
         return;
@@ -603,6 +705,8 @@ export function App() {
       } else if (detailPiPackage) {
         setDetailPiPackage(null);
         setActionIndex(0);
+      } else if (detailTool) {
+        setDetailToolKey(null);
       } else if (discoverSubView) {
         // Close sub-view and return to Discover dashboard
         setDiscoverSubView(null);
@@ -621,6 +725,8 @@ export function App() {
         setActionIndex((i) => Math.max(0, i - 1));
       } else if (detailAsset || detailConfig) {
         setActionIndex((i) => Math.max(0, i - 1));
+      } else if (detailTool) {
+        return;
       } else if (discoverSubView) {
         // Navigate within sub-view
         setSubViewIndex((i) => Math.max(0, i - 1));
@@ -650,6 +756,8 @@ export function App() {
       } else if (detailMarketplace) {
         const maxActions = detailMarketplace.source === "claude" ? 2 : 3;
         setActionIndex((i) => Math.min(maxActions, i + 1));
+      } else if (detailTool) {
+        return;
       } else if (discoverSubView) {
         // Navigate within sub-view
         const maxSubViewIndex = discoverSubView === "plugins" ? filteredPlugins.length - 1 : filteredPiPackages.length - 1;
@@ -687,6 +795,10 @@ export function App() {
 
       if (detailMarketplace) {
         handleMarketplaceAction(actionIndex);
+        return;
+      }
+
+      if (detailTool) {
         return;
       }
 
@@ -732,9 +844,9 @@ export function App() {
       }
 
       if (tab === "tools") {
-        const tool = tools[selectedIndex];
+        const tool = managedTools[selectedIndex];
         if (tool) {
-          void toggleToolEnabled(tool.toolId, tool.instanceId);
+          setDetailToolKey(`${tool.toolId}:${tool.instanceId}`);
         }
         return;
       }
@@ -751,6 +863,11 @@ export function App() {
           } else if (item.kind === "config") {
             setDetailConfig(item.config);
             setActionIndex(0);
+          } else if (item.kind === "tool") {
+            const tool = managedTools.find((entry) => entry.toolId === item.toolId);
+            if (tool) {
+              setDetailToolKey(`${tool.toolId}:${tool.instanceId}`);
+            }
           }
         }
         return;
@@ -781,7 +898,7 @@ export function App() {
     }
 
     // Space - toggle install/uninstall
-    if (input === " " && !detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && !diffTarget && !missingSummary) {
+    if (input === " " && !detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary) {
       if (tab === "sync") {
         const item = syncPreview[selectedIndex];
         if (!item) return;
@@ -800,7 +917,7 @@ export function App() {
       }
 
       if (tab === "tools") {
-        const tool = tools[selectedIndex];
+        const tool = managedTools[selectedIndex];
         if (tool) {
           void toggleToolEnabled(tool.toolId, tool.instanceId);
         }
@@ -872,6 +989,42 @@ export function App() {
     }
 
     // Shortcuts
+    if (tab === "tools") {
+      const tool = detailTool || managedTools[selectedIndex];
+      const detection = tool ? toolDetection[tool.toolId] : null;
+
+      if (input === "i" && tool && (!detection || !detection.installed)) {
+        setToolModalAction("install");
+        setToolModalDone(false);
+        setToolModalSuccess(false);
+        return;
+      }
+
+      if (input === "u" && tool && detection?.installed && detection.hasUpdate) {
+        setToolModalAction("update");
+        setToolModalDone(false);
+        setToolModalSuccess(false);
+        return;
+      }
+
+      if (input === "d" && tool && detection?.installed) {
+        setToolModalAction("uninstall");
+        setToolModalDone(false);
+        setToolModalSuccess(false);
+        return;
+      }
+
+      if (input === "e" && tool) {
+        setEditingToolId(`${tool.toolId}:${tool.instanceId}`);
+        return;
+      }
+
+      if (input === " " && tool) {
+        void toggleToolEnabled(tool.toolId, tool.instanceId);
+        return;
+      }
+    }
+
     if (input === "u" && tab === "marketplaces" && !detailMarketplace) {
       const m = marketplaces[selectedIndex - 1];
       if (m) updateMarketplace(m.name);
@@ -881,14 +1034,6 @@ export function App() {
     if (input === "r" && tab === "marketplaces" && !detailMarketplace) {
       const m = marketplaces[selectedIndex - 1];
       if (m) removeMarketplace(m.name);
-      return;
-    }
-
-    if (input === "e" && tab === "tools") {
-      const tool = tools[selectedIndex];
-      if (tool) {
-        setEditingToolId(`${tool.toolId}:${tool.instanceId}`);
-      }
       return;
     }
 
@@ -1097,6 +1242,43 @@ export function App() {
     setEditingToolId(null);
   };
 
+  const getToolActionCommand = (tool: ManagedToolRow, action: ToolModalAction): string => {
+    const registryEntry = getToolRegistryEntry(tool.toolId);
+    if (!registryEntry) {
+      return "Unknown tool";
+    }
+    const packageManager = getPackageManager();
+    const command =
+      action === "install"
+        ? buildInstallCommand(packageManager, registryEntry.npmPackage)
+        : action === "update"
+          ? tool.toolId === "amp-code"
+            ? { cmd: "amp", args: ["update"] }
+            : tool.toolId === "opencode"
+              ? { cmd: "opencode", args: ["upgrade"] }
+              : buildUpdateCommand(packageManager, registryEntry.npmPackage)
+          : buildUninstallCommand(packageManager, registryEntry.npmPackage);
+
+    return `${command.cmd} ${command.args.join(" ")}`;
+  };
+
+  const runToolAction = async (tool: ManagedToolRow, action: ToolModalAction) => {
+    setToolModalRunning(true);
+    setToolModalDone(false);
+
+    const success =
+      action === "install"
+        ? await installToolAction(tool.toolId)
+        : action === "update"
+          ? await updateToolAction(tool.toolId)
+          : await uninstallToolAction(tool.toolId);
+
+    setToolModalRunning(false);
+    setToolModalDone(true);
+    setToolModalSuccess(success);
+    await refreshAll();
+  };
+
 
   // Memoize instances for missing summary view (instance picker still needed there)
   const missingInstances = useMemo((): DiffInstanceRef[] => {
@@ -1144,6 +1326,22 @@ export function App() {
         <AddMarketplaceModal
           onSubmit={handleAddMarketplace}
           onCancel={() => setShowAddMarketplace(false)}
+        />
+      ) : toolModalAction && activeToolForModal ? (
+        <ToolActionModal
+          toolName={activeToolForModal.displayName}
+          action={toolModalAction}
+          command={getToolActionCommand(activeToolForModal, toolModalAction)}
+          inProgress={toolModalRunning || toolActionInProgress === activeToolForModal.toolId}
+          done={toolModalDone}
+          success={toolModalSuccess}
+          output={toolActionOutput}
+        />
+      ) : detailTool ? (
+        <ToolDetail
+          tool={detailTool}
+          detection={toolDetection[detailTool.toolId] || null}
+          pending={toolDetectionPending[detailTool.toolId] === true}
         />
       ) : detailPlugin ? (
         <PluginDetail
@@ -1425,7 +1623,13 @@ export function App() {
           )}
 
           {tab === "tools" && (
-            <ToolsList tools={tools} selectedIndex={selectedIndex} />
+            <ToolsList
+              tools={managedTools}
+              selectedIndex={selectedIndex}
+              detection={toolDetection}
+              detectionPending={toolDetectionPending}
+              actionInProgress={toolActionInProgress}
+            />
           )}
 
           {tab === "sync" && (
@@ -1448,7 +1652,7 @@ export function App() {
         </Box>
       )}
 
-      {(tab === "discover" || tab === "installed") && !detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && (
+      {(tab === "discover" || tab === "installed") && !detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && !detailTool && (
         discoverSubView === "plugins" ? (
           <PluginPreview plugin={filteredPlugins[subViewIndex] ?? null} />
         ) : discoverSubView === "piPackages" ? (
@@ -1464,12 +1668,16 @@ export function App() {
         ) : null
       )}
 
-      {tab === "sync" && !detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && (
+      {tab === "sync" && !detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && !detailTool && (
         <SyncPreview item={syncPreview[selectedIndex] ?? null} />
       )}
 
       <Notifications notifications={notifications} onClear={clearNotification} />
-      <HintBar tab={tab} hasDetail={Boolean(detailPlugin || detailAsset || detailConfig || detailMarketplace || detailPiPackage)} />
+      <HintBar
+        tab={tab}
+        hasDetail={Boolean(detailPlugin || detailAsset || detailConfig || detailMarketplace || detailPiPackage || detailTool)}
+        toolsHint={toolsHint}
+      />
       <StatusBar
         loading={loading}
         message={statusMessage}

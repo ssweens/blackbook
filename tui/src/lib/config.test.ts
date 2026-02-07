@@ -1,8 +1,8 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { writeFileSync, rmSync } from "fs";
+import { writeFileSync, rmSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { loadConfig } from "./config.js";
+import { loadConfig, saveConfig } from "./config.js";
 
 const TMP_PATH = join(tmpdir(), `blackbook-config-test-${Date.now()}.toml`);
 
@@ -38,6 +38,38 @@ default_target = "AGENTS.md"
       "claude-code:default": "CLAUDE.md",
       "opencode:secondary": "AGENTS.md",
     });
+  });
+});
+
+describe("loadConfig sync", () => {
+  it("parses package_manager from sync section", () => {
+    const content = `
+[sync]
+package_manager = "pnpm"
+`;
+
+    writeFileSync(TMP_PATH, content.trim());
+    const config = loadConfig(TMP_PATH);
+    expect(config.sync?.packageManager).toBe("pnpm");
+  });
+
+  it("writes package_manager when saving config", () => {
+    saveConfig(
+      {
+        marketplaces: {},
+        tools: {},
+        assets: [],
+        configs: [],
+        sync: {
+          packageManager: "bun",
+        },
+      },
+      TMP_PATH
+    );
+
+    const content = readFileSync(TMP_PATH, "utf-8");
+    expect(content).toContain("[sync]");
+    expect(content).toContain('package_manager = "bun"');
   });
 });
 

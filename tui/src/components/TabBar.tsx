@@ -8,11 +8,11 @@ interface TabBarProps {
 }
 
 const TABS: { id: Tab; label: string }[] = [
+  { id: "tools", label: "Tools" },
+  { id: "sync", label: "Sync" },
   { id: "discover", label: "Discover" },
   { id: "installed", label: "Installed" },
   { id: "marketplaces", label: "Marketplaces" },
-  { id: "tools", label: "Tools" },
-  { id: "sync", label: "Sync" },
 ];
 
 export function TabBar({ activeTab }: TabBarProps) {

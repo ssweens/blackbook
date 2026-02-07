@@ -93,8 +93,8 @@ cd ~/src/blackbook/tui && pnpm start
 
 - **Discover/Installed**: `s` cycle sort (name/installed), `r` reverse sort
 - **Marketplaces**: `u` update marketplace, `r` remove marketplace
-- **Tools**: `Enter`/`Space` toggle enabled, `e` edit config dir
-- **Sync**: `y` sync missing/drifted items (press twice to confirm)
+- **Tools**: `Enter` open detail, `i` install, `u` update, `d` uninstall, `Space` toggle enabled, `e` edit config dir
+- **Sync**: `y` sync selected items (missing/drifted assets/configs/plugins and tool updates; press twice to confirm)
 
 ## Configuration
 
@@ -364,7 +364,21 @@ my-packages = "~/src/my-pi-packages"
 
 ### Tools
 
-Tools are only managed when enabled in config. On first run, Blackbook enables tool instances whose default config directories already exist. Use the Tools tab in the TUI to toggle enablement and edit config directories.
+Blackbook manages the default tool set (Claude, OpenCode, Amp, Codex, Pi) from the Tools tab. Each row shows binary detection status, installed version, and update availability.
+
+From Tools you can:
+- Open detail (`Enter`)
+- Install (`i`)
+- Update (`u` when update is available)
+- Uninstall (`d`)
+- Toggle enablement (`Space`)
+- Edit config directory (`e`)
+
+If a tool has no configured instance yet, Blackbook shows a "Not configured" synthetic row so lifecycle actions are still available.
+
+Detection runs per-tool and updates rows incrementally with a spinner while each tool's version/status is loading.
+
+For updates, Blackbook uses tool-native upgrade commands when available (e.g. `amp update`, `opencode upgrade`) to keep the active PATH binary in sync.
 
 **Supported tools (default config paths):**
 - Claude — `~/.claude`
@@ -372,6 +386,13 @@ Tools are only managed when enabled in config. On first run, Blackbook enables t
 - Amp — `~/.config/amp`
 - Codex — `~/.codex`
 - Pi — `~/.pi`
+
+Choose package manager for lifecycle commands in config:
+
+```toml
+[sync]
+package_manager = "npm"   # "npm" | "bun" | "pnpm"
+```
 
 **Supported plugin types:** skills, commands, agents, hooks, MCP servers, LSP servers.
 

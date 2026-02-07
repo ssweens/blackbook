@@ -71,6 +71,9 @@ export function SyncList({
           if (item.missing) parts.push("Missing");
           if (item.drifted) parts.push("Drifted");
           statusLabel = parts.join(" · ");
+        } else if (item.kind === "tool") {
+          name = item.name;
+          statusLabel = `Update: v${item.installedVersion} → v${item.latestVersion}`;
         } else {
           name = item.asset.name;
           const missingCount = item.missingInstances.length;

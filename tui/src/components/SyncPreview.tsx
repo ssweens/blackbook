@@ -34,6 +34,25 @@ export function SyncPreview({ item }: SyncPreviewProps) {
     );
   }
 
+  if (item.kind === "tool") {
+    return (
+      <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="gray" paddingX={1} height={5}>
+        <Box>
+          <Text color="gray">Tool: </Text>
+          <Text color="white">{item.name}</Text>
+        </Box>
+        <Box>
+          <Text color="gray">Installed: </Text>
+          <Text color="yellow">v{item.installedVersion}</Text>
+        </Box>
+        <Box>
+          <Text color="gray">Latest: </Text>
+          <Text color="green">v{item.latestVersion}</Text>
+        </Box>
+      </Box>
+    );
+  }
+
   if (item.kind === "config") {
     const mappingSummary = item.config.mappings && item.config.mappings.length > 0
       ? item.config.mappings[0]

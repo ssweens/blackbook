@@ -9,7 +9,7 @@ import {
   getAssetSourceInfo,
   getConfigToolStatus,
 } from "./install.js";
-import type { Plugin, Marketplace, ToolInstance, Asset } from "./types.js";
+import type { Plugin, Marketplace, ToolInstance, Asset, ManagedToolRow, ToolDetectionResult } from "./types.js";
 
 // Mock config functions to avoid writing to real config file
 vi.mock("./config.js", async (importOriginal) => {
@@ -317,7 +317,11 @@ describe("Store tool management", () => {
 
     await useStore.getState().toggleToolEnabled(tool.toolId, tool.instanceId);
 
-    expect(updateToolInstanceConfig).toHaveBeenCalledWith(tool.toolId, tool.instanceId, { enabled: false });
+    expect(updateToolInstanceConfig).toHaveBeenCalledWith(
+      tool.toolId,
+      tool.instanceId,
+      expect.objectContaining({ enabled: false })
+    );
     expect(refreshAll).toHaveBeenCalled();
   });
 
@@ -330,7 +334,7 @@ describe("Store tool management", () => {
     expect(updateToolInstanceConfig).toHaveBeenCalledWith(
       "opencode",
       "default",
-      { configDir: "/tmp/opencode" }
+      expect.objectContaining({ configDir: "/tmp/opencode" })
     );
     expect(refreshAll).toHaveBeenCalled();
   });
@@ -383,6 +387,43 @@ describe("Store sync tools", () => {
     if (preview[0].kind === "plugin") {
       expect(preview[0].plugin.name).toBe("partial-plugin");
       expect(preview[0].missingInstances).toContain("OpenCode Secondary");
+    }
+  });
+
+  it("includes installed tools with updates in sync preview", () => {
+    const managedTools: ManagedToolRow[] = [
+      {
+        toolId: "amp-code",
+        displayName: "Amp",
+        instanceId: "default",
+        configDir: "/tmp/amp",
+        enabled: true,
+        synthetic: false,
+      },
+    ];
+    const toolDetection: Record<string, ToolDetectionResult> = {
+      "amp-code": {
+        toolId: "amp-code",
+        installed: true,
+        binaryPath: "/usr/local/bin/amp",
+        installedVersion: "0.0.1",
+        latestVersion: "0.0.2",
+        hasUpdate: true,
+        error: null,
+      },
+    };
+
+    useStore.setState({ managedTools, toolDetection, assets: [createMockAsset()], configs: [] });
+    vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [], byTool: {} });
+    vi.mocked(getAssetToolStatus).mockReturnValue([]);
+
+    const preview = useStore.getState().getSyncPreview();
+    expect(preview).toHaveLength(1);
+    expect(preview[0].kind).toBe("tool");
+    if (preview[0].kind === "tool") {
+      expect(preview[0].toolId).toBe("amp-code");
+      expect(preview[0].installedVersion).toBe("0.0.1");
+      expect(preview[0].latestVersion).toBe("0.0.2");
     }
   });
 

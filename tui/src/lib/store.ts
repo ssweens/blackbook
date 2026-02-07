@@ -16,6 +16,8 @@ import type {
   PiMarketplace,
   DiscoverSection,
   DiscoverSubView,
+  ManagedToolRow,
+  ToolDetectionResult,
 } from "./types.js";
 import { loadAllPiMarketplaces, getAllPiPackages, loadPiSettings, isPackageInstalled, fetchNpmPackageDetails } from "./pi-marketplace.js";
 import { installPiPackage, removePiPackage, updatePiPackage } from "./pi-install.js";
@@ -42,8 +44,13 @@ import {
   loadConfig,
   setMarketplaceEnabled,
   setPiMarketplaceEnabled,
+  getPackageManager,
 } from "./config.js";
 import { fetchMarketplace } from "./marketplace.js";
+import { getManagedToolRows } from "./tool-view.js";
+import { detectTool } from "./tool-detect.js";
+import { TOOL_REGISTRY } from "./tool-registry.js";
+import { installTool, uninstallTool, updateTool, type ProgressEvent } from "./tool-lifecycle.js";
 
 import {
   getAllInstalledPlugins,
@@ -70,6 +77,12 @@ interface Actions {
   loadAssets: () => Asset[];
   loadConfigs: () => Promise<ConfigFile[]>;
   loadTools: () => void;
+  refreshManagedTools: () => void;
+  refreshToolDetection: () => Promise<void>;
+  installToolAction: (toolId: string) => Promise<boolean>;
+  updateToolAction: (toolId: string) => Promise<boolean>;
+  uninstallToolAction: (toolId: string) => Promise<boolean>;
+  cancelToolAction: () => void;
   refreshAll: () => Promise<void>;
   installPlugin: (plugin: Plugin) => Promise<boolean>;
   uninstallPlugin: (plugin: Plugin) => Promise<boolean>;
@@ -244,6 +257,57 @@ function buildConfigSyncPreview(configs: ConfigFile[]): SyncPreviewItem[] {
   return preview;
 }
 
+function buildToolSyncPreview(
+  tools: ManagedToolRow[],
+  toolDetection: Record<string, ToolDetectionResult>
+): SyncPreviewItem[] {
+  const uniqueByTool = new Map<string, ManagedToolRow>();
+  for (const tool of tools) {
+    if (!uniqueByTool.has(tool.toolId)) {
+      uniqueByTool.set(tool.toolId, tool);
+    }
+  }
+
+  const preview: SyncPreviewItem[] = [];
+  for (const [toolId, tool] of uniqueByTool.entries()) {
+    const detection = toolDetection[toolId];
+    if (!detection) continue;
+    if (!detection.installed) continue;
+    if (!detection.hasUpdate) continue;
+    if (!detection.installedVersion || !detection.latestVersion) continue;
+
+    preview.push({
+      kind: "tool",
+      toolId,
+      name: tool.displayName,
+      installedVersion: detection.installedVersion,
+      latestVersion: detection.latestVersion,
+    });
+  }
+
+  return preview;
+}
+
+const TOOL_OUTPUT_MAX_LINES = 200;
+let toolActionAbortController: AbortController | null = null;
+
+function formatDetectedVersion(version: string | null): string {
+  return version ? `v${version}` : "unknown";
+}
+
+function appendToolOutput(existing: string[], chunk: string): string[] {
+  const lines = chunk
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (lines.length === 0) return existing;
+  const next = [...existing, ...lines];
+  if (next.length <= TOOL_OUTPUT_MAX_LINES) {
+    return next;
+  }
+  return next.slice(next.length - TOOL_OUTPUT_MAX_LINES);
+}
+
 export const useStore = create<Store>((set, get) => ({
   tab: "discover",
   marketplaces: [],
@@ -251,6 +315,11 @@ export const useStore = create<Store>((set, get) => ({
   assets: [],
   configs: [],
   tools: getToolInstances(),
+  managedTools: getManagedToolRows(),
+  toolDetection: {},
+  toolDetectionPending: {},
+  toolActionInProgress: null,
+  toolActionOutput: [],
   search: "",
   selectedIndex: 0,
   loading: false,
@@ -330,7 +399,221 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   loadTools: () => {
-    set({ tools: getToolInstances() });
+    set({ tools: getToolInstances(), managedTools: getManagedToolRows() });
+  },
+
+  refreshManagedTools: () => {
+    set({ managedTools: getManagedToolRows() });
+  },
+
+  refreshToolDetection: async () => {
+    const packageManager = getPackageManager();
+    const entries = Object.values(TOOL_REGISTRY);
+    const initialPending: Record<string, boolean> = {};
+    for (const entry of entries) {
+      initialPending[entry.toolId] = true;
+    }
+
+    set({ toolDetectionPending: initialPending });
+
+    await Promise.all(
+      entries.map(async (entry) => {
+        try {
+          const result = await detectTool(entry, packageManager);
+          set((state) => ({
+            toolDetection: {
+              ...state.toolDetection,
+              [entry.toolId]: result,
+            },
+            toolDetectionPending: {
+              ...state.toolDetectionPending,
+              [entry.toolId]: false,
+            },
+          }));
+        } catch (error) {
+          set((state) => ({
+            toolDetection: {
+              ...state.toolDetection,
+              [entry.toolId]: {
+                toolId: entry.toolId,
+                installed: false,
+                binaryPath: null,
+                installedVersion: null,
+                latestVersion: null,
+                hasUpdate: false,
+                error: error instanceof Error ? error.message : String(error),
+              },
+            },
+            toolDetectionPending: {
+              ...state.toolDetectionPending,
+              [entry.toolId]: false,
+            },
+          }));
+        }
+      })
+    );
+  },
+
+  installToolAction: async (toolId) => {
+    const { notify } = get();
+    if (get().toolActionInProgress) {
+      notify("Another tool action is already running.", "warning");
+      return false;
+    }
+
+    toolActionAbortController = new AbortController();
+    set({ toolActionInProgress: toolId, toolActionOutput: [] });
+
+    const packageManager = getPackageManager();
+    const success = await installTool(
+      toolId,
+      packageManager,
+      (event: ProgressEvent) => {
+        if (event.type === "stdout" || event.type === "stderr") {
+          set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, event.data) }));
+          return;
+        }
+        if (event.type === "error") {
+          set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, event.message) }));
+          return;
+        }
+        if (event.type === "timeout") {
+          set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, `Timed out after ${event.timeoutMs}ms`) }));
+          return;
+        }
+        if (event.type === "cancelled") {
+          set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, "Cancelled by user") }));
+        }
+      },
+      { signal: toolActionAbortController.signal }
+    );
+
+    toolActionAbortController = null;
+    set({ toolActionInProgress: null });
+    await get().refreshToolDetection();
+
+    const after = get().toolDetection[toolId];
+    if (success && !after?.installed) {
+      notify(
+        `Install command succeeded but tool is still not detected in PATH (${after?.binaryPath || "no binary path"}).`,
+        "warning"
+      );
+      return false;
+    }
+
+    notify(success ? "Tool installed successfully." : "Tool install failed.", success ? "success" : "error");
+    return success;
+  },
+
+  updateToolAction: async (toolId) => {
+    const { notify } = get();
+    if (get().toolActionInProgress) {
+      notify("Another tool action is already running.", "warning");
+      return false;
+    }
+
+    const before = get().toolDetection[toolId];
+
+    toolActionAbortController = new AbortController();
+    set({ toolActionInProgress: toolId, toolActionOutput: [] });
+
+    const packageManager = getPackageManager();
+    const success = await updateTool(
+      toolId,
+      packageManager,
+      (event: ProgressEvent) => {
+        if (event.type === "stdout" || event.type === "stderr") {
+          set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, event.data) }));
+          return;
+        }
+        if (event.type === "error") {
+          set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, event.message) }));
+          return;
+        }
+        if (event.type === "timeout") {
+          set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, `Timed out after ${event.timeoutMs}ms`) }));
+          return;
+        }
+        if (event.type === "cancelled") {
+          set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, "Cancelled by user") }));
+        }
+      },
+      { signal: toolActionAbortController.signal }
+    );
+
+    toolActionAbortController = null;
+    set({ toolActionInProgress: null });
+    await get().refreshToolDetection();
+
+    const after = get().toolDetection[toolId];
+    if (success && after?.installed && after.hasUpdate && after.installedVersion === before?.installedVersion) {
+      notify(
+        `Update command completed but running binary is still ${formatDetectedVersion(after.installedVersion)} at ${after.binaryPath || "unknown path"} (latest ${formatDetectedVersion(after.latestVersion)}). This usually means a different installation is first in PATH.`,
+        "warning"
+      );
+      return false;
+    }
+
+    notify(success ? "Tool updated successfully." : "Tool update failed.", success ? "success" : "error");
+    return success;
+  },
+
+  uninstallToolAction: async (toolId) => {
+    const { notify } = get();
+    if (get().toolActionInProgress) {
+      notify("Another tool action is already running.", "warning");
+      return false;
+    }
+
+    toolActionAbortController = new AbortController();
+    set({ toolActionInProgress: toolId, toolActionOutput: [] });
+
+    const packageManager = getPackageManager();
+    const success = await uninstallTool(
+      toolId,
+      packageManager,
+      (event: ProgressEvent) => {
+        if (event.type === "stdout" || event.type === "stderr") {
+          set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, event.data) }));
+          return;
+        }
+        if (event.type === "error") {
+          set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, event.message) }));
+          return;
+        }
+        if (event.type === "timeout") {
+          set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, `Timed out after ${event.timeoutMs}ms`) }));
+          return;
+        }
+        if (event.type === "cancelled") {
+          set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, "Cancelled by user") }));
+        }
+      },
+      { signal: toolActionAbortController.signal }
+    );
+
+    toolActionAbortController = null;
+    set({ toolActionInProgress: null });
+    await get().refreshToolDetection();
+
+    const after = get().toolDetection[toolId];
+    if (success && after?.installed) {
+      notify(
+        `Uninstall command completed but binary is still detected at ${after.binaryPath || "unknown path"}.`,
+        "warning"
+      );
+      return false;
+    }
+
+    notify(success ? "Tool uninstalled successfully." : "Tool uninstall failed.", success ? "success" : "error");
+    return success;
+  },
+
+  cancelToolAction: () => {
+    if (toolActionAbortController) {
+      toolActionAbortController.abort();
+      toolActionAbortController = null;
+    }
   },
 
   loadPiPackages: async () => {
@@ -488,6 +771,7 @@ export const useStore = create<Store>((set, get) => ({
         assets,
         configs,
         tools,
+        managedTools: getManagedToolRows(),
         loading: false,
       });
     } catch (e) {
@@ -530,7 +814,14 @@ export const useStore = create<Store>((set, get) => ({
     });
     const assets = get().loadAssets();
     const configs = await get().loadConfigs();
-    set({ installedPlugins: installedWithStatus, marketplaces, assets, configs, tools: getToolInstances() });
+    set({
+      installedPlugins: installedWithStatus,
+      marketplaces,
+      assets,
+      configs,
+      tools: getToolInstances(),
+      managedTools: getManagedToolRows(),
+    });
   },
 
   loadAssets: () => {
@@ -602,6 +893,8 @@ export const useStore = create<Store>((set, get) => ({
   refreshAll: async () => {
     await get().loadMarketplaces();
     await get().loadPiPackages();
+    get().refreshManagedTools();
+    await get().refreshToolDetection();
   },
 
   installPlugin: async (plugin) => {
@@ -708,16 +1001,26 @@ export const useStore = create<Store>((set, get) => ({
 
   toggleToolEnabled: async (toolId, instanceId) => {
     const { notify } = get();
-    const tools = getToolInstances();
-    const tool = tools.find((t) => t.toolId === toolId && t.instanceId === instanceId);
-    if (!tool) {
+    const configuredFromState = get().tools.find((t) => t.toolId === toolId && t.instanceId === instanceId);
+    const configuredTool = configuredFromState || (getToolInstances() || []).find((t) => t.toolId === toolId && t.instanceId === instanceId);
+    const managedTool = get().managedTools.find((t) => t.toolId === toolId && t.instanceId === instanceId);
+    if (!configuredTool && !managedTool) {
       notify(`Unknown tool instance: ${toolId}:${instanceId}`, "error");
       return;
     }
 
-    updateToolInstanceConfig(toolId, instanceId, { enabled: !tool.enabled });
+    const displayName = configuredTool?.name || managedTool?.displayName || `${toolId}:${instanceId}`;
+    const currentEnabled = configuredTool?.enabled ?? managedTool?.enabled ?? false;
+    const currentConfigDir = configuredTool?.configDir || managedTool?.configDir;
+
+    updateToolInstanceConfig(toolId, instanceId, {
+      id: instanceId,
+      name: displayName,
+      configDir: currentConfigDir,
+      enabled: !currentEnabled,
+    });
     await get().refreshAll();
-    notify(`${tool.name} ${tool.enabled ? "disabled" : "enabled"}`, "success");
+    notify(`${displayName} ${currentEnabled ? "disabled" : "enabled"}`, "success");
   },
 
   updateToolConfigDir: async (toolId, instanceId, configDir) => {
@@ -727,10 +1030,18 @@ export const useStore = create<Store>((set, get) => ({
       notify("Config directory cannot be empty.", "error");
       return;
     }
-    updateToolInstanceConfig(toolId, instanceId, { configDir: trimmed });
+
+    const configuredFromState = get().tools.find((t) => t.toolId === toolId && t.instanceId === instanceId);
+    const configuredTool = configuredFromState || (getToolInstances() || []).find((t) => t.toolId === toolId && t.instanceId === instanceId);
+    const managedTool = get().managedTools.find((t) => t.toolId === toolId && t.instanceId === instanceId);
+    updateToolInstanceConfig(toolId, instanceId, {
+      id: instanceId,
+      name: configuredTool?.name || managedTool?.displayName,
+      configDir: trimmed,
+      enabled: configuredTool?.enabled ?? managedTool?.enabled,
+    });
     await get().refreshAll();
-    const tool = get().tools.find((t) => t.toolId === toolId && t.instanceId === instanceId);
-    notify(`Updated ${tool?.name ?? `${toolId}:${instanceId}`} config_dir`, "success");
+    notify(`Updated ${(configuredTool?.name || managedTool?.displayName) ?? `${toolId}:${instanceId}`} config_dir`, "success");
   },
 
   getSyncPreview: () => {
@@ -746,7 +1057,9 @@ export const useStore = create<Store>((set, get) => ({
 
     const assets = get().assets.length > 0 ? get().assets : get().loadAssets();
     const configs = get().configs;
+    const toolSync = buildToolSyncPreview(get().managedTools, get().toolDetection);
     return [
+      ...toolSync,
       ...buildConfigSyncPreview(configs),
       ...buildAssetSyncPreview(assets),
       ...buildSyncPreview(pluginsForSync),
@@ -793,6 +1106,13 @@ export const useStore = create<Store>((set, get) => ({
         const result = await syncConfigInstances(item.config, statuses);
         if (result.success) syncedItems += 1;
         errors.push(...result.errors);
+      } else if (item.kind === "tool") {
+        const success = await get().updateToolAction(item.toolId);
+        if (success) {
+          syncedItems += 1;
+        } else {
+          errors.push(`Failed to update ${item.name}`);
+        }
       }
     }
 
@@ -998,6 +1318,11 @@ export const useStore = create<Store>((set, get) => ({
   openDiffFromSyncItem: (item) => {
     if (item.kind === "plugin") {
       get().notify("Plugins do not support drift diff.", "warning");
+      return;
+    }
+
+    if (item.kind === "tool") {
+      get().notify("Tool updates do not have a diff view.", "warning");
       return;
     }
 
