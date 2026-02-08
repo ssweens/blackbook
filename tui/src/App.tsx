@@ -154,6 +154,15 @@ export function App() {
     marketplaces: false,
   });
 
+  // Refs to break the feedback loop in the sync preview useEffect.
+  // These values are read inside the effect but must NOT be deps,
+  // because the effect itself sets them — listing them as deps
+  // causes infinite re-renders during incremental toolDetection updates.
+  const syncPreviewRef = useRef(syncPreview);
+  syncPreviewRef.current = syncPreview;
+  const syncArmedRef = useRef(syncArmed);
+  syncArmedRef.current = syncArmed;
+
   const getSyncItemKey = (item: SyncPreviewItem) => {
     if (item.kind === "plugin") {
       return `plugin:${item.plugin.marketplace}:${item.plugin.name}`;
@@ -270,10 +279,12 @@ export function App() {
     if (tab !== "sync") return;
     const preview = getSyncPreview();
 
+    // Compare against the ref (not the state dep) to avoid self-triggering.
+    const prev = syncPreviewRef.current;
     const isSame =
-      preview.length === syncPreview.length &&
+      preview.length === prev.length &&
       preview.every((item, index) => {
-        const existing = syncPreview[index];
+        const existing = prev[index];
         if (!existing) return false;
         if (existing.kind !== item.kind) return false;
         if (item.kind === "plugin" && existing.kind === "plugin") {
@@ -318,10 +329,12 @@ export function App() {
       return next;
     });
 
-    if (syncArmed) {
+    if (syncArmedRef.current) {
       setSyncArmed(false);
     }
-  }, [tab, marketplaces, installedPlugins, assets, managedTools, toolDetection, getSyncPreview, syncPreview, syncArmed]);
+    // Only react to input data changes — NOT syncPreview/syncArmed (written here).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, marketplaces, installedPlugins, assets, managedTools, toolDetection]);
 
   useEffect(() => {
     if (!syncArmed) return;
