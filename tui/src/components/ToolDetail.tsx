@@ -1,6 +1,5 @@
 import React from "react";
 import { Box, Text } from "ink";
-import Spinner from "ink-spinner";
 import type { ManagedToolRow, ToolDetectionResult } from "../lib/types.js";
 import { getToolRegistryEntry } from "../lib/tool-registry.js";
 
@@ -28,9 +27,7 @@ export function ToolDetail({ tool, detection, pending }: ToolDetailProps) {
       <Box marginBottom={1}>
         <Text color="gray">Status: </Text>
         {pending ? (
-          <Text color={statusColor}>
-            <Spinner type="dots" /> {statusLabel}
-          </Text>
+          <Text color={statusColor}>↻ {statusLabel}</Text>
         ) : (
           <Text color={statusColor}>{statusLabel}</Text>
         )}

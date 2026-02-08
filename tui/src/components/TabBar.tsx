@@ -8,8 +8,8 @@ interface TabBarProps {
 }
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: "tools", label: "Tools" },
   { id: "sync", label: "Sync" },
+  { id: "tools", label: "Tools" },
   { id: "discover", label: "Discover" },
   { id: "installed", label: "Installed" },
   { id: "marketplaces", label: "Marketplaces" },

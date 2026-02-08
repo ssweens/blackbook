@@ -7,6 +7,8 @@ import { getCacheDir } from "./config.js";
 import { getGitHubToken, isGitHubHost } from "./github.js";
 import type { Marketplace, Plugin } from "./types.js";
 
+export const MARKETPLACE_CACHE_TTL_SECONDS = 600;
+
 function getCachePath(key: string): string {
   const hash = createHash("md5").update(key).digest("hex");
   const cacheDir = join(getCacheDir(), "http_cache");
@@ -295,7 +297,7 @@ function scanLocalPluginContents(pluginDir: string): {
 
 export async function fetchMarketplace(marketplace: Marketplace): Promise<Plugin[]> {
   const cacheKey = `marketplace:${marketplace.url}`;
-  let data = cacheGet(cacheKey, 3600) as MarketplaceJson | null;
+  let data = cacheGet(cacheKey, MARKETPLACE_CACHE_TTL_SECONDS) as MarketplaceJson | null;
 
   if (!data) {
     try {

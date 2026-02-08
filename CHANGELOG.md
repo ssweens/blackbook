@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.12.0] - 2026-02-07
 
 ### Added
 - Tool lifecycle management modules: registry (`tool-registry`), managed tool rows (`tool-view`), binary/version detection (`tool-detect`), and lifecycle command runner (`tool-lifecycle`).
@@ -17,8 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `plans/tool-lifecycle.md` implementation plan for tool install/update/uninstall lifecycle, package-manager behavior, synthetic tool rows, and coverage updates.
 
 ### Changed
+- Sync tab is now first in the tab order (and default initial tab), followed by Tools, Discover, Installed, and Marketplaces.
 - Tools tab now displays install status/version/update badges and supports opening tool detail with `Enter` instead of toggling directly.
 - Tool detection now updates rows incrementally as each tool check completes (instead of waiting for all tools).
+- Tools tab now shows a global progress indicator while tool status detection is still running, and clears it only after all tool checks complete.
+- Tab-enter refresh now updates Discover/Installed/Marketplaces/Tools data so external changes are picked up without restarting, with a 30-second per-tab TTL to reduce repeated refetching while navigating.
+- Added manual `R` refresh shortcut to reload current tab data.
+- Added a global loading indicator across tabs (including Sync) while refresh operations are running.
+- Reduced refresh flicker by keeping existing tab content visible during background refresh; full loading placeholders now only show when the tab has no data yet.
 - Pi package detail now shows compact content counts (extensions, skills, prompts, themes) instead of rendering full item lists.
 
 ### Fixed
@@ -39,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Move scroll indicators to section headings as range text (e.g., "Configs (showing 1-2 of 4)")
 - Remove layout-shifting ↑/↓ indicators from PluginList, AssetList, ConfigList, and PiPackageList
 - Fix plugins showing as not installed when supporting tool is disabled (now always show installed if on disk)
+- Reduce remote marketplace cache TTL to 10 minutes and surface cache-window info in marketplace detail.
 
 ## [0.10.1] - 2026-02-01
 

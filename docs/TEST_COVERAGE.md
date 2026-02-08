@@ -83,7 +83,10 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [ ] Sync → tool update item selected → updates binary version status
 - [ ] Marketplaces → add marketplace → appears in list and discover results
 - [ ] Marketplaces → update marketplace → updated timestamp shown
+- [ ] Manual tab refresh (`R`) reloads current tab data
 - [ ] Tools → toggle enabled → tool list reflects new status
+- [ ] Tools → detection in progress shows global checking indicator until all tool checks complete
+- [ ] Global loading indicator appears across tabs (including Sync) during refresh operations
 - [ ] Search + sort → filters and ordering update list correctly
 - [x] Drifted asset → View diff → shows file list with +N/-N counts
 - [x] Drifted config → View diff → shows multi-file list with counts

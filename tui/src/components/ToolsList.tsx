@@ -1,6 +1,5 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
-import Spinner from "ink-spinner";
 import type { ManagedToolRow, ToolDetectionResult } from "../lib/types.js";
 
 interface ToolsListProps {
@@ -20,6 +19,12 @@ export function ToolsList({
   actionInProgress,
   maxHeight = 12,
 }: ToolsListProps) {
+  const pendingCount = useMemo(
+    () => Object.values(detectionPending).filter((isPending) => isPending).length,
+    [detectionPending]
+  );
+  const totalChecks = useMemo(() => Object.keys(detectionPending).length, [detectionPending]);
+
   const { visibleTools, startIndex, hasMore, hasPrev } = useMemo(() => {
     if (tools.length <= maxHeight) {
       return {
@@ -53,6 +58,15 @@ export function ToolsList({
         <Text bold>Manage tools</Text>
       </Box>
 
+      {pendingCount > 0 && (
+        <Box marginBottom={1}>
+          <Text color="cyan">
+            ↻ Checking tool statuses… {pendingCount} remaining
+            {totalChecks > 0 ? ` (${totalChecks - pendingCount}/${totalChecks} complete)` : ""}
+          </Text>
+        </Box>
+      )}
+
       {hasPrev && (
         <Box>
           <Text color="gray">  ↑ {startIndex} more above</Text>
@@ -85,9 +99,7 @@ export function ToolsList({
               <Text color={enabledColor}>{enabledLabel}</Text>
               <Text> </Text>
               {loading ? (
-                <Text color="gray">
-                  <Spinner type="dots" />
-                </Text>
+                <Text color="gray">⟳</Text>
               ) : (
                 <Text color={status.color}>{status.icon}</Text>
               )}

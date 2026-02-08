@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo, useRef } from "react";
 import { Box, Text, useInput, useApp } from "ink";
 import { useStore } from "./lib/store.js";
 import { TabBar } from "./components/TabBar.js";
@@ -37,7 +37,8 @@ import { getToolRegistryEntry } from "./lib/tool-registry.js";
 import { getPackageManager } from "./lib/config.js";
 import type { Tab, SyncPreviewItem, Plugin, Asset, ConfigFile, PiPackage, DiffInstanceRef, DiscoverSection, DiscoverSubView, ManagedToolRow } from "./lib/types.js";
 
-const TABS: Tab[] = ["tools", "sync", "discover", "installed", "marketplaces"];
+const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces"];
+const TAB_REFRESH_TTL_MS = 30000;
 
 export function App() {
   const { exit } = useApp();
@@ -69,6 +70,9 @@ export function App() {
     setDetailConfig,
     setDetailMarketplace,
     loadMarketplaces,
+    loadInstalledPlugins,
+    refreshManagedTools,
+    refreshToolDetection,
     installPlugin: doInstall,
     uninstallPlugin: doUninstall,
     updatePlugin: doUpdate,
@@ -133,6 +137,22 @@ export function App() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [searchFocused, setSearchFocused] = useState(false);
   const [subViewIndex, setSubViewIndex] = useState(0);
+  const [tabRefreshInProgress, setTabRefreshInProgress] = useState(false);
+  const tabRefreshCounterRef = useRef(0);
+  const lastTabRefreshRef = useRef<Record<Tab, number>>({
+    sync: 0,
+    tools: 0,
+    discover: 0,
+    installed: 0,
+    marketplaces: 0,
+  });
+  const tabRefreshInFlightRef = useRef<Record<Tab, boolean>>({
+    sync: false,
+    tools: false,
+    discover: false,
+    installed: false,
+    marketplaces: false,
+  });
 
   const getSyncItemKey = (item: SyncPreviewItem) => {
     if (item.kind === "plugin") {
@@ -176,66 +196,132 @@ export function App() {
     return `(showing ${start + 1}-${end} of ${totalCount})`;
   };
 
+  const refreshTabData = async (targetTab: Tab, options?: { force?: boolean }) => {
+    const force = options?.force === true;
+    const now = Date.now();
+
+    if (tabRefreshInFlightRef.current[targetTab]) {
+      return;
+    }
+
+    if (!force) {
+      const lastRefresh = lastTabRefreshRef.current[targetTab];
+      if (now - lastRefresh < TAB_REFRESH_TTL_MS) {
+        return;
+      }
+    }
+
+    tabRefreshInFlightRef.current[targetTab] = true;
+    tabRefreshCounterRef.current += 1;
+    setTabRefreshInProgress(true);
+
+    let refreshed = false;
+    try {
+      if (targetTab === "discover") {
+        await loadMarketplaces();
+        await loadPiPackages();
+        refreshed = true;
+        return;
+      }
+
+      if (targetTab === "installed") {
+        await loadInstalledPlugins();
+        await loadPiPackages();
+        refreshed = true;
+        return;
+      }
+
+      if (targetTab === "tools") {
+        refreshManagedTools();
+        await refreshToolDetection();
+        refreshed = true;
+        return;
+      }
+
+      if (targetTab === "marketplaces") {
+        await loadMarketplaces();
+        await loadPiPackages();
+        refreshed = true;
+        return;
+      }
+
+      await refreshAll();
+      refreshed = true;
+    } catch (error) {
+      notify(`Failed to refresh ${targetTab} tab: ${error instanceof Error ? error.message : String(error)}`, "error");
+    } finally {
+      if (refreshed) {
+        lastTabRefreshRef.current[targetTab] = Date.now();
+      }
+      tabRefreshInFlightRef.current[targetTab] = false;
+      tabRefreshCounterRef.current -= 1;
+      if (tabRefreshCounterRef.current <= 0) {
+        tabRefreshCounterRef.current = 0;
+        setTabRefreshInProgress(false);
+      }
+    }
+  };
+
   useEffect(() => {
-    refreshAll();
-  }, []);
+    void refreshTabData(tab);
+  }, [tab]);
 
   useEffect(() => {
     if (tab !== "sync") return;
     const preview = getSyncPreview();
-    setSyncPreview((current) => {
-      const isSame =
-        preview.length === current.length &&
-        preview.every((item, index) => {
-          const existing = current[index];
-          if (!existing) return false;
-          if (existing.kind !== item.kind) return false;
-          if (item.kind === "plugin" && existing.kind === "plugin") {
-            return (
-              existing.plugin.name === item.plugin.name &&
-              existing.missingInstances.join("|") === item.missingInstances.join("|")
-            );
-          }
-          if (item.kind === "asset" && existing.kind === "asset") {
-            return (
-              existing.asset.name === item.asset.name &&
-              existing.missingInstances.join("|") === item.missingInstances.join("|") &&
-              existing.driftedInstances.join("|") === item.driftedInstances.join("|")
-            );
-          }
-          if (item.kind === "config" && existing.kind === "config") {
-            return (
-              existing.config.name === item.config.name &&
-              existing.config.toolId === item.config.toolId &&
-              existing.missing === item.missing &&
-              existing.drifted === item.drifted
-            );
-          }
-          if (item.kind === "tool" && existing.kind === "tool") {
-            return (
-              existing.toolId === item.toolId &&
-              existing.installedVersion === item.installedVersion &&
-              existing.latestVersion === item.latestVersion
-            );
-          }
-          return false;
-        });
-      return isSame ? current : preview;
-    });
-    setSyncSelection((current) => {
+
+    const isSame =
+      preview.length === syncPreview.length &&
+      preview.every((item, index) => {
+        const existing = syncPreview[index];
+        if (!existing) return false;
+        if (existing.kind !== item.kind) return false;
+        if (item.kind === "plugin" && existing.kind === "plugin") {
+          return (
+            existing.plugin.name === item.plugin.name &&
+            existing.missingInstances.join("|") === item.missingInstances.join("|")
+          );
+        }
+        if (item.kind === "asset" && existing.kind === "asset") {
+          return (
+            existing.asset.name === item.asset.name &&
+            existing.missingInstances.join("|") === item.missingInstances.join("|") &&
+            existing.driftedInstances.join("|") === item.driftedInstances.join("|")
+          );
+        }
+        if (item.kind === "config" && existing.kind === "config") {
+          return (
+            existing.config.name === item.config.name &&
+            existing.config.toolId === item.config.toolId &&
+            existing.missing === item.missing &&
+            existing.drifted === item.drifted
+          );
+        }
+        if (item.kind === "tool" && existing.kind === "tool") {
+          return (
+            existing.toolId === item.toolId &&
+            existing.installedVersion === item.installedVersion &&
+            existing.latestVersion === item.latestVersion
+          );
+        }
+        return false;
+      });
+
+    if (isSame) return;
+
+    setSyncPreview(preview);
+    setSyncSelection(() => {
       const next = new Set<string>();
       for (const item of preview) {
-        const key = getSyncItemKey(item);
-        if (current.has(key)) {
-          next.add(key);
-        } else {
-          next.add(key);
-        }
+        next.add(getSyncItemKey(item));
       }
       return next;
     });
-    setSyncArmed(false);
-  }, [tab, marketplaces, installedPlugins, assets, managedTools, toolDetection, getSyncPreview]);
+
+    if (syncArmed) {
+      setSyncArmed(false);
+    }
+  }, [tab, marketplaces, installedPlugins, assets, managedTools, toolDetection, getSyncPreview, syncPreview, syncArmed]);
 
   useEffect(() => {
     if (!syncArmed) return;
@@ -481,27 +567,34 @@ export function App() {
   }, [detailToolKey, managedTools]);
 
   const activeToolForModal = detailTool || selectedManagedTool;
+  const pendingToolDetectionCount = useMemo(
+    () => Object.values(toolDetectionPending).filter((isPending) => isPending).length,
+    [toolDetectionPending]
+  );
 
   const toolsHint = useMemo(() => {
     if (tab !== "tools") return undefined;
     if (toolActionInProgress) return "(Tool action running... Esc to cancel)";
+    if (pendingToolDetectionCount > 0) {
+      return `(Checking tool statuses... ${pendingToolDetectionCount} remaining · R refresh)`;
+    }
     if (detailTool) {
-      return "i Install · u Update · d Uninstall · e Edit · Space Toggle · Esc Back";
+      return "i Install · u Update · d Uninstall · e Edit · Space Toggle · R Refresh · Esc Back";
     }
 
     if (!selectedManagedTool) {
-      return "Enter detail · e edit · Space toggle · q quit";
+      return "Enter detail · e edit · Space toggle · R refresh · q quit";
     }
 
     const detection = toolDetection[selectedManagedTool.toolId];
     if (!detection?.installed) {
-      return "Enter detail · i Install · e Edit · Space Toggle · q quit";
+      return "Enter detail · i Install · e Edit · Space Toggle · R refresh · q quit";
     }
     if (detection.hasUpdate) {
-      return "Enter detail · u Update · d Uninstall · e Edit · Space Toggle · q quit";
+      return "Enter detail · u Update · d Uninstall · e Edit · Space Toggle · R refresh · q quit";
     }
-    return "Enter detail · d Uninstall · e Edit · Space Toggle · q quit";
-  }, [tab, toolActionInProgress, detailTool, selectedManagedTool, toolDetection]);
+    return "Enter detail · d Uninstall · e Edit · Space Toggle · R refresh · q quit";
+  }, [tab, toolActionInProgress, pendingToolDetectionCount, detailTool, selectedManagedTool, toolDetection]);
 
   const selectedLibraryItem = useMemo(
     ():
@@ -644,6 +737,12 @@ export function App() {
 
     // Don't handle input when modal is open (modal handles its own input)
     if (showAddMarketplace || editingToolId) {
+      return;
+    }
+
+    // Manual refresh of current tab
+    if (input === "R") {
+      void refreshTabData(tab, { force: true });
       return;
     }
 
@@ -1232,6 +1331,28 @@ export function App() {
     ? "Loading..."
     : `${allPlugins.length} plugins, ${piPackages.length} pi-pkgs, ${assets.length} assets, ${configs.length} configs from ${marketplaces.length} marketplaces`;
 
+  const showGlobalLoadingIndicator = loading || tabRefreshInProgress;
+  const shouldShowDiscoverLoading =
+    loading && marketplaces.length === 0 && assets.length === 0 && configs.length === 0 && piPackages.length === 0;
+  const shouldShowInstalledLoading =
+    loading &&
+    installedPlugins.length === 0 &&
+    assets.filter((asset) => asset.installed).length === 0 &&
+    configs.filter((config) => config.installed).length === 0 &&
+    piPackages.filter((pkg) => pkg.installed).length === 0;
+  const shouldShowMarketplacesLoading = loading && marketplaces.length === 0 && piMarketplaces.length === 0;
+
+  const refreshTabLabel =
+    tab === "discover"
+      ? "Discover"
+      : tab === "installed"
+        ? "Installed"
+        : tab === "marketplaces"
+          ? "Marketplaces"
+          : tab === "tools"
+            ? "Tools"
+            : "Sync";
+
   const handleAddMarketplace = (name: string, url: string) => {
     addMarketplace(name, url);
     setShowAddMarketplace(false);
@@ -1306,6 +1427,14 @@ export function App() {
   return (
     <Box flexDirection="column" padding={1}>
       <TabBar activeTab={tab} onTabChange={setTab} />
+
+      <Box marginBottom={1}>
+        {showGlobalLoadingIndicator ? (
+          <Text color="cyan">↻ {tabRefreshInProgress ? `Refreshing ${refreshTabLabel}...` : "Loading..."}</Text>
+        ) : (
+          <Text color="gray"> </Text>
+        )}
+      </Box>
 
       {/* Diff view overlay */}
       {diffTarget ? (
@@ -1406,7 +1535,7 @@ export function App() {
 
           {tab === "discover" && (
             <>
-              {loading ? (
+              {shouldShowDiscoverLoading ? (
                 <Box marginY={1}>
                   <Text color="cyan">⠋ Loading plugins from marketplaces...</Text>
                 </Box>
@@ -1500,7 +1629,7 @@ export function App() {
 
           {tab === "installed" && (
             <>
-              {loading ? (
+              {shouldShowInstalledLoading ? (
                 <Box marginY={1}>
                   <Text color="cyan">⠋ Loading installed plugins...</Text>
                 </Box>
@@ -1575,7 +1704,7 @@ export function App() {
 
           {tab === "marketplaces" && (
             <>
-              {loading ? (
+              {shouldShowMarketplacesLoading ? (
                 <Box marginY={1}>
                   <Text color="cyan">⠋ Loading marketplaces...</Text>
                 </Box>

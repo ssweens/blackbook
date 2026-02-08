@@ -1,6 +1,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import type { Marketplace, Plugin } from "../lib/types.js";
+import { MARKETPLACE_CACHE_TTL_SECONDS } from "../lib/marketplace.js";
 
 interface MarketplaceDetailProps {
   marketplace: Marketplace;
@@ -38,6 +39,12 @@ export function MarketplaceDetail({ marketplace, selectedIndex }: MarketplaceDet
       <Box marginBottom={1}>
         <Text color="gray">{marketplace.url}</Text>
       </Box>
+
+      {!marketplace.isLocal && (
+        <Box marginBottom={1}>
+          <Text color="gray">Remote data may be cached for up to {Math.floor(MARKETPLACE_CACHE_TTL_SECONDS / 60)} minutes.</Text>
+        </Box>
+      )}
 
       <Box marginBottom={1}>
         <Text>{marketplace.availableCount} available plugins</Text>

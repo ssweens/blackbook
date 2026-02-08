@@ -1,6 +1,6 @@
 {
   "name": "@ssweens/blackbook",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Plugin manager for AI coding tools",
   "license": "Apache-2.0",
   "repository": {
@@ -62,5 +62,6 @@
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
     "vitest": "^4.0.18"
-  }
+  },
+  "packageManager": "pnpm@10.28.2+sha512.41872f037ad22f7348e3b1debbaf7e867cfd448f2726d9cf74c08f19507c31d2c8e7a11525b983febc2df640b5438dee6023ebb1f84ed43cc2d654d2bc326264"
 }

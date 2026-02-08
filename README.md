@@ -24,7 +24,7 @@ Plugin manager for agentic coding tools built with React/Ink. Install skills, co
 - **Unified plugin management** — Install skills, commands, agents, hooks, MCP/LSP servers across tools
 - **Marketplace support** — Browse and install from official and community marketplaces
 - **Pi packages** — Built-in npm marketplace for Pi coding agent extensions, themes, and custom tools
-- **TUI interface** — Interactive terminal UI with tabs for Discover, Installed, Marketplaces, Tools, and Sync
+- **TUI interface** — Interactive terminal UI with tabs for Sync, Tools, Discover, Installed, and Marketplaces
 - **Cross-tool sync** — Install plugins to multiple tools at once, detect incomplete installs
 
 ## Plugin Model
@@ -76,6 +76,8 @@ Launch the TUI:
 cd ~/src/blackbook/tui && pnpm start
 ```
 
+Blackbook opens on the **Sync** tab by default.
+
 ### Navigation
 
 | Key | Action |
@@ -86,15 +88,18 @@ cd ~/src/blackbook/tui && pnpm start
 | Space | Install/uninstall selected plugin |
 | / | Focus search (Discover/Installed) |
 | d | View diff for drifted item (Sync tab) |
+| R | Refresh current tab data |
 | Esc | Back from details or exit search |
 | q | Quit |
 
 ### Shortcuts
 
-- **Discover/Installed**: `s` cycle sort (name/installed), `r` reverse sort
-- **Marketplaces**: `u` update marketplace, `r` remove marketplace
-- **Tools**: `Enter` open detail, `i` install, `u` update, `d` uninstall, `Space` toggle enabled, `e` edit config dir
-- **Sync**: `y` sync selected items (missing/drifted assets/configs/plugins and tool updates; press twice to confirm)
+- **Discover/Installed**: `s` cycle sort (name/installed), `r` reverse sort, `R` refresh tab data
+- **Marketplaces**: `u` update marketplace, `r` remove marketplace, `R` refresh all marketplaces/packages
+- **Tools**: `Enter` open detail, `i` install, `u` update, `d` uninstall, `Space` toggle enabled, `e` edit config dir, `R` refresh detection
+- **Sync**: `y` sync selected items (missing/drifted assets/configs/plugins and tool updates; press twice to confirm), `R` refresh sync inputs
+
+Blackbook also refreshes data when entering tabs (Discover, Installed, Marketplaces, Tools), throttled with a 30-second TTL per tab to avoid constant refetching/flicker while navigating. A loading indicator is shown across tabs (including Sync) while refresh is in progress.
 
 ## Configuration
 
@@ -376,7 +381,7 @@ From Tools you can:
 
 If a tool has no configured instance yet, Blackbook shows a "Not configured" synthetic row so lifecycle actions are still available.
 
-Detection runs per-tool and updates rows incrementally with a spinner while each tool's version/status is loading.
+Detection runs per-tool and updates rows incrementally with a spinner while each tool's version/status is loading. The Tools tab also shows a global "Checking tool statuses" indicator until all tool checks complete.
 
 For updates, Blackbook uses tool-native upgrade commands when available (e.g. `claude update`, `amp update`, `opencode upgrade`) to keep the active PATH binary in sync. Claude install uses the official installer script (`curl -fsSL https://claude.ai/install.sh | bash`).
 
@@ -426,6 +431,8 @@ Downloaded plugins and HTTP cache are stored in:
 └── http_cache/        # Cached marketplace data
 └── assets/            # Cached asset URL sources
 ```
+
+Remote plugin marketplace responses are cached for up to 10 minutes before refetch.
 
 ## Development
 

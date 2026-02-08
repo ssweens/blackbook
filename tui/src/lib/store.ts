@@ -309,7 +309,7 @@ function appendToolOutput(existing: string[], chunk: string): string[] {
 }
 
 export const useStore = create<Store>((set, get) => ({
-  tab: "discover",
+  tab: "sync",
   marketplaces: [],
   installedPlugins: [],
   assets: [],
@@ -701,7 +701,14 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   loadMarketplaces: async () => {
-    set({ loading: true, error: null });
+    set((state) => ({
+      loading:
+        state.marketplaces.length === 0 &&
+        state.installedPlugins.length === 0 &&
+        state.assets.length === 0 &&
+        state.configs.length === 0,
+      error: null,
+    }));
 
     try {
       const marketplaces = parseMarketplaces();
