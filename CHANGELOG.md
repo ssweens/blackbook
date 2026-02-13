@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-02-12
+
+### Added
+- Reverse sync (pull back) for configs: press `p` in diff view to copy drifted instance files back to the source repo, making the instance version the new source of truth.
+- Source/target legend in diff views showing which side is the instance and which is the source repo.
+
+### Fixed
+- Tool shortcuts (`d`, `y`, etc.) from Sync tab no longer conflict when diff/missing overlays are open.
+- Spinner output stacking no longer causes duplicate status lines during concurrent tool detection.
+
 ## [0.12.1] - 2026-02-07
 
 ### Fixed
@@ -321,7 +331,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Symlink handling for plugin assets
 
-[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/ssweens/blackbook/compare/v0.12.1...v0.13.0
+[0.12.1]: https://github.com/ssweens/blackbook/compare/v0.12.0...v0.12.1
+[0.12.0]: https://github.com/ssweens/blackbook/compare/v0.10.1...v0.12.0
 [0.10.1]: https://github.com/ssweens/blackbook/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/ssweens/blackbook/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/ssweens/blackbook/compare/v0.8.0...v0.9.0
