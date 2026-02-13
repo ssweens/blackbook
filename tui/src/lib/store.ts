@@ -295,13 +295,56 @@ function formatDetectedVersion(version: string | null): string {
   return version ? `v${version}` : "unknown";
 }
 
+/** Strip ANSI escape sequences so Ink doesn't re-interpret raw codes. */
+function stripAnsi(str: string): string {
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+}
+
+/**
+ * Append process output while handling carriage-return (\r) correctly.
+ *
+ * Terminal spinners (npm, pip, etc.) emit `\rNew text` to overwrite the
+ * current line in-place.  The previous implementation only split on `\n`,
+ * so every spinner frame was appended as a separate line, causing the
+ * "stacking Upgrading" bug.
+ *
+ * Rules:
+ *  - `\n` → new line (append)
+ *  - bare `\r` (no following `\n`) → carriage return (replace last line)
+ */
 function appendToolOutput(existing: string[], chunk: string): string[] {
-  const lines = chunk
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-  if (lines.length === 0) return existing;
-  const next = [...existing, ...lines];
+  if (!chunk) return existing;
+
+  const clean = stripAnsi(chunk);
+  const next = [...existing];
+  const hasCarriageReturn = clean.includes("\r");
+
+  // Split on actual newlines first
+  const segments = clean.split("\n");
+
+  for (let i = 0; i < segments.length; i++) {
+    let seg = segments[i];
+
+    // Within a segment, \r means "go back to start of line".
+    // Keep only the text after the last \r (what the terminal would show).
+    if (seg.includes("\r")) {
+      const parts = seg.split("\r");
+      seg = parts.filter((p) => p.length > 0).pop() || "";
+    }
+
+    const trimmed = seg.trim();
+    if (trimmed.length === 0) continue;
+
+    // First segment of a \r-containing chunk replaces the last output line
+    // (simulates the terminal overwriting the current line).
+    if (hasCarriageReturn && next.length > 0 && i === 0) {
+      next[next.length - 1] = trimmed;
+    } else {
+      next.push(trimmed);
+    }
+  }
+
   if (next.length <= TOOL_OUTPUT_MAX_LINES) {
     return next;
   }

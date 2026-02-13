@@ -1101,7 +1101,7 @@ export function App() {
     }
 
     // Shortcuts
-    if (tab === "tools") {
+    if (tab === "tools" || detailTool) {
       const tool = detailTool || managedTools[selectedIndex];
       const detection = tool ? toolDetection[tool.toolId] : null;
 
