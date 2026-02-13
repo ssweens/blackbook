@@ -21,7 +21,7 @@ import { join, dirname, resolve, basename } from "path";
 import { tmpdir, homedir } from "os";
 import { expandPath, getCacheDir, getEnabledToolInstances, getToolInstances, getConfigRepoPath, resolveAssetSourcePath } from "./config.js";
 import { getGitHubToken, isGitHubHost } from "./github.js";
-import type { Asset, AssetConfig, Plugin, InstalledItem, ToolInstance, ConfigSyncConfig, ConfigFile, ConfigSourceFile, ConfigMapping } from "./types.js";
+import type { Asset, AssetConfig, Plugin, InstalledItem, ToolInstance, ConfigSyncConfig, ConfigFile, ConfigSourceFile, ConfigMapping, DiffInstanceRef } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
 import {
   safePath,
@@ -2220,6 +2220,69 @@ async function installConfigToInstance(
   } catch (error) {
     return { count: 0, error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+export interface ReverseSyncResult {
+  success: boolean;
+  syncedFiles: number;
+  errors: string[];
+}
+
+export function reverseSyncConfig(
+  config: ConfigFile,
+  instance: DiffInstanceRef
+): ReverseSyncResult {
+  const result: ReverseSyncResult = { success: false, syncedFiles: 0, errors: [] };
+  const sourceFiles = config.sourceFiles || [];
+
+  if (sourceFiles.length === 0) {
+    result.errors.push("No source files found for config.");
+    return result;
+  }
+
+  const backupOwner = normalizeBackupLabel(config.name);
+
+  for (const file of sourceFiles) {
+    const targetPath = join(instance.configDir, file.targetPath);
+
+    if (!existsSync(targetPath)) {
+      continue;
+    }
+
+    // Check if files actually differ
+    try {
+      const targetHash = hashFile(targetPath);
+      if (targetHash === file.hash) {
+        continue; // Already in sync
+      }
+    } catch {
+      // Can't hash target, skip this file
+      result.errors.push(`Failed to read instance file: ${targetPath}`);
+      continue;
+    }
+
+    try {
+      // Back up current source file before overwriting
+      const backupName = normalizeBackupLabel(
+        `${config.name}-${basename(file.sourcePath)}-pullback`
+      );
+      copyWithBackup(file.sourcePath, file.sourcePath, backupOwner, "config-pullback", backupName);
+
+      // Now overwrite source with instance version
+      // copyWithBackup just moved the source to backup, so the dest (sourcePath) is gone —
+      // we can simply copy the instance file there
+      mkdirSync(dirname(file.sourcePath), { recursive: true });
+      copyFileSync(targetPath, file.sourcePath);
+      result.syncedFiles++;
+    } catch (error) {
+      result.errors.push(
+        `Failed to pull back ${file.targetPath}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  result.success = result.syncedFiles > 0;
+  return result;
 }
 
 export async function syncConfigInstances(

@@ -35,6 +35,7 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Tool binary/version detection adapters (`which`, `--version`, `npm view`)
 - [x] Tool lifecycle command adapters (install/update/uninstall with timeout/cancel)
 - [ ] Marketplace add/remove persistence
+- [ ] Reverse config sync (instance → source with backup)
 
 ## Config & Asset Path Tests (asset-paths.test.ts)
 - [x] `assets_repo` config parsing from sync section
@@ -92,6 +93,9 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Drifted config → View diff → shows multi-file list with counts
 - [ ] Sync tab → press 'd' on drifted item → opens diff view
 - [ ] Sync tab → press 'd' on missing item → opens missing summary
+- [ ] Diff view → press 'p' on config diff → pulls instance files back to source repo
+- [ ] Reverse sync backs up source file before overwriting
+- [ ] Reverse sync skips files that are already in sync
 
 ## User Journeys (Problem Paths)
 - [x] Install failure surfaces error notification without leaving detail view

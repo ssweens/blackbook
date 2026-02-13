@@ -7,11 +7,12 @@ import { DiffDetail } from "./DiffDetail.js";
 interface DiffViewProps {
   target: DiffTarget;
   onClose: () => void;
+  onPullBack?: () => void;
 }
 
 type Step = "files" | "detail";
 
-export function DiffView({ target, onClose }: DiffViewProps) {
+export function DiffView({ target, onClose, onPullBack }: DiffViewProps) {
   // Skip file list if only one file - go directly to detail
   const singleFile = target.files.length === 1;
   const initialStep: Step = singleFile ? "detail" : "files";
@@ -39,6 +40,9 @@ export function DiffView({ target, onClose }: DiffViewProps) {
         onClose();
       }
     }
+    if (input === "p" && onPullBack) {
+      onPullBack();
+    }
   });
 
   if (step === "detail" && selectedFile) {
@@ -55,6 +59,7 @@ export function DiffView({ target, onClose }: DiffViewProps) {
             setSelectedFileIndex(null);
           }
         }}
+        onPullBack={onPullBack}
       />
     );
   }
@@ -70,6 +75,7 @@ export function DiffView({ target, onClose }: DiffViewProps) {
         setStep("detail");
       }}
       onClose={onClose}
+      onPullBack={onPullBack}
     />
   );
 }

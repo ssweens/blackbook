@@ -20,6 +20,7 @@ Plugin manager for agentic coding tools built with React/Ink. Install skills, co
 - **Unified AGENTS.md/CLAUDE.md management** — Sync shared instruction files across tools with per-tool target overrides
 - **Config file syncing** — Sync tool-specific configs (settings, themes, keybindings) from a central repository
 - **Drift detection & diff view** — SHA256-based drift detection with unified diff viewing for changed files
+- **Reverse sync (pull back)** — Pull drifted config changes from deployed instances back to the source repo
 - **Multi-file sync** — Directory and glob pattern support for syncing multiple files at once
 - **Unified plugin management** — Install skills, commands, agents, hooks, MCP/LSP servers across tools
 - **Marketplace support** — Browse and install from official and community marketplaces
@@ -88,6 +89,7 @@ Blackbook opens on the **Sync** tab by default.
 | Space | Install/uninstall selected plugin |
 | / | Focus search (Discover/Installed) |
 | d | View diff for drifted item (Sync tab) |
+| p | Pull back config changes to source (Diff view) |
 | R | Refresh current tab data |
 | Esc | Back from details or exit search |
 | q | Quit |

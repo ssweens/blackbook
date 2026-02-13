@@ -65,6 +65,7 @@ import {
   getConfigToolStatus,
   syncConfigInstances,
   getConfigSourceFiles,
+  reverseSyncConfig,
   manifestPath,
 } from "./install.js";
 
@@ -117,6 +118,7 @@ interface Actions {
   openMissingSummaryForAsset: (asset: Asset, instance?: DiffInstanceRef) => void;
   openMissingSummaryForConfig: (config: ConfigFile, instance?: DiffInstanceRef) => void;
   openDiffFromSyncItem: (item: SyncPreviewItem) => void;
+  reverseSyncConfig: (config: ConfigFile, instance: DiffInstanceRef) => void;
   closeDiff: () => void;
   closeMissingSummary: () => void;
   getDriftedInstances: (item: Asset | ConfigFile, kind: "asset" | "config") => DiffInstanceRef[];
@@ -1398,6 +1400,21 @@ export const useStore = create<Store>((set, get) => ({
         get().notify("No diff or missing summary available for this config.", "warning");
       }
     }
+  },
+
+  reverseSyncConfig: (config, instance) => {
+    const { notify } = get();
+    const result = reverseSyncConfig(config, instance);
+    if (result.success) {
+      notify(`Pulled back ${result.syncedFiles} file${result.syncedFiles === 1 ? "" : "s"} to source`, "success");
+    } else {
+      notify(`Pull back failed: ${result.errors.join("; ") || "no drifted files found"}`, "error");
+    }
+    if (result.errors.length > 0 && result.success) {
+      notify(`Pull back warnings: ${result.errors.join("; ")}`, "warning");
+    }
+    set({ diffTarget: null, diffSourceConfig: null });
+    void get().refreshAll();
   },
 
   closeDiff: () => {

@@ -93,6 +93,7 @@ export function App() {
     clearNotification,
     // Diff view
     diffTarget,
+    diffSourceConfig,
     missingSummary,
     missingSummarySourceAsset,
     missingSummarySourceConfig,
@@ -101,6 +102,7 @@ export function App() {
     openMissingSummaryForAsset,
     openMissingSummaryForConfig,
     openDiffFromSyncItem,
+    reverseSyncConfig: doReverseSyncConfig,
     closeDiff,
     closeMissingSummary,
     getMissingInstances,
@@ -1454,6 +1456,7 @@ export function App() {
         <DiffView
           target={diffTarget}
           onClose={closeDiff}
+          onPullBack={diffSourceConfig ? () => doReverseSyncConfig(diffSourceConfig, diffTarget.instance) : undefined}
         />
       ) : missingSummary ? (
         <MissingSummaryView

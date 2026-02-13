@@ -8,11 +8,12 @@ interface DiffDetailProps {
   title: string;
   instanceName: string;
   onBack: () => void;
+  onPullBack?: () => void;
 }
 
 const MAX_VISIBLE_LINES = 20;
 
-export function DiffDetail({ file, title, instanceName, onBack }: DiffDetailProps) {
+export function DiffDetail({ file, title, instanceName, onBack, onPullBack }: DiffDetailProps) {
   const [scrollOffset, setScrollOffset] = useState(0);
 
   // Compute full diff on demand
@@ -61,7 +62,7 @@ export function DiffDetail({ file, title, instanceName, onBack }: DiffDetailProp
           <Text color="yellow">Binary files differ</Text>
         </Box>
         <Box>
-          <Text color="gray">Esc back</Text>
+          <Text color="gray">{onPullBack ? "p pull to source · " : ""}Esc back</Text>
         </Box>
       </Box>
     );
@@ -81,7 +82,7 @@ export function DiffDetail({ file, title, instanceName, onBack }: DiffDetailProp
           <Text color="green">✓ No differences</Text>
         </Box>
         <Box>
-          <Text color="gray">Esc back</Text>
+          <Text color="gray">{onPullBack ? "p pull to source · " : ""}Esc back</Text>
         </Box>
       </Box>
     );
@@ -111,6 +112,11 @@ export function DiffDetail({ file, title, instanceName, onBack }: DiffDetailProp
         )}
       </Box>
 
+      <Box marginBottom={1}>
+        <Text color="red">-</Text><Text color="gray" dimColor> instance ({instanceName})  </Text>
+        <Text color="green">+</Text><Text color="gray" dimColor> source repo</Text>
+      </Box>
+
       <Box flexDirection="column" marginBottom={1}>
         {visibleLines.map((line, i) => {
           if (line.type === "header") {
@@ -131,7 +137,7 @@ export function DiffDetail({ file, title, instanceName, onBack }: DiffDetailProp
       </Box>
 
       <Box>
-        <Text color="gray">↑/↓ scroll · PgUp/PgDn jump · Esc back</Text>
+        <Text color="gray">↑/↓ scroll · PgUp/PgDn jump{onPullBack ? " · p pull to source" : ""} · Esc back</Text>
       </Box>
     </Box>
   );

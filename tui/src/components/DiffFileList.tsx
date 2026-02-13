@@ -8,6 +8,7 @@ interface DiffFileListProps {
   files: DiffFileSummary[];
   onSelect: (index: number) => void;
   onClose: () => void;
+  onPullBack?: () => void;
 }
 
 function statusIcon(status: DiffFileSummary["status"]): { icon: string; color: string } {
@@ -23,7 +24,7 @@ function statusIcon(status: DiffFileSummary["status"]): { icon: string; color: s
   }
 }
 
-export function DiffFileList({ title, instanceName, files, onSelect, onClose }: DiffFileListProps) {
+export function DiffFileList({ title, instanceName, files, onSelect, onClose, onPullBack }: DiffFileListProps) {
   const [selected, setSelected] = useState(0);
 
   useInput((input, key) => {
@@ -35,6 +36,8 @@ export function DiffFileList({ title, instanceName, files, onSelect, onClose }: 
       if (files.length > 0) {
         onSelect(selected);
       }
+    } else if (input === "p" && onPullBack) {
+      onPullBack();
     } else if (key.escape) {
       onClose();
     }
@@ -99,13 +102,17 @@ export function DiffFileList({ title, instanceName, files, onSelect, onClose }: 
       </Box>
 
       <Box>
-        <Text color="gray">↑/↓ navigate · Enter view diff · Esc back</Text>
+        <Text color="gray">↑/↓ navigate · Enter view diff{onPullBack ? " · p pull to source" : ""} · Esc back</Text>
       </Box>
 
-      <Box marginTop={1}>
+      <Box marginTop={1} flexDirection="column">
         <Text color="gray" dimColor>
-          Legend: [M] modified · [+] missing in target · [-] extra in target · [B] binary
+          [M] modified · [+] missing in instance · [-] extra in instance · [B] binary
         </Text>
+        <Box>
+          <Text color="red">-</Text><Text color="gray" dimColor> instance ({instanceName})  </Text>
+          <Text color="green">+</Text><Text color="gray" dimColor> source repo</Text>
+        </Box>
       </Box>
     </Box>
   );
