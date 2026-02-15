@@ -3,11 +3,11 @@ import { Box, Text } from "ink";
 import type { ConfigFile, DiffInstanceRef, DiffInstanceSummary } from "../lib/types.js";
 import { getConfigToolStatus } from "../lib/install.js";
 import { getConfigRepoPath } from "../lib/config.js";
-import { getDriftedConfigInstancesWithCounts, getMissingConfigInstances } from "../lib/diff.js";
+import { getDriftedConfigInstancesWithCounts, getMissingConfigInstances, buildConfigDiffTarget, getConfigSyncDirection, type SyncDirection } from "../lib/diff.js";
 
 export interface ConfigAction {
   label: string;
-  type: "diff" | "missing" | "sync" | "back" | "status";
+  type: "diff" | "missing" | "sync" | "pullback" | "back" | "status";
   instance?: DiffInstanceSummary | DiffInstanceRef;
   statusColor?: "green" | "yellow" | "gray";
   statusLabel?: string;
@@ -70,7 +70,11 @@ export function ConfigDetail({ config, selectedAction, actions }: ConfigDetailPr
 
       {!config.sourceExists && (
         <Box marginBottom={1}>
-          <Text color="red">Source unavailable: {config.sourceError || "Missing"}</Text>
+          {config.sourceError ? (
+            <Text color="red">Source unavailable: {config.sourceError}</Text>
+          ) : (
+            <Text color="yellow">Source empty — use p to pull from an instance</Text>
+          )}
         </Box>
       )}
 
@@ -104,9 +108,10 @@ export function ConfigDetail({ config, selectedAction, actions }: ConfigDetailPr
             );
           }
 
-          // Regular action (sync, back)
+          // Regular action (sync, pullback, back)
           let color = "white";
           if (action.type === "sync") color = "green";
+          if (action.type === "pullback") color = "cyan";
 
           return (
             <Box key={action.label} marginTop={action.type === "sync" ? 1 : 0}>
@@ -119,6 +124,12 @@ export function ConfigDetail({ config, selectedAction, actions }: ConfigDetailPr
             </Box>
           );
         })}
+      </Box>
+
+      <Box marginTop={1}>
+        <Text color="gray">
+          {actions.some((a) => a.type === "pullback") ? "p pull to source · " : ""}Esc back
+        </Text>
       </Box>
     </Box>
   );
@@ -184,14 +195,49 @@ export function getConfigActions(config: ConfigFile): ConfigAction[] {
     }
   }
 
-  // Add sync action if needed
+  // Compute aggregate sync direction from file timestamps
   const enabledStatuses = toolStatuses.filter((s) => s.enabled);
   const missingCount = enabledStatuses.filter((s) => !s.installed).length;
   const needsSync = missingCount > 0 || driftedInstances.length > 0;
 
-  if (needsSync) {
-    actions.push({ label: "Sync to tool", type: "sync" });
+  let direction: SyncDirection = "unknown";
+  if (driftedInstances.length > 0) {
+    // Use first drifted instance to compute direction (they share the same source)
+    const firstDrifted = driftedInstances[0];
+    const diffTarget = buildConfigDiffTarget(config, firstDrifted);
+    direction = getConfigSyncDirection(diffTarget.files);
   }
+
+  if (needsSync) {
+    const syncLabel = direction === "forward"
+      ? "Sync to tool (newer)"
+      : "Sync to tool";
+    actions.push({ label: syncLabel, type: "sync" });
+  }
+
+  // Add pullback action for drifted instances (not just when source is empty)
+  if (driftedInstances.length > 0) {
+    for (const inst of driftedInstances) {
+      const pullbackLabel = direction === "pullback"
+        ? `Pull to source from ${inst.instanceName} (newer)`
+        : `Pull to source from ${inst.instanceName}`;
+      actions.push({
+        label: pullbackLabel,
+        type: "pullback",
+        instance: inst,
+      });
+    }
+  } else if (!config.sourceExists && enabledStatuses.length > 0) {
+    // Source doesn't exist at all — offer pullback from any enabled instance
+    for (const status of enabledStatuses) {
+      actions.push({
+        label: `Pull to source from ${status.name}`,
+        type: "pullback",
+        instance: { toolId: status.toolId, instanceId: status.instanceId, instanceName: status.name, configDir: status.configDir },
+      });
+    }
+  }
+
   actions.push({ label: "Back to list", type: "back" });
 
   return actions;

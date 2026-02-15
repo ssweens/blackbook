@@ -79,7 +79,7 @@ describe("getConfigSourceFiles", () => {
     expect(files[0].targetPath).toBe("configs/config.toml");
   });
 
-  it("throws when mappings have no files", async () => {
+  it("returns empty array when mappings have no files", async () => {
     const repo = setupRepo();
     mkdirSync(repo, { recursive: true });
 
@@ -93,6 +93,7 @@ describe("getConfigSourceFiles", () => {
 
     vi.spyOn(config, "getConfigRepoPath").mockReturnValue(repo);
 
-    await expect(getConfigSourceFiles(cfg)).rejects.toThrow("No files found");
+    const files = await getConfigSourceFiles(cfg);
+    expect(files).toHaveLength(0);
   });
 });

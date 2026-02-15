@@ -120,3 +120,32 @@ target_path = "settings.json"
     expect(cfg.targetPath).toBe("settings.json");
   });
 });
+
+describe("pi-marketplaces round-trip", () => {
+  it("preserves pi-marketplaces through save/load cycle", () => {
+    const content = `
+[marketplaces]
+
+[pi-marketplaces]
+playbook = "/Users/test/src/playbook"
+custom = "/tmp/custom-packages"
+
+[sync]
+config_repo = "~/src/config"
+`;
+
+    writeFileSync(TMP_PATH, content.trim());
+    const config = loadConfig(TMP_PATH);
+    expect(config.piMarketplaces).toEqual({
+      playbook: "/Users/test/src/playbook",
+      custom: "/tmp/custom-packages",
+    });
+
+    saveConfig(config, TMP_PATH);
+    const reloaded = loadConfig(TMP_PATH);
+    expect(reloaded.piMarketplaces).toEqual({
+      playbook: "/Users/test/src/playbook",
+      custom: "/tmp/custom-packages",
+    });
+  });
+});

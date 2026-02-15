@@ -141,6 +141,16 @@ function buildFileSummary(
     status = "missing";
   }
 
+  // Collect modification timestamps
+  let sourceMtime: number | null = null;
+  let targetMtime: number | null = null;
+  if (sourceExists) {
+    try { sourceMtime = statSync(sourcePath!).mtimeMs; } catch { /* ignore */ }
+  }
+  if (targetExists) {
+    try { targetMtime = statSync(targetPath!).mtimeMs; } catch { /* ignore */ }
+  }
+
   // Compute line counts
   let linesAdded = 0;
   let linesRemoved = 0;
@@ -169,7 +179,42 @@ function buildFileSummary(
     status,
     linesAdded,
     linesRemoved,
+    sourceMtime,
+    targetMtime,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Aggregate sync direction recommendation
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type SyncDirection = "forward" | "pullback" | "both" | "unknown";
+
+/**
+ * Determines the recommended sync direction for a set of diff files based on
+ * modification timestamps. "forward" = source is newer (sync to tool),
+ * "pullback" = target/instance is newer (pull to source), "both" = mixed,
+ * "unknown" = no timestamp data available.
+ */
+export function getConfigSyncDirection(files: DiffFileSummary[]): SyncDirection {
+  let sourceNewer = 0;
+  let targetNewer = 0;
+
+  for (const f of files) {
+    if (f.sourceMtime != null && f.targetMtime != null) {
+      if (f.sourceMtime > f.targetMtime) {
+        sourceNewer++;
+      } else if (f.targetMtime > f.sourceMtime) {
+        targetNewer++;
+      }
+      // Equal timestamps: neither count
+    }
+  }
+
+  if (sourceNewer === 0 && targetNewer === 0) return "unknown";
+  if (sourceNewer > 0 && targetNewer === 0) return "forward";
+  if (targetNewer > 0 && sourceNewer === 0) return "pullback";
+  return "both";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

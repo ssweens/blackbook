@@ -59,7 +59,7 @@ export function MarketplaceList({
   return (
     <Box flexDirection="column">
       <Box marginBottom={1}>
-        <Text bold>Manage marketplaces</Text>
+        <Text bold>Plugin Marketplaces</Text>
       </Box>
 
       {showAddOption && (
@@ -67,7 +67,7 @@ export function MarketplaceList({
           <Text color={selectedIndex === 0 ? "cyan" : "gray"}>
             {selectedIndex === 0 ? "❯ " : "  "}
           </Text>
-          <Text color="green">+ Add Marketplace</Text>
+          <Text color="green">+ Add Plugin Marketplace</Text>
         </Box>
       )}
 

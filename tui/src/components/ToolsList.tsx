@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
 import type { ManagedToolRow, ToolDetectionResult } from "../lib/types.js";
+import { TOOL_REGISTRY } from "../lib/tool-registry.js";
 
 interface ToolsListProps {
   tools: ManagedToolRow[];
@@ -46,7 +47,10 @@ export function ToolsList({
     };
   }, [tools, selectedIndex, maxHeight]);
 
-  const getStatusIcon = (result: ToolDetectionResult | undefined): { icon: string; color: string; label: string } => {
+  const isConfigOnly = (toolId: string) => !(toolId in TOOL_REGISTRY);
+
+  const getStatusIcon = (toolId: string, result: ToolDetectionResult | undefined): { icon: string; color: string; label: string } => {
+    if (isConfigOnly(toolId)) return { icon: "●", color: "blue", label: "Config only" };
     if (!result) return { icon: "⟳", color: "gray", label: "Checking" };
     if (!result.installed) return { icon: "✗", color: "red", label: "Not installed" };
     return { icon: "✓", color: "green", label: "Installed" };
@@ -76,7 +80,8 @@ export function ToolsList({
       {visibleTools.map((tool, visibleIdx) => {
         const actualIndex = startIndex + visibleIdx;
         const isSelected = selectedIndex === actualIndex;
-        const status = getStatusIcon(detection[tool.toolId]);
+        const configOnly = isConfigOnly(tool.toolId);
+        const status = getStatusIcon(tool.toolId, detection[tool.toolId]);
         const result = detection[tool.toolId];
         const installedVersion = result?.installedVersion;
         const latestVersion = result?.latestVersion;
@@ -98,19 +103,23 @@ export function ToolsList({
               <Text> </Text>
               <Text color={enabledColor}>{enabledLabel}</Text>
               <Text> </Text>
-              {loading ? (
+              {loading && !configOnly ? (
                 <Text color="gray">⟳</Text>
               ) : (
                 <Text color={status.color}>{status.icon}</Text>
               )}
-              {result?.installed ? (
-                <Text color="gray"> v{installedVersion || "?"}</Text>
-              ) : (
-                <Text color="gray"> v{loading ? "..." : "—"}</Text>
+              {!configOnly && (
+                <>
+                  {result?.installed ? (
+                    <Text color="gray"> v{installedVersion || "?"}</Text>
+                  ) : (
+                    <Text color="gray"> v{loading ? "..." : "—"}</Text>
+                  )}
+                  <Text color={hasUpdate ? "yellow" : "gray"}>
+                    {latestVersion ? ` · latest v${latestVersion}` : loading ? " · latest ..." : " · latest ?"}
+                  </Text>
+                </>
               )}
-              <Text color={hasUpdate ? "yellow" : "gray"}>
-                {latestVersion ? ` · latest v${latestVersion}` : loading ? " · latest ..." : " · latest ?"}
-              </Text>
             </Box>
             <Box marginLeft={4}>
               <Text color="gray">{tool.configDir}</Text>

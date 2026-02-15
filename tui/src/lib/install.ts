@@ -203,6 +203,10 @@ function normalizeAssetTarget(target: string): string {
   return cleaned;
 }
 
+function isConfigOnlyInstance(instance: ToolInstance): boolean {
+  return !instance.skillsSubdir && !instance.commandsSubdir && !instance.agentsSubdir;
+}
+
 export function resolveAssetTarget(asset: AssetConfig, instance: ToolInstance): string {
   const overrideKey = `${instance.toolId}:${instance.instanceId}`;
   const override = asset.overrides?.[overrideKey];
@@ -806,6 +810,8 @@ export function getAssetToolStatus(asset: Asset, sourceInfo?: AssetSourceInfo): 
   const resolvedSource = sourceInfo || getAssetSourceInfo(asset);
 
   for (const instance of instances) {
+    if (isConfigOnlyInstance(instance)) continue;
+
     const enabled = instance.enabled;
     let installed = false;
     let drifted = false;
@@ -1064,6 +1070,7 @@ export async function enablePlugin(plugin: Plugin, marketplaceUrl?: string): Pro
 
   // Enable (install) to all enabled instances using the same method
   for (const instance of enabledInstances) {
+    if (isConfigOnlyInstance(instance)) continue;
     try {
       const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance);
       result.linkedInstances[instanceKey(instance)] = count;
@@ -1099,6 +1106,7 @@ export async function disablePlugin(plugin: Plugin): Promise<EnableResult> {
 
   // Disable (uninstall) from all enabled instances using the same method
   for (const instance of enabledInstances) {
+    if (isConfigOnlyInstance(instance)) continue;
     const removed = uninstallPluginItemsFromInstance(plugin.name, instance);
     result.linkedInstances[instanceKey(instance)] = removed;
   }
@@ -2059,10 +2067,7 @@ export async function getConfigSourceFiles(config: ConfigSyncConfig): Promise<Co
     }
 
     const expanded = await expandConfigMapping(mapping, configRepo);
-    if (expanded.length === 0) {
-      throw new Error(`No files found for config ${config.name || "(unnamed)"} mapping ${mapping.source} → ${mapping.target}`);
-    }
-
+    // Empty source is valid — files may not exist in the repo yet (initial seed via reverse sync)
     for (const file of expanded) {
       const targetKey = file.targetPath.replace(/\\/g, "/");
       if (seenTargets.has(targetKey)) {
@@ -2235,54 +2240,163 @@ export function reverseSyncConfig(
   const result: ReverseSyncResult = { success: false, syncedFiles: 0, errors: [] };
   const sourceFiles = config.sourceFiles || [];
 
-  if (sourceFiles.length === 0) {
-    result.errors.push("No source files found for config.");
-    return result;
-  }
+  if (sourceFiles.length > 0) {
+    // Normal reverse sync: copy drifted instance files back to existing source paths
+    const backupOwner = normalizeBackupLabel(config.name);
 
-  const backupOwner = normalizeBackupLabel(config.name);
+    for (const file of sourceFiles) {
+      const targetPath = join(instance.configDir, file.targetPath);
 
-  for (const file of sourceFiles) {
-    const targetPath = join(instance.configDir, file.targetPath);
-
-    if (!existsSync(targetPath)) {
-      continue;
-    }
-
-    // Check if files actually differ
-    try {
-      const targetHash = hashFile(targetPath);
-      if (targetHash === file.hash) {
-        continue; // Already in sync
+      if (!existsSync(targetPath)) {
+        continue;
       }
-    } catch {
-      // Can't hash target, skip this file
-      result.errors.push(`Failed to read instance file: ${targetPath}`);
-      continue;
+
+      // Check if files actually differ
+      try {
+        const targetHash = hashFile(targetPath);
+        if (targetHash === file.hash) {
+          continue; // Already in sync
+        }
+      } catch {
+        result.errors.push(`Failed to read instance file: ${targetPath}`);
+        continue;
+      }
+
+      try {
+        // Back up the existing source file before overwriting (if it exists)
+        if (existsSync(file.sourcePath)) {
+          const backupName = normalizeBackupLabel(
+            `${config.name}-${basename(file.sourcePath)}-pullback`
+          );
+          const backupPath = buildBackupPath(backupOwner, "config-pullback", backupName);
+          copyFileSync(file.sourcePath, backupPath);
+        }
+        mkdirSync(dirname(file.sourcePath), { recursive: true });
+        copyFileSync(targetPath, file.sourcePath);
+        result.syncedFiles++;
+      } catch (error) {
+        result.errors.push(
+          `Failed to pull back ${file.targetPath}: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+  } else {
+    // Seed reverse sync: source repo is empty, discover files from instance
+    const configRepo = getConfigRepoPath();
+    if (!configRepo) {
+      result.errors.push("Config repo not configured.");
+      return result;
     }
 
-    try {
-      // Back up current source file before overwriting
-      const backupName = normalizeBackupLabel(
-        `${config.name}-${basename(file.sourcePath)}-pullback`
-      );
-      copyWithBackup(file.sourcePath, file.sourcePath, backupOwner, "config-pullback", backupName);
+    const mappings: ConfigMapping[] = config.mappings && config.mappings.length > 0
+      ? config.mappings
+      : config.sourcePath && config.targetPath
+        ? [{ source: config.sourcePath, target: config.targetPath }]
+        : [];
 
-      // Now overwrite source with instance version
-      // copyWithBackup just moved the source to backup, so the dest (sourcePath) is gone —
-      // we can simply copy the instance file there
-      mkdirSync(dirname(file.sourcePath), { recursive: true });
-      copyFileSync(targetPath, file.sourcePath);
-      result.syncedFiles++;
-    } catch (error) {
-      result.errors.push(
-        `Failed to pull back ${file.targetPath}: ${error instanceof Error ? error.message : String(error)}`
-      );
+    if (mappings.length === 0) {
+      result.errors.push("No mappings configured for this config.");
+      return result;
+    }
+
+    for (const mapping of mappings) {
+      try {
+        const seeded = seedFromInstance(mapping, configRepo, instance.configDir);
+        result.syncedFiles += seeded;
+      } catch (error) {
+        result.errors.push(
+          `Failed to seed ${mapping.source}: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
     }
   }
 
   result.success = result.syncedFiles > 0;
   return result;
+}
+
+/**
+ * Seed the source repo from instance files when no source files exist yet.
+ * For glob sources like "claude/settings*", discovers matching files in the
+ * instance configDir and copies them to the source repo.
+ */
+function seedFromInstance(
+  mapping: ConfigMapping,
+  configRepo: string,
+  instanceConfigDir: string
+): number {
+  const source = normalizeConfigSource(mapping.source);
+  const targetInfo = normalizeConfigTarget(mapping.target);
+  let seeded = 0;
+
+  if (isGlobPattern(source)) {
+    // For globs like "claude/settings*", the glob basename is the file pattern
+    // and the dirname is the source repo subdirectory
+    const sourceDir = dirname(source);
+    const pattern = basename(source);
+
+    // Find matching files in the instance configDir under the target path
+    const instanceSearchDir = targetInfo.path
+      ? join(instanceConfigDir, targetInfo.path)
+      : instanceConfigDir;
+
+    if (!existsSync(instanceSearchDir)) return 0;
+
+    const entries = readdirSync(instanceSearchDir);
+    const globRegex = new RegExp("^" + pattern.replace(/\./g, "\\.").replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
+
+    for (const entry of entries) {
+      if (!globRegex.test(entry)) continue;
+      const instancePath = join(instanceSearchDir, entry);
+      const stat = lstatSync(instancePath);
+      if (!stat.isFile()) continue;
+
+      const destPath = join(configRepo, sourceDir, entry);
+      mkdirSync(dirname(destPath), { recursive: true });
+      copyFileSync(instancePath, destPath);
+      seeded++;
+    }
+  } else if (isDirectorySyncPath(source)) {
+    // Directory sync: copy all files from instance target dir to source repo dir
+    const sourceDirName = source.replace(/[\\/]+$/, "");
+    const instanceDir = targetInfo.path
+      ? join(instanceConfigDir, targetInfo.path)
+      : instanceConfigDir;
+
+    if (!existsSync(instanceDir)) return 0;
+
+    const copyRecursive = (srcDir: string, destDir: string) => {
+      const entries = readdirSync(srcDir);
+      for (const entry of entries) {
+        const srcPath = join(srcDir, entry);
+        const dstPath = join(destDir, entry);
+        const stat = lstatSync(srcPath);
+        if (stat.isDirectory()) {
+          copyRecursive(srcPath, dstPath);
+        } else if (stat.isFile()) {
+          mkdirSync(dirname(dstPath), { recursive: true });
+          copyFileSync(srcPath, dstPath);
+          seeded++;
+        }
+      }
+    };
+
+    copyRecursive(instanceDir, join(configRepo, sourceDirName));
+  } else {
+    // Single file: copy instance file to source repo path
+    const targetPath = targetInfo.path
+      ? join(instanceConfigDir, targetInfo.path)
+      : join(instanceConfigDir, basename(source));
+
+    if (!existsSync(targetPath)) return 0;
+
+    const destPath = join(configRepo, source);
+    mkdirSync(dirname(destPath), { recursive: true });
+    copyFileSync(targetPath, destPath);
+    seeded++;
+  }
+
+  return seeded;
 }
 
 export async function syncConfigInstances(

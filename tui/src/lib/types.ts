@@ -178,6 +178,7 @@ export interface Notification {
   message: string;
   type: "info" | "success" | "warning" | "error";
   timestamp: number;
+  spinner?: boolean;
 }
 
 export interface AppState {
@@ -245,6 +246,8 @@ export interface DiffFileSummary {
   status: DiffFileStatus;
   linesAdded: number;
   linesRemoved: number;
+  sourceMtime: number | null;  // ms since epoch
+  targetMtime: number | null;  // ms since epoch
 }
 
 export interface DiffTarget {

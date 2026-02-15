@@ -45,6 +45,14 @@ const DEFAULT_TOOLS: Record<string, ToolTarget> = {
     commandsSubdir: "agent/prompts",
     agentsSubdir: null,
   },
+  blackbook: {
+    id: "blackbook",
+    name: "Blackbook",
+    configDir: join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "blackbook"),
+    skillsSubdir: null,
+    commandsSubdir: null,
+    agentsSubdir: null,
+  },
 };
 
 export const TOOL_IDS = Object.keys(DEFAULT_TOOLS);
@@ -344,6 +352,7 @@ export function saveConfig(config: TomlConfig, configPath?: string): void {
   ];
 
   const hasMarketplaces = config.marketplaces && Object.keys(config.marketplaces).length > 0;
+  const hasPiMarketplaces = config.piMarketplaces && Object.keys(config.piMarketplaces).length > 0;
   const hasTools = config.tools && Object.keys(config.tools).length > 0;
   const hasAssets = config.assets && config.assets.length > 0;
   const hasSync = Boolean(
@@ -367,6 +376,14 @@ export function saveConfig(config: TomlConfig, configPath?: string): void {
     lines.push("# my-plugins = \"https://raw.githubusercontent.com/my-org/plugins/main/.claude-plugin/marketplace.json\"");
   }
   lines.push("");
+
+  if (hasPiMarketplaces) {
+    lines.push("[pi-marketplaces]");
+    for (const [name, source] of Object.entries(config.piMarketplaces!)) {
+      lines.push(`${name} = "${source}"`);
+    }
+    lines.push("");
+  }
 
   if (hasSync) {
     lines.push("[sync]");
@@ -570,6 +587,23 @@ export function getToolInstances(): ToolInstance[] {
     const toolConfig = userConfig.tools?.[toolId];
     const toolInstances = toolConfig?.instances || [];
 
+    if (toolInstances.length === 0) {
+      const configOnly = !tool.skillsSubdir && !tool.commandsSubdir && !tool.agentsSubdir;
+      if (configOnly && existsSync(tool.configDir)) {
+        instances.push({
+          toolId,
+          instanceId: "default",
+          name: tool.name,
+          configDir: tool.configDir,
+          skillsSubdir: tool.skillsSubdir,
+          commandsSubdir: tool.commandsSubdir,
+          agentsSubdir: tool.agentsSubdir,
+          enabled: true,
+        });
+        continue;
+      }
+    }
+
     toolInstances.forEach((instance, index) => {
       const instanceId = instance.id && instance.id.trim().length > 0
         ? instance.id
@@ -747,6 +781,21 @@ export function setMarketplaceEnabled(name: string, enabled: boolean): void {
   config.sync = config.sync || {};
   config.sync.disabledMarketplaces = Array.from(disabled).join(",") || undefined;
   saveConfig(config);
+}
+
+export function addPiMarketplace(name: string, source: string): void {
+  const config = loadConfig();
+  config.piMarketplaces = config.piMarketplaces || {};
+  config.piMarketplaces[name] = source;
+  saveConfig(config);
+}
+
+export function removePiMarketplace(name: string): void {
+  const config = loadConfig();
+  if (config.piMarketplaces) {
+    delete config.piMarketplaces[name];
+    saveConfig(config);
+  }
 }
 
 export function getDisabledPiMarketplaces(): string[] {

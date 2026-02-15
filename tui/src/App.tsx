@@ -14,6 +14,8 @@ import { AssetDetail, getAssetActions, type AssetAction } from "./components/Ass
 import { ConfigDetail, getConfigActions, type ConfigAction } from "./components/ConfigDetail.js";
 import { MarketplaceList } from "./components/MarketplaceList.js";
 import { MarketplaceDetail } from "./components/MarketplaceDetail.js";
+import { PiMarketplaceList } from "./components/PiMarketplaceList.js";
+import { PiMarketplaceDetail, getPiMarketplaceActions } from "./components/PiMarketplaceDetail.js";
 import { AddMarketplaceModal } from "./components/AddMarketplaceModal.js";
 import { EditToolModal } from "./components/EditToolModal.js";
 import { ToolsList } from "./components/ToolsList.js";
@@ -35,7 +37,7 @@ import { getPluginToolStatus, getConfigToolStatus } from "./lib/install.js";
 import { buildInstallCommand, buildUpdateCommand, buildUninstallCommand } from "./lib/tool-lifecycle.js";
 import { getToolRegistryEntry } from "./lib/tool-registry.js";
 import { getPackageManager } from "./lib/config.js";
-import type { Tab, SyncPreviewItem, Plugin, Asset, ConfigFile, PiPackage, DiffInstanceRef, DiscoverSection, DiscoverSubView, ManagedToolRow } from "./lib/types.js";
+import type { Tab, SyncPreviewItem, Plugin, Asset, ConfigFile, PiPackage, PiMarketplace, DiffInstanceRef, DiscoverSection, DiscoverSubView, ManagedToolRow } from "./lib/types.js";
 
 const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces"];
 const TAB_REFRESH_TTL_MS = 30000;
@@ -117,6 +119,8 @@ export function App() {
     uninstallPiPackage: doUninstallPiPkg,
     updatePiPackage: doUpdatePiPkg,
     togglePiMarketplaceEnabled,
+    addPiMarketplace,
+    removePiMarketplace,
     // Section navigation
     currentSection,
     setCurrentSection,
@@ -126,6 +130,8 @@ export function App() {
 
   const [actionIndex, setActionIndex] = useState(0);
   const [showAddMarketplace, setShowAddMarketplace] = useState(false);
+  const [showAddPiMarketplace, setShowAddPiMarketplace] = useState(false);
+  const [detailPiMarketplace, setDetailPiMarketplace] = useState<PiMarketplace | null>(null);
   const [editingToolId, setEditingToolId] = useState<string | null>(null);
   const [detailToolKey, setDetailToolKey] = useState<string | null>(null);
   const [toolModalAction, setToolModalAction] = useState<ToolModalAction | null>(null);
@@ -557,10 +563,13 @@ export function App() {
     return sections.find((s) => selectedIndex >= s.start && selectedIndex <= s.end);
   }, [sections, selectedIndex]);
 
+  // Pi section starts after plugin section: 0=AddPlugin, 1..N=plugins, N+1=AddPi, N+2..M=piMarketplaces
+  const piSectionOffset = marketplaces.length + 1;
+
   const maxIndex = useMemo(() => {
     if (tab === "marketplaces") {
-      // Plugin marketplaces (0 = Add, 1..N = marketplaces) + Pi marketplaces
-      return marketplaces.length + piMarketplaces.length;
+      // Plugin: Add(0) + marketplaces(N) + Pi: Add(1) + piMarketplaces(M)
+      return marketplaces.length + 1 + piMarketplaces.length;
     }
     if (tab === "tools") {
       return Math.max(0, managedTools.length - 1);
@@ -751,7 +760,7 @@ export function App() {
     }
 
     // Don't handle input when modal is open (modal handles its own input)
-    if (showAddMarketplace || editingToolId) {
+    if (showAddMarketplace || showAddPiMarketplace || editingToolId) {
       return;
     }
 
@@ -769,7 +778,7 @@ export function App() {
 
     // Tab/Shift+Tab for section navigation in Discover/Installed tabs
     if (key.tab && (tab === "discover" || tab === "installed") && !discoverSubView) {
-      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary) {
+      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary) {
         if (sections.length > 0) {
           const currentIdx = sections.findIndex((s) => selectedIndex >= s.start && selectedIndex <= s.end);
           if (key.shift) {
@@ -788,14 +797,14 @@ export function App() {
 
     // Left/Right arrows for main tab navigation (blocked when overlays are open)
     if (key.rightArrow) {
-      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary && !discoverSubView) {
+      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary && !discoverSubView) {
         const idx = TABS.indexOf(tab);
         setTab(TABS[(idx + 1) % TABS.length]);
         return;
       }
     }
     if (key.leftArrow) {
-      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary && !discoverSubView) {
+      if (!detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary && !discoverSubView) {
         const idx = TABS.indexOf(tab);
         setTab(TABS[(idx - 1 + TABS.length) % TABS.length]);
         return;
@@ -816,6 +825,9 @@ export function App() {
       } else if (detailMarketplace) {
         setDetailMarketplace(null);
         setActionIndex(0);
+      } else if (detailPiMarketplace) {
+        setDetailPiMarketplace(null);
+        setActionIndex(0);
       } else if (detailPiPackage) {
         setDetailPiPackage(null);
         setActionIndex(0);
@@ -835,7 +847,7 @@ export function App() {
         // DiffView and MissingSummaryView handle their own navigation
         return;
       }
-      if (detailPlugin || detailMarketplace || detailPiPackage) {
+      if (detailPlugin || detailMarketplace || detailPiMarketplace || detailPiPackage) {
         setActionIndex((i) => Math.max(0, i - 1));
       } else if (detailAsset || detailConfig) {
         setActionIndex((i) => Math.max(0, i - 1));
@@ -870,6 +882,9 @@ export function App() {
       } else if (detailMarketplace) {
         const maxActions = detailMarketplace.source === "claude" ? 2 : 3;
         setActionIndex((i) => Math.min(maxActions, i + 1));
+      } else if (detailPiMarketplace) {
+        const piMktActions = getPiMarketplaceActions(detailPiMarketplace);
+        setActionIndex((i) => Math.min(piMktActions.length - 1, i + 1));
       } else if (detailTool) {
         return;
       } else if (discoverSubView) {
@@ -912,6 +927,11 @@ export function App() {
         return;
       }
 
+      if (detailPiMarketplace) {
+        handlePiMarketplaceAction(actionIndex);
+        return;
+      }
+
       if (detailTool) {
         return;
       }
@@ -939,7 +959,6 @@ export function App() {
           setShowAddMarketplace(true);
           return;
         }
-        // Check if it's a plugin marketplace
         if (selectedIndex <= marketplaces.length) {
           const m = marketplaces[selectedIndex - 1];
           if (m) {
@@ -948,11 +967,15 @@ export function App() {
           }
           return;
         }
-        // It's a Pi marketplace - toggle enabled on Enter
-        const piIdx = selectedIndex - marketplaces.length - 1;
+        if (selectedIndex === piSectionOffset) {
+          setShowAddPiMarketplace(true);
+          return;
+        }
+        const piIdx = selectedIndex - piSectionOffset - 1;
         const pm = piMarketplaces[piIdx];
         if (pm) {
-          void togglePiMarketplaceEnabled(pm.name);
+          setDetailPiMarketplace(pm);
+          setActionIndex(0);
         }
         return;
       }
@@ -1012,7 +1035,7 @@ export function App() {
     }
 
     // Space - toggle install/uninstall
-    if (input === " " && !detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary) {
+    if (input === " " && !detailPlugin && !detailAsset && !detailConfig && !detailMarketplace && !detailPiMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary) {
       if (tab === "sync") {
         const item = syncPreview[selectedIndex];
         if (!item) return;
@@ -1040,7 +1063,6 @@ export function App() {
 
       // Handle Space for marketplaces (toggle enabled)
       if (tab === "marketplaces") {
-        // Plugin marketplaces (index 1 to marketplaces.length, 0 is "Add Marketplace")
         if (selectedIndex >= 1 && selectedIndex <= marketplaces.length) {
           const m = marketplaces[selectedIndex - 1];
           if (m) {
@@ -1048,9 +1070,8 @@ export function App() {
           }
           return;
         }
-        // Pi marketplaces
-        if (selectedIndex > marketplaces.length) {
-          const piIdx = selectedIndex - marketplaces.length - 1;
+        if (selectedIndex > piSectionOffset) {
+          const piIdx = selectedIndex - piSectionOffset - 1;
           const pm = piMarketplaces[piIdx];
           if (pm) {
             void togglePiMarketplaceEnabled(pm.name);
@@ -1139,15 +1160,25 @@ export function App() {
       }
     }
 
-    if (input === "u" && tab === "marketplaces" && !detailMarketplace) {
-      const m = marketplaces[selectedIndex - 1];
-      if (m) updateMarketplace(m.name);
+    if (input === "u" && tab === "marketplaces" && !detailMarketplace && !detailPiMarketplace) {
+      if (selectedIndex >= 1 && selectedIndex <= marketplaces.length) {
+        const m = marketplaces[selectedIndex - 1];
+        if (m) updateMarketplace(m.name);
+      }
       return;
     }
 
-    if (input === "r" && tab === "marketplaces" && !detailMarketplace) {
-      const m = marketplaces[selectedIndex - 1];
-      if (m) removeMarketplace(m.name);
+    if (input === "r" && tab === "marketplaces" && !detailMarketplace && !detailPiMarketplace) {
+      if (selectedIndex >= 1 && selectedIndex <= marketplaces.length) {
+        const m = marketplaces[selectedIndex - 1];
+        if (m && m.source !== "claude") removeMarketplace(m.name);
+      } else if (selectedIndex > piSectionOffset) {
+        const piIdx = selectedIndex - piSectionOffset - 1;
+        const pm = piMarketplaces[piIdx];
+        if (pm && !pm.builtIn) {
+          void removePiMarketplace(pm.name);
+        }
+      }
       return;
     }
 
@@ -1282,6 +1313,12 @@ export function App() {
         await syncTools([{ kind: "config", config: detailConfig, drifted: Boolean(detailConfig.drifted), missing: !detailConfig.installed }]);
         refreshDetailConfig(detailConfig);
         break;
+      case "pullback":
+        if (action.instance) {
+          doReverseSyncConfig(detailConfig, action.instance);
+          refreshDetailConfig(detailConfig);
+        }
+        break;
       case "back":
         setDetailConfig(null);
         setActionIndex(0);
@@ -1313,6 +1350,30 @@ export function App() {
         break;
       case "back":
         setDetailPiPackage(null);
+        setActionIndex(0);
+        break;
+    }
+  };
+
+  const handlePiMarketplaceAction = (index: number) => {
+    if (!detailPiMarketplace) return;
+    const actions = getPiMarketplaceActions(detailPiMarketplace);
+    const action = actions[index];
+    if (!action) return;
+
+    switch (action) {
+      case "browse":
+        setDiscoverSubView("piPackages");
+        setSubViewIndex(0);
+        setTab("discover");
+        setDetailPiMarketplace(null);
+        break;
+      case "remove":
+        void removePiMarketplace(detailPiMarketplace.name);
+        setDetailPiMarketplace(null);
+        break;
+      case "back":
+        setDetailPiMarketplace(null);
         setActionIndex(0);
         break;
     }
@@ -1476,6 +1537,15 @@ export function App() {
           onSubmit={handleAddMarketplace}
           onCancel={() => setShowAddMarketplace(false)}
         />
+      ) : showAddPiMarketplace ? (
+        <AddMarketplaceModal
+          type="pi"
+          onSubmit={(name, source) => {
+            void addPiMarketplace(name, source);
+            setShowAddPiMarketplace(false);
+          }}
+          onCancel={() => setShowAddPiMarketplace(false)}
+        />
       ) : toolModalAction && activeToolForModal ? (
         <ToolActionModal
           toolName={activeToolForModal.displayName}
@@ -1513,6 +1583,11 @@ export function App() {
       ) : detailMarketplace ? (
         <MarketplaceDetail
           marketplace={detailMarketplace}
+          selectedIndex={actionIndex}
+        />
+      ) : detailPiMarketplace ? (
+        <PiMarketplaceDetail
+          marketplace={detailPiMarketplace}
           selectedIndex={actionIndex}
         />
       ) : detailPiPackage ? (
@@ -1730,42 +1805,14 @@ export function App() {
                     marketplaces={marketplaces}
                     selectedIndex={selectedIndex <= marketplaces.length ? selectedIndex : -1}
                   />
-                  
-                  {piMarketplaces.length > 0 && (
-                    <Box flexDirection="column" marginTop={1}>
-                      <Box marginBottom={1}>
-                        <Text bold>Pi Package Marketplaces</Text>
-                      </Box>
-                      {piMarketplaces.map((pm, i) => {
-                        const pmIndex = marketplaces.length + 1 + i;
-                        const isSelected = selectedIndex === pmIndex;
-                        const statusIcon = pm.enabled ? "●" : "○";
-                        const statusColor = pm.enabled ? "green" : "gray";
-                        
-                        return (
-                          <Box key={pm.name} flexDirection="column">
-                            <Box>
-                              <Text color={isSelected ? "cyan" : "gray"}>
-                                {isSelected ? "❯ " : "  "}
-                              </Text>
-                              <Text color={statusColor}>{statusIcon} </Text>
-                              <Text bold={isSelected} color="white">{pm.name}</Text>
-                              {pm.builtIn && <Text color="magenta"> (built-in)</Text>}
-                              {!pm.enabled && <Text color="gray"> (disabled)</Text>}
-                            </Box>
-                            <Box marginLeft={4}>
-                              <Text color="gray">{pm.source}</Text>
-                            </Box>
-                            <Box marginLeft={4}>
-                              <Text color="gray">
-                                {pm.packages.length} packages available
-                              </Text>
-                            </Box>
-                          </Box>
-                        );
-                      })}
-                    </Box>
-                  )}
+
+                  <Box marginTop={1}>
+                    <PiMarketplaceList
+                      marketplaces={piMarketplaces}
+                      selectedIndex={selectedIndex}
+                      indexOffset={piSectionOffset}
+                    />
+                  </Box>
                 </Box>
               )}
             </>
@@ -1824,7 +1871,7 @@ export function App() {
       <Notifications notifications={notifications} onClear={clearNotification} />
       <HintBar
         tab={tab}
-        hasDetail={Boolean(detailPlugin || detailAsset || detailConfig || detailMarketplace || detailPiPackage || detailTool)}
+        hasDetail={Boolean(detailPlugin || detailAsset || detailConfig || detailMarketplace || detailPiMarketplace || detailPiPackage || detailTool)}
         toolsHint={toolsHint}
       />
       <StatusBar

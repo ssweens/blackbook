@@ -44,6 +44,8 @@ import {
   loadConfig,
   setMarketplaceEnabled,
   setPiMarketplaceEnabled,
+  addPiMarketplace as addPiMarketplaceToConfig,
+  removePiMarketplace as removePiMarketplaceFromConfig,
   getPackageManager,
 } from "./config.js";
 import { fetchMarketplace } from "./marketplace.js";
@@ -100,7 +102,7 @@ interface Actions {
   updateToolConfigDir: (toolId: string, instanceId: string, configDir: string) => Promise<void>;
   getSyncPreview: () => SyncPreviewItem[];
   syncTools: (items: SyncPreviewItem[]) => Promise<void>;
-  notify: (message: string, type?: Notification["type"]) => void;
+  notify: (message: string, type?: Notification["type"], options?: { spinner?: boolean }) => string;
   clearNotification: (id: string) => void;
   // Pi package actions
   loadPiPackages: () => Promise<void>;
@@ -109,6 +111,8 @@ interface Actions {
   updatePiPackage: (pkg: PiPackage) => Promise<boolean>;
   setDetailPiPackage: (pkg: PiPackage | null) => Promise<void>;
   togglePiMarketplaceEnabled: (name: string) => Promise<void>;
+  addPiMarketplace: (name: string, source: string) => Promise<void>;
+  removePiMarketplace: (name: string) => Promise<void>;
   // Section navigation
   setCurrentSection: (section: DiscoverSection) => void;
   setDiscoverSubView: (subView: DiscoverSubView) => void;
@@ -433,10 +437,11 @@ export const useStore = create<Store>((set, get) => ({
   setCurrentSection: (section) => set({ currentSection: section }),
   setDiscoverSubView: (subView) => set({ discoverSubView: subView }),
 
-  notify: (message, type = "info") => {
+  notify: (message, type = "info", options) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const notification: Notification = { id, message, type, timestamp: Date.now() };
+    const notification: Notification = { id, message, type, timestamp: Date.now(), spinner: options?.spinner };
     set((state) => ({ notifications: [...state.notifications, notification] }));
+    return id;
   },
 
   clearNotification: (id) => {
@@ -681,9 +686,11 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   installPiPackage: async (pkg) => {
-    const { notify } = get();
+    const { notify, clearNotification } = get();
+    const loadingId = notify(`Installing ${pkg.name}...`, "info", { spinner: true });
     try {
       const result = await installPiPackage(pkg);
+      clearNotification(loadingId);
       if (result.success) {
         notify(`Installed ${pkg.name}`, "success");
         await get().loadPiPackages();
@@ -693,15 +700,18 @@ export const useStore = create<Store>((set, get) => ({
         return false;
       }
     } catch (error) {
+      clearNotification(loadingId);
       notify(`Error installing ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
       return false;
     }
   },
 
   uninstallPiPackage: async (pkg) => {
-    const { notify } = get();
+    const { notify, clearNotification } = get();
+    const loadingId = notify(`Uninstalling ${pkg.name}...`, "info", { spinner: true });
     try {
       const result = await removePiPackage(pkg);
+      clearNotification(loadingId);
       if (result.success) {
         notify(`Uninstalled ${pkg.name}`, "success");
         await get().loadPiPackages();
@@ -711,15 +721,18 @@ export const useStore = create<Store>((set, get) => ({
         return false;
       }
     } catch (error) {
+      clearNotification(loadingId);
       notify(`Error uninstalling ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
       return false;
     }
   },
 
   updatePiPackage: async (pkg) => {
-    const { notify } = get();
+    const { notify, clearNotification } = get();
+    const loadingId = notify(`Updating ${pkg.name}...`, "info", { spinner: true });
     try {
       const result = await updatePiPackage(pkg);
+      clearNotification(loadingId);
       if (result.success) {
         notify(`Updated ${pkg.name}`, "success");
         await get().loadPiPackages();
@@ -729,6 +742,7 @@ export const useStore = create<Store>((set, get) => ({
         return false;
       }
     } catch (error) {
+      clearNotification(loadingId);
       notify(`Error updating ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
       return false;
     }
@@ -738,10 +752,29 @@ export const useStore = create<Store>((set, get) => ({
     const { piMarketplaces, notify } = get();
     const marketplace = piMarketplaces.find((m) => m.name === name);
     if (!marketplace) return;
-    
+
     const newEnabled = !marketplace.enabled;
     setPiMarketplaceEnabled(name, newEnabled);
     notify(`${name} Pi marketplace ${newEnabled ? "enabled" : "disabled"}`, "info");
+    await get().loadPiPackages();
+  },
+
+  addPiMarketplace: async (name, source) => {
+    const { notify } = get();
+    const existing = get().piMarketplaces.find((m) => m.name === name);
+    if (existing) {
+      notify(`Pi marketplace "${name}" already exists`, "error");
+      return;
+    }
+    addPiMarketplaceToConfig(name, source);
+    notify(`Added Pi marketplace "${name}"`, "success");
+    await get().loadPiPackages();
+  },
+
+  removePiMarketplace: async (name) => {
+    const { notify } = get();
+    removePiMarketplaceFromConfig(name);
+    notify(`Removed Pi marketplace "${name}"`, "success");
     await get().loadPiPackages();
   },
 
@@ -950,7 +983,7 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   installPlugin: async (plugin) => {
-    const { notify } = get();
+    const { notify, clearNotification } = get();
     const marketplace = get().marketplaces.find(
       (m) => m.name === plugin.marketplace
     );
@@ -959,8 +992,9 @@ export const useStore = create<Store>((set, get) => ({
       return false;
     }
 
-    notify(`Installing ${plugin.name}...`, "info");
+    const loadingId = notify(`Installing ${plugin.name}...`, "info", { spinner: true });
     const result = await installPlugin(plugin, marketplace.url);
+    clearNotification(loadingId);
     
     if (result.success) {
       await get().refreshAll();
@@ -992,14 +1026,15 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   uninstallPlugin: async (plugin) => {
-    const { notify } = get();
+    const { notify, clearNotification } = get();
     const enabledInstances = getEnabledToolInstances();
     if (enabledInstances.length === 0) {
       notify("No tools enabled in config.", "error");
       return false;
     }
-    notify(`Uninstalling ${plugin.name}...`, "info");
+    const loadingId = notify(`Uninstalling ${plugin.name}...`, "info", { spinner: true });
     const success = await uninstallPlugin(plugin);
+    clearNotification(loadingId);
     await get().refreshAll();
     if (success) {
       notify(`✓ Uninstalled ${plugin.name}`, "success");
@@ -1168,14 +1203,15 @@ export const useStore = create<Store>((set, get) => ({
       }
     }
 
-    await get().refreshAll();
-
     if (syncedItems > 0) {
-      notify(`✓ Synced ${syncedItems} items`, errors.length ? "success" : "success");
+      notify(`✓ Synced ${syncedItems} items`, "success");
     }
     if (errors.length > 0) {
       notify(`⚠ Sync completed with errors: ${errors.slice(0, 3).join("; ")}`, "error");
     }
+
+    // Refresh state in the background — don't block the success notification
+    void get().refreshAll();
   },
 
   addMarketplace: (name, url) => {

@@ -91,6 +91,12 @@ export function DiffFileList({ title, instanceName, files, onSelect, onClose, on
                   <Text color="green">+{file.linesAdded}</Text>
                   <Text> </Text>
                   <Text color="red">-{file.linesRemoved}</Text>
+                  {file.sourceMtime != null && file.targetMtime != null && file.sourceMtime > file.targetMtime && (
+                    <Text color="green"> →</Text>
+                  )}
+                  {file.sourceMtime != null && file.targetMtime != null && file.targetMtime > file.sourceMtime && (
+                    <Text color="cyan"> ←</Text>
+                  )}
                 </>
               )}
               {file.status === "binary" && (
@@ -110,8 +116,10 @@ export function DiffFileList({ title, instanceName, files, onSelect, onClose, on
           [M] modified · [+] missing in instance · [-] extra in instance · [B] binary
         </Text>
         <Box>
-          <Text color="red">-</Text><Text color="gray" dimColor> instance ({instanceName})  </Text>
-          <Text color="green">+</Text><Text color="gray" dimColor> source repo</Text>
+          <Text color="red">- </Text><Text color="gray" dimColor>instance ({instanceName})  </Text>
+          <Text color="green">+ </Text><Text color="gray" dimColor>source repo  </Text>
+          <Text color="green">→ </Text><Text color="gray" dimColor>source newer  </Text>
+          <Text color="cyan">← </Text><Text color="gray" dimColor>instance newer</Text>
         </Box>
       </Box>
     </Box>

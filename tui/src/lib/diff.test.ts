@@ -131,6 +131,8 @@ describe("diff utilities", () => {
         status: "modified",
         linesAdded: 1,
         linesRemoved: 1,
+        sourceMtime: null,
+        targetMtime: null,
       };
 
       const detail = computeFileDetail(summary);
@@ -155,6 +157,8 @@ describe("diff utilities", () => {
         status: "missing",
         linesAdded: 1,
         linesRemoved: 0,
+        sourceMtime: null,
+        targetMtime: null,
       };
 
       const detail = computeFileDetail(summary);
@@ -178,6 +182,8 @@ describe("diff utilities", () => {
         status: "extra",
         linesAdded: 0,
         linesRemoved: 1,
+        sourceMtime: null,
+        targetMtime: null,
       };
 
       const detail = computeFileDetail(summary);
@@ -198,6 +204,8 @@ describe("diff utilities", () => {
         status: "binary",
         linesAdded: 0,
         linesRemoved: 0,
+        sourceMtime: null,
+        targetMtime: null,
       };
 
       const detail = computeFileDetail(summary);
