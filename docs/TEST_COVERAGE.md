@@ -3,13 +3,14 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 175
+- **Total Tests:** 180
 - **Test Files:** 16
 
 ## Critical Paths
 - [x] Plugin discovery list loads
 - [x] Plugin detail view shows actions and tool status
 - [x] Plugin install/update/uninstall flow
+- [x] Plugin per-component enable/disable config parsing and round-trip
 - [x] Sync preview generation for partial installs
 - [x] Discover → plugin detail → install to all tools (E2E)
 - [x] Install failure notification stays on detail (E2E)
@@ -28,6 +29,9 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Diff computation (line counts, unified diff hunks, binary detection)
 - [x] Asset repo config parsing (`sync.assets_repo`)
 - [x] Multi-file asset mappings (`[[assets.files]]`, `[assets.files.overrides]`)
+- [x] Plugin component config parsing (`[plugins.*.*]` sections)
+- [x] Plugin component config save/load round-trip
+- [x] Plugin component config cleanup of empty entries
 - [x] Asset source path resolution (`resolveAssetSourcePath`)
 - [x] Pi package source type detection (`getSourceType`)
 - [x] Pi local marketplace scanning (`scanLocalMarketplace`)
@@ -75,6 +79,7 @@ This project tracks coverage by critical user journeys and system boundaries.
 
 ## User Journeys (Happy Paths)
 - [x] Discover → open plugin → install to all tools → remain on detail view
+- [ ] Discover → open plugin → manage components → toggle skill → disabled in config
 - [ ] Discover → open plugin → install single tool → success notification
 - [ ] Discover → open plugin → update → tool statuses refresh
 - [ ] Installed → open plugin → uninstall → removed from list

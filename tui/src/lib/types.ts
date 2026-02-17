@@ -171,6 +171,12 @@ export interface InstalledItem {
   previous?: InstalledItem | null;
 }
 
+export interface PluginComponentConfig {
+  disabledSkills: string[];
+  disabledCommands: string[];
+  disabledAgents: string[];
+}
+
 export type Tab = "discover" | "installed" | "marketplaces" | "tools" | "sync";
 
 export interface Notification {

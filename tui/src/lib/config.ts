@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import type { ToolTarget, ToolInstance, Marketplace, AssetConfig, ConfigSyncConfig, ConfigMapping, PackageManager } from "./types.js";
+import type { ToolTarget, ToolInstance, Marketplace, AssetConfig, ConfigSyncConfig, ConfigMapping, PackageManager, PluginComponentConfig } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
 
 const DEFAULT_TOOLS: Record<string, ToolTarget> = {
@@ -145,6 +145,12 @@ export interface PiMarketplacesConfig {
   [name: string]: string;  // name -> local path or git URL
 }
 
+export interface PluginComponentToml {
+  disabled_skills?: string;
+  disabled_commands?: string;
+  disabled_agents?: string;
+}
+
 export interface TomlConfig {
   marketplaces?: Record<string, string>;
   piMarketplaces?: PiMarketplacesConfig;
@@ -152,6 +158,7 @@ export interface TomlConfig {
   assets?: AssetConfig[];
   sync?: SyncConfig;
   configs?: ConfigSyncConfig[];
+  plugins?: Record<string, Record<string, PluginComponentToml>>;
 }
 
 export function loadConfig(configPath?: string): TomlConfig {
@@ -241,7 +248,23 @@ export function loadConfig(configPath?: string): TomlConfig {
       const sectionMatch = trimmed.match(/^\[([^\]]+)\]$/);
       if (sectionMatch) {
         const section = sectionMatch[1];
-        if (section.startsWith("tools.")) {
+        if (section.startsWith("plugins.")) {
+          // [plugins.marketplace-name.plugin-name]
+          const pluginParts = section.replace("plugins.", "").split(".");
+          if (pluginParts.length >= 2) {
+            currentSection = "plugins";
+            const marketplace = pluginParts[0];
+            const pluginName = pluginParts.slice(1).join(".");
+            result.plugins = result.plugins || {};
+            result.plugins[marketplace] = result.plugins[marketplace] || {};
+            result.plugins[marketplace][pluginName] = result.plugins[marketplace][pluginName] || {};
+            // Store reference for KV parsing
+            currentTool = `${marketplace}:${pluginName}`;
+          }
+          currentInstance = null;
+          currentAsset = null;
+          currentConfig = null;
+        } else if (section.startsWith("tools.")) {
           currentSection = "tools";
           currentTool = section.replace("tools.", "");
           result.tools![currentTool] = result.tools![currentTool] || {};
@@ -284,6 +307,11 @@ export function loadConfig(configPath?: string): TomlConfig {
         } else if (currentSection === "pi-marketplaces") {
           if (!result.piMarketplaces) result.piMarketplaces = {};
           result.piMarketplaces[key] = value;
+        } else if (currentSection === "plugins" && currentTool) {
+          const [marketplace, pluginName] = currentTool.split(":", 2);
+          if (result.plugins?.[marketplace]?.[pluginName]) {
+            (result.plugins[marketplace][pluginName] as Record<string, string>)[key] = value;
+          }
         } else if (currentSection === "tools" && currentTool) {
           const normalizedKey = key === "config_dir" ? "configDir" : key;
           (result.tools![currentTool] as Record<string, string>)[normalizedKey] = value;
@@ -442,6 +470,27 @@ export function saveConfig(config: TomlConfig, configPath?: string): void {
       }
 
       lines.push("");
+    }
+  }
+
+  // Write plugin component configs
+  if (config.plugins) {
+    for (const [marketplace, plugins] of Object.entries(config.plugins)) {
+      for (const [pluginName, pluginConfig] of Object.entries(plugins)) {
+        const hasContent = pluginConfig.disabled_skills || pluginConfig.disabled_commands || pluginConfig.disabled_agents;
+        if (!hasContent) continue;
+        lines.push(`[plugins.${marketplace}.${pluginName}]`);
+        if (pluginConfig.disabled_skills) {
+          lines.push(`disabled_skills = "${pluginConfig.disabled_skills}"`);
+        }
+        if (pluginConfig.disabled_commands) {
+          lines.push(`disabled_commands = "${pluginConfig.disabled_commands}"`);
+        }
+        if (pluginConfig.disabled_agents) {
+          lines.push(`disabled_agents = "${pluginConfig.disabled_agents}"`);
+        }
+        lines.push("");
+      }
     }
   }
 
@@ -818,4 +867,74 @@ export function setPiMarketplaceEnabled(name: string, enabled: boolean): void {
   config.sync = config.sync || {};
   config.sync.disabledPiMarketplaces = Array.from(disabled).join(",") || undefined;
   saveConfig(config);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plugin Component Config (per-component enable/disable)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function parseCommaList(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+export function getPluginComponentConfig(marketplace: string, pluginName: string): PluginComponentConfig {
+  const config = loadConfig();
+  const pluginToml = config.plugins?.[marketplace]?.[pluginName];
+  return {
+    disabledSkills: parseCommaList(pluginToml?.disabled_skills),
+    disabledCommands: parseCommaList(pluginToml?.disabled_commands),
+    disabledAgents: parseCommaList(pluginToml?.disabled_agents),
+  };
+}
+
+export function setPluginComponentEnabled(
+  marketplace: string,
+  pluginName: string,
+  kind: "skill" | "command" | "agent",
+  componentName: string,
+  enabled: boolean
+): void {
+  const config = loadConfig();
+  config.plugins = config.plugins || {};
+  config.plugins[marketplace] = config.plugins[marketplace] || {};
+  config.plugins[marketplace][pluginName] = config.plugins[marketplace][pluginName] || {};
+
+  const pluginToml = config.plugins[marketplace][pluginName];
+  const field = kind === "skill" ? "disabled_skills" : kind === "command" ? "disabled_commands" : "disabled_agents";
+  const current = new Set(parseCommaList(pluginToml[field]));
+
+  if (enabled) {
+    current.delete(componentName);
+  } else {
+    current.add(componentName);
+  }
+
+  pluginToml[field] = Array.from(current).join(",") || undefined;
+
+  // Clean up empty plugin entries
+  if (!pluginToml.disabled_skills && !pluginToml.disabled_commands && !pluginToml.disabled_agents) {
+    delete config.plugins[marketplace][pluginName];
+    if (Object.keys(config.plugins[marketplace]).length === 0) {
+      delete config.plugins[marketplace];
+    }
+    if (Object.keys(config.plugins).length === 0) {
+      delete config.plugins;
+    }
+  }
+
+  saveConfig(config);
+}
+
+export function isPluginComponentEnabled(
+  marketplace: string,
+  pluginName: string,
+  kind: "skill" | "command" | "agent",
+  componentName: string
+): boolean {
+  const componentConfig = getPluginComponentConfig(marketplace, pluginName);
+  const disabledList = kind === "skill" ? componentConfig.disabledSkills :
+                       kind === "command" ? componentConfig.disabledCommands :
+                       componentConfig.disabledAgents;
+  return !disabledList.includes(componentName);
 }

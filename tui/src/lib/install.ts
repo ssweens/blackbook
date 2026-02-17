@@ -19,7 +19,7 @@ import { createHash } from "crypto";
 const execFileAsync = promisify(execFile);
 import { join, dirname, resolve, basename } from "path";
 import { tmpdir, homedir } from "os";
-import { expandPath, getCacheDir, getEnabledToolInstances, getToolInstances, getConfigRepoPath, resolveAssetSourcePath } from "./config.js";
+import { expandPath, getCacheDir, getEnabledToolInstances, getToolInstances, getConfigRepoPath, resolveAssetSourcePath, getPluginComponentConfig, setPluginComponentEnabled } from "./config.js";
 import { getGitHubToken, isGitHubHost } from "./github.js";
 import type { Asset, AssetConfig, Plugin, InstalledItem, ToolInstance, ConfigSyncConfig, ConfigFile, ConfigSourceFile, ConfigMapping, DiffInstanceRef } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
@@ -669,7 +669,7 @@ export async function installPlugin(plugin: Plugin, marketplaceUrl: string): Pro
     } else {
       for (const instance of nonClaudeInstances) {
         try {
-          const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance);
+          const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance, plugin.marketplace);
           result.linkedInstances[instanceKey(instance)] = count;
           result.errors.push(...errors);
         } catch (error) {
@@ -856,13 +856,15 @@ export function getAssetToolStatus(asset: Asset, sourceInfo?: AssetSourceInfo): 
 function installPluginItemsToInstance(
   pluginName: string,
   sourcePath: string,
-  instance: ToolInstance
+  instance: ToolInstance,
+  marketplace?: string
 ): { count: number; items: InstalledItem[]; errors: string[] } {
   if (!instance.enabled) return { count: 0, items: [], errors: [] };
 
   validatePluginName(pluginName);
   const errors: string[] = [];
   const items: InstalledItem[] = [];
+  const componentConfig = marketplace ? getPluginComponentConfig(marketplace, pluginName) : null;
   const appliedKeys: string[] = [];
 
   const manifest = loadManifest();
@@ -925,6 +927,7 @@ function installPluginItemsToInstance(
         for (const entry of readdirSync(skillsDir)) {
           const src = safePath(skillsDir, entry);
           if (existsSync(join(src, "SKILL.md"))) {
+            if (componentConfig?.disabledSkills.includes(entry)) continue;
             const baseDest = join(instance.configDir, instance.skillsSubdir);
             const dest = safePath(baseDest, entry);
             installItem("skill", entry, src, dest);
@@ -939,6 +942,7 @@ function installPluginItemsToInstance(
         for (const entry of readdirSync(commandsDir)) {
           if (entry.endsWith(".md")) {
             const name = entry.replace(/\.md$/, "");
+            if (componentConfig?.disabledCommands.includes(name)) continue;
             const src = safePath(commandsDir, entry);
             const baseDest = join(instance.configDir, instance.commandsSubdir);
             const dest = safePath(baseDest, entry);
@@ -954,6 +958,7 @@ function installPluginItemsToInstance(
         for (const entry of readdirSync(agentsDir)) {
           if (entry.endsWith(".md")) {
             const name = entry.replace(/\.md$/, "");
+            if (componentConfig?.disabledAgents.includes(name)) continue;
             const src = safePath(agentsDir, entry);
             const baseDest = join(instance.configDir, instance.agentsSubdir);
             const dest = safePath(baseDest, entry);
@@ -1072,7 +1077,7 @@ export async function enablePlugin(plugin: Plugin, marketplaceUrl?: string): Pro
   for (const instance of enabledInstances) {
     if (isConfigOnlyInstance(instance)) continue;
     try {
-      const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance);
+      const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance, plugin.marketplace);
       result.linkedInstances[instanceKey(instance)] = count;
       result.errors.push(...errors);
     } catch (error) {
@@ -1151,7 +1156,7 @@ export async function updatePlugin(plugin: Plugin, marketplaceUrl: string): Prom
   if (sourcePath) {
     for (const instance of enabledInstances) {
       try {
-        const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance);
+        const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance, plugin.marketplace);
         result.linkedInstances[instanceKey(instance)] = count;
         result.errors.push(...errors);
       } catch (error) {
@@ -1176,6 +1181,7 @@ export function linkPluginToInstance(
 ): number {
   if (!instance.enabled) return 0;
   validatePluginName(plugin.name);
+  const componentConfig = getPluginComponentConfig(plugin.marketplace, plugin.name);
 
   let linked = 0;
   const manifest = loadManifest();
@@ -1193,6 +1199,7 @@ export function linkPluginToInstance(
   console.error(`[DEBUG] plugin.agents: ${JSON.stringify(plugin.agents)}`);
 
   for (const skill of plugin.skills) {
+    if (componentConfig.disabledSkills.includes(skill)) continue;
     validateItemName("skill", skill);
     const source = safePath(join(sourcePath, "skills"), skill);
     console.error(`[DEBUG] Checking skill source: ${source}, exists: ${existsSync(source)}`);
@@ -1220,6 +1227,7 @@ export function linkPluginToInstance(
   }
 
   for (const cmd of plugin.commands) {
+    if (componentConfig.disabledCommands.includes(cmd)) continue;
     validateItemName("command", cmd);
     const source = safePath(join(sourcePath, "commands"), `${cmd}.md`);
     if (!existsSync(source)) continue;
@@ -1246,6 +1254,7 @@ export function linkPluginToInstance(
   }
 
   for (const agent of plugin.agents) {
+    if (componentConfig.disabledAgents.includes(agent)) continue;
     validateItemName("agent", agent);
     const source = safePath(join(sourcePath, "agents"), `${agent}.md`);
     if (!existsSync(source)) continue;
@@ -1274,6 +1283,109 @@ export function linkPluginToInstance(
   saveManifest(manifest);
   console.error(`[DEBUG] linkPluginToInstance completed: ${linked} items linked for ${instance.name}`);
   return linked;
+}
+
+/**
+ * Toggle a single plugin component (skill/command/agent) on or off.
+ * When disabling: removes symlinks/copies from all tool instances and updates config.
+ * When enabling: creates symlinks/copies to all tool instances and updates config.
+ */
+export function togglePluginComponent(
+  plugin: Plugin,
+  kind: "skill" | "command" | "agent",
+  componentName: string,
+  enabled: boolean
+): { success: boolean; error?: string } {
+  // Update config first
+  setPluginComponentEnabled(plugin.marketplace, plugin.name, kind, componentName, enabled);
+
+  const instances = getEnabledToolInstances();
+  const manifest = loadManifest();
+  const sourcePath = getPluginSourcePath(plugin);
+
+  for (const instance of instances) {
+    if (isConfigOnlyInstance(instance)) continue;
+    const key = instanceKey(instance);
+    const itemKey = `${kind}:${componentName}`;
+
+    if (!enabled) {
+      // Remove the component from this instance
+      if (!manifest.tools[key]) continue;
+      const item = manifest.tools[key].items[itemKey];
+      if (!item) continue;
+
+      // Resolve the actual destination path
+      const subdir = kind === "skill" ? instance.skillsSubdir :
+                     kind === "command" ? instance.commandsSubdir :
+                     instance.agentsSubdir;
+      if (!subdir) continue;
+
+      const suffix = kind === "skill" ? componentName : `${componentName}.md`;
+      const destPath = join(instance.configDir, subdir, suffix);
+
+      try {
+        if (existsSync(destPath) || isSymlink(destPath)) {
+          const stat = lstatSync(destPath);
+          if (stat.isDirectory() && !stat.isSymbolicLink()) {
+            rmSync(destPath, { recursive: true });
+          } else {
+            unlinkSync(destPath);
+          }
+        }
+      } catch (error) {
+        logError(`Failed to remove ${kind} ${componentName} from ${instance.name}`, error);
+      }
+
+      // Restore backup if exists
+      if (item.backup && existsSync(item.backup)) {
+        try {
+          renameSync(item.backup, destPath);
+        } catch (error) {
+          logError(`Failed to restore backup for ${componentName}`, error);
+        }
+      }
+
+      if (item.previous) {
+        manifest.tools[key].items[itemKey] = item.previous;
+      } else {
+        delete manifest.tools[key].items[itemKey];
+      }
+    } else {
+      // Enable: create symlink/copy for this component
+      if (!sourcePath) continue;
+
+      const subdir = kind === "skill" ? instance.skillsSubdir :
+                     kind === "command" ? instance.commandsSubdir :
+                     instance.agentsSubdir;
+      if (!subdir) continue;
+
+      const suffix = kind === "skill" ? componentName : `${componentName}.md`;
+      const src = join(sourcePath, `${kind}s`, suffix);
+      if (!existsSync(src)) continue;
+
+      const dest = join(instance.configDir, subdir, suffix);
+
+      if (!manifest.tools[key]) {
+        manifest.tools[key] = { items: {} };
+      }
+
+      const result = createSymlink(src, dest, plugin.name, kind, componentName);
+      if (result.success) {
+        manifest.tools[key].items[itemKey] = {
+          kind,
+          name: componentName,
+          source: src,
+          dest: join(subdir, suffix),
+          backup: null,
+          owner: plugin.name,
+          previous: null,
+        };
+      }
+    }
+  }
+
+  saveManifest(manifest);
+  return { success: true };
 }
 
 function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] {
@@ -1727,7 +1839,7 @@ export async function syncPluginInstances(
   // Sync (install) to all missing instances using the same method
   for (const instance of missingInstances) {
     try {
-      const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance);
+      const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance, plugin.marketplace);
       result.syncedInstances[instanceKey(instance)] = count;
       result.errors.push(...errors);
     } catch (error) {

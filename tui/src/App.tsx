@@ -33,7 +33,8 @@ import { PiPackageSummary } from "./components/PiPackageSummary.js";
 import { PiPackageList } from "./components/PiPackageList.js";
 import { PiPackagePreview } from "./components/PiPackagePreview.js";
 import { PiPackageDetail, getPiPackageActions } from "./components/PiPackageDetail.js";
-import { getPluginToolStatus, getConfigToolStatus } from "./lib/install.js";
+import { ComponentManager, getComponentItems } from "./components/ComponentManager.js";
+import { getPluginToolStatus, getConfigToolStatus, togglePluginComponent } from "./lib/install.js";
 import { buildInstallCommand, buildUpdateCommand, buildUninstallCommand } from "./lib/tool-lifecycle.js";
 import { getToolRegistryEntry } from "./lib/tool-registry.js";
 import { getPackageManager } from "./lib/config.js";
@@ -129,6 +130,8 @@ export function App() {
   } = useStore();
 
   const [actionIndex, setActionIndex] = useState(0);
+  const [componentManagerMode, setComponentManagerMode] = useState(false);
+  const [componentIndex, setComponentIndex] = useState(0);
   const [showAddMarketplace, setShowAddMarketplace] = useState(false);
   const [showAddPiMarketplace, setShowAddPiMarketplace] = useState(false);
   const [detailPiMarketplace, setDetailPiMarketplace] = useState<PiMarketplace | null>(null);
@@ -676,7 +679,9 @@ export function App() {
     const supportedTools = toolStatuses.filter(t => t.supported && t.enabled);
     const installedCount = supportedTools.filter(t => t.installed).length;
     const needsRepair = installedCount < supportedTools.length && supportedTools.length > 0;
+    const hasComponents = plugin.skills.length > 0 || plugin.commands.length > 0 || plugin.agents.length > 0;
     const actions = ["Uninstall", "Update now"];
+    if (hasComponents) actions.push("Manage components");
     if (needsRepair) actions.push("Install to all tools");
     actions.push("Back to plugin list");
     return actions;
@@ -764,6 +769,39 @@ export function App() {
       return;
     }
 
+    // Component manager mode input handling
+    if (componentManagerMode && detailPlugin) {
+      if (key.escape) {
+        setComponentManagerMode(false);
+        return;
+      }
+
+      const items = getComponentItems(detailPlugin);
+      if (items.length === 0) {
+        setComponentManagerMode(false);
+        return;
+      }
+
+      if (key.upArrow) {
+        setComponentIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setComponentIndex((i) => Math.min(items.length - 1, i + 1));
+        return;
+      }
+      if (key.return || input === " ") {
+        const item = items[componentIndex];
+        if (item) {
+          togglePluginComponent(detailPlugin, item.kind, item.name, !item.enabled);
+          // Force re-render by refreshing the detail plugin
+          refreshDetailPlugin(detailPlugin);
+        }
+        return;
+      }
+      return;
+    }
+
     // Manual refresh of current tab
     if (input === "R") {
       void refreshTabData(tab, { force: true });
@@ -816,6 +854,7 @@ export function App() {
       if (detailPlugin) {
         setDetailPlugin(null);
         setActionIndex(0);
+        setComponentManagerMode(false);
       } else if (detailAsset) {
         setDetailAsset(null);
         setActionIndex(0);
@@ -1254,6 +1293,10 @@ export function App() {
         await doInstall(detailPlugin);
         refreshDetailPlugin(detailPlugin);
         break;
+      case "Manage components":
+        setComponentManagerMode(true);
+        setComponentIndex(0);
+        break;
       case "Back to plugin list":
         setDetailPlugin(null);
         setActionIndex(0);
@@ -1561,6 +1604,11 @@ export function App() {
           tool={detailTool}
           detection={toolDetection[detailTool.toolId] || null}
           pending={toolDetectionPending[detailTool.toolId] === true}
+        />
+      ) : detailPlugin && componentManagerMode ? (
+        <ComponentManager
+          plugin={detailPlugin}
+          selectedIndex={componentIndex}
         />
       ) : detailPlugin ? (
         <PluginDetail

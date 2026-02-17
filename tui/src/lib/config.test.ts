@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { writeFileSync, rmSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { loadConfig, saveConfig } from "./config.js";
+import { loadConfig, saveConfig, getPluginComponentConfig, setPluginComponentEnabled, isPluginComponentEnabled } from "./config.js";
 
 const TMP_PATH = join(tmpdir(), `blackbook-config-test-${Date.now()}.toml`);
 
@@ -118,6 +118,87 @@ target_path = "settings.json"
     expect(cfg.toolId).toBe("claude-code");
     expect(cfg.sourcePath).toBe("claude-code/settings.json");
     expect(cfg.targetPath).toBe("settings.json");
+  });
+});
+
+describe("plugin component config", () => {
+  it("parses disabled_skills and disabled_commands from [plugins.*.*]", () => {
+    const content = `
+[marketplaces]
+
+[plugins.my-marketplace.my-plugin]
+disabled_skills = "skill-a,skill-b"
+disabled_commands = "cmd-x"
+`;
+
+    writeFileSync(TMP_PATH, content.trim());
+    const config = loadConfig(TMP_PATH);
+    expect(config.plugins).toBeDefined();
+    expect(config.plugins!["my-marketplace"]["my-plugin"]).toEqual({
+      disabled_skills: "skill-a,skill-b",
+      disabled_commands: "cmd-x",
+    });
+  });
+
+  it("round-trips plugin component config through save/load", () => {
+    const config = {
+      marketplaces: {},
+      tools: {},
+      assets: [] as never[],
+      configs: [] as never[],
+      plugins: {
+        "test-market": {
+          "test-plugin": {
+            disabled_skills: "foo,bar",
+            disabled_commands: "baz",
+          },
+        },
+      },
+    };
+
+    saveConfig(config, TMP_PATH);
+    const reloaded = loadConfig(TMP_PATH);
+    expect(reloaded.plugins!["test-market"]["test-plugin"]).toEqual({
+      disabled_skills: "foo,bar",
+      disabled_commands: "baz",
+    });
+  });
+
+  it("getPluginComponentConfig returns parsed arrays", () => {
+    const content = `
+[plugins.mkt.plg]
+disabled_skills = "a,b,c"
+disabled_agents = "x"
+`;
+
+    writeFileSync(TMP_PATH, content.trim());
+    // getPluginComponentConfig reads from default path, so test via loadConfig
+    const config = loadConfig(TMP_PATH);
+    const pluginToml = config.plugins!["mkt"]["plg"];
+    const disabledSkills = (pluginToml.disabled_skills || "").split(",").map(s => s.trim()).filter(Boolean);
+    const disabledAgents = (pluginToml.disabled_agents || "").split(",").map(s => s.trim()).filter(Boolean);
+    expect(disabledSkills).toEqual(["a", "b", "c"]);
+    expect(disabledAgents).toEqual(["x"]);
+  });
+
+  it("cleans up empty plugin entries on save", () => {
+    const config = {
+      marketplaces: {},
+      plugins: {
+        "mkt": {
+          "plg": {
+            disabled_skills: undefined,
+            disabled_commands: undefined,
+            disabled_agents: undefined,
+          },
+        },
+      },
+    };
+
+    saveConfig(config as never, TMP_PATH);
+    const content = readFileSync(TMP_PATH, "utf-8");
+    // Empty plugin config should not be written
+    expect(content).not.toContain("[plugins.");
   });
 });
 

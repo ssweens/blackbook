@@ -27,6 +27,7 @@ Plugin manager for agentic coding tools built with React/Ink. Install skills, co
 - **Pi packages** — Built-in npm marketplace for Pi coding agent extensions, themes, and custom tools
 - **TUI interface** — Interactive terminal UI with tabs for Sync, Tools, Discover, Installed, and Marketplaces
 - **Cross-tool sync** — Install plugins to multiple tools at once, detect incomplete installs
+- **Per-component control** — Disable individual skills, commands, or agents within a plugin
 
 ## Plugin Model
 
@@ -157,6 +158,19 @@ config_dir = "~/.config/opencode"
 ```
 
 Paths in `config_dir` (and local marketplace paths) support `~` expansion to your home directory.
+
+### Per-Component Control
+
+Disable individual skills, commands, or agents within an installed plugin. Use the **Manage components** action in the plugin detail view, or configure directly in `config.toml`:
+
+```toml
+[plugins.my-marketplace.my-plugin]
+disabled_skills = "skill-a,skill-b"
+disabled_commands = "cmd-x"
+disabled_agents = "agent-y"
+```
+
+Disabled components are removed from all tool instances. When a plugin is updated, disabled components remain disabled. New components added by plugin updates are enabled by default.
 
 ### Sync Repositories
 

@@ -2,6 +2,7 @@ import React, { useMemo } from "react";
 import { Box, Text } from "ink";
 import type { Plugin } from "../lib/types.js";
 import { getPluginToolStatus } from "../lib/install.js";
+import { getPluginComponentConfig } from "../lib/config.js";
 
 interface PluginDetailProps {
   plugin: Plugin;
@@ -11,6 +12,8 @@ interface PluginDetailProps {
 
 export function PluginDetail({ plugin, selectedAction }: PluginDetailProps) {
   const toolStatuses = getPluginToolStatus(plugin);
+  const componentConfig = getPluginComponentConfig(plugin.marketplace, plugin.name);
+  const disabledCount = componentConfig.disabledSkills.length + componentConfig.disabledCommands.length + componentConfig.disabledAgents.length;
   
   // Use store-calculated incomplete status for consistency with list views
   const isIncomplete = plugin.installed && plugin.incomplete;
@@ -85,23 +88,52 @@ export function PluginDetail({ plugin, selectedAction }: PluginDetailProps) {
       )}
 
       <Box flexDirection="column" marginBottom={1}>
-        <Text bold>Components:</Text>
+        <Box>
+          <Text bold>Components:</Text>
+          {disabledCount > 0 && (
+            <Text color="yellow"> ({disabledCount} disabled)</Text>
+          )}
+        </Box>
         {plugin.skills.length > 0 && (
-          <Box marginLeft={1}>
+          <Box marginLeft={1} flexWrap="wrap">
             <Text color="gray">• Skills: </Text>
-            <Text color="cyan">{plugin.skills.join(", ")}</Text>
+            {plugin.skills.map((skill, i) => {
+              const disabled = componentConfig.disabledSkills.includes(skill);
+              return (
+                <Text key={skill}>
+                  <Text color={disabled ? "red" : "cyan"} strikethrough={disabled}>{skill}</Text>
+                  {i < plugin.skills.length - 1 && <Text color="gray">, </Text>}
+                </Text>
+              );
+            })}
           </Box>
         )}
         {plugin.commands.length > 0 && (
-          <Box marginLeft={1}>
+          <Box marginLeft={1} flexWrap="wrap">
             <Text color="gray">• Commands: </Text>
-            <Text color="cyan">{plugin.commands.join(", ")}</Text>
+            {plugin.commands.map((cmd, i) => {
+              const disabled = componentConfig.disabledCommands.includes(cmd);
+              return (
+                <Text key={cmd}>
+                  <Text color={disabled ? "red" : "cyan"} strikethrough={disabled}>{cmd}</Text>
+                  {i < plugin.commands.length - 1 && <Text color="gray">, </Text>}
+                </Text>
+              );
+            })}
           </Box>
         )}
         {plugin.agents.length > 0 && (
-          <Box marginLeft={1}>
+          <Box marginLeft={1} flexWrap="wrap">
             <Text color="gray">• Agents: </Text>
-            <Text color="cyan">{plugin.agents.join(", ")}</Text>
+            {plugin.agents.map((agent, i) => {
+              const disabled = componentConfig.disabledAgents.includes(agent);
+              return (
+                <Text key={agent}>
+                  <Text color={disabled ? "red" : "cyan"} strikethrough={disabled}>{agent}</Text>
+                  {i < plugin.agents.length - 1 && <Text color="gray">, </Text>}
+                </Text>
+              );
+            })}
           </Box>
         )}
         {plugin.hooks.length > 0 && (
