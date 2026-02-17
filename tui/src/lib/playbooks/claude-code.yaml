@@ -1,0 +1,30 @@
+id: claude-code
+name: Claude Code
+default_instances:
+  - id: default
+    name: Claude
+    config_dir: ~/.claude
+structure:
+  - skills/
+  - commands/
+  - agents/
+components:
+  skills:
+    install_dir: skills/
+    strategy: symlink
+  commands:
+    install_dir: commands/
+    strategy: symlink
+  agents:
+    install_dir: agents/
+    strategy: symlink
+config_files:
+  - name: Settings
+    path: settings.json
+    format: json
+    pullback: true
+  - name: CLAUDE.md
+    path: CLAUDE.md
+    format: markdown
+    pullback: true
+syncable: true

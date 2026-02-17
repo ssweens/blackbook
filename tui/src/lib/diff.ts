@@ -218,6 +218,27 @@ export function getConfigSyncDirection(files: DiffFileSummary[]): SyncDirection 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// State-based sync direction (for pullback-enabled files)
+// ─────────────────────────────────────────────────────────────────────────────
+
+import type { DriftKind } from "./modules/types.js";
+
+/**
+ * Determines sync direction from three-way state drift kind.
+ * Unlike getConfigSyncDirection which uses timestamps, this uses
+ * deterministic hash comparison against last-synced state.
+ */
+export function getSyncDirectionFromDrift(driftKind: DriftKind): SyncDirection {
+  switch (driftKind) {
+    case "in-sync": return "forward";
+    case "source-changed": return "forward";
+    case "target-changed": return "pullback";
+    case "both-changed": return "both";
+    case "never-synced": return "unknown";
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // File-level diff detail (with hunks)
 // ─────────────────────────────────────────────────────────────────────────────
 

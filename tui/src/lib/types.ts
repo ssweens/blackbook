@@ -122,6 +122,34 @@ export interface ConfigSourceFile {
   isDirectory: boolean;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Unified File Status (from declarative config + orchestrator check)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type FileCheckStatus = "ok" | "missing" | "drifted" | "failed";
+
+export type DriftKind = "in-sync" | "source-changed" | "target-changed" | "both-changed" | "never-synced";
+
+export interface FileInstanceStatus {
+  toolId: string;
+  instanceId: string;
+  instanceName: string;
+  configDir: string;
+  status: FileCheckStatus;
+  message: string;
+  diff?: string;
+  driftKind?: DriftKind;
+}
+
+export interface FileStatus {
+  name: string;
+  source: string;
+  target: string;
+  pullback: boolean;
+  tools?: string[];
+  instances: FileInstanceStatus[];
+}
+
 export type SyncPreviewItem =
   | {
       kind: "plugin";
@@ -146,6 +174,12 @@ export type SyncPreviewItem =
       name: string;
       installedVersion: string;
       latestVersion: string;
+    }
+  | {
+      kind: "file";
+      file: FileStatus;
+      missingInstances: string[];
+      driftedInstances: string[];
     };
 
 export interface Marketplace {
@@ -193,6 +227,7 @@ export interface AppState {
   installedPlugins: Plugin[];
   assets: Asset[];
   configs: ConfigFile[];
+  files: FileStatus[];
   tools: ToolInstance[];
   managedTools: ManagedToolRow[];
   toolDetection: Record<string, ToolDetectionResult>;
@@ -228,7 +263,7 @@ export interface AppState {
 // Diff View Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type DiffItemKind = "asset" | "config";
+export type DiffItemKind = "asset" | "config" | "file";
 
 export interface DiffInstanceRef {
   toolId: string;

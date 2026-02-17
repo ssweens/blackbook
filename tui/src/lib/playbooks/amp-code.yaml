@@ -1,0 +1,22 @@
+id: amp-code
+name: Amp
+default_instances:
+  - id: default
+    name: Amp
+    config_dir: ~/.config/amp
+structure:
+  - skills/
+  - commands/
+  - agents/
+components:
+  skills:
+    install_dir: skills/
+    strategy: symlink
+  commands:
+    install_dir: commands/
+    strategy: symlink
+  agents:
+    install_dir: agents/
+    strategy: symlink
+config_files: []
+syncable: true

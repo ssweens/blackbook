@@ -184,6 +184,9 @@ export function App() {
     if (item.kind === "tool") {
       return `tool:${item.toolId}`;
     }
+    if (item.kind === "file") {
+      return `file:${item.file.name}`;
+    }
     return `asset:${item.asset.name}`;
   };
 

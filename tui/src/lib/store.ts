@@ -6,6 +6,8 @@ import type {
   Plugin,
   Asset,
   ConfigFile,
+  FileStatus,
+  FileInstanceStatus,
   AppState,
   Notification,
   SyncPreviewItem,
@@ -48,6 +50,14 @@ import {
   removePiMarketplace as removePiMarketplaceFromConfig,
   getPackageManager,
 } from "./config.js";
+import { loadConfig as loadYamlConfig, getConfigPath as getYamlConfigPath } from "./config/loader.js";
+import { resolveSourcePath, expandPath as expandConfigPath } from "./config/path.js";
+import { getAllPlaybooks, resolveToolInstances, isSyncTarget } from "./config/playbooks.js";
+import { runCheck, runApply } from "./modules/orchestrator.js";
+import { fileCopyModule } from "./modules/file-copy.js";
+import { directorySyncModule } from "./modules/directory-sync.js";
+import { buildStateKey } from "./state.js";
+import type { OrchestratorStep } from "./modules/orchestrator.js";
 import { fetchMarketplace } from "./marketplace.js";
 import { getManagedToolRows } from "./tool-view.js";
 import { detectTool } from "./tool-detect.js";
@@ -79,6 +89,7 @@ interface Actions {
   loadInstalledPlugins: () => Promise<void>;
   loadAssets: () => Asset[];
   loadConfigs: () => Promise<ConfigFile[]>;
+  loadFiles: () => Promise<FileStatus[]>;
   loadTools: () => void;
   refreshManagedTools: () => void;
   refreshToolDetection: () => Promise<void>;
@@ -263,6 +274,23 @@ function buildConfigSyncPreview(configs: ConfigFile[]): SyncPreviewItem[] {
   return preview;
 }
 
+function buildFileSyncPreview(files: FileStatus[]): SyncPreviewItem[] {
+  const preview: SyncPreviewItem[] = [];
+  for (const file of files) {
+    const missingInstances = file.instances
+      .filter((i) => i.status === "missing")
+      .map((i) => i.instanceName);
+    const driftedInstances = file.instances
+      .filter((i) => i.status === "drifted")
+      .map((i) => i.instanceName);
+
+    if (missingInstances.length === 0 && driftedInstances.length === 0) continue;
+
+    preview.push({ kind: "file", file, missingInstances, driftedInstances });
+  }
+  return preview;
+}
+
 function buildToolSyncPreview(
   tools: ManagedToolRow[],
   toolDetection: Record<string, ToolDetectionResult>
@@ -363,6 +391,7 @@ export const useStore = create<Store>((set, get) => ({
   installedPlugins: [],
   assets: [],
   configs: [],
+  files: [],
   tools: getToolInstances(),
   managedTools: getManagedToolRows(),
   toolDetection: {},
@@ -793,6 +822,7 @@ export const useStore = create<Store>((set, get) => ({
       const { plugins: installedPlugins } = getAllInstalledPlugins();
       const assets = get().loadAssets();
       const configs = await get().loadConfigs();
+      const files = await get().loadFiles();
       const tools = getToolInstances();
 
       const enrichedMarketplaces: Marketplace[] = await Promise.all(
@@ -855,6 +885,7 @@ export const useStore = create<Store>((set, get) => ({
         installedPlugins: installedWithStatus,
         assets,
         configs,
+        files,
         tools,
         managedTools: getManagedToolRows(),
         loading: false,
@@ -899,11 +930,13 @@ export const useStore = create<Store>((set, get) => ({
     });
     const assets = get().loadAssets();
     const configs = await get().loadConfigs();
+    const files = await get().loadFiles();
     set({
       installedPlugins: installedWithStatus,
       marketplaces,
       assets,
       configs,
+      files,
       tools: getToolInstances(),
       managedTools: getManagedToolRows(),
     });
@@ -973,6 +1006,99 @@ export const useStore = create<Store>((set, get) => ({
 
     set({ configs });
     return configs;
+  },
+
+  loadFiles: async () => {
+    // Only load files when YAML config exists
+    const configPath = getYamlConfigPath();
+    if (!configPath.endsWith(".yaml")) {
+      set({ files: [] });
+      return [];
+    }
+
+    const configResult = loadYamlConfig(configPath);
+    if (configResult.errors.length > 0) {
+      set({ files: [] });
+      return [];
+    }
+
+    const config = configResult.config;
+    if (config.files.length === 0) {
+      set({ files: [] });
+      return [];
+    }
+
+    const playbooks = getAllPlaybooks();
+    const toolInstances = resolveToolInstances(config, playbooks);
+    const sourceRepo = config.settings.source_repo
+      ? expandConfigPath(config.settings.source_repo)
+      : null;
+
+    const files: FileStatus[] = [];
+
+    for (const fileEntry of config.files) {
+      const fileStatus: FileStatus = {
+        name: fileEntry.name,
+        source: fileEntry.source,
+        target: fileEntry.target,
+        pullback: fileEntry.pullback,
+        tools: fileEntry.tools,
+        instances: [],
+      };
+
+      // Determine which tool instances this file targets
+      const targetToolIds = fileEntry.tools
+        ? fileEntry.tools.filter((t) => isSyncTarget(t, playbooks))
+        : [...toolInstances.keys()].filter((t) => isSyncTarget(t, playbooks));
+
+      for (const toolId of targetToolIds) {
+        const instances = toolInstances.get(toolId) || [];
+        for (const inst of instances) {
+          if (!inst.enabled) continue;
+
+          const instanceConfigDir = expandConfigPath(inst.config_dir);
+          const targetOverride = fileEntry.overrides?.[`${toolId}:${inst.id}`];
+          const targetRelPath = targetOverride || fileEntry.target;
+
+          // Resolve source: relative to source_repo or absolute
+          const sourcePath = resolveSourcePath(fileEntry.source, sourceRepo || undefined);
+          const targetPath = `${instanceConfigDir}/${targetRelPath}`;
+
+          // Build orchestrator step and run check
+          const stateKey = buildStateKey(fileEntry.name, toolId, inst.id, targetRelPath);
+          const steps: OrchestratorStep[] = [{
+            label: `${fileEntry.name}:${toolId}:${inst.id}`,
+            module: fileCopyModule as any,
+            params: {
+              sourcePath,
+              targetPath,
+              owner: `file:${fileEntry.name}`,
+              stateKey,
+              pullback: fileEntry.pullback,
+            },
+          }];
+
+          const result = await runCheck(steps);
+          const stepResult = result.steps[0];
+
+          fileStatus.instances.push({
+            toolId,
+            instanceId: inst.id,
+            instanceName: inst.name,
+            configDir: instanceConfigDir,
+            status: stepResult.check.status,
+            message: stepResult.check.message,
+            diff: stepResult.check.diff,
+            driftKind: stepResult.check.driftKind,
+          });
+        }
+      }
+
+      files.push(fileStatus);
+    }
+
+    set({ files });
+    return files;
   },
 
   refreshAll: async () => {
@@ -1144,9 +1270,11 @@ export const useStore = create<Store>((set, get) => ({
 
     const assets = get().assets.length > 0 ? get().assets : get().loadAssets();
     const configs = get().configs;
+    const files = get().files;
     const toolSync = buildToolSyncPreview(get().managedTools, get().toolDetection);
     return [
       ...toolSync,
+      ...buildFileSyncPreview(files),
       ...buildConfigSyncPreview(configs),
       ...buildAssetSyncPreview(assets),
       ...buildSyncPreview(pluginsForSync),
@@ -1193,6 +1321,38 @@ export const useStore = create<Store>((set, get) => ({
         const result = await syncConfigInstances(item.config, statuses);
         if (result.success) syncedItems += 1;
         errors.push(...result.errors);
+      } else if (item.kind === "file") {
+        // Build orchestrator steps for non-ok instances
+        const configResult = loadYamlConfig();
+        if (configResult.errors.length > 0) {
+          errors.push(`Config load failed: ${configResult.errors[0].message}`);
+          continue;
+        }
+        const sourceRepo = configResult.config.settings.source_repo
+          ? expandConfigPath(configResult.config.settings.source_repo)
+          : null;
+
+        // Only forward-sync instances (skip conflicts and pullback targets)
+        const steps: OrchestratorStep[] = item.file.instances
+          .filter((i) => (i.status === "missing" || i.status === "drifted") && i.driftKind !== "both-changed" && i.driftKind !== "target-changed")
+          .map((i) => {
+            const sourcePath = resolveSourcePath(item.file.source, sourceRepo || undefined);
+            const targetPath = `${i.configDir}/${item.file.target}`;
+            const stateKey = buildStateKey(item.file.name, i.toolId, i.instanceId, item.file.target);
+            return {
+              label: `${item.file.name}:${i.toolId}:${i.instanceId}`,
+              module: fileCopyModule as any,
+              params: { sourcePath, targetPath, owner: `file:${item.file.name}`, stateKey, pullback: item.file.pullback },
+            };
+          });
+
+        if (steps.length > 0) {
+          const result = await runApply(steps);
+          if (result.summary.changed > 0) syncedItems += 1;
+          for (const step of result.steps) {
+            if (step.apply?.error) errors.push(step.apply.error);
+          }
+        }
       } else if (item.kind === "tool") {
         const success = await get().updateToolAction(item.toolId);
         if (success) {
@@ -1423,6 +1583,12 @@ export const useStore = create<Store>((set, get) => ({
       } else {
         get().notify("No diff or missing summary available for this asset.", "warning");
       }
+      return;
+    }
+
+    if (item.kind === "file") {
+      // File diff support will be added in Phase 5 (three-way state)
+      get().notify("File diff view coming soon.", "info");
       return;
     }
 

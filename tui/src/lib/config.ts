@@ -3,59 +3,31 @@ import { homedir } from "os";
 import { join } from "path";
 import type { ToolTarget, ToolInstance, Marketplace, AssetConfig, ConfigSyncConfig, ConfigMapping, PackageManager, PluginComponentConfig } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
+import { getAllPlaybooks, getBuiltinToolIds } from "./config/playbooks.js";
+import { getConfigDir as getConfigDirFromPath } from "./config/path.js";
 
-const DEFAULT_TOOLS: Record<string, ToolTarget> = {
-  "claude-code": {
-    id: "claude-code",
-    name: "Claude",
-    configDir: join(homedir(), ".claude"),
-    skillsSubdir: "skills",
-    commandsSubdir: "commands",
-    agentsSubdir: "agents",
-  },
-  opencode: {
-    id: "opencode",
-    name: "OpenCode",
-    configDir: join(homedir(), ".config/opencode"),
-    skillsSubdir: "skills",
-    commandsSubdir: "commands",
-    agentsSubdir: "agents",
-  },
-  "amp-code": {
-    id: "amp-code",
-    name: "Amp",
-    configDir: join(homedir(), ".config/amp"),
-    skillsSubdir: "skills",
-    commandsSubdir: "commands",
-    agentsSubdir: "agents",
-  },
-  "openai-codex": {
-    id: "openai-codex",
-    name: "Codex",
-    configDir: join(homedir(), ".codex"),
-    skillsSubdir: "skills",
-    commandsSubdir: null,
-    agentsSubdir: null,
-  },
-  pi: {
-    id: "pi",
-    name: "Pi",
-    configDir: join(homedir(), ".pi"),
-    skillsSubdir: "agent/skills",
-    commandsSubdir: "agent/prompts",
-    agentsSubdir: null,
-  },
-  blackbook: {
-    id: "blackbook",
-    name: "Blackbook",
-    configDir: join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "blackbook"),
-    skillsSubdir: null,
-    commandsSubdir: null,
-    agentsSubdir: null,
-  },
-};
+function buildToolDefinitions(): Record<string, ToolTarget> {
+  const playbooks = getAllPlaybooks();
+  const result: Record<string, ToolTarget> = {};
+  for (const [toolId, pb] of playbooks) {
+    // Respect XDG_CONFIG_HOME for blackbook (config-only tool)
+    const configDir = toolId === "blackbook"
+      ? getConfigDirFromPath()
+      : expandPath(pb.default_instances[0].config_dir);
 
-export const TOOL_IDS = Object.keys(DEFAULT_TOOLS);
+    result[toolId] = {
+      id: toolId,
+      name: pb.default_instances[0].name,
+      configDir,
+      skillsSubdir: pb.components.skills?.install_dir?.replace(/\/$/, "") ?? null,
+      commandsSubdir: pb.components.commands?.install_dir?.replace(/\/$/, "") ?? null,
+      agentsSubdir: pb.components.agents?.install_dir?.replace(/\/$/, "") ?? null,
+    };
+  }
+  return result;
+}
+
+export const TOOL_IDS = getBuiltinToolIds();
 
 const DEFAULT_MARKETPLACES: Record<string, string> = {};
 
@@ -563,8 +535,9 @@ const DEFAULT_INITIAL_MARKETPLACES: Record<string, string> = {
 };
 
 function buildInitialToolConfig(): Record<string, ToolConfig> {
+  const definitions = buildToolDefinitions();
   const tools: Record<string, ToolConfig> = {};
-  for (const [toolId, tool] of Object.entries(DEFAULT_TOOLS)) {
+  for (const [toolId, tool] of Object.entries(definitions)) {
     if (existsSync(tool.configDir)) {
       tools[toolId] = {
         instances: [
@@ -624,15 +597,17 @@ export function removeMarketplace(name: string): void {
 }
 
 export function getToolDefinitions(): Record<string, ToolTarget> {
-  return DEFAULT_TOOLS;
+  return buildToolDefinitions();
 }
 
 export function getToolInstances(): ToolInstance[] {
+  const definitions = buildToolDefinitions();
   const userConfig = loadConfig();
   const instances: ToolInstance[] = [];
 
   for (const toolId of TOOL_IDS) {
-    const tool = DEFAULT_TOOLS[toolId];
+    const tool = definitions[toolId];
+    if (!tool) continue;
     const toolConfig = userConfig.tools?.[toolId];
     const toolInstances = toolConfig?.instances || [];
 

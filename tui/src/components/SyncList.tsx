@@ -74,6 +74,18 @@ export function SyncList({
         } else if (item.kind === "tool") {
           name = item.name;
           statusLabel = `Update: v${item.installedVersion} → v${item.latestVersion}`;
+        } else if (item.kind === "file") {
+          name = item.file.name;
+          const missingCount = item.missingInstances.length;
+          const driftedCount = item.driftedInstances.length;
+          const conflictCount = item.file.instances.filter((i) => i.driftKind === "both-changed").length;
+          const pullbackCount = item.file.instances.filter((i) => i.driftKind === "target-changed").length;
+          const parts: string[] = [];
+          if (missingCount > 0) parts.push(`Missing: ${missingCount}`);
+          if (driftedCount > 0 && pullbackCount === 0 && conflictCount === 0) parts.push(`Drifted: ${driftedCount}`);
+          if (pullbackCount > 0) parts.push(`Pullback: ${pullbackCount}`);
+          if (conflictCount > 0) parts.push(`Conflict: ${conflictCount}`);
+          statusLabel = parts.join(" · ");
         } else {
           name = item.asset.name;
           const missingCount = item.missingInstances.length;

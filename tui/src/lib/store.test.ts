@@ -9,6 +9,10 @@ import {
   getAssetSourceInfo,
   getConfigToolStatus,
 } from "./install.js";
+import { getConfigPath as getYamlConfigPath, loadConfig as loadYamlConfig } from "./config/loader.js";
+import { resolveSourcePath, expandPath as expandConfigPath } from "./config/path.js";
+import { getAllPlaybooks, resolveToolInstances, isSyncTarget } from "./config/playbooks.js";
+import { runCheck, runApply } from "./modules/orchestrator.js";
 import type { Plugin, Marketplace, ToolInstance, Asset, ManagedToolRow, ToolDetectionResult } from "./types.js";
 
 // Mock config functions to avoid writing to real config file
@@ -43,6 +47,43 @@ vi.mock("./marketplace.js", async (importOriginal) => {
   return {
     ...actual,
     fetchMarketplace: vi.fn().mockResolvedValue([]),
+  };
+});
+
+vi.mock("./config/loader.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./config/loader.js")>();
+  return {
+    ...actual,
+    getConfigPath: vi.fn().mockReturnValue("/tmp/blackbook/config.toml"),
+    loadConfig: vi.fn().mockReturnValue({ config: { files: [], settings: {}, tools: {}, plugins: {} }, configPath: "/tmp/blackbook/config.yaml", errors: [] }),
+  };
+});
+
+vi.mock("./config/path.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./config/path.js")>();
+  return {
+    ...actual,
+    resolveSourcePath: vi.fn((source: string, repo?: string) => repo ? `${repo}/${source}` : source),
+    expandPath: vi.fn((p: string) => p.replace("~", "/home/user")),
+  };
+});
+
+vi.mock("./config/playbooks.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./config/playbooks.js")>();
+  return {
+    ...actual,
+    getAllPlaybooks: vi.fn().mockReturnValue(new Map()),
+    resolveToolInstances: vi.fn().mockReturnValue(new Map()),
+    isSyncTarget: vi.fn().mockReturnValue(true),
+  };
+});
+
+vi.mock("./modules/orchestrator.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./modules/orchestrator.js")>();
+  return {
+    ...actual,
+    runCheck: vi.fn().mockResolvedValue({ steps: [], summary: { ok: 0, missing: 0, drifted: 0, failed: 0, changed: 0 } }),
+    runApply: vi.fn().mockResolvedValue({ steps: [], summary: { ok: 0, missing: 0, drifted: 0, failed: 0, changed: 0 } }),
   };
 });
 
@@ -436,5 +477,260 @@ describe("Store sync tools", () => {
     expect(notifications).toHaveLength(1);
     expect(notifications[0].message).toBe("All enabled instances are in sync.");
     expect(notifications[0].type).toBe("success");
+  });
+});
+
+describe("Store loadFiles (YAML config)", () => {
+  beforeEach(() => {
+    useStore.setState({ files: [] });
+    vi.mocked(getYamlConfigPath).mockReset();
+    vi.mocked(loadYamlConfig).mockReset();
+    vi.mocked(getAllPlaybooks).mockReset();
+    vi.mocked(resolveToolInstances).mockReset();
+    vi.mocked(isSyncTarget).mockReset();
+    vi.mocked(runCheck).mockReset();
+    vi.mocked(expandConfigPath).mockReset();
+    vi.mocked(resolveSourcePath).mockReset();
+  });
+
+  it("returns empty when config path is not YAML", async () => {
+    vi.mocked(getYamlConfigPath).mockReturnValue("/tmp/blackbook/config.toml");
+
+    const files = await useStore.getState().loadFiles();
+
+    expect(files).toEqual([]);
+    expect(useStore.getState().files).toEqual([]);
+    expect(loadYamlConfig).not.toHaveBeenCalled();
+  });
+
+  it("returns empty when YAML config has errors", async () => {
+    vi.mocked(getYamlConfigPath).mockReturnValue("/tmp/blackbook/config.yaml");
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: { files: [], settings: { package_manager: "pnpm" }, tools: {}, plugins: {} } as any,
+      configPath: "/tmp/blackbook/config.yaml",
+      errors: [{ source: "yaml", message: "parse error" }],
+    });
+
+    const files = await useStore.getState().loadFiles();
+
+    expect(files).toEqual([]);
+  });
+
+  it("returns empty when config has no files", async () => {
+    vi.mocked(getYamlConfigPath).mockReturnValue("/tmp/blackbook/config.yaml");
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: { files: [], settings: { package_manager: "pnpm" }, tools: {}, plugins: {} } as any,
+      configPath: "/tmp/blackbook/config.yaml",
+      errors: [],
+    });
+
+    const files = await useStore.getState().loadFiles();
+
+    expect(files).toEqual([]);
+  });
+
+  it("builds FileStatus for each file entry across instances", async () => {
+    vi.mocked(getYamlConfigPath).mockReturnValue("/tmp/blackbook/config.yaml");
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: {
+        files: [
+          { name: "CLAUDE.md", source: "CLAUDE.md", target: "CLAUDE.md", pullback: false },
+        ],
+        settings: { source_repo: "~/dotfiles", package_manager: "pnpm" },
+        tools: {},
+        plugins: {},
+      } as any,
+      configPath: "/tmp/blackbook/config.yaml",
+      errors: [],
+    });
+
+    const playbooks = new Map([
+      ["claude-code", { syncable: true }],
+    ]);
+    vi.mocked(getAllPlaybooks).mockReturnValue(playbooks as any);
+    vi.mocked(isSyncTarget).mockReturnValue(true);
+    vi.mocked(expandConfigPath).mockImplementation((p: string) => p.replace("~", "/home/user"));
+    vi.mocked(resolveSourcePath).mockImplementation((source: string, repo?: string) =>
+      repo ? `${repo}/${source}` : source
+    );
+    vi.mocked(resolveToolInstances).mockReturnValue(
+      new Map([
+        ["claude-code", [
+          { id: "default", name: "Claude", enabled: true, config_dir: "~/.claude" },
+        ]],
+      ])
+    );
+    vi.mocked(runCheck).mockResolvedValue({
+      steps: [{ label: "CLAUDE.md:claude-code:default", check: { status: "missing", message: "File not found", diff: undefined } }],
+      summary: { ok: 0, missing: 1, drifted: 0, failed: 0, changed: 0 },
+    });
+
+    const files = await useStore.getState().loadFiles();
+
+    expect(files).toHaveLength(1);
+    expect(files[0].name).toBe("CLAUDE.md");
+    expect(files[0].instances).toHaveLength(1);
+    expect(files[0].instances[0]).toMatchObject({
+      toolId: "claude-code",
+      instanceId: "default",
+      instanceName: "Claude",
+      status: "missing",
+    });
+  });
+
+  it("skips disabled instances", async () => {
+    vi.mocked(getYamlConfigPath).mockReturnValue("/tmp/blackbook/config.yaml");
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: {
+        files: [
+          { name: "settings.json", source: "settings.json", target: "settings.json", pullback: false },
+        ],
+        settings: { package_manager: "pnpm" },
+        tools: {},
+        plugins: {},
+      } as any,
+      configPath: "/tmp/blackbook/config.yaml",
+      errors: [],
+    });
+
+    vi.mocked(getAllPlaybooks).mockReturnValue(new Map([["claude-code", { syncable: true }]]) as any);
+    vi.mocked(isSyncTarget).mockReturnValue(true);
+    vi.mocked(expandConfigPath).mockImplementation((p: string) => p);
+    vi.mocked(resolveSourcePath).mockImplementation((s: string) => s);
+    vi.mocked(resolveToolInstances).mockReturnValue(
+      new Map([
+        ["claude-code", [
+          { id: "default", name: "Claude", enabled: false, config_dir: "/home/.claude" },
+        ]],
+      ])
+    );
+
+    const files = await useStore.getState().loadFiles();
+
+    expect(files).toHaveLength(1);
+    expect(files[0].instances).toHaveLength(0);
+    expect(runCheck).not.toHaveBeenCalled();
+  });
+
+  it("includes file items in sync preview for missing/drifted only", () => {
+    useStore.setState({
+      files: [
+        {
+          name: "ok-file",
+          source: "ok.md",
+          target: "ok.md",
+          pullback: false,
+          instances: [{ toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/tmp", status: "ok", message: "File matches" }],
+        },
+        {
+          name: "missing-file",
+          source: "missing.md",
+          target: "missing.md",
+          pullback: false,
+          instances: [{ toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/tmp", status: "missing", message: "Not found" }],
+        },
+      ],
+      assets: [createMockAsset()],
+      configs: [],
+      managedTools: [],
+      toolDetection: {},
+    });
+
+    vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [], byTool: {} });
+    vi.mocked(getAssetToolStatus).mockReturnValue([]);
+    vi.mocked(getAssetSourceInfo).mockReturnValue({
+      sourcePath: "/tmp/test-asset",
+      exists: false,
+      isDirectory: false,
+      hash: null,
+      error: "Asset source not found.",
+    });
+
+    const preview = useStore.getState().getSyncPreview();
+    const fileItems = preview.filter((p) => p.kind === "file");
+
+    expect(fileItems).toHaveLength(1);
+    if (fileItems[0].kind === "file") {
+      expect(fileItems[0].file.name).toBe("missing-file");
+      expect(fileItems[0].missingInstances).toContain("Claude");
+    }
+  });
+});
+
+describe("Store syncTools with file items", () => {
+  beforeEach(() => {
+    useStore.setState({ notifications: [] });
+    vi.mocked(loadYamlConfig).mockReset();
+    vi.mocked(runApply).mockReset();
+    vi.mocked(expandConfigPath).mockReset();
+    vi.mocked(resolveSourcePath).mockReset();
+  });
+
+  it("syncs file items via orchestrator runApply", async () => {
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: { files: [], settings: { source_repo: "~/dotfiles", package_manager: "pnpm" }, tools: {}, plugins: {} } as any,
+      configPath: "/tmp/config.yaml",
+      errors: [],
+    });
+    vi.mocked(expandConfigPath).mockImplementation((p: string) => p.replace("~", "/home/user"));
+    vi.mocked(resolveSourcePath).mockImplementation((source: string, repo?: string) =>
+      repo ? `${repo}/${source}` : source
+    );
+    vi.mocked(runApply).mockResolvedValue({
+      steps: [{ label: "CLAUDE.md:claude-code:default", check: { status: "missing", message: "" }, apply: { changed: true, message: "File copied" } }],
+      summary: { ok: 0, missing: 0, drifted: 0, failed: 0, changed: 1 },
+    });
+
+    await useStore.getState().syncTools([
+      {
+        kind: "file",
+        file: {
+          name: "CLAUDE.md",
+          source: "CLAUDE.md",
+          target: "CLAUDE.md",
+          pullback: false,
+          instances: [
+            { toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/home/user/.claude", status: "missing", message: "Not found" },
+          ],
+        },
+        missingInstances: ["Claude"],
+        driftedInstances: [],
+      },
+    ]);
+
+    expect(runApply).toHaveBeenCalledTimes(1);
+    const { notifications } = useStore.getState();
+    const successNote = notifications.find((n) => n.type === "success");
+    expect(successNote?.message).toContain("Synced 1");
+  });
+
+  it("reports errors when config fails to load during file sync", async () => {
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: { files: [], settings: { package_manager: "pnpm" }, tools: {}, plugins: {} } as any,
+      configPath: "/tmp/config.yaml",
+      errors: [{ source: "yaml", message: "bad config" }],
+    });
+
+    await useStore.getState().syncTools([
+      {
+        kind: "file",
+        file: {
+          name: "test.md",
+          source: "test.md",
+          target: "test.md",
+          pullback: false,
+          instances: [
+            { toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/tmp", status: "missing", message: "Not found" },
+          ],
+        },
+        missingInstances: ["Claude"],
+        driftedInstances: [],
+      },
+    ]);
+
+    expect(runApply).not.toHaveBeenCalled();
+    const { notifications } = useStore.getState();
+    const errorNote = notifications.find((n) => n.type === "error");
+    expect(errorNote?.message).toContain("bad config");
   });
 });

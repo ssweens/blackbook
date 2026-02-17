@@ -1,0 +1,14 @@
+id: openai-codex
+name: Codex
+default_instances:
+  - id: default
+    name: Codex
+    config_dir: ~/.codex
+structure:
+  - skills/
+components:
+  skills:
+    install_dir: skills/
+    strategy: symlink
+config_files: []
+syncable: true

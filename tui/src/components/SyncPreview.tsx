@@ -53,6 +53,50 @@ export function SyncPreview({ item }: SyncPreviewProps) {
     );
   }
 
+  if (item.kind === "file") {
+    const conflictInstances = item.file.instances.filter((i) => i.driftKind === "both-changed").map((i) => i.instanceName);
+    const pullbackInstances = item.file.instances.filter((i) => i.driftKind === "target-changed").map((i) => i.instanceName);
+    return (
+      <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="gray" paddingX={1} height={5}>
+        <Box>
+          <Text color="gray">File: </Text>
+          <Text color="white">{item.file.name}</Text>
+          {item.file.pullback && <Text color="magenta"> (pullback)</Text>}
+        </Box>
+        <Box>
+          <Text color="gray">Source: </Text>
+          <Text color="cyan">{item.file.source} → {item.file.target}</Text>
+        </Box>
+        <Box>
+          {item.missingInstances.length > 0 && (
+            <>
+              <Text color="gray">Missing: </Text>
+              <Text color="yellow">{item.missingInstances.join(", ")}</Text>
+            </>
+          )}
+          {pullbackInstances.length > 0 && (
+            <>
+              <Text color="gray">{item.missingInstances.length > 0 ? " · " : ""}Pullback: </Text>
+              <Text color="magenta">{pullbackInstances.join(", ")}</Text>
+            </>
+          )}
+          {conflictInstances.length > 0 && (
+            <>
+              <Text color="gray">{(item.missingInstances.length > 0 || pullbackInstances.length > 0) ? " · " : ""}Conflict: </Text>
+              <Text color="red">{conflictInstances.join(", ")}</Text>
+            </>
+          )}
+          {item.missingInstances.length === 0 && pullbackInstances.length === 0 && conflictInstances.length === 0 && item.driftedInstances.length > 0 && (
+            <>
+              <Text color="gray">Drifted: </Text>
+              <Text color="yellow">{item.driftedInstances.join(", ")}</Text>
+            </>
+          )}
+        </Box>
+      </Box>
+    );
+  }
+
   if (item.kind === "config") {
     const mappingSummary = item.config.mappings && item.config.mappings.length > 0
       ? item.config.mappings[0]
