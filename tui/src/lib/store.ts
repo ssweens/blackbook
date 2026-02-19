@@ -4,8 +4,6 @@ import type {
   Tab,
   Marketplace,
   Plugin,
-  Asset,
-  ConfigFile,
   FileStatus,
   FileInstanceStatus,
   AppState,
@@ -23,16 +21,6 @@ import type {
 } from "./types.js";
 import { loadAllPiMarketplaces, getAllPiPackages, loadPiSettings, isPackageInstalled, fetchNpmPackageDetails } from "./pi-marketplace.js";
 import { installPiPackage, removePiPackage, updatePiPackage } from "./pi-install.js";
-import {
-  getDriftedAssetInstances,
-  getMissingAssetInstances,
-  buildAssetDiffTarget,
-  buildAssetMissingSummary,
-  getDriftedConfigInstances,
-  getMissingConfigInstances,
-  buildConfigDiffTarget,
-  buildConfigMissingSummary,
-} from "./diff.js";
 import {
   parseMarketplaces,
   addMarketplace as addMarketplaceToConfig,
@@ -71,13 +59,6 @@ import {
   updatePlugin,
   getPluginToolStatus,
   syncPluginInstances,
-  getAssetToolStatus,
-  getAssetSourceInfo,
-  syncAssetInstances,
-  getConfigToolStatus,
-  syncConfigInstances,
-  getConfigSourceFiles,
-  reverseSyncConfig,
   manifestPath,
 } from "./install.js";
 
@@ -87,8 +68,6 @@ interface Actions {
   setSelectedIndex: (index: number) => void;
   loadMarketplaces: () => Promise<void>;
   loadInstalledPlugins: () => Promise<void>;
-  loadAssets: () => Asset[];
-  loadConfigs: () => Promise<ConfigFile[]>;
   loadFiles: () => Promise<FileStatus[]>;
   loadTools: () => void;
   refreshManagedTools: () => void;
@@ -102,8 +81,6 @@ interface Actions {
   uninstallPlugin: (plugin: Plugin) => Promise<boolean>;
   updatePlugin: (plugin: Plugin) => Promise<boolean>;
   setDetailPlugin: (plugin: Plugin | null) => void;
-  setDetailAsset: (asset: Asset | null) => void;
-  setDetailConfig: (config: ConfigFile | null) => void;
   setDetailMarketplace: (marketplace: Marketplace | null) => void;
   addMarketplace: (name: string, url: string) => void;
   removeMarketplace: (name: string) => void;
@@ -128,16 +105,9 @@ interface Actions {
   setCurrentSection: (section: DiscoverSection) => void;
   setDiscoverSubView: (subView: DiscoverSubView) => void;
   // Diff view actions
-  openDiffForAsset: (asset: Asset, instance?: DiffInstanceRef) => void;
-  openDiffForConfig: (config: ConfigFile, instance?: DiffInstanceRef) => void;
-  openMissingSummaryForAsset: (asset: Asset, instance?: DiffInstanceRef) => void;
-  openMissingSummaryForConfig: (config: ConfigFile, instance?: DiffInstanceRef) => void;
   openDiffFromSyncItem: (item: SyncPreviewItem) => void;
-  reverseSyncConfig: (config: ConfigFile, instance: DiffInstanceRef) => void;
   closeDiff: () => void;
   closeMissingSummary: () => void;
-  getDriftedInstances: (item: Asset | ConfigFile, kind: "asset" | "config") => DiffInstanceRef[];
-  getMissingInstances: (item: Asset | ConfigFile, kind: "asset" | "config") => DiffInstanceRef[];
 }
 
 export type Store = AppState & Actions;
@@ -162,56 +132,6 @@ function getInstallStatus(plugin: Plugin, installedAny: boolean): InstallStatus 
   return { installed: true, incomplete };
 }
 
-export interface AssetInstallStatus {
-  installed: boolean;
-  incomplete?: boolean;
-  drifted?: boolean;
-}
-
-function getAssetInstallStatus(
-  asset: Asset,
-  sourceInfo = getAssetSourceInfo(asset)
-): AssetInstallStatus {
-  const statuses = getAssetToolStatus(asset, sourceInfo).filter((status) => status.enabled);
-  if (statuses.length === 0) {
-    return { installed: false, incomplete: false, drifted: false };
-  }
-
-  const installedAny = statuses.some((status) => status.installed);
-  if (!installedAny) {
-    return { installed: false, incomplete: false, drifted: false };
-  }
-
-  const incomplete = statuses.some((status) => !status.installed);
-  const drifted = statuses.some((status) => status.drifted);
-  return { installed: true, incomplete, drifted };
-}
-
-export interface ConfigInstallStatus {
-  installed: boolean;
-  incomplete?: boolean;
-  drifted?: boolean;
-}
-
-function getConfigInstallStatus(
-  config: ConfigFile,
-  sourceFiles?: ConfigFile["sourceFiles"]
-): ConfigInstallStatus {
-  const files = sourceFiles || [];
-  const statuses = getConfigToolStatus(config, files).filter((status) => status.enabled);
-  if (statuses.length === 0) {
-    return { installed: false, incomplete: false, drifted: false };
-  }
-
-  const installedAny = statuses.some((status) => status.installed);
-  if (!installedAny) {
-    return { installed: false, incomplete: false, drifted: false };
-  }
-
-  const incomplete = statuses.some((status) => !status.installed);
-  const drifted = statuses.some((status) => status.drifted);
-  return { installed: true, incomplete, drifted };
-}
 
 function buildSyncPreview(plugins: Plugin[]): SyncPreviewItem[] {
   const preview: SyncPreviewItem[] = [];
@@ -231,48 +151,6 @@ function buildSyncPreview(plugins: Plugin[]): SyncPreviewItem[] {
   return preview;
 }
 
-function buildAssetSyncPreview(assets: Asset[]): SyncPreviewItem[] {
-  const preview: SyncPreviewItem[] = [];
-  for (const asset of assets) {
-    const sourceInfo = getAssetSourceInfo(asset);
-    const statuses = getAssetToolStatus(asset, sourceInfo).filter((status) => status.enabled);
-    if (statuses.length === 0) continue;
-    const installedAny = statuses.some((status) => status.installed);
-    const missingInstances = statuses
-      .filter((status) => !status.installed)
-      .map((status) => status.name);
-    const driftedInstances = statuses
-      .filter((status) => status.drifted)
-      .map((status) => status.name);
-
-    // Only show assets that are installed somewhere and need sync
-    if (!installedAny) continue;
-    if (missingInstances.length === 0 && driftedInstances.length === 0) continue;
-
-    preview.push({ kind: "asset", asset, missingInstances, driftedInstances });
-  }
-  return preview;
-}
-
-function buildConfigSyncPreview(configs: ConfigFile[]): SyncPreviewItem[] {
-  const preview: SyncPreviewItem[] = [];
-  for (const config of configs) {
-    const files = config.sourceFiles || [];
-    const statuses = getConfigToolStatus(config, files).filter((status) => status.enabled);
-    if (statuses.length === 0) continue;
-
-    const installedAny = statuses.some((status) => status.installed);
-    const missing = statuses.some((status) => !status.installed);
-    const drifted = statuses.some((status) => status.drifted);
-
-    // Only show configs that are installed somewhere and need sync
-    if (!installedAny) continue;
-    if (!missing && !drifted) continue;
-
-    preview.push({ kind: "config", config, drifted, missing });
-  }
-  return preview;
-}
 
 function buildFileSyncPreview(files: FileStatus[]): SyncPreviewItem[] {
   const preview: SyncPreviewItem[] = [];
@@ -389,8 +267,6 @@ export const useStore = create<Store>((set, get) => ({
   tab: "sync",
   marketplaces: [],
   installedPlugins: [],
-  assets: [],
-  configs: [],
   files: [],
   tools: getToolInstances(),
   managedTools: getManagedToolRows(),
@@ -403,22 +279,16 @@ export const useStore = create<Store>((set, get) => ({
   loading: false,
   error: null,
   detailPlugin: null,
-  detailAsset: null,
-  detailConfig: null,
   detailMarketplace: null,
   detailPiPackage: null,
   notifications: [],
   diffTarget: null,
-  diffSourceAsset: null,
-  diffSourceConfig: null,
   missingSummary: null,
-  missingSummarySourceAsset: null,
-  missingSummarySourceConfig: null,
   // Pi packages state
   piPackages: [],
   piMarketplaces: [],
   // Section navigation
-  currentSection: "configs" as DiscoverSection,
+  currentSection: "plugins" as DiscoverSection,
   discoverSubView: null as DiscoverSubView,
 
   setTab: (tab) =>
@@ -430,16 +300,12 @@ export const useStore = create<Store>((set, get) => ({
             selectedIndex: 0,
             search: "",
             detailPlugin: null,
-            detailAsset: null,
-            detailConfig: null,
             detailMarketplace: null,
           }
     ),
   setSearch: (search) => set({ search, selectedIndex: 0 }),
   setSelectedIndex: (index) => set({ selectedIndex: index }),
   setDetailPlugin: (plugin) => set({ detailPlugin: plugin }),
-  setDetailAsset: (asset) => set({ detailAsset: asset }),
-  setDetailConfig: (config) => set({ detailConfig: config }),
   setDetailMarketplace: (marketplace) => set({ detailMarketplace: marketplace }),
   setDetailPiPackage: async (pkg) => {
     if (!pkg) {
@@ -811,17 +677,13 @@ export const useStore = create<Store>((set, get) => ({
     set((state) => ({
       loading:
         state.marketplaces.length === 0 &&
-        state.installedPlugins.length === 0 &&
-        state.assets.length === 0 &&
-        state.configs.length === 0,
+        state.installedPlugins.length === 0,
       error: null,
     }));
 
     try {
       const marketplaces = parseMarketplaces();
       const { plugins: installedPlugins } = getAllInstalledPlugins();
-      const assets = get().loadAssets();
-      const configs = await get().loadConfigs();
       const files = await get().loadFiles();
       const tools = getToolInstances();
 
@@ -883,8 +745,6 @@ export const useStore = create<Store>((set, get) => ({
       set({
         marketplaces: enrichedMarketplaces,
         installedPlugins: installedWithStatus,
-        assets,
-        configs,
         files,
         tools,
         managedTools: getManagedToolRows(),
@@ -928,84 +788,14 @@ export const useStore = create<Store>((set, get) => ({
         incomplete: status.incomplete,
       };
     });
-    const assets = get().loadAssets();
-    const configs = await get().loadConfigs();
     const files = await get().loadFiles();
     set({
       installedPlugins: installedWithStatus,
       marketplaces,
-      assets,
-      configs,
       files,
       tools: getToolInstances(),
       managedTools: getManagedToolRows(),
     });
-  },
-
-  loadAssets: () => {
-    const config = loadConfig();
-    const assets = (config.assets || []).map((asset) => {
-      const sourceInfo = getAssetSourceInfo(asset);
-      const status = getAssetInstallStatus(
-        {
-          ...asset,
-          installed: false,
-          scope: "user",
-        },
-        sourceInfo
-      );
-      return {
-        ...asset,
-        installed: status.installed,
-        incomplete: status.incomplete,
-        drifted: status.drifted,
-        scope: "user" as const,
-        sourceExists: sourceInfo.exists,
-        sourceError: sourceInfo.error || null,
-      };
-    });
-
-    set({ assets });
-    return assets;
-  },
-
-  loadConfigs: async () => {
-    const config = loadConfig();
-    const configs: ConfigFile[] = [];
-
-    for (const cfg of (config.configs || [])) {
-      let sourceFiles: ConfigFile["sourceFiles"] = [];
-      let sourceError: string | null = null;
-
-      try {
-        sourceFiles = await getConfigSourceFiles(cfg);
-      } catch (error) {
-        sourceError = error instanceof Error ? error.message : String(error);
-      }
-
-      const status = getConfigInstallStatus(
-        {
-          ...cfg,
-          installed: false,
-          scope: "user",
-        },
-        sourceFiles
-      );
-
-      configs.push({
-        ...cfg,
-        installed: status.installed,
-        incomplete: status.incomplete,
-        drifted: status.drifted,
-        scope: "user" as const,
-        sourceExists: sourceError === null && sourceFiles.length > 0,
-        sourceError,
-        sourceFiles,
-      });
-    }
-
-    set({ configs });
-    return configs;
   },
 
   loadFiles: async () => {
@@ -1268,15 +1058,11 @@ export const useStore = create<Store>((set, get) => ({
       return marketplace || scanned; // Prefer marketplace, fallback to scanned for local-only
     });
 
-    const assets = get().assets.length > 0 ? get().assets : get().loadAssets();
-    const configs = get().configs;
     const files = get().files;
     const toolSync = buildToolSyncPreview(get().managedTools, get().toolDetection);
     return [
       ...toolSync,
       ...buildFileSyncPreview(files),
-      ...buildConfigSyncPreview(configs),
-      ...buildAssetSyncPreview(assets),
       ...buildSyncPreview(pluginsForSync),
     ];
   },
@@ -1302,23 +1088,6 @@ export const useStore = create<Store>((set, get) => ({
         if (statuses.length === 0) continue;
 
         const result = await syncPluginInstances(item.plugin, marketplaceUrl, statuses);
-        if (result.success) syncedItems += 1;
-        errors.push(...result.errors);
-      } else if (item.kind === "asset") {
-        const statuses = getAssetToolStatus(item.asset)
-          .filter((status) => status.enabled && (!status.installed || status.drifted));
-        if (statuses.length === 0) continue;
-
-        const result = syncAssetInstances(item.asset, statuses);
-        if (result.success) syncedItems += 1;
-        errors.push(...result.errors);
-      } else if (item.kind === "config") {
-        const files = item.config.sourceFiles || [];
-        const statuses = getConfigToolStatus(item.config, files)
-          .filter((status) => status.enabled && (!status.installed || status.drifted));
-        if (statuses.length === 0) continue;
-
-        const result = await syncConfigInstances(item.config, statuses);
         if (result.success) syncedItems += 1;
         errors.push(...result.errors);
       } else if (item.kind === "file") {
@@ -1477,92 +1246,6 @@ export const useStore = create<Store>((set, get) => ({
   // Diff view actions
   // ─────────────────────────────────────────────────────────────────────────────
 
-  getDriftedInstances: (item, kind) => {
-    if (kind === "asset") {
-      return getDriftedAssetInstances(item as Asset);
-    }
-    return getDriftedConfigInstances(item as ConfigFile);
-  },
-
-  getMissingInstances: (item, kind) => {
-    if (kind === "asset") {
-      return getMissingAssetInstances(item as Asset);
-    }
-    return getMissingConfigInstances(item as ConfigFile);
-  },
-
-  openDiffForAsset: (asset, instance) => {
-    const instances = getDriftedAssetInstances(asset);
-    if (instances.length === 0) {
-      get().notify("No drifted instances found for this asset.", "warning");
-      return;
-    }
-    const targetInstance = instance || instances[0];
-    const diffTarget = buildAssetDiffTarget(asset, targetInstance);
-    set({
-      diffTarget,
-      diffSourceAsset: asset,
-      diffSourceConfig: null,
-      missingSummary: null,
-      missingSummarySourceAsset: null,
-      missingSummarySourceConfig: null,
-    });
-  },
-
-  openDiffForConfig: (config, instance) => {
-    const instances = getDriftedConfigInstances(config);
-    if (instances.length === 0) {
-      get().notify("No drifted instances found for this config.", "warning");
-      return;
-    }
-    const targetInstance = instance || instances[0];
-    const diffTarget = buildConfigDiffTarget(config, targetInstance);
-    set({
-      diffTarget,
-      diffSourceAsset: null,
-      diffSourceConfig: config,
-      missingSummary: null,
-      missingSummarySourceAsset: null,
-      missingSummarySourceConfig: null,
-    });
-  },
-
-  openMissingSummaryForAsset: (asset, instance) => {
-    const instances = getMissingAssetInstances(asset);
-    if (instances.length === 0) {
-      get().notify("No missing instances found for this asset.", "warning");
-      return;
-    }
-    const targetInstance = instance || instances[0];
-    const missingSummary = buildAssetMissingSummary(asset, targetInstance);
-    set({
-      missingSummary,
-      missingSummarySourceAsset: asset,
-      missingSummarySourceConfig: null,
-      diffTarget: null,
-      diffSourceAsset: null,
-      diffSourceConfig: null,
-    });
-  },
-
-  openMissingSummaryForConfig: (config, instance) => {
-    const instances = getMissingConfigInstances(config);
-    if (instances.length === 0) {
-      get().notify("No missing instances found for this config.", "warning");
-      return;
-    }
-    const targetInstance = instance || instances[0];
-    const missingSummary = buildConfigMissingSummary(config, targetInstance);
-    set({
-      missingSummary,
-      missingSummarySourceAsset: null,
-      missingSummarySourceConfig: config,
-      diffTarget: null,
-      diffSourceAsset: null,
-      diffSourceConfig: null,
-    });
-  },
-
   openDiffFromSyncItem: (item) => {
     if (item.kind === "plugin") {
       get().notify("Plugins do not support drift diff.", "warning");
@@ -1574,49 +1257,11 @@ export const useStore = create<Store>((set, get) => ({
       return;
     }
 
-    if (item.kind === "asset") {
-      const asset = item.asset;
-      if (item.driftedInstances.length > 0) {
-        get().openDiffForAsset(asset);
-      } else if (item.missingInstances.length > 0) {
-        get().openMissingSummaryForAsset(asset);
-      } else {
-        get().notify("No diff or missing summary available for this asset.", "warning");
-      }
-      return;
-    }
-
     if (item.kind === "file") {
       // File diff support will be added in Phase 5 (three-way state)
       get().notify("File diff view coming soon.", "info");
       return;
     }
-
-    if (item.kind === "config") {
-      const config = item.config;
-      if (item.drifted) {
-        get().openDiffForConfig(config);
-      } else if (item.missing) {
-        get().openMissingSummaryForConfig(config);
-      } else {
-        get().notify("No diff or missing summary available for this config.", "warning");
-      }
-    }
-  },
-
-  reverseSyncConfig: (config, instance) => {
-    const { notify } = get();
-    const result = reverseSyncConfig(config, instance);
-    if (result.success) {
-      notify(`Pulled back ${result.syncedFiles} file${result.syncedFiles === 1 ? "" : "s"} to source`, "success");
-    } else {
-      notify(`Pull back failed: ${result.errors.join("; ") || "no drifted files found"}`, "error");
-    }
-    if (result.errors.length > 0 && result.success) {
-      notify(`Pull back warnings: ${result.errors.join("; ")}`, "warning");
-    }
-    set({ diffTarget: null, diffSourceConfig: null });
-    void get().refreshAll();
   },
 
   closeDiff: () => {

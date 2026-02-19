@@ -13,7 +13,7 @@ import { getConfigPath as getYamlConfigPath, loadConfig as loadYamlConfig } from
 import { resolveSourcePath, expandPath as expandConfigPath } from "./config/path.js";
 import { getAllPlaybooks, resolveToolInstances, isSyncTarget } from "./config/playbooks.js";
 import { runCheck, runApply } from "./modules/orchestrator.js";
-import type { Plugin, Marketplace, ToolInstance, Asset, ManagedToolRow, ToolDetectionResult } from "./types.js";
+import type { Plugin, Marketplace, ToolInstance, ManagedToolRow, ToolDetectionResult } from "./types.js";
 
 // Mock config functions to avoid writing to real config file
 vi.mock("./config.js", async (importOriginal) => {
@@ -131,18 +131,6 @@ function createMockTool(overrides: Partial<ToolInstance> = {}): ToolInstance {
     commandsSubdir: "commands",
     agentsSubdir: "agents",
     enabled: true,
-    ...overrides,
-  };
-}
-
-function createMockAsset(overrides: Partial<Asset> = {}): Asset {
-  return {
-    name: "test-asset",
-    source: "./assets/test-asset",
-    installed: true,
-    scope: "user",
-    sourceExists: true,
-    sourceError: null,
     ...overrides,
   };
 }
@@ -392,7 +380,6 @@ describe("Store sync tools", () => {
   });
 
   it("builds a sync preview for partial plugins", () => {
-    useStore.setState({ assets: [createMockAsset()] });
     const plugin = createMockPlugin({ name: "partial-plugin" });
     vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [plugin], byTool: {} });
     vi.mocked(getPluginToolStatus).mockReturnValue([
@@ -454,7 +441,7 @@ describe("Store sync tools", () => {
       },
     };
 
-    useStore.setState({ managedTools, toolDetection, assets: [createMockAsset()], configs: [] });
+    useStore.setState({ managedTools, toolDetection });
     vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [], byTool: {} });
     vi.mocked(getAssetToolStatus).mockReturnValue([]);
 
@@ -630,8 +617,6 @@ describe("Store loadFiles (YAML config)", () => {
           instances: [{ toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/tmp", status: "missing", message: "Not found" }],
         },
       ],
-      assets: [createMockAsset()],
-      configs: [],
       managedTools: [],
       toolDetection: {},
     });

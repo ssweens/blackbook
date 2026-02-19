@@ -64,63 +64,6 @@ export interface Plugin {
   updatedAt?: Date;
 }
 
-export interface AssetMapping {
-  source: string;  // relative to assets_repo; can be file, dir (trailing /), or glob
-  target: string;  // relative to tool's configDir; destination file or directory
-  overrides?: Record<string, string>;  // per-instance target overrides
-}
-
-export interface AssetConfig {
-  name: string;
-  // Simple single-source syntax (backward compatible)
-  source?: string;
-  defaultTarget?: string;
-  overrides?: Record<string, string>;
-  // Multi-file syntax (new)
-  mappings?: AssetMapping[];
-}
-
-export interface Asset extends AssetConfig {
-  installed: boolean;
-  incomplete?: boolean;
-  drifted?: boolean;
-  scope: "user" | "project";
-  sourceExists?: boolean;
-  sourceError?: string | null;
-}
-
-export interface ConfigMapping {
-  source: string;  // relative to config_repo; can be file, dir (trailing /), or glob
-  target: string;  // relative to tool's configDir; destination file or directory
-}
-
-export interface ConfigSyncConfig {
-  name: string;
-  toolId: string;
-  // Legacy single-file support
-  sourcePath?: string;  // relative to config_repo
-  targetPath?: string;  // relative to tool's configDir
-  // New multi-file support
-  mappings?: ConfigMapping[];
-}
-
-export interface ConfigFile extends ConfigSyncConfig {
-  installed: boolean;
-  incomplete?: boolean;
-  drifted?: boolean;
-  scope: "user";
-  sourceExists?: boolean;
-  sourceError?: string | null;
-  // Expanded source info for multi-file configs
-  sourceFiles?: ConfigSourceFile[];
-}
-
-export interface ConfigSourceFile {
-  sourcePath: string;
-  targetPath: string;
-  hash: string;
-  isDirectory: boolean;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Unified File Status (from declarative config + orchestrator check)
@@ -155,18 +98,6 @@ export type SyncPreviewItem =
       kind: "plugin";
       plugin: Plugin;
       missingInstances: string[];
-    }
-  | {
-      kind: "asset";
-      asset: Asset;
-      missingInstances: string[];
-      driftedInstances: string[];
-    }
-  | {
-      kind: "config";
-      config: ConfigFile;
-      drifted: boolean;
-      missing: boolean;
     }
   | {
       kind: "tool";
@@ -225,8 +156,6 @@ export interface AppState {
   tab: Tab;
   marketplaces: Marketplace[];
   installedPlugins: Plugin[];
-  assets: Asset[];
-  configs: ConfigFile[];
   files: FileStatus[];
   tools: ToolInstance[];
   managedTools: ManagedToolRow[];
@@ -239,18 +168,12 @@ export interface AppState {
   loading: boolean;
   error: string | null;
   detailPlugin: Plugin | null;
-  detailAsset: Asset | null;
-  detailConfig: ConfigFile | null;
   detailMarketplace: Marketplace | null;
   detailPiPackage: PiPackage | null;
   notifications: Notification[];
   // Diff view state
   diffTarget: DiffTarget | null;
-  diffSourceAsset: Asset | null;
-  diffSourceConfig: ConfigFile | null;
   missingSummary: MissingSummary | null;
-  missingSummarySourceAsset: Asset | null;
-  missingSummarySourceConfig: ConfigFile | null;
   // Pi packages state
   piPackages: PiPackage[];
   piMarketplaces: PiMarketplace[];
@@ -263,7 +186,7 @@ export interface AppState {
 // Diff View Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type DiffItemKind = "asset" | "config" | "file";
+export type DiffItemKind = "file";
 
 export interface DiffInstanceRef {
   toolId: string;
@@ -371,7 +294,7 @@ export interface PiSettings {
 }
 
 // Section navigation for Discover/Installed tabs
-export type DiscoverSection = "configs" | "assets" | "plugins" | "piPackages";
+export type DiscoverSection = "plugins" | "piPackages";
 
 // Sub-view state for drilling into Plugins or Pi Packages
 export type DiscoverSubView = "plugins" | "piPackages" | null;

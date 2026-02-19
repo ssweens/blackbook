@@ -9,8 +9,6 @@ import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import { join, relative, basename } from "node:path";
 import { diffLines, createTwoFilesPatch, parsePatch } from "diff";
 import type {
-  Asset,
-  ConfigFile,
   DiffTarget,
   DiffFileSummary,
   DiffFileDetail,
@@ -19,7 +17,6 @@ import type {
   DiffInstanceRef,
   DiffFileStatus,
   MissingSummary,
-  ConfigSourceFile,
 } from "./types.js";
 import { getAssetToolStatus, getConfigToolStatus, getAssetSourceInfo, resolveAssetTarget } from "./install.js";
 import { getToolInstances } from "./config.js";
@@ -289,7 +286,7 @@ export interface DiffInstanceSummary extends DiffInstanceRef {
   totalRemoved: number;
 }
 
-export function getDriftedAssetInstances(asset: Asset): DiffInstanceRef[] {
+export function getDriftedAssetInstances(asset: any): DiffInstanceRef[] {
   const sourceInfo = getAssetSourceInfo(asset);
   const statuses = getAssetToolStatus(asset, sourceInfo);
   return statuses
@@ -302,7 +299,7 @@ export function getDriftedAssetInstances(asset: Asset): DiffInstanceRef[] {
     }));
 }
 
-export function getDriftedAssetInstancesWithCounts(asset: Asset): DiffInstanceSummary[] {
+export function getDriftedAssetInstancesWithCounts(asset: any): DiffInstanceSummary[] {
   const sourceInfo = getAssetSourceInfo(asset);
   const statuses = getAssetToolStatus(asset, sourceInfo);
   return statuses
@@ -321,7 +318,7 @@ export function getDriftedAssetInstancesWithCounts(asset: Asset): DiffInstanceSu
     });
 }
 
-export function getMissingAssetInstances(asset: Asset): DiffInstanceRef[] {
+export function getMissingAssetInstances(asset: any): DiffInstanceRef[] {
   const sourceInfo = getAssetSourceInfo(asset);
   const statuses = getAssetToolStatus(asset, sourceInfo);
   return statuses
@@ -335,7 +332,7 @@ export function getMissingAssetInstances(asset: Asset): DiffInstanceRef[] {
 }
 
 export function buildAssetDiffTarget(
-  asset: Asset,
+  asset: any,
   instance: DiffInstanceRef
 ): DiffTarget {
   const sourceInfo = getAssetSourceInfo(asset);
@@ -361,7 +358,7 @@ export function buildAssetDiffTarget(
   if (!existsSync(sourcePath)) {
     // Source doesn't exist - can't diff
     return {
-      kind: "asset",
+      kind: "file",
       title: asset.name,
       instance,
       files: [],
@@ -403,7 +400,7 @@ export function buildAssetDiffTarget(
   }
 
   return {
-    kind: "asset",
+    kind: "file",
     title: asset.name,
     instance,
     files,
@@ -411,7 +408,7 @@ export function buildAssetDiffTarget(
 }
 
 export function buildAssetMissingSummary(
-  asset: Asset,
+  asset: any,
   instance: DiffInstanceRef
 ): MissingSummary {
   const sourceInfo = getAssetSourceInfo(asset);
@@ -424,7 +421,7 @@ export function buildAssetMissingSummary(
 
   if (!existsSync(sourcePath)) {
     return {
-      kind: "asset",
+      kind: "file",
       title: asset.name,
       instance,
       missingFiles: [],
@@ -458,7 +455,7 @@ export function buildAssetMissingSummary(
   }
 
   return {
-    kind: "asset",
+    kind: "file",
     title: asset.name,
     instance,
     missingFiles,
@@ -470,7 +467,7 @@ export function buildAssetMissingSummary(
 // Build DiffTarget for a Config
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function getDriftedConfigInstances(config: ConfigFile): DiffInstanceRef[] {
+export function getDriftedConfigInstances(config: any): DiffInstanceRef[] {
   const statuses = getConfigToolStatus(config, config.sourceFiles);
   return statuses
     .filter((s) => s.enabled && s.drifted)
@@ -482,7 +479,7 @@ export function getDriftedConfigInstances(config: ConfigFile): DiffInstanceRef[]
     }));
 }
 
-export function getDriftedConfigInstancesWithCounts(config: ConfigFile): DiffInstanceSummary[] {
+export function getDriftedConfigInstancesWithCounts(config: any): DiffInstanceSummary[] {
   const statuses = getConfigToolStatus(config, config.sourceFiles);
   return statuses
     .filter((s) => s.enabled && s.drifted)
@@ -500,7 +497,7 @@ export function getDriftedConfigInstancesWithCounts(config: ConfigFile): DiffIns
     });
 }
 
-export function getMissingConfigInstances(config: ConfigFile): DiffInstanceRef[] {
+export function getMissingConfigInstances(config: any): DiffInstanceRef[] {
   const statuses = getConfigToolStatus(config, config.sourceFiles);
   return statuses
     .filter((s) => s.enabled && !s.installed && !s.drifted)
@@ -513,7 +510,7 @@ export function getMissingConfigInstances(config: ConfigFile): DiffInstanceRef[]
 }
 
 export function buildConfigDiffTarget(
-  config: ConfigFile,
+  config: any,
   instance: DiffInstanceRef
 ): DiffTarget {
   const files: DiffFileSummary[] = [];
@@ -545,7 +542,7 @@ export function buildConfigDiffTarget(
   }
 
   return {
-    kind: "config",
+    kind: "file",
     title: config.name,
     instance,
     files,
@@ -553,7 +550,7 @@ export function buildConfigDiffTarget(
 }
 
 export function buildConfigMissingSummary(
-  config: ConfigFile,
+  config: any,
   instance: DiffInstanceRef
 ): MissingSummary {
   const missingFiles: string[] = [];
@@ -567,7 +564,7 @@ export function buildConfigMissingSummary(
   }
 
   return {
-    kind: "config",
+    kind: "file",
     title: config.name,
     instance,
     missingFiles,

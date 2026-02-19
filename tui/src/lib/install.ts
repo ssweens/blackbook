@@ -21,7 +21,7 @@ import { join, dirname, resolve, basename } from "path";
 import { tmpdir, homedir } from "os";
 import { expandPath, getCacheDir, getEnabledToolInstances, getToolInstances, getConfigRepoPath, resolveAssetSourcePath, getPluginComponentConfig, setPluginComponentEnabled } from "./config.js";
 import { getGitHubToken, isGitHubHost } from "./github.js";
-import type { Asset, AssetConfig, Plugin, InstalledItem, ToolInstance, ConfigSyncConfig, ConfigFile, ConfigSourceFile, ConfigMapping, DiffInstanceRef } from "./types.js";
+import type { Plugin, InstalledItem, ToolInstance, DiffInstanceRef } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
 import {
   safePath,
@@ -207,7 +207,7 @@ function isConfigOnlyInstance(instance: ToolInstance): boolean {
   return !instance.skillsSubdir && !instance.commandsSubdir && !instance.agentsSubdir;
 }
 
-export function resolveAssetTarget(asset: AssetConfig, instance: ToolInstance): string {
+export function resolveAssetTarget(asset: any, instance: ToolInstance): string {
   const overrideKey = `${instance.toolId}:${instance.instanceId}`;
   const override = asset.overrides?.[overrideKey];
   if (override) return normalizeAssetTarget(override);
@@ -215,7 +215,7 @@ export function resolveAssetTarget(asset: AssetConfig, instance: ToolInstance): 
   return instance.toolId === "claude-code" ? "CLAUDE.md" : "AGENTS.md";
 }
 
-export function getAssetSourceInfo(asset: AssetConfig): AssetSourceInfo {
+export function getAssetSourceInfo(asset: any): any {
   // Handle simple single-source syntax
   if (!asset.source) {
     return {
@@ -761,9 +761,9 @@ function copyWithBackup(
 }
 
 function installAssetToInstance(
-  asset: Asset,
+  asset: any,
   instance: ToolInstance,
-  sourceInfo: AssetSourceInfo
+  sourceInfo: any
 ): { count: number; item?: InstalledItem; error?: string } {
   if (!instance.enabled) return { count: 0 };
   try {
@@ -804,8 +804,8 @@ function installAssetToInstance(
   }
 }
 
-export function getAssetToolStatus(asset: Asset, sourceInfo?: AssetSourceInfo): AssetToolStatus[] {
-  const statuses: AssetToolStatus[] = [];
+export function getAssetToolStatus(asset: any, sourceInfo?: any): any[] {
+  const statuses: any[] = [];
   const instances = getToolInstances();
   const resolvedSource = sourceInfo || getAssetSourceInfo(asset);
 
@@ -1850,15 +1850,15 @@ export async function syncPluginInstances(
     }
   }
 
-  result.success = Object.values(result.syncedInstances).some((n) => n > 0);
+  result.success = Object.values(result.syncedInstances).some((n: any) => n > 0);
   return result;
 }
 
 export function syncAssetInstances(
-  asset: Asset,
-  targetStatuses: AssetToolStatus[]
-): AssetSyncResult {
-  const result: AssetSyncResult = { success: false, syncedInstances: {}, errors: [] };
+  asset: any,
+  targetStatuses: any[]
+): any {
+  const result: any = { success: false, syncedInstances: {}, errors: [] };
   if (targetStatuses.length === 0) return result;
 
   const sourceInfo = getAssetSourceInfo(asset);
@@ -1881,7 +1881,7 @@ export function syncAssetInstances(
     }
   }
 
-  result.success = Object.values(result.syncedInstances).some((n) => n > 0);
+  result.success = Object.values(result.syncedInstances).some((n: any) => n > 0);
   return result;
 }
 
@@ -2067,7 +2067,7 @@ function normalizeBackupLabel(value: string): string {
 
 // Expand a mapping to list of source files
 async function expandConfigMapping(
-  mapping: ConfigMapping,
+  mapping: any,
   configRepo: string
 ): Promise<Array<{ sourcePath: string; targetPath: string; hash: string }>> {
   const sourcePattern = normalizeConfigSource(mapping.source);
@@ -2150,7 +2150,7 @@ async function expandConfigMapping(
 }
 
 // Get all source files for a config (handles both legacy and new formats)
-export async function getConfigSourceFiles(config: ConfigSyncConfig): Promise<ConfigSourceFile[]> {
+export async function getanys(config: any): Promise<any[]> {
   const configRepo = getConfigRepoPath();
   if (!configRepo) {
     throw new Error("Config repo not configured. Add [sync] config_repo to your config.toml");
@@ -2160,7 +2160,7 @@ export async function getConfigSourceFiles(config: ConfigSyncConfig): Promise<Co
     throw new Error("Config name cannot be empty.");
   }
 
-  const mappings: ConfigMapping[] = config.mappings && config.mappings.length > 0
+  const mappings: any[] = config.mappings && config.mappings.length > 0
     ? config.mappings
     : config.sourcePath && config.targetPath
       ? [{ source: config.sourcePath, target: config.targetPath }]
@@ -2170,7 +2170,7 @@ export async function getConfigSourceFiles(config: ConfigSyncConfig): Promise<Co
     throw new Error(`Config ${config.name || "(unnamed)"} has no mappings. Add [[configs.files]] or source_path/target_path.`);
   }
 
-  const results: ConfigSourceFile[] = [];
+  const results: any[] = [];
   const seenTargets = new Set<string>();
 
   for (const mapping of mappings) {
@@ -2199,7 +2199,7 @@ export async function getConfigSourceFiles(config: ConfigSyncConfig): Promise<Co
 }
 
 // Compute aggregated hash for all source files
-function hashSourceFiles(files: ConfigSourceFile[]): string {
+function hashSourceFiles(files: any[]): string {
   if (files.length === 0) return "";
   if (files.length === 1) return files[0].hash;
 
@@ -2214,7 +2214,7 @@ function hashSourceFiles(files: ConfigSourceFile[]): string {
 }
 
 // Updated status check for multi-file configs
-export function getConfigToolStatus(config: ConfigSyncConfig, sourceFiles?: ConfigSourceFile[]): ConfigToolStatus[] {
+export function getConfigToolStatus(config: any, sourceFiles?: any[]): ConfigToolStatus[] {
   const statuses: ConfigToolStatus[] = [];
   const instances = getToolInstances();
 
@@ -2274,9 +2274,9 @@ export function getConfigToolStatus(config: ConfigSyncConfig, sourceFiles?: Conf
 
 // Install multi-file config to instance
 async function installConfigToInstance(
-  config: ConfigSyncConfig,
+  config: any,
   instance: ToolInstance,
-  sourceFiles: ConfigSourceFile[]
+  sourceFiles: any[]
 ): Promise<{ count: number; error?: string }> {
   if (!instance.enabled) return { count: 0 };
   if (instance.toolId !== config.toolId) return { count: 0 };
@@ -2346,7 +2346,7 @@ export interface ReverseSyncResult {
 }
 
 export function reverseSyncConfig(
-  config: ConfigFile,
+  config: any,
   instance: DiffInstanceRef
 ): ReverseSyncResult {
   const result: ReverseSyncResult = { success: false, syncedFiles: 0, errors: [] };
@@ -2400,7 +2400,7 @@ export function reverseSyncConfig(
       return result;
     }
 
-    const mappings: ConfigMapping[] = config.mappings && config.mappings.length > 0
+    const mappings: any[] = config.mappings && config.mappings.length > 0
       ? config.mappings
       : config.sourcePath && config.targetPath
         ? [{ source: config.sourcePath, target: config.targetPath }]
@@ -2433,7 +2433,7 @@ export function reverseSyncConfig(
  * instance configDir and copies them to the source repo.
  */
 function seedFromInstance(
-  mapping: ConfigMapping,
+  mapping: any,
   configRepo: string,
   instanceConfigDir: string
 ): number {
@@ -2512,15 +2512,15 @@ function seedFromInstance(
 }
 
 export async function syncConfigInstances(
-  config: ConfigFile,
+  config: any,
   targetStatuses: ConfigToolStatus[]
 ): Promise<ConfigSyncResult> {
   const result: ConfigSyncResult = { success: false, syncedInstances: {}, errors: [] };
   if (targetStatuses.length === 0) return result;
 
-  let sourceFiles: ConfigSourceFile[] = [];
+  let sourceFiles: any[] = [];
   try {
-    sourceFiles = config.sourceFiles || await getConfigSourceFiles(config);
+    sourceFiles = config.sourceFiles || await getanys(config);
   } catch (error) {
     result.errors.push(error instanceof Error ? error.message : String(error));
     return result;
@@ -2542,6 +2542,6 @@ export async function syncConfigInstances(
     }
   }
 
-  result.success = Object.values(result.syncedInstances).some((n) => n > 0);
+  result.success = Object.values(result.syncedInstances).some((n: any) => n > 0);
   return result;
 }

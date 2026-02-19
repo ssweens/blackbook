@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import type { ToolTarget, ToolInstance, Marketplace, AssetConfig, ConfigSyncConfig, ConfigMapping, PackageManager, PluginComponentConfig } from "./types.js";
+import type { ToolTarget, ToolInstance, Marketplace, PackageManager, PluginComponentConfig } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
 import { getAllPlaybooks, getBuiltinToolIds } from "./config/playbooks.js";
 import { getConfigDir as getConfigDirFromPath } from "./config/path.js";
@@ -127,9 +127,9 @@ export interface TomlConfig {
   marketplaces?: Record<string, string>;
   piMarketplaces?: PiMarketplacesConfig;
   tools?: Record<string, ToolConfig>;
-  assets?: AssetConfig[];
+  assets?: Record<string, any>[];
   sync?: SyncConfig;
-  configs?: ConfigSyncConfig[];
+  configs?: Record<string, any>[];
   plugins?: Record<string, Record<string, PluginComponentToml>>;
 }
 
@@ -147,8 +147,8 @@ export function loadConfig(configPath?: string): TomlConfig {
     let currentSection = "";
     let currentTool = "";
     let currentInstance: ToolInstanceConfig | null = null;
-    let currentAsset: AssetConfig | null = null;
-    let currentConfig: ConfigSyncConfig | null = null;
+    let currentAsset: Record<string, any> | null = null;
+    let currentConfig: Record<string, any> | null = null;
     
     for (const line of content.split("\n")) {
       const trimmed = line.trim();
@@ -172,7 +172,7 @@ export function loadConfig(configPath?: string): TomlConfig {
           currentTool = "";
           currentInstance = null;
           currentConfig = null;
-          const asset: AssetConfig = { name: "" };
+          const asset: Record<string, any> = { name: "" };
           result.assets = result.assets || [];
           result.assets.push(asset);
           currentAsset = asset;
@@ -192,7 +192,7 @@ export function loadConfig(configPath?: string): TomlConfig {
           currentTool = "";
           currentInstance = null;
           currentAsset = null;
-          const config: ConfigSyncConfig = { name: "", toolId: "" };
+          const config: Record<string, any> = { name: "", toolId: "" };
           result.configs = result.configs || [];
           result.configs.push(config);
           currentConfig = config;

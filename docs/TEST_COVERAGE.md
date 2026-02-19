@@ -3,8 +3,8 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 316
-- **Test Files:** 32
+- **Total Tests:** 313
+- **Test Files:** 31
 
 ## Critical Paths
 - [x] Plugin discovery list loads

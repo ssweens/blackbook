@@ -13,7 +13,7 @@ import {
 import { dirname } from "path";
 import { join } from "path";
 import { tmpdir } from "os";
-import type { Asset, Plugin, ToolInstance } from "./types.js";
+import type { Plugin, ToolInstance } from "./types.js";
 import {
   createSymlink,
   removeSymlink,
@@ -864,7 +864,7 @@ describe("Asset sync adapters", () => {
   it("marks drifted assets when target hash diverges", () => {
     const sourcePath = join(TEST_DIR, "asset-source.txt");
     writeFileSync(sourcePath, "source content");
-    const asset: Asset = {
+    const asset: any = {
       name: "asset-drift",
       source: sourcePath,
       installed: true,

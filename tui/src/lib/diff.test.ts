@@ -7,14 +7,8 @@ import {
   computeUnifiedDiff,
   isBinaryFile,
   computeFileDetail,
-  buildAssetDiffTarget,
-  buildAssetMissingSummary,
-  buildConfigDiffTarget,
-  buildConfigMissingSummary,
-  getDriftedAssetInstances,
-  getMissingAssetInstances,
 } from "./diff.js";
-import type { DiffFileSummary, Asset, ConfigFile, DiffInstanceRef } from "./types.js";
+import type { DiffFileSummary, DiffInstanceRef } from "./types.js";
 
 describe("diff utilities", () => {
   describe("computeDiffCounts", () => {

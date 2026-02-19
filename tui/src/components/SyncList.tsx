@@ -65,16 +65,11 @@ export function SyncList({
         if (item.kind === "plugin") {
           name = item.plugin.name;
           statusLabel = `Missing: ${item.missingInstances.length}`;
-        } else if (item.kind === "config") {
-          name = item.config.name;
-          const parts: string[] = [];
-          if (item.missing) parts.push("Missing");
-          if (item.drifted) parts.push("Drifted");
-          statusLabel = parts.join(" · ");
         } else if (item.kind === "tool") {
           name = item.name;
           statusLabel = `Update: v${item.installedVersion} → v${item.latestVersion}`;
-        } else if (item.kind === "file") {
+        } else {
+          // item.kind === "file"
           name = item.file.name;
           const missingCount = item.missingInstances.length;
           const driftedCount = item.driftedInstances.length;
@@ -86,11 +81,6 @@ export function SyncList({
           if (pullbackCount > 0) parts.push(`Pullback: ${pullbackCount}`);
           if (conflictCount > 0) parts.push(`Conflict: ${conflictCount}`);
           statusLabel = parts.join(" · ");
-        } else {
-          name = item.asset.name;
-          const missingCount = item.missingInstances.length;
-          const driftedCount = item.driftedInstances.length;
-          statusLabel = `Missing: ${missingCount}${driftedCount > 0 ? ` · Drifted: ${driftedCount}` : ""}`;
         }
 
         return (
