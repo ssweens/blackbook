@@ -106,7 +106,92 @@ Blackbook also refreshes data when entering tabs (Discover, Installed, Marketpla
 
 ## Configuration
 
-Blackbook uses a single config file at `~/.config/blackbook/config.toml`.
+Blackbook supports YAML (recommended) or TOML config format. New installs use YAML.
+
+```
+~/.config/blackbook/config.yaml       # Primary config (YAML)
+~/.config/blackbook/config.local.yaml # Machine-specific overrides (optional, gitignored)
+~/.config/blackbook/config.toml       # Legacy format (still supported, read-only)
+```
+
+### YAML Config (Recommended)
+
+```yaml
+# ~/.config/blackbook/config.yaml
+settings:
+  source_repo: ~/src/playbook
+  package_manager: pnpm     # npm | pnpm | bun
+
+tools:
+  claude-code:
+    - id: default
+      name: Claude
+      enabled: true
+      config_dir: ~/.claude
+    - id: learning
+      name: Claude Learning
+      enabled: true
+      config_dir: ~/.claude-learning
+
+files:
+  - name: CLAUDE.md
+    source: CLAUDE.md         # Relative to source_repo
+    target: CLAUDE.md
+    pullback: true            # Enable three-way state tracking
+    overrides:
+      "opencode:default": AGENTS.md
+  - name: Settings
+    source: claude-code/settings.json
+    target: settings.json
+    tools: [claude-code]      # Only sync to specific tools
+
+marketplaces:
+  playbook: https://raw.githubusercontent.com/ssweens/playbook/main/.claude-plugin/marketplace.json
+```
+
+#### Local Overrides
+
+`config.local.yaml` is deep-merged on top of `config.yaml`. Use it for machine-specific settings:
+
+```yaml
+# ~/.config/blackbook/config.local.yaml
+settings:
+  source_repo: ~/alternate/dotfiles
+
+tools:
+  claude-code:
+    - id: default
+      name: Claude
+      config_dir: ~/custom/.claude
+```
+
+Arrays of objects merge by `name` or `id` key. Set a key to `null` to delete it from the base config.
+
+#### Unified Files
+
+The `files:` list replaces the separate `assets` and `configs` concepts:
+
+| Feature | Description |
+|---------|-------------|
+| `tools` omitted | Syncs to all enabled, syncable tool instances |
+| `tools: [claude-code]` | Syncs only to claude-code instances |
+| `pullback: true` | Enables three-way state tracking for reverse sync |
+| `overrides` | Per-instance target path overrides |
+
+#### Three-Way State
+
+Files with `pullback: true` use deterministic hash-based drift detection instead of timestamps:
+
+| Drift | Meaning | Action |
+|-------|---------|--------|
+| `source-changed` | You edited the source file | Forward sync (source → target) |
+| `target-changed` | Tool edited the config | Pullback available (target → source) |
+| `both-changed` | Both sides changed | Conflict — choose forward, pullback, or skip |
+| `in-sync` | No changes since last sync | Nothing to do |
+
+State is stored in `~/.cache/blackbook/state.json`.
+
+### TOML Config (Legacy)
 
 ### Prerequisites
 
@@ -444,8 +529,10 @@ Downloaded plugins and HTTP cache are stored in:
 ```
 ~/.cache/blackbook/
 ├── plugins/           # Downloaded plugin sources
-└── http_cache/        # Cached marketplace data
-└── assets/            # Cached asset URL sources
+├── http_cache/        # Cached marketplace data
+├── assets/            # Cached asset URL sources
+├── backups/           # File backups before overwrite (last 3 per file)
+└── state.json         # Three-way state tracking for pullback files
 ```
 
 Remote plugin marketplace responses are cached for up to 10 minutes before refetch.
@@ -477,4 +564,10 @@ npm run build
 - `tui/src/cli.tsx` entry point
 - `tui/src/App.tsx` app shell
 - `tui/src/components/` UI components
-- `tui/src/lib/` config, marketplace, install, state
+- `tui/src/lib/config/` YAML config loading, validation (zod), merge, path resolution
+- `tui/src/lib/modules/` Ansible-inspired check/apply modules (file-copy, directory-sync, symlink, backup, cleanup, plugin install/remove)
+- `tui/src/lib/playbooks/` Internal YAML tool playbooks (default tool definitions)
+- `tui/src/lib/state.ts` Three-way state tracking for pullback-enabled files
+- `tui/src/lib/store.ts` Zustand store (main state management)
+- `tui/src/lib/config.ts` Config facade (TOML + YAML)
+- `tui/src/lib/install.ts` Legacy plugin/asset/config sync (being replaced by modules)

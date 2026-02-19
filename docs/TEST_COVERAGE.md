@@ -3,8 +3,8 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 180
-- **Test Files:** 16
+- **Total Tests:** 316
+- **Test Files:** 32
 
 ## Critical Paths
 - [x] Plugin discovery list loads
@@ -19,6 +19,14 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Tool lifecycle core flows (registry/view/detect/command adapters)
 - [x] Tools lifecycle UI refreshes version/status after install → update → uninstall (E2E)
 - [x] Sync tab shows tool update items with installed/latest version delta (E2E)
+- [x] YAML config loading with zod validation
+- [x] YAML config.local.yaml deep merge with merge-by-key semantics
+- [x] Unified files list with check/apply module orchestration
+- [x] Three-way state tracking (source-changed, target-changed, both-changed drift detection)
+- [x] Pullback detection and target → source sync
+- [x] Conflict detection for both-changed files
+- [x] Cleanup detection of orphaned state entries
+- [x] Plugin install/remove via module wrappers
 
 ## Boundaries
 - [x] Marketplace fetch (remote marketplace.json)
