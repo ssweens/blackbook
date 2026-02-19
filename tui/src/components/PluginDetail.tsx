@@ -1,7 +1,7 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
 import type { Plugin } from "../lib/types.js";
-import { getPluginToolStatus } from "../lib/install.js";
+import { getPluginToolStatus } from "../lib/plugin-status.js";
 import { getPluginComponentConfig } from "../lib/config.js";
 
 interface PluginDetailProps {

@@ -1,9 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { pluginRemoveModule } from "./plugin-remove.js";
-import {
-  uninstallPlugin,
-  getPluginToolStatus,
-} from "../install.js";
+import { uninstallPlugin } from "../install.js";
+import { getPluginToolStatus } from "../plugin-status.js";
 import type { Plugin } from "../types.js";
 
 vi.mock("../install.js", async (importOriginal) => {
@@ -11,9 +9,12 @@ vi.mock("../install.js", async (importOriginal) => {
   return {
     ...actual,
     uninstallPlugin: vi.fn(),
-    getPluginToolStatus: vi.fn(),
   };
 });
+
+vi.mock("../plugin-status.js", () => ({
+  getPluginToolStatus: vi.fn(),
+}));
 
 function mockPlugin(overrides: Partial<Plugin> = {}): Plugin {
   return {

@@ -1,10 +1,7 @@
 import type { Module, CheckResult, ApplyResult } from "./types.js";
 import type { Plugin } from "../types.js";
-import {
-  installPlugin as legacyInstall,
-  getPluginToolStatus,
-  syncPluginInstances,
-} from "../install.js";
+import { installPlugin as legacyInstall, syncPluginInstances } from "../install.js";
+import { getPluginToolStatus } from "../plugin-status.js";
 
 export interface PluginInstallParams {
   plugin: Plugin;

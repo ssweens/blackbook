@@ -1,9 +1,7 @@
 import type { Module, CheckResult, ApplyResult } from "./types.js";
 import type { Plugin } from "../types.js";
-import {
-  uninstallPlugin as legacyUninstall,
-  getPluginToolStatus,
-} from "../install.js";
+import { uninstallPlugin as legacyUninstall } from "../install.js";
+import { getPluginToolStatus } from "../plugin-status.js";
 
 export interface PluginRemoveParams {
   plugin: Plugin;

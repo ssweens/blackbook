@@ -28,7 +28,7 @@ import { PiPackageList } from "./components/PiPackageList.js";
 import { PiPackagePreview } from "./components/PiPackagePreview.js";
 import { PiPackageDetail, getPiPackageActions } from "./components/PiPackageDetail.js";
 import { ComponentManager, getComponentItems } from "./components/ComponentManager.js";
-import { getPluginToolStatus, togglePluginComponent } from "./lib/install.js";
+import { getPluginToolStatus, togglePluginComponent } from "./lib/plugin-status.js";
 import { buildInstallCommand, buildUpdateCommand, buildUninstallCommand } from "./lib/tool-lifecycle.js";
 import { getToolRegistryEntry } from "./lib/tool-registry.js";
 import { getPackageManager } from "./lib/config.js";

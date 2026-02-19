@@ -1,10 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { pluginInstallModule } from "./plugin-install.js";
-import {
-  installPlugin,
-  getPluginToolStatus,
-  syncPluginInstances,
-} from "../install.js";
+import { installPlugin, syncPluginInstances } from "../install.js";
+import { getPluginToolStatus } from "../plugin-status.js";
 import type { Plugin } from "../types.js";
 
 vi.mock("../install.js", async (importOriginal) => {
@@ -12,10 +9,13 @@ vi.mock("../install.js", async (importOriginal) => {
   return {
     ...actual,
     installPlugin: vi.fn(),
-    getPluginToolStatus: vi.fn(),
     syncPluginInstances: vi.fn(),
   };
 });
+
+vi.mock("../plugin-status.js", () => ({
+  getPluginToolStatus: vi.fn(),
+}));
 
 function mockPlugin(overrides: Partial<Plugin> = {}): Plugin {
   return {
