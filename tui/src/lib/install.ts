@@ -19,9 +19,23 @@ import { createHash } from "crypto";
 const execFileAsync = promisify(execFile);
 import { join, dirname, resolve, basename } from "path";
 import { tmpdir, homedir } from "os";
-import { expandPath, getCacheDir, getEnabledToolInstances, getToolInstances, getConfigRepoPath, resolveAssetSourcePath, getPluginComponentConfig, setPluginComponentEnabled } from "./config.js";
+import {
+  expandPath,
+  getCacheDir,
+  getEnabledToolInstances,
+  getToolInstances,
+  getConfigRepoPath,
+  resolveAssetSourcePath,
+  getPluginComponentConfig,
+  setPluginComponentEnabled,
+} from "./config.js";
 import { getGitHubToken, isGitHubHost } from "./github.js";
-import type { Plugin, InstalledItem, ToolInstance, DiffInstanceRef } from "./types.js";
+import type {
+  Plugin,
+  InstalledItem,
+  ToolInstance,
+  DiffInstanceRef,
+} from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
 import {
   safePath,
@@ -33,10 +47,25 @@ import {
   validateRelativeSubPath,
 } from "./validation.js";
 import fastGlob from "fast-glob";
-
-export function getPluginsCacheDir(): string {
-  return join(getCacheDir(), "plugins");
-}
+import {
+  getPluginsCacheDir,
+  instanceKey,
+  buildBackupPath,
+  buildLooseBackupPath,
+  getPluginSourcePath,
+  createSymlink,
+  isSymlink,
+  removeSymlink,
+  type SymlinkResult,
+} from "./plugin-helpers.js";
+import {
+  manifestPath,
+  loadManifest,
+  saveManifest,
+  type Manifest,
+} from "./manifest.js";
+import { logError, validatePluginMetadata } from "./validation.js";
+import { getPluginToolStatus } from "./plugin-status.js";
 
 /**
  * Extract marketplace and plugin name from a source path.
@@ -46,7 +75,9 @@ export function getPluginsCacheDir(): string {
  * - Claude cache with hash: ~/.claude/plugins/cache/{marketplace}/{plugin}/{hash}/...
  * Returns null if the path doesn't match any expected pattern.
  */
-function extractPluginInfoFromSource(sourcePath: string): { marketplace: string; pluginName: string } | null {
+function extractPluginInfoFromSource(
+  sourcePath: string,
+): { marketplace: string; pluginName: string } | null {
   // Try blackbook cache first: ~/.cache/blackbook/plugins/{marketplace}/{plugin}/...
   const blackbookCacheDir = getPluginsCacheDir();
   if (sourcePath.startsWith(blackbookCacheDir)) {
@@ -60,16 +91,17 @@ function extractPluginInfoFromSource(sourcePath: string): { marketplace: string;
 
   // Try Claude cache: ~/.claude/plugins/cache/{marketplace}/{plugin}/...
   // or ~/.claude*/plugins/cache/{marketplace}/{plugin}/...
-  const claudeCacheMatch = sourcePath.match(/\.claude[^/]*\/plugins\/cache\/([^/]+)\/([^/]+)/);
+  const claudeCacheMatch = sourcePath.match(
+    /\.claude[^/]*\/plugins\/cache\/([^/]+)\/([^/]+)/,
+  );
   if (claudeCacheMatch) {
-    return { marketplace: claudeCacheMatch[1], pluginName: claudeCacheMatch[2] };
+    return {
+      marketplace: claudeCacheMatch[1],
+      pluginName: claudeCacheMatch[2],
+    };
   }
 
   return null;
-}
-
-function instanceKey(instance: ToolInstance): string {
-  return `${instance.toolId}:${instance.instanceId}`;
 }
 
 function hashBuffer(buffer: Buffer): string {
@@ -95,43 +127,6 @@ function hashPath(path: string): { hash: string; isDirectory: boolean } {
 
 function hashString(value: string): string {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function getUrlCachePath(url: string): string {
-  const cacheDir = join(getCacheDir(), "assets");
-  mkdirSync(cacheDir, { recursive: true });
-  let filename = "asset";
-  try {
-    const { pathname } = new URL(url);
-    const base = pathname.split("/").filter(Boolean).pop();
-    if (base) filename = base;
-  } catch {
-    // ignore
-  }
-  const prefix = hashString(url).slice(0, 12);
-  return join(cacheDir, `${prefix}-${filename}`);
-}
-
-function fetchUrlToCache(url: string): { path: string; error?: string } {
-  const cachePath = getUrlCachePath(url);
-  try {
-    const args = ["-fsSL"];
-    const token = getGitHubToken();
-    if (token && isGitHubHost(url)) {
-      args.push("-H", `Authorization: token ${token}`);
-    }
-    if (existsSync(cachePath)) {
-      args.push("-z", cachePath);
-    }
-    args.push("-o", cachePath, url);
-    execFileSync("curl", args);
-    return { path: cachePath };
-  } catch (error) {
-    return {
-      path: cachePath,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
 }
 
 function hashDirectory(path: string): string {
@@ -174,119 +169,13 @@ function hashDirectory(path: string): string {
   return hasher.digest("hex");
 }
 
-export interface AssetToolStatus {
-  toolId: string;
-  instanceId: string;
-  name: string;
-  configDir: string;
-  enabled: boolean;
-  installed: boolean;
-  drifted: boolean;
-  targetPath: string;
-}
-
-export interface AssetSourceInfo {
-  sourcePath: string;
-  exists: boolean;
-  isDirectory: boolean;
-  hash: string | null;
-  error?: string;
-}
-
-function normalizeAssetTarget(target: string): string {
-  const trimmed = target.trim();
-  if (!trimmed) {
-    throw new Error("Asset target cannot be empty.");
-  }
-  const cleaned = trimmed.replace(/\/+$/, "");
-  validateRelativeSubPath(cleaned);
-  return cleaned;
-}
-
 function isConfigOnlyInstance(instance: ToolInstance): boolean {
-  return !instance.skillsSubdir && !instance.commandsSubdir && !instance.agentsSubdir;
+  return (
+    !instance.skillsSubdir && !instance.commandsSubdir && !instance.agentsSubdir
+  );
 }
-
-export function resolveAssetTarget(asset: any, instance: ToolInstance): string {
-  const overrideKey = `${instance.toolId}:${instance.instanceId}`;
-  const override = asset.overrides?.[overrideKey];
-  if (override) return normalizeAssetTarget(override);
-  if (asset.defaultTarget) return normalizeAssetTarget(asset.defaultTarget);
-  return instance.toolId === "claude-code" ? "CLAUDE.md" : "AGENTS.md";
-}
-
-export function getAssetSourceInfo(asset: any): any {
-  // Handle simple single-source syntax
-  if (!asset.source) {
-    return {
-      sourcePath: "",
-      exists: false,
-      isDirectory: false,
-      hash: null,
-      error: "Asset has no source configured.",
-    };
-  }
-  const sourcePath = resolveAssetSourcePath(asset.source);
-  if (sourcePath.startsWith("http://") || sourcePath.startsWith("https://")) {
-    const result = fetchUrlToCache(sourcePath);
-    if (result.error) {
-      return {
-        sourcePath,
-        exists: false,
-        isDirectory: false,
-        hash: null,
-        error: `Failed to fetch asset source: ${result.error}`,
-      };
-    }
-    try {
-      const { hash, isDirectory } = hashPath(result.path);
-      return { sourcePath: result.path, exists: true, isDirectory, hash };
-    } catch (error) {
-      return {
-        sourcePath: result.path,
-        exists: false,
-        isDirectory: false,
-        hash: null,
-        error: `Failed to read asset source: ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
-  }
-
-  if (!existsSync(sourcePath)) {
-    return { sourcePath, exists: false, isDirectory: false, hash: null, error: "Asset source not found." };
-  }
-
-  try {
-    const { hash, isDirectory } = hashPath(sourcePath);
-    return { sourcePath, exists: true, isDirectory, hash };
-  } catch (error) {
-    return {
-      sourcePath,
-      exists: false,
-      isDirectory: false,
-      hash: null,
-      error: `Failed to read asset source: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
-}
-
-type SymlinkErrorCode =
-  | "SOURCE_NOT_FOUND"
-  | "TARGET_MISSING"
-  | "BACKUP_FAILED"
-  | "SYMLINK_FAILED"
-  | "UNLINK_FAILED";
-
-export type SymlinkResult =
-  | { success: true }
-  | { success: false; code: SymlinkErrorCode; message: string };
 
 let cachedGitAvailable: boolean | null = null;
-
-function logError(context: string, error: unknown): void {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`${context}: ${message}`);
-}
 
 async function ensureGitAvailable(): Promise<void> {
   if (cachedGitAvailable === true) return;
@@ -295,14 +184,16 @@ async function ensureGitAvailable(): Promise<void> {
     cachedGitAvailable = true;
   } catch (error) {
     cachedGitAvailable = false;
-    throw new Error("Git is required to download plugins but was not found. Install from https://git-scm.com/");
+    throw new Error(
+      "Git is required to download plugins but was not found. Install from https://git-scm.com/",
+    );
   }
 }
 
 async function execClaudeCommand(
   instance: ToolInstance,
   command: "install" | "uninstall" | "enable" | "disable" | "update",
-  pluginName: string
+  pluginName: string,
 ): Promise<void> {
   validatePluginName(pluginName);
   await execFileAsync("claude", ["plugin", command, pluginName], {
@@ -313,30 +204,10 @@ async function execClaudeCommand(
   });
 }
 
-function buildBackupPath(
-  pluginName: string,
-  itemKind: string,
-  itemName: string
-): string {
-  validatePluginName(pluginName);
-  validateItemName(itemKind, itemName);
-  const backupRoot = join(getCacheDir(), "backups");
-  const backupPath = safePath(backupRoot, itemKind, itemName);
-  mkdirSync(dirname(backupPath), { recursive: true });
-  return backupPath;
-}
-
-function buildLooseBackupPath(target: string): string {
-  let backupPath = `${target}.bak`;
-  let attempt = 0;
-  while (existsSync(backupPath) || isSymlink(backupPath)) {
-    attempt += 1;
-    backupPath = `${target}.bak.${attempt}`;
-  }
-  return backupPath;
-}
-
-function withTempDir<T>(prefix: string, fn: (dir: string) => Promise<T>): Promise<T> {
+function withTempDir<T>(
+  prefix: string,
+  fn: (dir: string) => Promise<T>,
+): Promise<T> {
   const tempDir = join(tmpdir(), `${prefix}-${Date.now()}-${process.pid}`);
   mkdirSync(tempDir, { recursive: true });
   return fn(tempDir).finally(() => {
@@ -348,22 +219,12 @@ function withTempDir<T>(prefix: string, fn: (dir: string) => Promise<T>): Promis
   });
 }
 
-function validatePluginMetadata(plugin: Plugin): void {
-  validateMarketplaceName(plugin.marketplace);
-  validatePluginName(plugin.name);
-  for (const skill of plugin.skills) {
-    validateItemName("skill", skill);
-  }
-  for (const cmd of plugin.commands) {
-    validateItemName("command", cmd);
-  }
-  for (const agent of plugin.agents) {
-    validateItemName("agent", agent);
-  }
-}
-
-function parseGithubRepoFromUrl(url: string): { repo: string; ref: string } | null {
-  const rawMatch = url.match(/raw\.githubusercontent\.com\/([^/]+\/[^/]+)\/([^/]+)/);
+function parseGithubRepoFromUrl(
+  url: string,
+): { repo: string; ref: string } | null {
+  const rawMatch = url.match(
+    /raw\.githubusercontent\.com\/([^/]+\/[^/]+)\/([^/]+)/,
+  );
   if (rawMatch) return { repo: rawMatch[1], ref: rawMatch[2] };
 
   const gitMatch = url.match(/github\.com\/([^/]+\/[^/.]+)(?:\.git)?/);
@@ -372,7 +233,10 @@ function parseGithubRepoFromUrl(url: string): { repo: string; ref: string } | nu
   return null;
 }
 
-export async function downloadPlugin(plugin: Plugin, marketplaceUrl: string): Promise<string | null> {
+export async function downloadPlugin(
+  plugin: Plugin,
+  marketplaceUrl: string,
+): Promise<string | null> {
   validateMarketplaceName(plugin.marketplace);
   validatePluginName(plugin.name);
   const pluginsDir = getPluginsCacheDir();
@@ -387,12 +251,17 @@ export async function downloadPlugin(plugin: Plugin, marketplaceUrl: string): Pr
   const source = plugin.source;
 
   // Handle local marketplace (path-based)
-  const isLocalMarketplace = marketplaceUrl.startsWith("/") ||
+  const isLocalMarketplace =
+    marketplaceUrl.startsWith("/") ||
     marketplaceUrl.startsWith("./") ||
     marketplaceUrl.startsWith("../") ||
     marketplaceUrl.startsWith("~");
 
-  if (isLocalMarketplace && typeof source === "string" && source.startsWith("./")) {
+  if (
+    isLocalMarketplace &&
+    typeof source === "string" &&
+    source.startsWith("./")
+  ) {
     // Resolve marketplace base directory
     let marketplaceBase = marketplaceUrl;
     if (marketplaceBase.startsWith("~")) {
@@ -411,7 +280,7 @@ export async function downloadPlugin(plugin: Plugin, marketplaceUrl: string): Pr
     if (!existsSync(sourceDir)) {
       logError(
         `Local plugin source not found: ${sourceDir}`,
-        new Error(`source=${source}, marketplaceBase=${marketplaceBase}`)
+        new Error(`source=${source}, marketplaceBase=${marketplaceBase}`),
       );
       rmSync(pluginDir, { recursive: true, force: true });
       return null;
@@ -455,7 +324,9 @@ export async function downloadPlugin(plugin: Plugin, marketplaceUrl: string): Pr
   if (!repoUrl) {
     logError(
       `Cannot determine repo URL for plugin ${plugin.name}`,
-      new Error(`source=${JSON.stringify(source)}, marketplaceUrl=${marketplaceUrl}`)
+      new Error(
+        `source=${JSON.stringify(source)}, marketplaceUrl=${marketplaceUrl}`,
+      ),
     );
     rmSync(pluginDir, { recursive: true, force: true });
     return null;
@@ -468,12 +339,23 @@ export async function downloadPlugin(plugin: Plugin, marketplaceUrl: string): Pr
     await ensureGitAvailable();
 
     return await withTempDir("blackbook-clone", async (tempDir) => {
-      await execFileAsync("git", ["clone", "--depth", "1", "--branch", ref, repoUrl!, tempDir]);
+      await execFileAsync("git", [
+        "clone",
+        "--depth",
+        "1",
+        "--branch",
+        ref,
+        repoUrl!,
+        tempDir,
+      ]);
 
       const sourceDir = subPath ? join(tempDir, subPath) : tempDir;
 
       if (!existsSync(sourceDir)) {
-        logError(`Plugin source path not found: ${sourceDir}`, new Error("Missing plugin source"));
+        logError(
+          `Plugin source path not found: ${sourceDir}`,
+          new Error("Missing plugin source"),
+        );
         rmSync(pluginDir, { recursive: true, force: true });
         return null;
       }
@@ -488,136 +370,6 @@ export async function downloadPlugin(plugin: Plugin, marketplaceUrl: string): Pr
   }
 }
 
-export function getPluginSourcePath(plugin: Plugin): string | null {
-  try {
-    validateMarketplaceName(plugin.marketplace);
-    validatePluginName(plugin.name);
-    const pluginDir = safePath(getPluginsCacheDir(), plugin.marketplace, plugin.name);
-    if (existsSync(pluginDir)) {
-      return pluginDir;
-    }
-    return null;
-  } catch (error) {
-    logError(`Invalid plugin source path for ${plugin.name}`, error);
-    return null;
-  }
-}
-
-export function manifestPath(cacheDir?: string): string {
-  return join(cacheDir || getCacheDir(), "installed_items.json");
-}
-
-interface Manifest {
-  tools: Record<string, { items: Record<string, InstalledItem> }>;
-}
-
-export function loadManifest(cacheDir?: string): Manifest {
-  const path = manifestPath(cacheDir);
-  if (!existsSync(path)) return { tools: {} };
-  return withFileLockSync(path, () => {
-    const content = readFileSync(path, "utf-8");
-    try {
-      return JSON.parse(content);
-    } catch (error) {
-      const message = `Manifest file is corrupted at ${path}: ${error instanceof Error ? error.message : String(error)}`;
-      throw new Error(message);
-    }
-  });
-}
-
-export function saveManifest(manifest: Manifest, cacheDir?: string): void {
-  const path = manifestPath(cacheDir);
-  withFileLockSync(path, () => {
-    atomicWriteFileSync(path, JSON.stringify(manifest, null, 2));
-  });
-}
-
-export function createSymlink(
-  source: string,
-  target: string,
-  pluginName?: string,
-  itemKind?: string,
-  itemName?: string
-): SymlinkResult {
-  if (!existsSync(source)) {
-    return { success: false, code: "SOURCE_NOT_FOUND", message: `Source not found: ${source}` };
-  }
-
-  mkdirSync(dirname(target), { recursive: true });
-
-  if (existsSync(target) || isSymlink(target)) {
-    if (isSymlink(target)) {
-      try {
-        const actual = realpathSync(target);
-        const expected = realpathSync(source);
-        if (actual === expected) return { success: true };
-      } catch (error) {
-        logError(`Broken symlink at ${target}`, error);
-      }
-    }
-
-    let backupPath: string;
-    if (pluginName && itemKind && itemName) {
-      backupPath = buildBackupPath(pluginName, itemKind, itemName);
-    } else {
-      backupPath = buildLooseBackupPath(target);
-    }
-
-    try {
-      const tempBackup = `${backupPath}.new.${Date.now()}`;
-      renameSync(target, tempBackup);
-      if (existsSync(backupPath) || isSymlink(backupPath)) {
-        rmSync(backupPath, { recursive: true, force: true });
-      }
-      renameSync(tempBackup, backupPath);
-    } catch (error) {
-      logError(`Failed to backup ${target}`, error);
-      return { success: false, code: "BACKUP_FAILED", message: `Failed to backup ${target}` };
-    }
-  }
-
-  const tmpPath = join(tmpdir(), `.tmp_${Date.now()}`);
-  try {
-    symlinkSync(source, tmpPath);
-    renameSync(tmpPath, target);
-    return { success: true };
-  } catch (error) {
-    logError(`Failed to create symlink ${target}`, error);
-    return { success: false, code: "SYMLINK_FAILED", message: `Failed to create symlink ${target}` };
-  } finally {
-    if (existsSync(tmpPath)) {
-      try {
-        unlinkSync(tmpPath);
-      } catch (error) {
-        logError(`Failed to remove temp symlink ${tmpPath}`, error);
-      }
-    }
-  }
-}
-
-export function isSymlink(path: string): boolean {
-  try {
-    return lstatSync(path).isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-
-export function removeSymlink(target: string): SymlinkResult {
-  if (!isSymlink(target)) {
-    return { success: false, code: "TARGET_MISSING", message: `Target is not a symlink: ${target}` };
-  }
-  try {
-    unlinkSync(target);
-    return { success: true };
-  } catch (error) {
-    logError(`Failed to remove symlink ${target}`, error);
-    return { success: false, code: "UNLINK_FAILED", message: `Failed to remove symlink ${target}` };
-  }
-}
-
-
-
 export interface InstallResult {
   success: boolean;
   linkedInstances: Record<string, number>;
@@ -625,11 +377,16 @@ export interface InstallResult {
   skippedInstances: string[];
 }
 
-export async function installPlugin(plugin: Plugin, marketplaceUrl: string): Promise<InstallResult> {
+export async function installPlugin(
+  plugin: Plugin,
+  marketplaceUrl: string,
+): Promise<InstallResult> {
   validatePluginMetadata(plugin);
   const instances = getToolInstances();
   const enabledInstances = getEnabledToolInstances();
-  const skippedInstances = instances.filter((instance) => !instance.enabled).map(instanceKey);
+  const skippedInstances = instances
+    .filter((instance) => !instance.enabled)
+    .map(instanceKey);
   const result: InstallResult = {
     success: false,
     linkedInstances: {},
@@ -642,8 +399,12 @@ export async function installPlugin(plugin: Plugin, marketplaceUrl: string): Pro
     return result;
   }
 
-  const claudeInstances = enabledInstances.filter((instance) => instance.toolId === "claude-code");
-  const nonClaudeInstances = enabledInstances.filter((instance) => instance.toolId !== "claude-code");
+  const claudeInstances = enabledInstances.filter(
+    (instance) => instance.toolId === "claude-code",
+  );
+  const nonClaudeInstances = enabledInstances.filter(
+    (instance) => instance.toolId !== "claude-code",
+  );
 
   // For Claude instances, use the native CLI
   for (const instance of claudeInstances) {
@@ -652,7 +413,7 @@ export async function installPlugin(plugin: Plugin, marketplaceUrl: string): Pro
       result.linkedInstances[instanceKey(instance)] = 1;
     } catch (e) {
       result.errors.push(
-        `Claude install failed for ${instance.name}: ${e instanceof Error ? e.message : "unknown error"}`
+        `Claude install failed for ${instance.name}: ${e instanceof Error ? e.message : "unknown error"}`,
       );
     }
   }
@@ -669,13 +430,21 @@ export async function installPlugin(plugin: Plugin, marketplaceUrl: string): Pro
     } else {
       for (const instance of nonClaudeInstances) {
         try {
-          const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance, plugin.marketplace);
+          const { count, errors } = installPluginItemsToInstance(
+            plugin.name,
+            sourcePath,
+            instance,
+            plugin.marketplace,
+          );
           result.linkedInstances[instanceKey(instance)] = count;
           result.errors.push(...errors);
         } catch (error) {
-          logError(`Install failed for ${plugin.name} in ${instance.name}`, error);
+          logError(
+            `Install failed for ${plugin.name} in ${instance.name}`,
+            error,
+          );
           result.errors.push(
-            `Install failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`
+            `Install failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`,
           );
         }
       }
@@ -701,7 +470,11 @@ export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
   }
 
   try {
-    const pluginDir = safePath(getPluginsCacheDir(), plugin.marketplace, plugin.name);
+    const pluginDir = safePath(
+      getPluginsCacheDir(),
+      plugin.marketplace,
+      plugin.name,
+    );
     rmSync(pluginDir, { recursive: true, force: true });
   } catch (error) {
     logError(`Failed to remove plugin dir for ${plugin.name}`, error);
@@ -734,10 +507,10 @@ function copyWithBackup(
   dest: string,
   pluginName: string,
   itemKind: string,
-  itemName: string
+  itemName: string,
 ): { dest: string; backup: string | null } {
   let backupPath: string | null = null;
-  
+
   if (existsSync(dest) || isSymlink(dest)) {
     backupPath = buildBackupPath(pluginName, itemKind, itemName);
     const tempBackup = `${backupPath}.new.${Date.now()}`;
@@ -747,124 +520,33 @@ function copyWithBackup(
     }
     renameSync(tempBackup, backupPath);
   }
-  
+
   mkdirSync(dirname(dest), { recursive: true });
-  
+
   const srcStat = lstatSync(src);
   if (srcStat.isDirectory()) {
     cpSync(src, dest, { recursive: true });
   } else {
     copyFileSync(src, dest);
   }
-  
+
   return { dest, backup: backupPath };
-}
-
-function installAssetToInstance(
-  asset: any,
-  instance: ToolInstance,
-  sourceInfo: any
-): { count: number; item?: InstalledItem; error?: string } {
-  if (!instance.enabled) return { count: 0 };
-  try {
-    validateItemName("asset", asset.name);
-    const targetRel = resolveAssetTarget(asset, instance);
-    const targetPath = join(instance.configDir, targetRel);
-    if (!sourceInfo.exists || !sourceInfo.hash) {
-      return { count: 0, error: sourceInfo.error || "Asset source not found." };
-    }
-
-    const manifest = loadManifest();
-    const key = instanceKey(instance);
-    if (!manifest.tools[key]) {
-      manifest.tools[key] = { items: {} };
-    }
-
-    const itemKey = `asset:${asset.name}`;
-    const previous = manifest.tools[key].items[itemKey] || null;
-    const backupName = `${asset.name}-${instance.toolId}-${instance.instanceId}`;
-    const result = copyWithBackup(sourceInfo.sourcePath, targetPath, asset.name, "asset", backupName);
-
-    const item: InstalledItem = {
-      kind: "asset",
-      name: asset.name,
-      source: asset.source || "",
-      dest: result.dest,
-      backup: result.backup,
-      owner: asset.name,
-      previous,
-    };
-
-    manifest.tools[key].items[itemKey] = item;
-    saveManifest(manifest);
-
-    return { count: 1, item };
-  } catch (error) {
-    return { count: 0, error: error instanceof Error ? error.message : String(error) };
-  }
-}
-
-export function getAssetToolStatus(asset: any, sourceInfo?: any): any[] {
-  const statuses: any[] = [];
-  const instances = getToolInstances();
-  const resolvedSource = sourceInfo || getAssetSourceInfo(asset);
-
-  for (const instance of instances) {
-    if (isConfigOnlyInstance(instance)) continue;
-
-    const enabled = instance.enabled;
-    let installed = false;
-    let drifted = false;
-    let targetPath = "";
-    try {
-      const targetRel = resolveAssetTarget(asset, instance);
-      targetPath = join(instance.configDir, targetRel);
-      if (enabled && existsSync(targetPath)) {
-        installed = true;
-        if (resolvedSource.exists && resolvedSource.hash) {
-          try {
-            const targetHash = hashPath(targetPath);
-            if (targetHash.isDirectory !== resolvedSource.isDirectory) {
-              drifted = true;
-            } else {
-              drifted = targetHash.hash !== resolvedSource.hash;
-            }
-          } catch {
-            drifted = true;
-          }
-        }
-      }
-    } catch (error) {
-      logError(`Failed to resolve asset target for ${asset.name}`, error);
-    }
-
-    statuses.push({
-      toolId: instance.toolId,
-      instanceId: instance.instanceId,
-      name: instance.name,
-      configDir: instance.configDir,
-      enabled,
-      installed,
-      drifted,
-      targetPath,
-    });
-  }
-
-  return statuses;
 }
 
 function installPluginItemsToInstance(
   pluginName: string,
   sourcePath: string,
   instance: ToolInstance,
-  marketplace?: string
+  marketplace?: string,
 ): { count: number; items: InstalledItem[]; errors: string[] } {
   if (!instance.enabled) return { count: 0, items: [], errors: [] };
 
   validatePluginName(pluginName);
   const errors: string[] = [];
   const items: InstalledItem[] = [];
-  const componentConfig = marketplace ? getPluginComponentConfig(marketplace, pluginName) : null;
+  const componentConfig = marketplace
+    ? getPluginComponentConfig(marketplace, pluginName)
+    : null;
   const appliedKeys: string[] = [];
 
   const manifest = loadManifest();
@@ -887,7 +569,10 @@ function installPluginItemsToInstance(
             unlinkSync(item.dest);
           }
         }
-        if (item.backup && (existsSync(item.backup) || isSymlink(item.backup))) {
+        if (
+          item.backup &&
+          (existsSync(item.backup) || isSymlink(item.backup))
+        ) {
           renameSync(item.backup, item.dest);
         }
       } catch (error) {
@@ -901,7 +586,12 @@ function installPluginItemsToInstance(
     }
   };
 
-  const installItem = (kind: "skill" | "command" | "agent", name: string, src: string, dest: string) => {
+  const installItem = (
+    kind: "skill" | "command" | "agent",
+    name: string,
+    src: string,
+    dest: string,
+  ) => {
     validateItemName(kind, name);
     const key = `${kind}:${name}`;
     const previous = toolManifest.items[key] || null;
@@ -970,7 +660,9 @@ function installPluginItemsToInstance(
   } catch (error) {
     const message = `Install failed for ${pluginName} in ${instance.name}`;
     logError(message, error);
-    errors.push(`${message}: ${error instanceof Error ? error.message : String(error)}`);
+    errors.push(
+      `${message}: ${error instanceof Error ? error.message : String(error)}`,
+    );
     rollback();
     return { count: 0, items: [], errors };
   }
@@ -982,7 +674,10 @@ function installPluginItemsToInstance(
   return { count: items.length, items, errors };
 }
 
-function uninstallPluginItemsFromInstance(pluginName: string, instance: ToolInstance): number {
+function uninstallPluginItemsFromInstance(
+  pluginName: string,
+  instance: ToolInstance,
+): number {
   validatePluginName(pluginName);
   let manifest: Manifest;
   try {
@@ -1044,11 +739,16 @@ function uninstallPluginItemsFromInstance(pluginName: string, instance: ToolInst
   return removed;
 }
 
-export async function enablePlugin(plugin: Plugin, marketplaceUrl?: string): Promise<EnableResult> {
+export async function enablePlugin(
+  plugin: Plugin,
+  marketplaceUrl?: string,
+): Promise<EnableResult> {
   validatePluginMetadata(plugin);
   const instances = getToolInstances();
   const enabledInstances = getEnabledToolInstances();
-  const skippedInstances = instances.filter((instance) => !instance.enabled).map(instanceKey);
+  const skippedInstances = instances
+    .filter((instance) => !instance.enabled)
+    .map(instanceKey);
   const result: EnableResult = {
     success: false,
     linkedInstances: {},
@@ -1063,11 +763,11 @@ export async function enablePlugin(plugin: Plugin, marketplaceUrl?: string): Pro
 
   // Get or download plugin source
   let sourcePath = getPluginSourcePath(plugin);
-  
+
   if (!sourcePath && marketplaceUrl) {
     sourcePath = await downloadPlugin(plugin, marketplaceUrl);
   }
-  
+
   if (!sourcePath) {
     result.errors.push(`Plugin source not found for ${plugin.name}`);
     return result;
@@ -1077,13 +777,18 @@ export async function enablePlugin(plugin: Plugin, marketplaceUrl?: string): Pro
   for (const instance of enabledInstances) {
     if (isConfigOnlyInstance(instance)) continue;
     try {
-      const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance, plugin.marketplace);
+      const { count, errors } = installPluginItemsToInstance(
+        plugin.name,
+        sourcePath,
+        instance,
+        plugin.marketplace,
+      );
       result.linkedInstances[instanceKey(instance)] = count;
       result.errors.push(...errors);
     } catch (error) {
       logError(`Enable failed for ${plugin.name} in ${instance.name}`, error);
       result.errors.push(
-        `Enable failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`
+        `Enable failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`,
       );
     }
   }
@@ -1096,7 +801,9 @@ export async function disablePlugin(plugin: Plugin): Promise<EnableResult> {
   validatePluginMetadata(plugin);
   const instances = getToolInstances();
   const enabledInstances = getEnabledToolInstances();
-  const skippedInstances = instances.filter((instance) => !instance.enabled).map(instanceKey);
+  const skippedInstances = instances
+    .filter((instance) => !instance.enabled)
+    .map(instanceKey);
   const result: EnableResult = {
     success: false,
     linkedInstances: {},
@@ -1120,11 +827,16 @@ export async function disablePlugin(plugin: Plugin): Promise<EnableResult> {
   return result;
 }
 
-export async function updatePlugin(plugin: Plugin, marketplaceUrl: string): Promise<EnableResult> {
+export async function updatePlugin(
+  plugin: Plugin,
+  marketplaceUrl: string,
+): Promise<EnableResult> {
   validatePluginMetadata(plugin);
   const instances = getToolInstances();
   const enabledInstances = getEnabledToolInstances();
-  const skippedInstances = instances.filter((instance) => !instance.enabled).map(instanceKey);
+  const skippedInstances = instances
+    .filter((instance) => !instance.enabled)
+    .map(instanceKey);
   const result: EnableResult = {
     success: false,
     linkedInstances: {},
@@ -1144,7 +856,11 @@ export async function updatePlugin(plugin: Plugin, marketplaceUrl: string): Prom
 
   // Clear cached plugin
   try {
-    const pluginDir = safePath(getPluginsCacheDir(), plugin.marketplace, plugin.name);
+    const pluginDir = safePath(
+      getPluginsCacheDir(),
+      plugin.marketplace,
+      plugin.name,
+    );
     rmSync(pluginDir, { recursive: true, force: true });
   } catch (error) {
     logError(`Failed to remove plugin dir for ${plugin.name}`, error);
@@ -1156,13 +872,18 @@ export async function updatePlugin(plugin: Plugin, marketplaceUrl: string): Prom
   if (sourcePath) {
     for (const instance of enabledInstances) {
       try {
-        const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance, plugin.marketplace);
+        const { count, errors } = installPluginItemsToInstance(
+          plugin.name,
+          sourcePath,
+          instance,
+          plugin.marketplace,
+        );
         result.linkedInstances[instanceKey(instance)] = count;
         result.errors.push(...errors);
       } catch (error) {
         logError(`Update failed for ${plugin.name} in ${instance.name}`, error);
         result.errors.push(
-          `Update failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`
+          `Update failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`,
         );
       }
     }
@@ -1177,11 +898,14 @@ export async function updatePlugin(plugin: Plugin, marketplaceUrl: string): Prom
 export function linkPluginToInstance(
   plugin: Plugin,
   instance: ToolInstance,
-  sourcePath: string
+  sourcePath: string,
 ): number {
   if (!instance.enabled) return 0;
   validatePluginName(plugin.name);
-  const componentConfig = getPluginComponentConfig(plugin.marketplace, plugin.name);
+  const componentConfig = getPluginComponentConfig(
+    plugin.marketplace,
+    plugin.name,
+  );
 
   let linked = 0;
   const manifest = loadManifest();
@@ -1191,9 +915,13 @@ export function linkPluginToInstance(
   }
 
   // Debug logging
-  console.error(`[DEBUG] linkPluginToInstance: ${plugin.name} -> ${instance.name}`);
+  console.error(
+    `[DEBUG] linkPluginToInstance: ${plugin.name} -> ${instance.name}`,
+  );
   console.error(`[DEBUG] sourcePath: ${sourcePath}`);
-  console.error(`[DEBUG] skillsSubdir: ${instance.skillsSubdir}, commandsSubdir: ${instance.commandsSubdir}, agentsSubdir: ${instance.agentsSubdir}`);
+  console.error(
+    `[DEBUG] skillsSubdir: ${instance.skillsSubdir}, commandsSubdir: ${instance.commandsSubdir}, agentsSubdir: ${instance.agentsSubdir}`,
+  );
   console.error(`[DEBUG] plugin.skills: ${JSON.stringify(plugin.skills)}`);
   console.error(`[DEBUG] plugin.commands: ${JSON.stringify(plugin.commands)}`);
   console.error(`[DEBUG] plugin.agents: ${JSON.stringify(plugin.agents)}`);
@@ -1202,7 +930,9 @@ export function linkPluginToInstance(
     if (componentConfig.disabledSkills.includes(skill)) continue;
     validateItemName("skill", skill);
     const source = safePath(join(sourcePath, "skills"), skill);
-    console.error(`[DEBUG] Checking skill source: ${source}, exists: ${existsSync(source)}`);
+    console.error(
+      `[DEBUG] Checking skill source: ${source}, exists: ${existsSync(source)}`,
+    );
     if (!existsSync(source)) continue;
 
     if (instance.skillsSubdir) {
@@ -1281,7 +1011,9 @@ export function linkPluginToInstance(
   }
 
   saveManifest(manifest);
-  console.error(`[DEBUG] linkPluginToInstance completed: ${linked} items linked for ${instance.name}`);
+  console.error(
+    `[DEBUG] linkPluginToInstance completed: ${linked} items linked for ${instance.name}`,
+  );
   return linked;
 }
 
@@ -1294,10 +1026,16 @@ export function togglePluginComponent(
   plugin: Plugin,
   kind: "skill" | "command" | "agent",
   componentName: string,
-  enabled: boolean
+  enabled: boolean,
 ): { success: boolean; error?: string } {
   // Update config first
-  setPluginComponentEnabled(plugin.marketplace, plugin.name, kind, componentName, enabled);
+  setPluginComponentEnabled(
+    plugin.marketplace,
+    plugin.name,
+    kind,
+    componentName,
+    enabled,
+  );
 
   const instances = getEnabledToolInstances();
   const manifest = loadManifest();
@@ -1315,9 +1053,12 @@ export function togglePluginComponent(
       if (!item) continue;
 
       // Resolve the actual destination path
-      const subdir = kind === "skill" ? instance.skillsSubdir :
-                     kind === "command" ? instance.commandsSubdir :
-                     instance.agentsSubdir;
+      const subdir =
+        kind === "skill"
+          ? instance.skillsSubdir
+          : kind === "command"
+            ? instance.commandsSubdir
+            : instance.agentsSubdir;
       if (!subdir) continue;
 
       const suffix = kind === "skill" ? componentName : `${componentName}.md`;
@@ -1333,7 +1074,10 @@ export function togglePluginComponent(
           }
         }
       } catch (error) {
-        logError(`Failed to remove ${kind} ${componentName} from ${instance.name}`, error);
+        logError(
+          `Failed to remove ${kind} ${componentName} from ${instance.name}`,
+          error,
+        );
       }
 
       // Restore backup if exists
@@ -1354,9 +1098,12 @@ export function togglePluginComponent(
       // Enable: create symlink/copy for this component
       if (!sourcePath) continue;
 
-      const subdir = kind === "skill" ? instance.skillsSubdir :
-                     kind === "command" ? instance.commandsSubdir :
-                     instance.agentsSubdir;
+      const subdir =
+        kind === "skill"
+          ? instance.skillsSubdir
+          : kind === "command"
+            ? instance.commandsSubdir
+            : instance.agentsSubdir;
       if (!subdir) continue;
 
       const suffix = kind === "skill" ? componentName : `${componentName}.md`;
@@ -1388,11 +1135,16 @@ export function togglePluginComponent(
   return { success: true };
 }
 
-function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] {
+function getInstalledPluginsForClaudeInstance(
+  instance: ToolInstance,
+): Plugin[] {
   const plugins: Plugin[] = [];
 
   // Read installed_plugins.json for the authoritative list of installed plugins
-  const installedPluginsPath = join(instance.configDir, "plugins/installed_plugins.json");
+  const installedPluginsPath = join(
+    instance.configDir,
+    "plugins/installed_plugins.json",
+  );
   const installedPluginKeys = new Set<string>();
 
   if (existsSync(installedPluginsPath)) {
@@ -1406,7 +1158,10 @@ function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] 
         }
       }
     } catch (error) {
-      logError(`Failed to read installed_plugins.json for ${instance.name}`, error);
+      logError(
+        `Failed to read installed_plugins.json for ${instance.name}`,
+        error,
+      );
     }
   }
 
@@ -1452,7 +1207,7 @@ function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] 
         }
 
         let contentDir = pluginDir;
-        const subDirs = readdirSync(pluginDir).filter(d => {
+        const subDirs = readdirSync(pluginDir).filter((d) => {
           const p = join(pluginDir, d);
           try {
             return lstatSync(p).isDirectory() && !d.startsWith(".");
@@ -1462,7 +1217,7 @@ function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] 
           }
         });
 
-        if (subDirs.length > 0 && subDirs.every(d => /^[a-f0-9]+$/.test(d))) {
+        if (subDirs.length > 0 && subDirs.every((d) => /^[a-f0-9]+$/.test(d))) {
           subDirs.sort();
           contentDir = join(pluginDir, subDirs[subDirs.length - 1]);
         }
@@ -1525,12 +1280,18 @@ function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] 
           }
         }
 
-        if (existsSync(join(contentDir, "mcp.json")) ||
-            existsSync(join(contentDir, ".claude-plugin", "mcp.json"))) {
+        if (
+          existsSync(join(contentDir, "mcp.json")) ||
+          existsSync(join(contentDir, ".claude-plugin", "mcp.json"))
+        ) {
           hasMcp = true;
         }
 
-        const manifestPath = join(contentDir, ".claude-plugin", "manifest.json");
+        const manifestPath = join(
+          contentDir,
+          ".claude-plugin",
+          "manifest.json",
+        );
         if (existsSync(manifestPath)) {
           try {
             const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
@@ -1564,7 +1325,9 @@ function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] 
   return plugins;
 }
 
-export function getInstalledPluginsForInstance(instance: ToolInstance): Plugin[] {
+export function getInstalledPluginsForInstance(
+  instance: ToolInstance,
+): Plugin[] {
   if (!instance.enabled) return [];
   if (instance.toolId === "claude-code") {
     return getInstalledPluginsForClaudeInstance(instance);
@@ -1685,14 +1448,17 @@ export function getInstalledPluginsForInstance(instance: ToolInstance): Plugin[]
 
   // Group components by plugin (using source path to determine actual plugin)
   // Key format: "marketplace:pluginName" or "local:componentName" for truly local items
-  const pluginGroups = new Map<string, {
-    marketplace: string;
-    pluginName: string;
-    source: string;
-    skills: string[];
-    commands: string[];
-    agents: string[];
-  }>();
+  const pluginGroups = new Map<
+    string,
+    {
+      marketplace: string;
+      pluginName: string;
+      source: string;
+      skills: string[];
+      commands: string[];
+      agents: string[];
+    }
+  >();
 
   for (const component of components) {
     const pluginInfo = extractPluginInfoFromSource(component.source);
@@ -1769,7 +1535,10 @@ export function getInstalledPluginsForInstance(instance: ToolInstance): Plugin[]
   return plugins;
 }
 
-export function getAllInstalledPlugins(): { plugins: Plugin[]; byTool: Record<string, Plugin[]> } {
+export function getAllInstalledPlugins(): {
+  plugins: Plugin[];
+  byTool: Record<string, Plugin[]>;
+} {
   const byTool: Record<string, Plugin[]> = {};
   const allPlugins: Plugin[] = [];
   const seen = new Set<string>();
@@ -1807,18 +1576,25 @@ export interface ToolInstallStatus {
 
 function findInstance(toolId: string, instanceId: string): ToolInstance | null {
   const instances = getToolInstances();
-  return instances.find(
-    (instance) => instance.toolId === toolId && instance.instanceId === instanceId
-  ) || null;
+  return (
+    instances.find(
+      (instance) =>
+        instance.toolId === toolId && instance.instanceId === instanceId,
+    ) || null
+  );
 }
 
 export async function syncPluginInstances(
   plugin: Plugin,
   marketplaceUrl: string | undefined,
-  missingStatuses: ToolInstallStatus[]
+  missingStatuses: ToolInstallStatus[],
 ): Promise<SyncResult> {
   validatePluginMetadata(plugin);
-  const result: SyncResult = { success: false, syncedInstances: {}, errors: [] };
+  const result: SyncResult = {
+    success: false,
+    syncedInstances: {},
+    errors: [],
+  };
   if (missingStatuses.length === 0) return result;
 
   const missingInstances = missingStatuses
@@ -1839,709 +1615,33 @@ export async function syncPluginInstances(
   // Sync (install) to all missing instances using the same method
   for (const instance of missingInstances) {
     try {
-      const { count, errors } = installPluginItemsToInstance(plugin.name, sourcePath, instance, plugin.marketplace);
+      const { count, errors } = installPluginItemsToInstance(
+        plugin.name,
+        sourcePath,
+        instance,
+        plugin.marketplace,
+      );
       result.syncedInstances[instanceKey(instance)] = count;
       result.errors.push(...errors);
     } catch (error) {
       logError(`Sync failed for ${plugin.name} in ${instance.name}`, error);
       result.errors.push(
-        `Sync failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`
+        `Sync failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`,
       );
     }
   }
 
-  result.success = Object.values(result.syncedInstances).some((n: any) => n > 0);
+  result.success = Object.values(result.syncedInstances).some(
+    (n: any) => n > 0,
+  );
   return result;
 }
-
-export function syncAssetInstances(
-  asset: any,
-  targetStatuses: any[]
-): any {
-  const result: any = { success: false, syncedInstances: {}, errors: [] };
-  if (targetStatuses.length === 0) return result;
-
-  const sourceInfo = getAssetSourceInfo(asset);
-  if (!sourceInfo.exists || !sourceInfo.hash) {
-    result.errors.push(sourceInfo.error || `Asset source not found for ${asset.name}`);
-    return result;
-  }
-
-  for (const status of targetStatuses) {
-    const instance = findInstance(status.toolId, status.instanceId);
-    if (!instance) continue;
-    if (!instance.enabled) continue;
-
-    const installResult = installAssetToInstance(asset, instance, sourceInfo);
-    if (installResult.count > 0) {
-      result.syncedInstances[instanceKey(instance)] = installResult.count;
-    }
-    if (installResult.error) {
-      result.errors.push(`Asset sync failed for ${instance.name}: ${installResult.error}`);
-    }
-  }
-
-  result.success = Object.values(result.syncedInstances).some((n: any) => n > 0);
-  return result;
-}
-
-export function getPluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
-  const statuses: ToolInstallStatus[] = [];
-  try {
-    validatePluginMetadata(plugin);
-  } catch (error) {
-    logError(`Invalid plugin metadata for ${plugin.name}`, error);
-    return statuses;
-  }
-  const instances = getToolInstances();
-
-  for (const instance of instances) {
-    const hasSkills = plugin.skills.length > 0;
-    const hasCommands = plugin.commands.length > 0;
-    const hasAgents = plugin.agents.length > 0;
-    
-    const canInstallSkills = hasSkills && instance.skillsSubdir !== null;
-    const canInstallCommands = hasCommands && instance.commandsSubdir !== null;
-    const canInstallAgents = hasAgents && instance.agentsSubdir !== null;
-    
-    const supported = canInstallSkills || canInstallCommands || canInstallAgents || 
-                      (instance.toolId === "claude-code" && (plugin.hasMcp || plugin.hasLsp));
-    
-    let installed = false;
-    const enabled = instance.enabled;
-
-    if (enabled && supported) {
-      // Check for installed components by looking at actual files/symlinks
-      // This works for all tools including Claude
-      if (canInstallSkills && instance.skillsSubdir) {
-        for (const skill of plugin.skills) {
-          const base = join(instance.configDir, instance.skillsSubdir);
-          const skillPath = safePath(base, skill);
-          if (existsSync(skillPath)) {
-            installed = true;
-            break;
-          }
-        }
-      }
-      if (!installed && canInstallCommands && instance.commandsSubdir) {
-        for (const cmd of plugin.commands) {
-          const base = join(instance.configDir, instance.commandsSubdir);
-          const cmdPath = safePath(base, `${cmd}.md`);
-          if (existsSync(cmdPath)) {
-            installed = true;
-            break;
-          }
-        }
-      }
-      if (!installed && canInstallAgents && instance.agentsSubdir) {
-        for (const agent of plugin.agents) {
-          const base = join(instance.configDir, instance.agentsSubdir);
-          const agentPath = safePath(base, `${agent}.md`);
-          if (existsSync(agentPath)) {
-            installed = true;
-            break;
-          }
-        }
-      }
-      
-      // For MCP/LSP-only plugins on Claude, check installed_plugins.json
-      if (!installed && (plugin.hasMcp || plugin.hasLsp) && instance.toolId === "claude-code") {
-        const installedPluginsPath = join(instance.configDir, "plugins/installed_plugins.json");
-        if (existsSync(installedPluginsPath)) {
-          try {
-            const content = readFileSync(installedPluginsPath, "utf-8");
-            const data = JSON.parse(content);
-            if (data.plugins && typeof data.plugins === "object") {
-              for (const key of Object.keys(data.plugins)) {
-                const pluginName = key.split("@")[0];
-                if (pluginName === plugin.name) {
-                  installed = true;
-                  break;
-                }
-              }
-            }
-          } catch {
-            // Ignore parse errors
-          }
-        }
-      }
-    }
-    
-    statuses.push({
-      toolId: instance.toolId,
-      instanceId: instance.instanceId,
-      name: instance.name,
-      installed,
-      supported,
-      enabled,
-    });
-  }
-
-  return statuses;
-}
-
-// Config sync types and functions
-
-export interface ConfigToolStatus {
-  toolId: string;
-  instanceId: string;
-  name: string;
-  configDir: string;
-  enabled: boolean;
-  installed: boolean;
-  drifted: boolean;
-  targetPath: string;
-}
-
-export interface ConfigSyncResult {
-  success: boolean;
-  syncedInstances: Record<string, number>;
-  errors: string[];
-}
-
-
-// Helper to check if a path is a directory sync (ends with / or \)
-function isDirectorySyncPath(path: string): boolean {
-  return path.endsWith("/") || path.endsWith("\\");
-}
-
-// Helper to check if a path contains glob patterns
-function isGlobPattern(path: string): boolean {
-  return fastGlob.isDynamicPattern(path);
-}
-
-function normalizeConfigSource(source: string): string {
-  const trimmed = source.trim();
-  if (!trimmed) {
-    throw new Error("Config source cannot be empty.");
-  }
-  const normalized = trimmed.replace(/\\/g, "/").replace(/^\.\//, "");
-  const validationPath = normalized.replace(/\/+$/, "");
-  validateRelativeSubPath(validationPath);
-  return normalized;
-}
-
-interface NormalizedConfigTarget {
-  path: string;
-  isDir: boolean;
-}
-
-function normalizeConfigTarget(target: string): NormalizedConfigTarget {
-  const trimmed = target.trim();
-  if (!trimmed) {
-    throw new Error("Config target cannot be empty.");
-  }
-  const isDir = trimmed === "." || trimmed === "./" || isDirectorySyncPath(trimmed);
-  const cleaned = trimmed.replace(/\\/g, "/").replace(/\/+$/, "");
-  const withoutDot = cleaned.replace(/^\.\//, "");
-  const normalized = withoutDot === "." ? "" : withoutDot;
-  if (normalized) {
-    validateRelativeSubPath(normalized);
-  }
-  return { path: normalized, isDir };
-}
-
-function buildConfigTargetPath(
-  target: NormalizedConfigTarget,
-  fileName: string,
-  sourceIsMultiFile: boolean
-): string {
-  const useDir = sourceIsMultiFile || target.isDir;
-  if (useDir) {
-    return target.path ? join(target.path, fileName) : fileName;
-  }
-  return target.path;
-}
-
-function normalizeBackupLabel(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    throw new Error("Config name cannot be empty.");
-  }
-  const normalized = trimmed.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9._-]/g, "-");
-  if (!normalized) {
-    throw new Error(`Invalid backup label: ${value}`);
-  }
-  return normalized;
-}
-
-// Expand a mapping to list of source files
-async function expandConfigMapping(
-  mapping: any,
-  configRepo: string
-): Promise<Array<{ sourcePath: string; targetPath: string; hash: string }>> {
-  const sourcePattern = normalizeConfigSource(mapping.source);
-  const targetInfo = normalizeConfigTarget(mapping.target);
-  const results: Array<{ sourcePath: string; targetPath: string; hash: string }> = [];
-
-  const addEntry = (sourcePath: string, fileName: string, sourceIsMultiFile: boolean) => {
-    const targetPath = buildConfigTargetPath(targetInfo, fileName, sourceIsMultiFile);
-    const hash = hashFile(sourcePath);
-    results.push({ sourcePath, targetPath, hash });
-  };
-
-  // Handle directory sync (trailing slash convention)
-  if (isDirectorySyncPath(sourcePattern)) {
-    const sourceDir = join(configRepo, sourcePattern.replace(/[\\/]+$/, ""));
-    if (!existsSync(sourceDir)) {
-      return [];
-    }
-
-    const stat = lstatSync(sourceDir);
-    if (!stat.isDirectory()) {
-      return [];
-    }
-
-    // Get all files in directory recursively
-    const entries = await fastGlob("**/*", {
-      cwd: sourceDir,
-      absolute: false,
-      onlyFiles: true,
-      dot: true,
-    });
-
-    for (const entry of entries) {
-      const fullSourcePath = join(sourceDir, entry);
-      addEntry(fullSourcePath, basename(entry), true);
-    }
-
-    return results;
-  }
-
-  // Handle glob patterns
-  if (isGlobPattern(sourcePattern)) {
-    const entries = await fastGlob(sourcePattern, {
-      cwd: configRepo,
-      absolute: true,
-      onlyFiles: true,
-      dot: true,
-    });
-
-    for (const entry of entries) {
-      addEntry(entry, basename(entry), true);
-    }
-
-    return results;
-  }
-
-  const sourceFullPath = join(configRepo, sourcePattern);
-  if (!existsSync(sourceFullPath)) {
-    return [];
-  }
-
-  const stat = lstatSync(sourceFullPath);
-  if (stat.isDirectory()) {
-    const entries = await fastGlob("**/*", {
-      cwd: sourceFullPath,
-      absolute: false,
-      onlyFiles: true,
-      dot: true,
-    });
-
-    for (const entry of entries) {
-      const fullSourcePath = join(sourceFullPath, entry);
-      addEntry(fullSourcePath, basename(entry), true);
-    }
-  } else {
-    addEntry(sourceFullPath, basename(sourceFullPath), false);
-  }
-
-  return results;
-}
-
-// Get all source files for a config (handles both legacy and new formats)
-export async function getanys(config: any): Promise<any[]> {
-  const configRepo = getConfigRepoPath();
-  if (!configRepo) {
-    throw new Error("Config repo not configured. Add [sync] config_repo to your config.toml");
-  }
-
-  if (!config.name || !config.name.trim()) {
-    throw new Error("Config name cannot be empty.");
-  }
-
-  const mappings: any[] = config.mappings && config.mappings.length > 0
-    ? config.mappings
-    : config.sourcePath && config.targetPath
-      ? [{ source: config.sourcePath, target: config.targetPath }]
-      : [];
-
-  if (mappings.length === 0) {
-    throw new Error(`Config ${config.name || "(unnamed)"} has no mappings. Add [[configs.files]] or source_path/target_path.`);
-  }
-
-  const results: any[] = [];
-  const seenTargets = new Set<string>();
-
-  for (const mapping of mappings) {
-    if (!mapping.source || !mapping.target) {
-      throw new Error(`Config ${config.name || "(unnamed)"} mapping requires both source and target.`);
-    }
-
-    const expanded = await expandConfigMapping(mapping, configRepo);
-    // Empty source is valid — files may not exist in the repo yet (initial seed via reverse sync)
-    for (const file of expanded) {
-      const targetKey = file.targetPath.replace(/\\/g, "/");
-      if (seenTargets.has(targetKey)) {
-        throw new Error(`Config ${config.name || "(unnamed)"} has duplicate target path: ${file.targetPath}`);
-      }
-      seenTargets.add(targetKey);
-      results.push({
-        sourcePath: file.sourcePath,
-        targetPath: file.targetPath,
-        hash: file.hash,
-        isDirectory: false,
-      });
-    }
-  }
-
-  return results;
-}
-
-// Compute aggregated hash for all source files
-function hashSourceFiles(files: any[]): string {
-  if (files.length === 0) return "";
-  if (files.length === 1) return files[0].hash;
-
-  const hasher = createHash("sha256");
-  for (const file of files.sort((a, b) => a.sourcePath.localeCompare(b.sourcePath))) {
-    hasher.update(file.targetPath);
-    hasher.update("\0");
-    hasher.update(file.hash);
-    hasher.update("\0");
-  }
-  return hasher.digest("hex");
-}
-
-// Updated status check for multi-file configs
-export function getConfigToolStatus(config: any, sourceFiles?: any[]): ConfigToolStatus[] {
-  const statuses: ConfigToolStatus[] = [];
-  const instances = getToolInstances();
-
-  // Only get instances that match the config's toolId
-  const matchingInstances = instances.filter((instance) => instance.toolId === config.toolId);
-
-  for (const instance of matchingInstances) {
-    const enabled = instance.enabled;
-    const files = sourceFiles || [];
-    const hasFiles = files.length > 0;
-
-    let installed = false;
-    let drifted = false;
-    const targetBase = join(instance.configDir, config.targetPath || ".");
-
-    if (enabled && hasFiles) {
-      let anyExist = false;
-      let anyMissing = false;
-      let anyDrifted = false;
-
-      for (const file of files) {
-        const targetPath = join(instance.configDir, file.targetPath);
-        if (!existsSync(targetPath)) {
-          anyMissing = true;
-          continue;
-        }
-
-        anyExist = true;
-        try {
-          const targetHash = hashFile(targetPath);
-          if (targetHash !== file.hash) {
-            anyDrifted = true;
-          }
-        } catch {
-          anyDrifted = true;
-        }
-      }
-
-      installed = anyExist;
-      drifted = anyExist && (anyDrifted || anyMissing);
-    }
-
-    statuses.push({
-      toolId: instance.toolId,
-      instanceId: instance.instanceId,
-      name: instance.name,
-      configDir: instance.configDir,
-      enabled,
-      installed,
-      drifted,
-      targetPath: targetBase,
-    });
-  }
-
-  return statuses;
-}
-
-// Install multi-file config to instance
-async function installConfigToInstance(
-  config: any,
-  instance: ToolInstance,
-  sourceFiles: any[]
-): Promise<{ count: number; error?: string }> {
-  if (!instance.enabled) return { count: 0 };
-  if (instance.toolId !== config.toolId) return { count: 0 };
-
-  if (sourceFiles.length === 0) {
-    return { count: 0, error: "No source files found for config." };
-  }
-
-  try {
-    const manifest = loadManifest();
-    const key = instanceKey(instance);
-    if (!manifest.tools[key]) {
-      manifest.tools[key] = { items: {} };
-    }
-
-    let syncedCount = 0;
-    const itemKey = `config:${config.name}`;
-    const previous = manifest.tools[key].items[itemKey] || null;
-    const backupOwner = normalizeBackupLabel(config.name);
-
-    for (const file of sourceFiles) {
-      const targetPath = join(instance.configDir, file.targetPath);
-
-      // Check if target exists and matches (skip if already in sync)
-      if (existsSync(targetPath)) {
-        try {
-          const targetHash = hashFile(targetPath);
-          if (targetHash === file.hash) {
-            continue; // Already in sync
-          }
-        } catch {
-          // Target exists but can't be hashed, continue with sync
-        }
-      }
-
-      const backupName = normalizeBackupLabel(
-        `${config.name}-${basename(file.targetPath)}-${instance.toolId}-${instance.instanceId}`
-      );
-      copyWithBackup(file.sourcePath, targetPath, backupOwner, "config", backupName);
-      syncedCount++;
-    }
-
-    // Update manifest with aggregate info
-    const item: InstalledItem = {
-      kind: "asset",
-      name: config.name,
-      source: hashSourceFiles(sourceFiles),
-      dest: instance.configDir,
-      backup: null,
-      owner: config.name,
-      previous,
-    };
-
-    manifest.tools[key].items[itemKey] = item;
-    saveManifest(manifest);
-
-    return { count: syncedCount };
-  } catch (error) {
-    return { count: 0, error: error instanceof Error ? error.message : String(error) };
-  }
-}
-
-export interface ReverseSyncResult {
-  success: boolean;
-  syncedFiles: number;
-  errors: string[];
-}
-
-export function reverseSyncConfig(
-  config: any,
-  instance: DiffInstanceRef
-): ReverseSyncResult {
-  const result: ReverseSyncResult = { success: false, syncedFiles: 0, errors: [] };
-  const sourceFiles = config.sourceFiles || [];
-
-  if (sourceFiles.length > 0) {
-    // Normal reverse sync: copy drifted instance files back to existing source paths
-    const backupOwner = normalizeBackupLabel(config.name);
-
-    for (const file of sourceFiles) {
-      const targetPath = join(instance.configDir, file.targetPath);
-
-      if (!existsSync(targetPath)) {
-        continue;
-      }
-
-      // Check if files actually differ
-      try {
-        const targetHash = hashFile(targetPath);
-        if (targetHash === file.hash) {
-          continue; // Already in sync
-        }
-      } catch {
-        result.errors.push(`Failed to read instance file: ${targetPath}`);
-        continue;
-      }
-
-      try {
-        // Back up the existing source file before overwriting (if it exists)
-        if (existsSync(file.sourcePath)) {
-          const backupName = normalizeBackupLabel(
-            `${config.name}-${basename(file.sourcePath)}-pullback`
-          );
-          const backupPath = buildBackupPath(backupOwner, "config-pullback", backupName);
-          copyFileSync(file.sourcePath, backupPath);
-        }
-        mkdirSync(dirname(file.sourcePath), { recursive: true });
-        copyFileSync(targetPath, file.sourcePath);
-        result.syncedFiles++;
-      } catch (error) {
-        result.errors.push(
-          `Failed to pull back ${file.targetPath}: ${error instanceof Error ? error.message : String(error)}`
-        );
-      }
-    }
-  } else {
-    // Seed reverse sync: source repo is empty, discover files from instance
-    const configRepo = getConfigRepoPath();
-    if (!configRepo) {
-      result.errors.push("Config repo not configured.");
-      return result;
-    }
-
-    const mappings: any[] = config.mappings && config.mappings.length > 0
-      ? config.mappings
-      : config.sourcePath && config.targetPath
-        ? [{ source: config.sourcePath, target: config.targetPath }]
-        : [];
-
-    if (mappings.length === 0) {
-      result.errors.push("No mappings configured for this config.");
-      return result;
-    }
-
-    for (const mapping of mappings) {
-      try {
-        const seeded = seedFromInstance(mapping, configRepo, instance.configDir);
-        result.syncedFiles += seeded;
-      } catch (error) {
-        result.errors.push(
-          `Failed to seed ${mapping.source}: ${error instanceof Error ? error.message : String(error)}`
-        );
-      }
-    }
-  }
-
-  result.success = result.syncedFiles > 0;
-  return result;
-}
-
-/**
- * Seed the source repo from instance files when no source files exist yet.
- * For glob sources like "claude/settings*", discovers matching files in the
- * instance configDir and copies them to the source repo.
- */
-function seedFromInstance(
-  mapping: any,
-  configRepo: string,
-  instanceConfigDir: string
-): number {
-  const source = normalizeConfigSource(mapping.source);
-  const targetInfo = normalizeConfigTarget(mapping.target);
-  let seeded = 0;
-
-  if (isGlobPattern(source)) {
-    // For globs like "claude/settings*", the glob basename is the file pattern
-    // and the dirname is the source repo subdirectory
-    const sourceDir = dirname(source);
-    const pattern = basename(source);
-
-    // Find matching files in the instance configDir under the target path
-    const instanceSearchDir = targetInfo.path
-      ? join(instanceConfigDir, targetInfo.path)
-      : instanceConfigDir;
-
-    if (!existsSync(instanceSearchDir)) return 0;
-
-    const entries = readdirSync(instanceSearchDir);
-    const globRegex = new RegExp("^" + pattern.replace(/\./g, "\\.").replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
-
-    for (const entry of entries) {
-      if (!globRegex.test(entry)) continue;
-      const instancePath = join(instanceSearchDir, entry);
-      const stat = lstatSync(instancePath);
-      if (!stat.isFile()) continue;
-
-      const destPath = join(configRepo, sourceDir, entry);
-      mkdirSync(dirname(destPath), { recursive: true });
-      copyFileSync(instancePath, destPath);
-      seeded++;
-    }
-  } else if (isDirectorySyncPath(source)) {
-    // Directory sync: copy all files from instance target dir to source repo dir
-    const sourceDirName = source.replace(/[\\/]+$/, "");
-    const instanceDir = targetInfo.path
-      ? join(instanceConfigDir, targetInfo.path)
-      : instanceConfigDir;
-
-    if (!existsSync(instanceDir)) return 0;
-
-    const copyRecursive = (srcDir: string, destDir: string) => {
-      const entries = readdirSync(srcDir);
-      for (const entry of entries) {
-        const srcPath = join(srcDir, entry);
-        const dstPath = join(destDir, entry);
-        const stat = lstatSync(srcPath);
-        if (stat.isDirectory()) {
-          copyRecursive(srcPath, dstPath);
-        } else if (stat.isFile()) {
-          mkdirSync(dirname(dstPath), { recursive: true });
-          copyFileSync(srcPath, dstPath);
-          seeded++;
-        }
-      }
-    };
-
-    copyRecursive(instanceDir, join(configRepo, sourceDirName));
-  } else {
-    // Single file: copy instance file to source repo path
-    const targetPath = targetInfo.path
-      ? join(instanceConfigDir, targetInfo.path)
-      : join(instanceConfigDir, basename(source));
-
-    if (!existsSync(targetPath)) return 0;
-
-    const destPath = join(configRepo, source);
-    mkdirSync(dirname(destPath), { recursive: true });
-    copyFileSync(targetPath, destPath);
-    seeded++;
-  }
-
-  return seeded;
-}
-
-export async function syncConfigInstances(
-  config: any,
-  targetStatuses: ConfigToolStatus[]
-): Promise<ConfigSyncResult> {
-  const result: ConfigSyncResult = { success: false, syncedInstances: {}, errors: [] };
-  if (targetStatuses.length === 0) return result;
-
-  let sourceFiles: any[] = [];
-  try {
-    sourceFiles = config.sourceFiles || await getanys(config);
-  } catch (error) {
-    result.errors.push(error instanceof Error ? error.message : String(error));
-    return result;
-  }
-
-  for (const status of targetStatuses) {
-    const instance = getToolInstances().find(
-      (inst) => inst.toolId === status.toolId && inst.instanceId === status.instanceId
-    );
-    if (!instance) continue;
-    if (!instance.enabled) continue;
-
-    const installResult = await installConfigToInstance(config, instance, sourceFiles);
-    if (installResult.count > 0) {
-      result.syncedInstances[instanceKey(instance)] = installResult.count;
-    }
-    if (installResult.error) {
-      result.errors.push(`Config sync failed for ${instance.name}: ${installResult.error}`);
-    }
-  }
-
-  result.success = Object.values(result.syncedInstances).some((n: any) => n > 0);
-  return result;
-}
+// Re-exports for backward compatibility (store.ts and tests import from install.ts)
+export { manifestPath, loadManifest, saveManifest } from "./manifest.js";
+export { getPluginToolStatus } from "./plugin-status.js";
+export {
+  getPluginsCacheDir,
+  createSymlink,
+  isSymlink,
+  removeSymlink,
+} from "./plugin-helpers.js";

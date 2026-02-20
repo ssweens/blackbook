@@ -5,9 +5,6 @@ import {
   getAllInstalledPlugins,
   getPluginToolStatus,
   syncPluginInstances,
-  getAssetToolStatus,
-  getAssetSourceInfo,
-  getConfigToolStatus,
 } from "./install.js";
 import { getConfigPath as getYamlConfigPath, loadConfig as loadYamlConfig } from "./config/loader.js";
 import { resolveSourcePath, expandPath as expandConfigPath } from "./config/path.js";
@@ -36,9 +33,6 @@ vi.mock("./install.js", async (importOriginal) => {
     getAllInstalledPlugins: vi.fn(),
     getPluginToolStatus: vi.fn(),
     syncPluginInstances: vi.fn(),
-    getAssetToolStatus: vi.fn(),
-    getAssetSourceInfo: vi.fn(),
-    getConfigToolStatus: vi.fn(),
   };
 });
 
@@ -374,9 +368,6 @@ describe("Store sync tools", () => {
     vi.mocked(getAllInstalledPlugins).mockReset();
     vi.mocked(getPluginToolStatus).mockReset();
     vi.mocked(syncPluginInstances).mockReset();
-    vi.mocked(getAssetToolStatus).mockReset();
-    vi.mocked(getAssetSourceInfo).mockReset();
-    vi.mocked(getConfigToolStatus).mockReturnValue([]);
   });
 
   it("builds a sync preview for partial plugins", () => {
@@ -400,14 +391,6 @@ describe("Store sync tools", () => {
         enabled: true,
       },
     ]);
-    vi.mocked(getAssetSourceInfo).mockReturnValue({
-      sourcePath: "/tmp/test-asset",
-      exists: false,
-      isDirectory: false,
-      hash: null,
-      error: "Asset source not found.",
-    });
-    vi.mocked(getAssetToolStatus).mockReturnValue([]);
 
     const preview = useStore.getState().getSyncPreview();
     expect(preview).toHaveLength(1);
@@ -443,7 +426,6 @@ describe("Store sync tools", () => {
 
     useStore.setState({ managedTools, toolDetection });
     vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [], byTool: {} });
-    vi.mocked(getAssetToolStatus).mockReturnValue([]);
 
     const preview = useStore.getState().getSyncPreview();
     expect(preview).toHaveLength(1);
@@ -622,14 +604,6 @@ describe("Store loadFiles (YAML config)", () => {
     });
 
     vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [], byTool: {} });
-    vi.mocked(getAssetToolStatus).mockReturnValue([]);
-    vi.mocked(getAssetSourceInfo).mockReturnValue({
-      sourcePath: "/tmp/test-asset",
-      exists: false,
-      isDirectory: false,
-      hash: null,
-      error: "Asset source not found.",
-    });
 
     const preview = useStore.getState().getSyncPreview();
     const fileItems = preview.filter((p) => p.kind === "file");
