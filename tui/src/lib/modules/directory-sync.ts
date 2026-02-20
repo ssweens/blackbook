@@ -1,12 +1,28 @@
-import { existsSync, mkdirSync, cpSync } from "fs";
+import { existsSync, mkdirSync, cpSync, readdirSync, lstatSync } from "fs";
+import { join } from "path";
 import type { Module, CheckResult, ApplyResult } from "./types.js";
-import { hashDirectoryAsync } from "./hash.js";
+import { hashFileAsync } from "./hash.js";
 import { createBackup, pruneBackups } from "./backup.js";
 
 export interface DirectorySyncParams {
   sourcePath: string;
   targetPath: string;
   owner: string;
+}
+
+/** Recursively list all file paths relative to `dir`. */
+function listFilesRecursive(dir: string, prefix = ""): string[] {
+  const results: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const relPath = prefix ? `${prefix}/${entry.name}` : entry.name;
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...listFilesRecursive(fullPath, relPath));
+    } else if (entry.isFile() || (entry.isSymbolicLink() && lstatSync(fullPath).isFile())) {
+      results.push(relPath);
+    }
+  }
+  return results;
 }
 
 export const directorySyncModule: Module<DirectorySyncParams> = {
@@ -27,14 +43,30 @@ export const directorySyncModule: Module<DirectorySyncParams> = {
       return { status: "missing", message: `Target directory does not exist: ${targetPath}` };
     }
 
-    const sourceHash = await hashDirectoryAsync(sourcePath);
-    const targetHash = await hashDirectoryAsync(targetPath);
+    // Only compare files that Blackbook manages (exist in source).
+    // The target directory may contain unmanaged files — hashing the entire
+    // target would always differ from the source hash, giving false "drifted".
+    const sourceFiles = listFilesRecursive(sourcePath);
 
-    if (sourceHash === targetHash) {
-      return { status: "ok", message: "Directories match" };
+    for (const relPath of sourceFiles) {
+      const srcFile = join(sourcePath, relPath);
+      const tgtFile = join(targetPath, relPath);
+
+      if (!existsSync(tgtFile)) {
+        return { status: "drifted", message: `Target file missing: ${relPath}` };
+      }
+
+      const [srcHash, tgtHash] = await Promise.all([
+        hashFileAsync(srcFile),
+        hashFileAsync(tgtFile),
+      ]);
+
+      if (srcHash !== tgtHash) {
+        return { status: "drifted", message: `File differs: ${relPath}` };
+      }
     }
 
-    return { status: "drifted", message: "Directory contents differ" };
+    return { status: "ok", message: "All managed files match" };
   },
 
   async apply(params): Promise<ApplyResult> {

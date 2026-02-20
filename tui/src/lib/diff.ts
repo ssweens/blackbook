@@ -366,11 +366,10 @@ export function buildFileDiffTarget(
     }
   } else if (sourceStat.isDirectory()) {
     const sourceFiles = listFilesRecursive(sourcePath);
-    const targetFiles = existsSync(targetPath) ? listFilesRecursive(targetPath) : [];
 
-    const allFiles = new Set([...sourceFiles, ...targetFiles]);
-    const ordered = [...allFiles];
-    ordered.sort();
+    // Only compare files that exist in source — files only in target are
+    // unmanaged by Blackbook and must not be counted as drift.
+    const ordered = [...sourceFiles].sort();
 
     for (const relPath of ordered) {
       const srcFile = join(sourcePath, relPath);
@@ -378,7 +377,7 @@ export function buildFileDiffTarget(
       const summary = buildFileSummary(
         relPath,
         relPath,
-        existsSync(srcFile) ? srcFile : null,
+        srcFile,
         existsSync(tgtFile) ? tgtFile : null
       );
       if (summary.status !== "modified" || summary.linesAdded > 0 || summary.linesRemoved > 0) {
@@ -454,18 +453,16 @@ export function buildFileMissingSummary(
     const sourceFiles = listFilesRecursive(sourcePath);
     const targetFiles = existsSync(targetPath) ? listFilesRecursive(targetPath) : [];
 
-    const sourceSet = new Set(sourceFiles);
     const targetSet = new Set(targetFiles);
 
+    // Only report files that Blackbook manages (exist in source).
+    // Files only in target are unmanaged — reporting them as "extra"
+    // would flood results when the target directory contains unrelated files.
     for (const f of sourceFiles) {
       if (!targetSet.has(f)) missingFiles.push(f);
     }
-    for (const f of targetFiles) {
-      if (!sourceSet.has(f)) extraFiles.push(f);
-    }
 
     missingFiles.sort();
-    extraFiles.sort();
   }
 
   return {
