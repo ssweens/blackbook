@@ -62,6 +62,7 @@ export function App() {
     setDetailMarketplace,
     loadMarketplaces,
     loadInstalledPlugins,
+    loadFiles,
     refreshManagedTools,
     refreshToolDetection,
     installPlugin: doInstall,
@@ -214,15 +215,13 @@ export function App() {
     let refreshed = false;
     try {
       if (targetTab === "discover") {
-        await loadMarketplaces();
-        await loadPiPackages();
+        await Promise.all([loadMarketplaces(), loadPiPackages()]);
         refreshed = true;
         return;
       }
 
       if (targetTab === "installed") {
-        await loadInstalledPlugins();
-        await loadPiPackages();
+        await Promise.all([loadInstalledPlugins(), loadPiPackages()]);
         refreshed = true;
         return;
       }
@@ -235,13 +234,15 @@ export function App() {
       }
 
       if (targetTab === "marketplaces") {
-        await loadMarketplaces();
-        await loadPiPackages();
+        await Promise.all([loadMarketplaces(), loadPiPackages()]);
         refreshed = true;
         return;
       }
 
-      await refreshAll();
+      // Sync tab: refresh only sync-relevant data and avoid full cross-tab reload.
+      // This keeps first navigation responsive and prevents expensive refresh chains.
+      refreshManagedTools();
+      await Promise.all([loadInstalledPlugins(), loadFiles(), refreshToolDetection()]);
       refreshed = true;
     } catch (error) {
       notify(`Failed to refresh ${targetTab} tab: ${error instanceof Error ? error.message : String(error)}`, "error");

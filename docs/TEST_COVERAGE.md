@@ -19,6 +19,7 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Tool lifecycle core flows (registry/view/detect/command adapters)
 - [x] Tools lifecycle UI refreshes version/status after install → update → uninstall (E2E)
 - [x] Sync tab shows tool update items with installed/latest version delta (E2E)
+- [x] Tab navigation refreshes use scoped per-tab loading to avoid cross-tab blocking
 - [x] YAML config loading with zod validation
 - [x] YAML config.local.yaml deep merge with merge-by-key semantics
 - [x] Unified files list with check/apply module orchestration

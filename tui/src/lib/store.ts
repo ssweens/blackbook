@@ -702,7 +702,6 @@ export const useStore = create<Store>((set, get) => ({
     try {
       const marketplaces = parseMarketplaces();
       const { plugins: installedPlugins } = getAllInstalledPlugins();
-      const files = await get().loadFiles();
       const tools = getToolInstances();
 
       const enrichedMarketplaces: Marketplace[] = await Promise.all(
@@ -763,7 +762,6 @@ export const useStore = create<Store>((set, get) => ({
       set({
         marketplaces: enrichedMarketplaces,
         installedPlugins: installedWithStatus,
-        files,
         tools,
         managedTools: getManagedToolRows(),
         loading: false,
@@ -806,11 +804,9 @@ export const useStore = create<Store>((set, get) => ({
         incomplete: status.incomplete,
       };
     });
-    const files = await get().loadFiles();
     set({
       installedPlugins: installedWithStatus,
       marketplaces,
-      files,
       tools: getToolInstances(),
       managedTools: getManagedToolRows(),
     });
@@ -912,6 +908,7 @@ export const useStore = create<Store>((set, get) => ({
   refreshAll: async () => {
     await get().loadMarketplaces();
     await get().loadPiPackages();
+    await get().loadFiles();
     get().refreshManagedTools();
     await get().refreshToolDetection();
   },
