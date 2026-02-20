@@ -98,6 +98,7 @@ export function App() {
     openDiffFromSyncItem,
     closeDiff,
     closeMissingSummary,
+    pullbackFileInstance,
     // Pi packages
     piPackages,
     piMarketplaces,
@@ -972,6 +973,15 @@ export function App() {
       return;
     }
 
+    // p - pull to source (configs/assets with pullback)
+    if (input === "p" && detailFile && !diffTarget && !missingSummary) {
+      const pullAction = fileActions.find((a) => a.type === "pullback");
+      if (pullAction?.instance) {
+        void pullbackFileInstance(detailFile, pullAction.instance as DiffInstanceRef);
+      }
+      return;
+    }
+
     // Enter - select
     if (key.return) {
       if (detailFile) {
@@ -1328,6 +1338,11 @@ export function App() {
         break;
       case "sync":
         await syncTools([toFileSyncItem(detailFile)]);
+        break;
+      case "pullback":
+        if (action.instance) {
+          await pullbackFileInstance(detailFile, action.instance as DiffInstanceRef);
+        }
         break;
       case "back":
         setDetailFile(null);

@@ -111,6 +111,9 @@ interface Actions {
   openDiffFromSyncItem: (item: SyncPreviewItem) => void;
   closeDiff: () => void;
   closeMissingSummary: () => void;
+
+  // Pullback actions
+  pullbackFileInstance: (file: FileStatus, instance: DiffInstanceRef) => Promise<boolean>;
 }
 
 export type Store = AppState & Actions;
@@ -1369,6 +1372,55 @@ export const useStore = create<Store>((set, get) => ({
 
   closeMissingSummary: () => {
     set({ missingSummary: null });
+  },
+
+  pullbackFileInstance: async (file, instance) => {
+    const { notify } = get();
+    const picked = file.instances.find(
+      (i) => i.toolId === instance.toolId && i.instanceId === instance.instanceId,
+    );
+    if (!picked) {
+      notify(`Unknown instance: ${instance.toolId}:${instance.instanceId}`, "error");
+      return false;
+    }
+
+    if (!file.pullback) {
+      notify("Pullback is not enabled for this file.", "error");
+      return false;
+    }
+
+    try {
+      const stateKey = buildStateKey(file.name, picked.toolId, picked.instanceId, picked.targetRelPath);
+      const step: OrchestratorStep = {
+        label: `pullback:${file.name}:${picked.toolId}:${picked.instanceId}`,
+        module: getSyncModule(picked.targetPath) as any,
+        params: {
+          sourcePath: picked.targetPath,
+          targetPath: picked.sourcePath,
+          owner: `file:${file.name}`,
+          stateKey,
+          pullback: true,
+        },
+      };
+
+      notify(`Pulling ${file.name} from ${picked.instanceName}...`, "info");
+      const result = await runApply([step]);
+      const hadError = result.steps.some((s) => s.apply?.error);
+      if (hadError) {
+        const msg = result.steps.find((s) => s.apply?.error)?.apply?.error;
+        notify(`Pull failed: ${msg || "unknown error"}`, "error");
+        void get().refreshAll();
+        return false;
+      }
+
+      notify(`✓ Pulled ${file.name} from ${picked.instanceName}`, "success");
+      void get().refreshAll();
+      return true;
+    } catch (error) {
+      notify(`Pull failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+      void get().refreshAll();
+      return false;
+    }
   },
 }));
 

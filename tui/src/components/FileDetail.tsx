@@ -1,11 +1,14 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Box, Text } from "ink";
+import fg from "fast-glob";
+import { join } from "node:path";
 import type { FileStatus, DiffInstanceRef, DiffInstanceSummary } from "../lib/types.js";
 import { buildFileDiffTarget } from "../lib/diff.js";
+import { getAssetsRepoPath, getConfigRepoPath } from "../lib/config.js";
 
 export interface FileAction {
   label: string;
-  type: "diff" | "missing" | "sync" | "back" | "status";
+  type: "diff" | "missing" | "sync" | "pullback" | "back" | "status";
   instance?: DiffInstanceSummary | DiffInstanceRef;
   statusColor?: "green" | "yellow" | "gray" | "red" | "magenta";
   statusLabel?: string;
@@ -17,60 +20,93 @@ interface FileDetailProps {
   actions: FileAction[];
 }
 
-function summarizeFileStatus(file: FileStatus): { label: string; color: string } {
+function summarizeFileStatus(file: FileStatus): { label: string; color: string; drifted: boolean } {
   const failed = file.instances.filter((i) => i.status === "failed").length;
   const missing = file.instances.filter((i) => i.status === "missing").length;
   const drifted = file.instances.filter((i) => i.status === "drifted").length;
 
-  if (failed > 0) return { label: `Failed (${failed})`, color: "red" };
-  if (missing > 0) return { label: `Missing (${missing})`, color: "yellow" };
-  if (drifted > 0) return { label: `Drifted (${drifted})`, color: "yellow" };
-  return { label: "In Sync", color: "green" };
+  if (failed > 0) return { label: `Failed (${failed})`, color: "red", drifted: false };
+  if (missing > 0) return { label: missing === 1 ? "Not synced" : `Not synced (${missing})`, color: "yellow", drifted: false };
+  if (drifted > 0) return { label: "Synced", color: "green", drifted: true };
+  return { label: "Synced", color: "green", drifted: false };
 }
 
 export function FileDetail({ file, selectedAction, actions }: FileDetailProps) {
   const overall = summarizeFileStatus(file);
-  const kindLabel = file.tools && file.tools.length > 0 ? "config" : "asset";
+  const isConfig = Boolean(file.tools && file.tools.length > 0);
+  const kindLabel = isConfig ? "config" : "asset";
+
+  const repoPath = useMemo(() => (isConfig ? getConfigRepoPath() : getAssetsRepoPath()), [isConfig]);
+
+  const sourceDisplay = useMemo(() => {
+    const prefix = isConfig ? "config/" : "assets/";
+    return file.source.startsWith(prefix) ? file.source.slice(prefix.length) : file.source;
+  }, [file.source, isConfig]);
+
+  const sourceMappingDisplay = useMemo(() => `${sourceDisplay} → ${file.target}`, [sourceDisplay, file.target]);
+
+  const sourceFilesCount = useMemo(() => {
+    if (!repoPath) return null;
+    try {
+      const matches = fg.sync(join(repoPath, file.source), {
+        onlyFiles: true,
+        dot: true,
+        unique: true,
+        followSymbolicLinks: true,
+      });
+      return matches.length;
+    } catch {
+      return null;
+    }
+  }, [repoPath, file.source]);
+
+  const sourceExists = useMemo(() => (sourceFilesCount == null ? true : sourceFilesCount > 0), [sourceFilesCount]);
 
   return (
     <Box flexDirection="column">
       <Box marginBottom={1}>
         <Text bold>{file.name}</Text>
         <Text color="gray"> · {kindLabel}</Text>
-        {file.pullback && <Text color="magenta"> · pullback</Text>}
+      </Box>
+
+      {isConfig && (
+        <Box marginBottom={1}>
+          <Text color="gray">Tool: </Text>
+          <Text color="magenta">{file.tools!.join(", ")}</Text>
+        </Box>
+      )}
+
+      <Box marginBottom={1}>
+        <Text color="gray">{isConfig ? "Config repo" : "Assets repo"}: </Text>
+        <Text>{repoPath || "(not configured)"}</Text>
       </Box>
 
       <Box marginBottom={1}>
-        <Text color="gray">Source: </Text>
-        <Text color="cyan">{file.source}</Text>
+        <Text color="gray">{isConfig ? "Source(s)" : "Source"}: </Text>
+        <Text>{isConfig ? sourceMappingDisplay : sourceDisplay}</Text>
       </Box>
 
-      <Box marginBottom={1}>
-        <Text color="gray">Target: </Text>
-        <Text>{file.target}</Text>
-      </Box>
-
-      <Box marginBottom={1}>
-        {file.tools && file.tools.length > 0 ? (
-          <>
-            <Text color="gray">Tool: </Text>
-            <Text color="magenta">{file.tools.join(", ")}</Text>
-          </>
-        ) : (
-          <>
-            <Text color="gray">Tools: </Text>
-            <Text>(all syncable tools)</Text>
-          </>
-        )}
-      </Box>
+      {isConfig && (
+        <Box marginBottom={1}>
+          <Text color="gray">Files: </Text>
+          <Text>{sourceFilesCount == null ? "(unknown)" : `${sourceFilesCount} file(s)`}</Text>
+        </Box>
+      )}
 
       <Box marginBottom={1}>
         <Text color="gray">Status: </Text>
         <Text color={overall.color}>{overall.label}</Text>
+        {overall.drifted && <Text color="yellow"> (drifted)</Text>}
       </Box>
 
+      {isConfig && !sourceExists && (
+        <Box marginBottom={1}>
+          <Text color="yellow">Source empty — use p to pull from an instance</Text>
+        </Box>
+      )}
+
       <Box flexDirection="column" marginTop={1}>
-        <Text bold>Instances:</Text>
+        <Text bold>{isConfig ? "Tools:" : "Instances:"}</Text>
         {actions.map((action, i) => {
           const isSelected = i === selectedAction;
 
@@ -93,6 +129,7 @@ export function FileDetail({ file, selectedAction, actions }: FileDetailProps) {
 
           let color = "white";
           if (action.type === "sync") color = "green";
+          if (action.type === "pullback") color = "cyan";
 
           return (
             <Box key={action.label} marginTop={action.type === "sync" ? 1 : 0}>
@@ -106,7 +143,9 @@ export function FileDetail({ file, selectedAction, actions }: FileDetailProps) {
       </Box>
 
       <Box marginTop={1}>
-        <Text color="gray">Esc back</Text>
+        <Text color="gray">
+          {actions.some((a) => a.type === "pullback") ? "p pull to source · " : ""}Esc back
+        </Text>
       </Box>
     </Box>
   );
@@ -177,8 +216,28 @@ export function getFileActions(file: FileStatus): FileAction[] {
     (i) => i.status === "missing" || i.status === "drifted",
   );
   if (needsSync) {
-    actions.push({ label: "Sync to all tools", type: "sync" });
+    actions.push({ label: "Sync to tool", type: "sync" });
   }
+
+  if (file.pullback) {
+    const best =
+      file.instances.find((i) => i.status === "drifted") ||
+      file.instances.find((i) => i.status === "ok") ||
+      file.instances[0];
+    if (best) {
+      actions.push({
+        label: `Pull to source from ${best.instanceName}`,
+        type: "pullback",
+        instance: {
+          toolId: best.toolId,
+          instanceId: best.instanceId,
+          instanceName: best.instanceName,
+          configDir: best.configDir,
+        },
+      });
+    }
+  }
+
   actions.push({ label: "Back to list", type: "back" });
 
   return actions;
