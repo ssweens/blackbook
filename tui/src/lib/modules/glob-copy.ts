@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, basename, join } from "node:path";
 import fg from "fast-glob";
 import type { Module, CheckResult, ApplyResult } from "./types.js";
-import { hashFile } from "./hash.js";
+import { hashFileAsync } from "./hash.js";
 import { createBackup, pruneBackups } from "./backup.js";
 import { atomicWriteFileSync } from "../fs-utils.js";
 
@@ -99,8 +99,8 @@ export const globCopyModule: Module<GlobCopyParams> = {
         continue;
       }
 
-      const srcHash = hashFile(srcFile);
-      const tgtHash = hashFile(tgtFile);
+      const srcHash = await hashFileAsync(srcFile);
+      const tgtHash = await hashFileAsync(tgtFile);
       if (srcHash !== tgtHash) {
         anyDrifted = true;
       }

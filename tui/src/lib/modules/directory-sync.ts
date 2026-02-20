@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, cpSync } from "fs";
 import type { Module, CheckResult, ApplyResult } from "./types.js";
-import { hashDirectory } from "./hash.js";
+import { hashDirectoryAsync } from "./hash.js";
 import { createBackup, pruneBackups } from "./backup.js";
 
 export interface DirectorySyncParams {
@@ -27,8 +27,8 @@ export const directorySyncModule: Module<DirectorySyncParams> = {
       return { status: "missing", message: `Target directory does not exist: ${targetPath}` };
     }
 
-    const sourceHash = hashDirectory(sourcePath);
-    const targetHash = hashDirectory(targetPath);
+    const sourceHash = await hashDirectoryAsync(sourcePath);
+    const targetHash = await hashDirectoryAsync(targetPath);
 
     if (sourceHash === targetHash) {
       return { status: "ok", message: "Directories match" };

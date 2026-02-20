@@ -3,7 +3,7 @@ import { dirname } from "path";
 import { createTwoFilesPatch } from "diff";
 import { readFileSync } from "fs";
 import type { Module, CheckResult, ApplyResult } from "./types.js";
-import { hashFile } from "./hash.js";
+import { hashFile, hashFileAsync } from "./hash.js";
 import { createBackup, pruneBackups } from "./backup.js";
 import { atomicWriteFileSync } from "../fs-utils.js";
 import { detectDrift, recordSync } from "../state.js";
@@ -59,8 +59,8 @@ export const fileCopyModule: Module<FileCopyParams> = {
       };
     }
 
-    const sourceHash = hashFile(sourcePath);
-    const targetHash = hashFile(targetPath);
+    const sourceHash = await hashFileAsync(sourcePath);
+    const targetHash = await hashFileAsync(targetPath);
 
     if (sourceHash === targetHash) {
       return { status: "ok", message: "Files match", driftKind: "in-sync" };

@@ -243,6 +243,8 @@ export function App() {
 
       if (targetTab === "installed") {
         await Promise.all([loadInstalledPlugins(), loadPiPackages()]);
+        // Load file statuses in the background so Installed is responsive immediately.
+        void loadFiles();
         refreshed = true;
         return;
       }

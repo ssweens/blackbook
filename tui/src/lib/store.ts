@@ -296,7 +296,7 @@ function appendToolOutput(existing: string[], chunk: string): string[] {
 }
 
 export const useStore = create<Store>((set, get) => ({
-  tab: "sync",
+  tab: "installed",
   marketplaces: [],
   installedPlugins: [],
   files: [],
