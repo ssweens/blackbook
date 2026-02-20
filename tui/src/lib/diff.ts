@@ -276,3 +276,121 @@ function listFilesRecursive(dir: string, base: string = ""): string[] {
   return files;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Build DiffTarget / MissingSummary for unified files
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function buildFileDiffTarget(
+  title: string,
+  displayPath: string,
+  sourcePath: string,
+  targetPath: string,
+  instance: DiffInstanceRef
+): DiffTarget {
+  const files: DiffFileSummary[] = [];
+
+  if (!existsSync(sourcePath)) {
+    return {
+      kind: "file",
+      title,
+      instance,
+      files: [],
+    };
+  }
+
+  const sourceStat = statSync(sourcePath);
+
+  if (sourceStat.isFile()) {
+    const summary = buildFileSummary(
+      displayPath,
+      displayPath,
+      sourcePath,
+      existsSync(targetPath) ? targetPath : null
+    );
+    if (summary.status !== "modified" || summary.linesAdded > 0 || summary.linesRemoved > 0) {
+      files.push(summary);
+    }
+  } else if (sourceStat.isDirectory()) {
+    const sourceFiles = listFilesRecursive(sourcePath);
+    const targetFiles = existsSync(targetPath) ? listFilesRecursive(targetPath) : [];
+
+    const allFiles = new Set([...sourceFiles, ...targetFiles]);
+    const ordered = [...allFiles];
+    ordered.sort();
+
+    for (const relPath of ordered) {
+      const srcFile = join(sourcePath, relPath);
+      const tgtFile = join(targetPath, relPath);
+      const summary = buildFileSummary(
+        relPath,
+        relPath,
+        existsSync(srcFile) ? srcFile : null,
+        existsSync(tgtFile) ? tgtFile : null
+      );
+      if (summary.status !== "modified" || summary.linesAdded > 0 || summary.linesRemoved > 0) {
+        files.push(summary);
+      }
+    }
+  }
+
+  return {
+    kind: "file",
+    title,
+    instance,
+    files,
+  };
+}
+
+export function buildFileMissingSummary(
+  title: string,
+  displayPath: string,
+  sourcePath: string,
+  targetPath: string,
+  instance: DiffInstanceRef
+): MissingSummary {
+  const missingFiles: string[] = [];
+  const extraFiles: string[] = [];
+
+  if (!existsSync(sourcePath)) {
+    return {
+      kind: "file",
+      title,
+      instance,
+      missingFiles,
+      extraFiles,
+    };
+  }
+
+  const sourceStat = statSync(sourcePath);
+
+  if (sourceStat.isFile()) {
+    if (!existsSync(targetPath)) {
+      missingFiles.push(displayPath);
+    }
+  } else if (sourceStat.isDirectory()) {
+    const sourceFiles = listFilesRecursive(sourcePath);
+    const targetFiles = existsSync(targetPath) ? listFilesRecursive(targetPath) : [];
+
+    const sourceSet = new Set(sourceFiles);
+    const targetSet = new Set(targetFiles);
+
+    for (const f of sourceFiles) {
+      if (!targetSet.has(f)) missingFiles.push(f);
+    }
+    for (const f of targetFiles) {
+      if (!sourceSet.has(f)) extraFiles.push(f);
+    }
+
+    missingFiles.sort();
+    extraFiles.sort();
+  }
+
+  return {
+    kind: "file",
+    title,
+    instance,
+    missingFiles,
+    extraFiles,
+  };
+}
+

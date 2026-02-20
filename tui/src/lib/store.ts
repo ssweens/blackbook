@@ -44,6 +44,7 @@ import { getAllPlaybooks, resolveToolInstances, isSyncTarget } from "./config/pl
 import { runCheck, runApply } from "./modules/orchestrator.js";
 import { fileCopyModule } from "./modules/file-copy.js";
 import { directorySyncModule } from "./modules/directory-sync.js";
+import { buildFileDiffTarget, buildFileMissingSummary } from "./diff.js";
 import { buildStateKey } from "./state.js";
 import type { OrchestratorStep } from "./modules/orchestrator.js";
 import { fetchMarketplace } from "./marketplace.js";
@@ -105,6 +106,8 @@ interface Actions {
   setCurrentSection: (section: DiscoverSection) => void;
   setDiscoverSubView: (subView: DiscoverSubView) => void;
   // Diff view actions
+  openDiffForFile: (file: FileStatus, instance?: DiffInstanceRef) => void;
+  openMissingSummaryForFile: (file: FileStatus, instance?: DiffInstanceRef) => void;
   openDiffFromSyncItem: (item: SyncPreviewItem) => void;
   closeDiff: () => void;
   closeMissingSummary: () => void;
@@ -890,6 +893,9 @@ export const useStore = create<Store>((set, get) => ({
             instanceId: inst.id,
             instanceName: inst.name,
             configDir: instanceConfigDir,
+            targetRelPath,
+            sourcePath,
+            targetPath,
             status: stepResult.check.status,
             message: stepResult.check.message,
             diff: stepResult.check.diff,
@@ -1112,17 +1118,14 @@ export const useStore = create<Store>((set, get) => ({
           errors.push(`Config load failed: ${configResult.errors[0].message}`);
           continue;
         }
-        const sourceRepo = configResult.config.settings.source_repo
-          ? expandConfigPath(configResult.config.settings.source_repo)
-          : null;
 
         // Only forward-sync instances (skip conflicts and pullback targets)
         const steps: OrchestratorStep[] = item.file.instances
           .filter((i) => (i.status === "missing" || i.status === "drifted") && i.driftKind !== "both-changed" && i.driftKind !== "target-changed")
           .map((i) => {
-            const sourcePath = resolveSourcePath(item.file.source, sourceRepo || undefined);
-            const targetPath = `${i.configDir}/${item.file.target}`;
-            const stateKey = buildStateKey(item.file.name, i.toolId, i.instanceId, item.file.target);
+            const sourcePath = i.sourcePath;
+            const targetPath = i.targetPath;
+            const stateKey = buildStateKey(item.file.name, i.toolId, i.instanceId, i.targetRelPath);
             return {
               label: `${item.file.name}:${i.toolId}:${i.instanceId}`,
               module: getSyncModule(sourcePath) as any,
@@ -1261,6 +1264,76 @@ export const useStore = create<Store>((set, get) => ({
   // Diff view actions
   // ─────────────────────────────────────────────────────────────────────────────
 
+  openDiffForFile: (file, instance) => {
+    const driftedInstances = file.instances.filter((i) => i.status === "drifted");
+    if (driftedInstances.length === 0) {
+      get().notify("No drifted instances found for this file.", "warning");
+      return;
+    }
+
+    const picked =
+      instance
+        ? driftedInstances.find(
+            (i) => i.toolId === instance.toolId && i.instanceId === instance.instanceId,
+          ) || driftedInstances[0]
+        : driftedInstances[0];
+
+    const targetInstance: DiffInstanceRef = instance || {
+      toolId: picked.toolId,
+      instanceId: picked.instanceId,
+      instanceName: picked.instanceName,
+      configDir: picked.configDir,
+    };
+
+    const diffTarget = buildFileDiffTarget(
+      file.name,
+      picked.targetRelPath,
+      picked.sourcePath,
+      picked.targetPath,
+      targetInstance,
+    );
+
+    set({
+      diffTarget,
+      missingSummary: null,
+    });
+  },
+
+  openMissingSummaryForFile: (file, instance) => {
+    const missingInstances = file.instances.filter((i) => i.status === "missing");
+    if (missingInstances.length === 0) {
+      get().notify("No missing instances found for this file.", "warning");
+      return;
+    }
+
+    const picked =
+      instance
+        ? missingInstances.find(
+            (i) => i.toolId === instance.toolId && i.instanceId === instance.instanceId,
+          ) || missingInstances[0]
+        : missingInstances[0];
+
+    const targetInstance: DiffInstanceRef = instance || {
+      toolId: picked.toolId,
+      instanceId: picked.instanceId,
+      instanceName: picked.instanceName,
+      configDir: picked.configDir,
+    };
+
+    const missingSummary = buildFileMissingSummary(
+      file.name,
+      picked.targetRelPath,
+      picked.sourcePath,
+      picked.targetPath,
+      targetInstance,
+    );
+
+    set({
+      missingSummary,
+      diffTarget: null,
+    });
+  },
+
   openDiffFromSyncItem: (item) => {
     if (item.kind === "plugin") {
       get().notify("Plugins do not support drift diff.", "warning");
@@ -1273,8 +1346,19 @@ export const useStore = create<Store>((set, get) => ({
     }
 
     if (item.kind === "file") {
-      // File diff support will be added in Phase 5 (three-way state)
-      get().notify("File diff view coming soon.", "info");
+      const drifted = item.file.instances.filter((i) => i.status === "drifted");
+      const missing = item.file.instances.filter((i) => i.status === "missing");
+
+      if (drifted.length > 0) {
+        get().openDiffForFile(item.file);
+        return;
+      }
+      if (missing.length > 0) {
+        get().openMissingSummaryForFile(item.file);
+        return;
+      }
+
+      get().notify("No diff or missing summary available for this file.", "warning");
       return;
     }
   },

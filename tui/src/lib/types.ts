@@ -78,6 +78,12 @@ export interface FileInstanceStatus {
   instanceId: string;
   instanceName: string;
   configDir: string;
+  /** The per-instance resolved target path (relative to configDir), including overrides. */
+  targetRelPath: string;
+  /** Resolved absolute source path used for check/apply. */
+  sourcePath: string;
+  /** Resolved absolute target path used for check/apply. */
+  targetPath: string;
   status: FileCheckStatus;
   message: string;
   diff?: string;
@@ -294,7 +300,7 @@ export interface PiSettings {
 }
 
 // Section navigation for Discover/Installed tabs
-export type DiscoverSection = "plugins" | "piPackages";
+export type DiscoverSection = "configs" | "assets" | "plugins" | "piPackages";
 
 // Sub-view state for drilling into Plugins or Pi Packages
 export type DiscoverSubView = "plugins" | "piPackages" | null;

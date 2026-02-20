@@ -637,14 +637,14 @@ describe("Store loadFiles (YAML config)", () => {
           source: "ok.md",
           target: "ok.md",
           pullback: false,
-          instances: [{ toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/tmp", status: "ok", message: "File matches" }],
+          instances: [{ toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/tmp", targetRelPath: "ok.md", sourcePath: "/src/ok.md", targetPath: "/tmp/ok.md", status: "ok", message: "File matches" }],
         },
         {
           name: "missing-file",
           source: "missing.md",
           target: "missing.md",
           pullback: false,
-          instances: [{ toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/tmp", status: "missing", message: "Not found" }],
+          instances: [{ toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/tmp", targetRelPath: "missing.md", sourcePath: "/src/missing.md", targetPath: "/tmp/missing.md", status: "missing", message: "Not found" }],
         },
       ],
       managedTools: [],
@@ -697,7 +697,7 @@ describe("Store syncTools with file items", () => {
           target: "CLAUDE.md",
           pullback: false,
           instances: [
-            { toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/home/user/.claude", status: "missing", message: "Not found" },
+            { toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/home/user/.claude", targetRelPath: "CLAUDE.md", sourcePath: "/home/user/dotfiles/CLAUDE.md", targetPath: "/home/user/.claude/CLAUDE.md", status: "missing", message: "Not found" },
           ],
         },
         missingInstances: ["Claude"],
@@ -738,7 +738,7 @@ describe("Store syncTools with file items", () => {
             target: "read",
             pullback: false,
             instances: [
-              { toolId: "opencode", instanceId: "default", instanceName: "OpenCode", configDir: "/tmp/opencode", status: "missing", message: "Not found" },
+              { toolId: "opencode", instanceId: "default", instanceName: "OpenCode", configDir: "/tmp/opencode", targetRelPath: "read", sourcePath: sourceDir, targetPath: "/tmp/opencode/read", status: "missing", message: "Not found" },
             ],
           },
           missingInstances: ["OpenCode"],
@@ -769,7 +769,7 @@ describe("Store syncTools with file items", () => {
           target: "test.md",
           pullback: false,
           instances: [
-            { toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/tmp", status: "missing", message: "Not found" },
+            { toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/tmp", targetRelPath: "test.md", sourcePath: "/src/test.md", targetPath: "/tmp/test.md", status: "missing", message: "Not found" },
           ],
         },
         missingInstances: ["Claude"],
