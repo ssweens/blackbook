@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
 import fg from "fast-glob";
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { FileStatus, DiffInstanceRef, DiffInstanceSummary } from "../lib/types.js";
 import { buildFileDiffTarget } from "../lib/diff.js";
@@ -46,19 +47,40 @@ export function FileDetail({ file, selectedAction, actions }: FileDetailProps) {
   const sourceMappingDisplay = useMemo(() => `${sourceDisplay} → ${file.target}`, [sourceDisplay, file.target]);
 
   const sourceFilesCount = useMemo(() => {
-    if (!repoPath) return null;
+    if (!isConfig) return null;
+
+    const sourcePath = file.instances[0]?.sourcePath;
+    if (!sourcePath) return null;
+    if (sourcePath.startsWith("http://") || sourcePath.startsWith("https://")) return null;
+
     try {
-      const matches = fg.sync(join(repoPath, file.source), {
-        onlyFiles: true,
-        dot: true,
-        unique: true,
-        followSymbolicLinks: true,
-      });
-      return matches.length;
+      if (/[*?\[{]/.test(sourcePath)) {
+        const matches = fg.sync(sourcePath, {
+          onlyFiles: true,
+          dot: true,
+          unique: true,
+          followSymbolicLinks: true,
+        });
+        return matches.length;
+      }
+
+      if (!existsSync(sourcePath)) return 0;
+      const stat = statSync(sourcePath);
+      if (stat.isFile()) return 1;
+      if (stat.isDirectory()) {
+        const matches = fg.sync(join(sourcePath, "**/*"), {
+          onlyFiles: true,
+          dot: true,
+          unique: true,
+          followSymbolicLinks: true,
+        });
+        return matches.length;
+      }
+      return 0;
     } catch {
       return null;
     }
-  }, [repoPath, file.source]);
+  }, [file.instances, isConfig]);
 
   const sourceExists = useMemo(() => (sourceFilesCount == null ? true : sourceFilesCount > 0), [sourceFilesCount]);
 
@@ -219,22 +241,37 @@ export function getFileActions(file: FileStatus): FileAction[] {
     actions.push({ label: "Sync to tool", type: "sync" });
   }
 
-  if (file.pullback) {
-    const best =
-      file.instances.find((i) => i.status === "drifted") ||
-      file.instances.find((i) => i.status === "ok") ||
-      file.instances[0];
-    if (best) {
-      actions.push({
-        label: `Pull to source from ${best.instanceName}`,
-        type: "pullback",
-        instance: {
-          toolId: best.toolId,
-          instanceId: best.instanceId,
-          instanceName: best.instanceName,
-          configDir: best.configDir,
-        },
-      });
+  const shouldOfferPullback = Boolean((file.tools && file.tools.length > 0) || file.pullback);
+  if (shouldOfferPullback) {
+    const drifted = file.instances.filter((i) => i.status === "drifted");
+
+    if (drifted.length > 0) {
+      for (const inst of drifted) {
+        actions.push({
+          label: `Pull to source from ${inst.instanceName}`,
+          type: "pullback",
+          instance: {
+            toolId: inst.toolId,
+            instanceId: inst.instanceId,
+            instanceName: inst.instanceName,
+            configDir: inst.configDir,
+          },
+        });
+      }
+    } else {
+      // Source doesn't exist / no drift information — still allow pulling from any enabled instance.
+      for (const inst of file.instances) {
+        actions.push({
+          label: `Pull to source from ${inst.instanceName}`,
+          type: "pullback",
+          instance: {
+            toolId: inst.toolId,
+            instanceId: inst.instanceId,
+            instanceName: inst.instanceName,
+            configDir: inst.configDir,
+          },
+        });
+      }
     }
   }
 

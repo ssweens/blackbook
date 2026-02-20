@@ -37,6 +37,8 @@ import {
   addPiMarketplace as addPiMarketplaceToConfig,
   removePiMarketplace as removePiMarketplaceFromConfig,
   getPackageManager,
+  getConfigRepoPath,
+  getAssetsRepoPath,
 } from "./config.js";
 import { loadConfig as loadYamlConfig, getConfigPath as getYamlConfigPath } from "./config/loader.js";
 import { resolveSourcePath, expandPath as expandConfigPath } from "./config/path.js";
@@ -44,6 +46,7 @@ import { getAllPlaybooks, resolveToolInstances, isSyncTarget } from "./config/pl
 import { runCheck, runApply } from "./modules/orchestrator.js";
 import { fileCopyModule } from "./modules/file-copy.js";
 import { directorySyncModule } from "./modules/directory-sync.js";
+import { globCopyModule } from "./modules/glob-copy.js";
 import { buildFileDiffTarget, buildFileMissingSummary } from "./diff.js";
 import { buildStateKey } from "./state.js";
 import type { OrchestratorStep } from "./modules/orchestrator.js";
@@ -136,7 +139,12 @@ function isDirectorySource(path: string): boolean {
   return false;
 }
 
+function isGlobPath(pathValue: string): boolean {
+  return /[*?\[{]/.test(pathValue);
+}
+
 function getSyncModule(sourcePath: string) {
+  if (isGlobPath(sourcePath)) return globCopyModule;
   return isDirectorySource(sourcePath) ? directorySyncModule : fileCopyModule;
 }
 
@@ -844,6 +852,11 @@ export const useStore = create<Store>((set, get) => ({
       ? expandConfigPath(config.settings.source_repo)
       : null;
 
+    // Back-compat: if YAML doesn't specify source_repo, infer config/assets repos
+    // from the legacy config to keep relative sources working.
+    const legacyConfigRepo = getConfigRepoPath();
+    const legacyAssetsRepo = getAssetsRepoPath();
+
     const files: FileStatus[] = [];
 
     for (const fileEntry of config.files) {
@@ -870,8 +883,12 @@ export const useStore = create<Store>((set, get) => ({
           const targetOverride = fileEntry.overrides?.[`${toolId}:${inst.id}`];
           const targetRelPath = targetOverride || fileEntry.target;
 
-          // Resolve source: relative to source_repo or absolute
-          const sourcePath = resolveSourcePath(fileEntry.source, sourceRepo || undefined);
+          // Resolve source: relative to YAML source_repo, or legacy repo paths
+          const isConfigFile = Boolean(fileEntry.tools && fileEntry.tools.length > 0);
+          const inferredRepo = isConfigFile ? legacyConfigRepo : legacyAssetsRepo;
+          const effectiveRepo = sourceRepo || inferredRepo || undefined;
+
+          const sourcePath = resolveSourcePath(fileEntry.source, effectiveRepo);
           const targetPath = `${instanceConfigDir}/${targetRelPath}`;
 
           // Build orchestrator step and run check
@@ -1384,24 +1401,41 @@ export const useStore = create<Store>((set, get) => ({
       return false;
     }
 
-    if (!file.pullback) {
+    const isConfigFile = Boolean(file.tools && file.tools.length > 0);
+    if (!file.pullback && !isConfigFile) {
       notify("Pullback is not enabled for this file.", "error");
       return false;
     }
 
     try {
       const stateKey = buildStateKey(file.name, picked.toolId, picked.instanceId, picked.targetRelPath);
-      const step: OrchestratorStep = {
-        label: `pullback:${file.name}:${picked.toolId}:${picked.instanceId}`,
-        module: getSyncModule(picked.targetPath) as any,
-        params: {
-          sourcePath: picked.targetPath,
-          targetPath: picked.sourcePath,
-          owner: `file:${file.name}`,
-          stateKey,
-          pullback: true,
-        },
-      };
+
+      // Glob sources cannot be pulled back by swapping paths (the destination is a pattern).
+      // Instead, let glob-copy interpret pullback=true as target→source.
+      const isGlob = isGlobPath(picked.sourcePath);
+
+      const step: OrchestratorStep = isGlob
+        ? {
+            label: `pullback:${file.name}:${picked.toolId}:${picked.instanceId}`,
+            module: globCopyModule as any,
+            params: {
+              sourcePath: picked.sourcePath,
+              targetPath: picked.targetPath,
+              owner: `file:${file.name}`,
+              pullback: true,
+            },
+          }
+        : {
+            label: `pullback:${file.name}:${picked.toolId}:${picked.instanceId}`,
+            module: getSyncModule(picked.targetPath) as any,
+            params: {
+              sourcePath: picked.targetPath,
+              targetPath: picked.sourcePath,
+              owner: `file:${file.name}`,
+              stateKey,
+              pullback: true,
+            },
+          };
 
       notify(`Pulling ${file.name} from ${picked.instanceName}...`, "info");
       const result = await runApply([step]);

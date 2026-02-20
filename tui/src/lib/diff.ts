@@ -6,7 +6,8 @@
  */
 
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
-import { join, relative, basename } from "node:path";
+import { join, relative, basename, dirname } from "node:path";
+import fg from "fast-glob";
 import { diffLines, createTwoFilesPatch, parsePatch } from "diff";
 import type {
   DiffTarget,
@@ -276,6 +277,25 @@ function listFilesRecursive(dir: string, base: string = ""): string[] {
   return files;
 }
 
+function isGlobPath(pathValue: string): boolean {
+  return /[*?\[{]/.test(pathValue);
+}
+
+function globBaseDir(pattern: string): string {
+  const idx = pattern.search(/[*?\[{]/);
+  if (idx === -1) return dirname(pattern);
+  return dirname(pattern.slice(0, idx));
+}
+
+function isDirectory(pathValue: string): boolean {
+  if (!existsSync(pathValue)) return false;
+  try {
+    return statSync(pathValue).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Build DiffTarget / MissingSummary for unified files
 // ─────────────────────────────────────────────────────────────────────────────
@@ -290,6 +310,40 @@ export function buildFileDiffTarget(
   const files: DiffFileSummary[] = [];
 
   if (!existsSync(sourcePath)) {
+    // Glob sources (e.g. settings*) do not exist as a literal path.
+    if (isGlobPath(sourcePath)) {
+      const matches = fg.sync(sourcePath, {
+        onlyFiles: true,
+        dot: true,
+        unique: true,
+        followSymbolicLinks: true,
+      });
+
+      const baseDir = globBaseDir(sourcePath);
+      const targetIsDir = isDirectory(targetPath);
+
+      for (const src of matches) {
+        const display = relative(baseDir, src) || basename(src);
+        const tgt = targetIsDir ? join(targetPath, basename(src)) : targetPath;
+        const summary = buildFileSummary(
+          display,
+          display,
+          src,
+          existsSync(tgt) ? tgt : null,
+        );
+        if (summary.status !== "modified" || summary.linesAdded > 0 || summary.linesRemoved > 0) {
+          files.push(summary);
+        }
+      }
+
+      return {
+        kind: "file",
+        title,
+        instance,
+        files,
+      };
+    }
+
     return {
       kind: "file",
       title,
@@ -352,6 +406,35 @@ export function buildFileMissingSummary(
   const extraFiles: string[] = [];
 
   if (!existsSync(sourcePath)) {
+    // Glob sources (e.g. settings*) do not exist as a literal path.
+    if (isGlobPath(sourcePath)) {
+      const matches = fg.sync(sourcePath, {
+        onlyFiles: true,
+        dot: true,
+        unique: true,
+        followSymbolicLinks: true,
+      });
+
+      const baseDir = globBaseDir(sourcePath);
+      const targetIsDir = isDirectory(targetPath);
+
+      for (const src of matches) {
+        const display = relative(baseDir, src) || basename(src);
+        const tgt = targetIsDir ? join(targetPath, basename(src)) : targetPath;
+        if (!existsSync(tgt)) missingFiles.push(display);
+      }
+
+      missingFiles.sort();
+
+      return {
+        kind: "file",
+        title,
+        instance,
+        missingFiles,
+        extraFiles,
+      };
+    }
+
     return {
       kind: "file",
       title,
