@@ -4,7 +4,10 @@ import { join } from "path";
 import type { ToolTarget, ToolInstance, Marketplace, PackageManager, PluginComponentConfig } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
 import { getAllPlaybooks, getBuiltinToolIds } from "./config/playbooks.js";
-import { getConfigDir as getConfigDirFromPath } from "./config/path.js";
+import { getConfigDir as getConfigDirFromPath, expandPath as expandYamlPath } from "./config/path.js";
+import { loadConfig as loadYamlConfig } from "./config/loader.js";
+import { saveConfig as saveYamlConfig } from "./config/writer.js";
+import type { BlackbookConfig, FileEntry } from "./config/schema.js";
 
 function buildToolDefinitions(): Record<string, ToolTarget> {
   const playbooks = getAllPlaybooks();
@@ -554,11 +557,98 @@ function buildInitialToolConfig(): Record<string, ToolConfig> {
   return tools;
 }
 
+function buildInitialYamlTools(): BlackbookConfig["tools"] {
+  const playbooks = getAllPlaybooks();
+  const tools: BlackbookConfig["tools"] = {};
+
+  for (const [toolId, playbook] of playbooks.entries()) {
+    const instances = playbook.default_instances
+      .filter((instance) => existsSync(expandYamlPath(instance.config_dir)))
+      .map((instance) => ({
+        id: instance.id,
+        name: instance.name,
+        enabled: true,
+        config_dir: instance.config_dir,
+      }));
+
+    if (instances.length > 0) {
+      tools[toolId] = instances;
+    }
+  }
+
+  return tools;
+}
+
+function buildInitialYamlFiles(tools: BlackbookConfig["tools"]): FileEntry[] {
+  const playbooks = getAllPlaybooks();
+  const files: FileEntry[] = [];
+  const usedNames = new Set<string>();
+
+  for (const [toolId, instances] of Object.entries(tools)) {
+    const playbook = playbooks.get(toolId);
+    if (!playbook || playbook.config_files.length === 0) continue;
+
+    for (const configFile of playbook.config_files) {
+      let inferredSource: string | null = null;
+
+      for (const instance of instances) {
+        const absoluteTarget = join(expandYamlPath(instance.config_dir), configFile.path);
+        if (existsSync(absoluteTarget)) {
+          inferredSource = absoluteTarget;
+          break;
+        }
+      }
+
+      if (!inferredSource) continue;
+
+      let name = `${toolId}:${configFile.name}`;
+      let suffix = 2;
+      while (usedNames.has(name)) {
+        name = `${toolId}:${configFile.name} (${suffix})`;
+        suffix += 1;
+      }
+      usedNames.add(name);
+
+      files.push({
+        name,
+        source: inferredSource,
+        target: configFile.path,
+        tools: [toolId],
+        pullback: configFile.pullback,
+      });
+    }
+  }
+
+  return files;
+}
+
+function buildInitialYamlConfig(): BlackbookConfig {
+  const tools = buildInitialYamlTools();
+  return {
+    settings: {
+      package_manager: "pnpm",
+    },
+    marketplaces: { ...DEFAULT_INITIAL_MARKETPLACES },
+    tools,
+    files: buildInitialYamlFiles(tools),
+    plugins: {},
+  };
+}
+
 export function ensureConfigExists(): void {
-  const path = getConfigPath();
-  if (!existsSync(path)) {
+  const tomlPath = getConfigPath();
+  if (!existsSync(tomlPath)) {
     saveConfig({ marketplaces: DEFAULT_INITIAL_MARKETPLACES, tools: buildInitialToolConfig() });
   }
+
+  const yamlPath = join(getConfigDirFromPath(), "config.yaml");
+  if (!existsSync(yamlPath)) {
+    const yamlConfig = buildInitialYamlConfig();
+    saveYamlConfig(yamlConfig, yamlPath);
+  }
+
+  // Validate generated YAML once so startup gets deterministic defaults.
+  loadYamlConfig(yamlPath);
 }
 
 export function updateToolInstanceConfig(

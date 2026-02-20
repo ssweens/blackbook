@@ -97,7 +97,7 @@ Blackbook opens on the **Sync** tab by default.
 
 ### Shortcuts
 
-- **Discover/Installed**: `s` cycle sort (name/installed), `r` reverse sort, `R` refresh tab data
+- **Discover/Installed**: `s` cycle sort (name/installed), `r` reverse sort, `R` refresh tab data (`d` opens diff for selected managed file in Installed)
 - **Marketplaces**: `u` update marketplace, `r` remove marketplace, `R` refresh all marketplaces/packages
 - **Tools**: `Enter` open detail, `i` install, `u` update, `d` uninstall, `Space` toggle enabled, `e` edit config dir, `R` refresh detection
 - **Sync**: `y` sync selected items (missing/drifted assets/configs/plugins and tool updates; press twice to confirm), `R` refresh sync inputs
@@ -112,6 +112,8 @@ Blackbook uses YAML configuration files:
 ~/.config/blackbook/config.yaml       # Primary config
 ~/.config/blackbook/config.local.yaml # Machine-specific overrides (optional, gitignored)
 ```
+
+On first launch, if `config.yaml` is missing, Blackbook bootstraps one from detected tool installations and prepopulates `files:` entries for known tool config files that already exist on disk. (A compatibility `config.toml` is also written for legacy paths still being migrated.)
 
 ### YAML Config
 

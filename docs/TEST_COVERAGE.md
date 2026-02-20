@@ -3,12 +3,13 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 313
-- **Test Files:** 31
+- **Total Tests:** 315
+- **Test Files:** 32
 
 ## Critical Paths
 - [x] Plugin discovery list loads
 - [x] Plugin detail view shows actions and tool status
+- [x] Installed tab includes managed file entries with diff/missing detail access
 - [x] Plugin install/update/uninstall flow
 - [x] Plugin per-component enable/disable config parsing and round-trip
 - [x] Sync preview generation for partial installs
@@ -21,6 +22,7 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Sync tab shows tool update items with installed/latest version delta (E2E)
 - [x] Tab navigation refreshes use scoped per-tab loading to avoid cross-tab blocking
 - [x] YAML config loading with zod validation
+- [x] First-launch bootstrap creates config.yaml with inferred tools and prepopulated file entries
 - [x] YAML config.local.yaml deep merge with merge-by-key semantics
 - [x] Unified files list with check/apply module orchestration
 - [x] File sync routes directory sources through `directory-sync` (avoids EISDIR in file-copy)
