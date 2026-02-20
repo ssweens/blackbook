@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
 import { useStore } from "./store.js";
 import { getToolInstances, updateToolInstanceConfig, getEnabledToolInstances } from "./config.js";
 import {
@@ -581,6 +584,51 @@ describe("Store loadFiles (YAML config)", () => {
     expect(runCheck).not.toHaveBeenCalled();
   });
 
+  it("uses directory-sync module when source path is a directory", async () => {
+    const sourceRoot = mkdtempSync(join(tmpdir(), "blackbook-src-"));
+    const sourceDir = join(sourceRoot, "read");
+    mkdirSync(sourceDir, { recursive: true });
+
+    try {
+      vi.mocked(getYamlConfigPath).mockReturnValue("/tmp/blackbook/config.yaml");
+      vi.mocked(loadYamlConfig).mockReturnValue({
+        config: {
+          files: [
+            { name: "read", source: "read", target: "read", pullback: false },
+          ],
+          settings: { package_manager: "pnpm" },
+          tools: {},
+          plugins: {},
+        } as any,
+        configPath: "/tmp/blackbook/config.yaml",
+        errors: [],
+      });
+
+      vi.mocked(getAllPlaybooks).mockReturnValue(new Map([["opencode", { syncable: true }]]) as any);
+      vi.mocked(isSyncTarget).mockReturnValue(true);
+      vi.mocked(expandConfigPath).mockImplementation((p: string) => p);
+      vi.mocked(resolveSourcePath).mockReturnValue(sourceDir);
+      vi.mocked(resolveToolInstances).mockReturnValue(
+        new Map([
+          ["opencode", [
+            { id: "default", name: "OpenCode", enabled: true, config_dir: "/tmp/opencode" },
+          ]],
+        ])
+      );
+      vi.mocked(runCheck).mockResolvedValue({
+        steps: [{ label: "read:opencode:default", check: { status: "missing", message: "Directory not found" } }],
+        summary: { ok: 0, missing: 1, drifted: 0, failed: 0, changed: 0 },
+      });
+
+      await useStore.getState().loadFiles();
+
+      const steps = vi.mocked(runCheck).mock.calls[0][0];
+      expect((steps[0].module as any).name).toBe("directory-sync");
+    } finally {
+      rmSync(sourceRoot, { recursive: true, force: true });
+    }
+  });
+
   it("includes file items in sync preview for missing/drifted only", () => {
     useStore.setState({
       files: [
@@ -661,6 +709,48 @@ describe("Store syncTools with file items", () => {
     const { notifications } = useStore.getState();
     const successNote = notifications.find((n) => n.type === "success");
     expect(successNote?.message).toContain("Synced 1");
+  });
+
+  it("uses directory-sync module when syncing directory entries", async () => {
+    const sourceRoot = mkdtempSync(join(tmpdir(), "blackbook-sync-src-"));
+    const sourceDir = join(sourceRoot, "read");
+    mkdirSync(sourceDir, { recursive: true });
+
+    try {
+      vi.mocked(loadYamlConfig).mockReturnValue({
+        config: { files: [], settings: { package_manager: "pnpm" }, tools: {}, plugins: {} } as any,
+        configPath: "/tmp/config.yaml",
+        errors: [],
+      });
+      vi.mocked(expandConfigPath).mockImplementation((p: string) => p);
+      vi.mocked(resolveSourcePath).mockReturnValue(sourceDir);
+      vi.mocked(runApply).mockResolvedValue({
+        steps: [{ label: "read:opencode:default", check: { status: "missing", message: "" }, apply: { changed: true, message: "Directory synced" } }],
+        summary: { ok: 0, missing: 0, drifted: 0, failed: 0, changed: 1 },
+      });
+
+      await useStore.getState().syncTools([
+        {
+          kind: "file",
+          file: {
+            name: "read",
+            source: "read",
+            target: "read",
+            pullback: false,
+            instances: [
+              { toolId: "opencode", instanceId: "default", instanceName: "OpenCode", configDir: "/tmp/opencode", status: "missing", message: "Not found" },
+            ],
+          },
+          missingInstances: ["OpenCode"],
+          driftedInstances: [],
+        },
+      ]);
+
+      const steps = vi.mocked(runApply).mock.calls[0][0];
+      expect((steps[0].module as any).name).toBe("directory-sync");
+    } finally {
+      rmSync(sourceRoot, { recursive: true, force: true });
+    }
   });
 
   it("reports errors when config fails to load during file sync", async () => {

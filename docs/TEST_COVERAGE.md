@@ -22,6 +22,7 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] YAML config loading with zod validation
 - [x] YAML config.local.yaml deep merge with merge-by-key semantics
 - [x] Unified files list with check/apply module orchestration
+- [x] File sync routes directory sources through `directory-sync` (avoids EISDIR in file-copy)
 - [x] Three-way state tracking (source-changed, target-changed, both-changed drift detection)
 - [x] Pullback detection and target → source sync
 - [x] Conflict detection for both-changed files

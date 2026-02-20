@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { existsSync, watch } from "fs";
+import { existsSync, lstatSync, statSync, watch } from "fs";
 import type {
   Tab,
   Marketplace,
@@ -114,6 +114,24 @@ export type Store = AppState & Actions;
 
 function instanceKey(toolId: string, instanceId: string): string {
   return `${toolId}:${instanceId}`;
+}
+
+function isDirectorySource(path: string): boolean {
+  if (!existsSync(path)) return false;
+  try {
+    const stat = lstatSync(path);
+    if (stat.isDirectory()) return true;
+    if (stat.isSymbolicLink()) {
+      return statSync(path).isDirectory();
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+function getSyncModule(sourcePath: string) {
+  return isDirectorySource(sourcePath) ? directorySyncModule : fileCopyModule;
 }
 
 export interface InstallStatus {
@@ -858,7 +876,7 @@ export const useStore = create<Store>((set, get) => ({
           const stateKey = buildStateKey(fileEntry.name, toolId, inst.id, targetRelPath);
           const steps: OrchestratorStep[] = [{
             label: `${fileEntry.name}:${toolId}:${inst.id}`,
-            module: fileCopyModule as any,
+            module: getSyncModule(sourcePath) as any,
             params: {
               sourcePath,
               targetPath,
@@ -1110,7 +1128,7 @@ export const useStore = create<Store>((set, get) => ({
             const stateKey = buildStateKey(item.file.name, i.toolId, i.instanceId, item.file.target);
             return {
               label: `${item.file.name}:${i.toolId}:${i.instanceId}`,
-              module: fileCopyModule as any,
+              module: getSyncModule(sourcePath) as any,
               params: { sourcePath, targetPath, owner: `file:${item.file.name}`, stateKey, pullback: item.file.pullback },
             };
           });

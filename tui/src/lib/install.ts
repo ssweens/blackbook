@@ -1147,8 +1147,8 @@ function getInstalledPluginsForClaudeInstance(
   );
   const installedPluginKeys = new Set<string>();
 
-  if (existsSync(installedPluginsPath)) {
-    try {
+  try {
+    if (lstatSync(installedPluginsPath).isFile()) {
       const content = readFileSync(installedPluginsPath, "utf-8");
       const data = JSON.parse(content);
       if (data.plugins && typeof data.plugins === "object") {
@@ -1157,12 +1157,9 @@ function getInstalledPluginsForClaudeInstance(
           installedPluginKeys.add(key);
         }
       }
-    } catch (error) {
-      logError(
-        `Failed to read installed_plugins.json for ${instance.name}`,
-        error,
-      );
     }
+  } catch {
+    // Ignore if file doesn't exist or can't be read
   }
 
   // If no installed_plugins.json or it's empty, fall back to scanning cache
@@ -1230,54 +1227,54 @@ function getInstalledPluginsForClaudeInstance(
         let description = "";
 
         const skillsDir = join(contentDir, "skills");
-        if (existsSync(skillsDir)) {
-          try {
+        try {
+          if (lstatSync(skillsDir).isDirectory()) {
             for (const item of readdirSync(skillsDir)) {
               const itemPath = join(skillsDir, item);
               if (existsSync(join(itemPath, "SKILL.md"))) {
                 skills.push(item);
               }
             }
-          } catch (error) {
-            logError(`Failed to read skills in ${skillsDir}`, error);
           }
+        } catch {
+          // Ignore if skills directory doesn't exist
         }
 
         const commandsDir = join(contentDir, "commands");
-        if (existsSync(commandsDir)) {
-          try {
+        try {
+          if (lstatSync(commandsDir).isDirectory()) {
             for (const item of readdirSync(commandsDir)) {
               if (item.endsWith(".md")) {
                 commands.push(item.replace(/\.md$/, ""));
               }
             }
-          } catch (error) {
-            logError(`Failed to read commands in ${commandsDir}`, error);
           }
+        } catch {
+          // Ignore if commands directory doesn't exist
         }
 
         const agentsDir = join(contentDir, "agents");
-        if (existsSync(agentsDir)) {
-          try {
+        try {
+          if (lstatSync(agentsDir).isDirectory()) {
             for (const item of readdirSync(agentsDir)) {
               if (item.endsWith(".md")) {
                 agents.push(item.replace(/\.md$/, ""));
               }
             }
-          } catch (error) {
-            logError(`Failed to read agents in ${agentsDir}`, error);
           }
+        } catch {
+          // Ignore if agents directory doesn't exist
         }
 
         const hooksDir = join(contentDir, "hooks");
-        if (existsSync(hooksDir)) {
-          try {
+        try {
+          if (lstatSync(hooksDir).isDirectory()) {
             for (const item of readdirSync(hooksDir)) {
               hooks.push(item.replace(/\.(md|json)$/, ""));
             }
-          } catch (error) {
-            logError(`Failed to read hooks in ${hooksDir}`, error);
           }
+        } catch {
+          // Ignore if hooks directory doesn't exist
         }
 
         if (
@@ -1292,13 +1289,13 @@ function getInstalledPluginsForClaudeInstance(
           ".claude-plugin",
           "manifest.json",
         );
-        if (existsSync(manifestPath)) {
-          try {
+        try {
+          if (lstatSync(manifestPath).isFile()) {
             const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
             description = manifest.description || "";
-          } catch (error) {
-            logError(`Failed to read manifest ${manifestPath}`, error);
           }
+        } catch {
+          // Ignore if manifest doesn't exist or can't be read
         }
 
         plugins.push({
@@ -1386,8 +1383,8 @@ export function getInstalledPluginsForInstance(
   // Scan skills
   if (instance.skillsSubdir) {
     const skillsDir = join(instance.configDir, instance.skillsSubdir);
-    if (existsSync(skillsDir)) {
-      try {
+    try {
+      if (lstatSync(skillsDir).isDirectory()) {
         for (const item of readdirSync(skillsDir)) {
           const itemPath = join(skillsDir, item);
           try {
@@ -1402,17 +1399,17 @@ export function getInstalledPluginsForInstance(
             logError(`Failed to stat skill entry ${itemPath}`, error);
           }
         }
-      } catch (error) {
-        logError(`Failed to read skills in ${skillsDir}`, error);
       }
+    } catch {
+      // Ignore if skills directory doesn't exist
     }
   }
 
   // Scan commands
   if (instance.commandsSubdir) {
     const commandsDir = join(instance.configDir, instance.commandsSubdir);
-    if (existsSync(commandsDir)) {
-      try {
+    try {
+      if (lstatSync(commandsDir).isDirectory()) {
         for (const item of readdirSync(commandsDir)) {
           if (item.endsWith(".md")) {
             const name = item.replace(/\.md$/, "");
@@ -1421,17 +1418,17 @@ export function getInstalledPluginsForInstance(
             components.push({ type: "command", name, source });
           }
         }
-      } catch (error) {
-        logError(`Failed to read commands in ${commandsDir}`, error);
       }
+    } catch {
+      // Ignore if commands directory doesn't exist
     }
   }
 
   // Scan agents
   if (instance.agentsSubdir) {
     const agentsDir = join(instance.configDir, instance.agentsSubdir);
-    if (existsSync(agentsDir)) {
-      try {
+    try {
+      if (lstatSync(agentsDir).isDirectory()) {
         for (const item of readdirSync(agentsDir)) {
           if (item.endsWith(".md")) {
             const name = item.replace(/\.md$/, "");
@@ -1440,9 +1437,9 @@ export function getInstalledPluginsForInstance(
             components.push({ type: "agent", name, source });
           }
         }
-      } catch (error) {
-        logError(`Failed to read agents in ${agentsDir}`, error);
       }
+    } catch {
+      // Ignore if agents directory doesn't exist
     }
   }
 
