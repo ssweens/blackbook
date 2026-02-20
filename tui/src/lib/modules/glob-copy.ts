@@ -65,10 +65,19 @@ export const globCopyModule: Module<GlobCopyParams> = {
       : listSourceMatches(sourcePath);
 
     if (sources.length === 0) {
+      // A glob may legitimately match 0 files in the repo while the tool has an
+      // installed target (so we can pull back). Don't treat this as fatal.
+      if (existsSync(targetPath)) {
+        const msg = pullback
+          ? `No target files match ${filePattern} in ${targetPath}`
+          : `Source pattern matched 0 files: ${sourcePath}`;
+        return { status: "ok", message: msg };
+      }
+
       const msg = pullback
         ? `No target files match ${filePattern} in ${targetPath}`
         : `Source pattern matched 0 files: ${sourcePath}`;
-      return { status: "failed", message: msg, error: msg };
+      return { status: "missing", message: msg, driftKind: "never-synced" as any };
     }
 
     // Map each file to its corresponding target.

@@ -33,7 +33,22 @@ export const fileCopyModule: Module<FileCopyParams> = {
     const { sourcePath, targetPath, stateKey, pullback } = params;
 
     if (!existsSync(sourcePath)) {
-      return { status: "failed", message: `Source not found: ${sourcePath}`, error: `Source not found: ${sourcePath}` };
+      // For configs/assets, the repo/source may legitimately be empty/missing while
+      // the tool still has a working installed target. Treat this as "ok" when
+      // the target exists so the UI can offer pullback without showing a failure.
+      if (existsSync(targetPath)) {
+        return {
+          status: "ok",
+          message: `Source not found: ${sourcePath}`,
+          driftKind: pullback ? "target-changed" : undefined,
+        };
+      }
+
+      return {
+        status: "missing",
+        message: `Source not found: ${sourcePath}`,
+        driftKind: "never-synced",
+      };
     }
 
     if (!existsSync(targetPath)) {

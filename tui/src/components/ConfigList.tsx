@@ -28,7 +28,7 @@ function computeFlags(config: FileStatus): {
   const incomplete = installed && config.instances.some((i) => i.status === "missing");
   const drifted = installed && config.instances.some((i) => i.status === "drifted" || i.driftKind === "both-changed" || i.driftKind === "target-changed");
   const sourceMissing = config.instances.some(
-    (i) => i.status === "failed" && i.message.toLowerCase().startsWith("source not found"),
+    (i) => i.message.toLowerCase().startsWith("source not found") || i.message.toLowerCase().startsWith("source pattern matched 0") || i.message.toLowerCase().startsWith("source directory not found"),
   );
   return { installed, incomplete, drifted, sourceMissing };
 }

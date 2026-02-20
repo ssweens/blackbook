@@ -22,7 +22,7 @@ function computeFlags(asset: FileStatus): {
   const incomplete = installed && asset.instances.some((i) => i.status === "missing");
   const drifted = installed && asset.instances.some((i) => i.status === "drifted" || i.driftKind === "both-changed" || i.driftKind === "target-changed");
   const sourceMissing = asset.instances.some(
-    (i) => i.status === "failed" && i.message.toLowerCase().startsWith("source not found"),
+    (i) => i.message.toLowerCase().startsWith("source not found") || i.message.toLowerCase().startsWith("source pattern matched 0") || i.message.toLowerCase().startsWith("source directory not found"),
   );
   return { installed, incomplete, drifted, sourceMissing };
 }

@@ -16,7 +16,11 @@ export const directorySyncModule: Module<DirectorySyncParams> = {
     const { sourcePath, targetPath } = params;
 
     if (!existsSync(sourcePath)) {
-      return { status: "failed", message: `Source directory not found: ${sourcePath}`, error: `Source directory not found: ${sourcePath}` };
+      // Source repo can be empty while target already exists. Don't treat as fatal.
+      if (existsSync(targetPath)) {
+        return { status: "ok", message: `Source directory not found: ${sourcePath}` };
+      }
+      return { status: "missing", message: `Source directory not found: ${sourcePath}` };
     }
 
     if (!existsSync(targetPath)) {
