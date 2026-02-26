@@ -15,25 +15,6 @@ export function SyncPreview({ item }: SyncPreviewProps) {
     );
   }
 
-  if (item.kind === "asset") {
-    return (
-      <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="gray" paddingX={1} height={5}>
-        <Box>
-          <Text color="gray">Asset: </Text>
-          <Text color="white">{item.asset.name}</Text>
-        </Box>
-        <Box>
-          <Text color="gray">Missing instances: </Text>
-          <Text color="yellow">{item.missingInstances.join(", ") || "—"}</Text>
-        </Box>
-        <Box>
-          <Text color="gray">Drifted instances: </Text>
-          <Text color="yellow">{item.driftedInstances.join(", ") || "—"}</Text>
-        </Box>
-      </Box>
-    );
-  }
-
   if (item.kind === "tool") {
     return (
       <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="gray" paddingX={1} height={5}>
@@ -53,39 +34,55 @@ export function SyncPreview({ item }: SyncPreviewProps) {
     );
   }
 
-  if (item.kind === "config") {
-    const mappingSummary = item.config.mappings && item.config.mappings.length > 0
-      ? item.config.mappings[0]
-      : item.config.sourcePath && item.config.targetPath
-        ? { source: item.config.sourcePath, target: item.config.targetPath }
-        : null;
-    const mappingCount = item.config.mappings?.length ?? (item.config.sourcePath ? 1 : 0);
+  if (item.kind === "file") {
+    const bothChangedInstances = item.file.instances.filter((i) => i.driftKind === "both-changed").map((i) => i.instanceName);
+    const targetChangedInstances = item.file.instances.filter((i) => i.driftKind === "target-changed").map((i) => i.instanceName);
+    const sourceChangedInstances = item.file.instances
+      .filter((i) => i.status === "drifted" && i.driftKind !== "target-changed" && i.driftKind !== "both-changed")
+      .map((i) => i.instanceName);
 
     return (
       <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="gray" paddingX={1} height={5}>
         <Box>
-          <Text color="gray">Config: </Text>
-          <Text color="white">{item.config.name}</Text>
-          <Text color="gray"> · </Text>
-          <Text color="magenta">{item.config.toolId}</Text>
+          <Text color="gray">File: </Text>
+          <Text color="white">{item.file.name}</Text>
+          {item.file.pullback && <Text color="magenta"> (pullback)</Text>}
         </Box>
         <Box>
           <Text color="gray">Source: </Text>
-          <Text color="cyan">
-            {mappingSummary ? `${mappingSummary.source} → ${mappingSummary.target}` : "(no mappings)"}
-          </Text>
-          {mappingCount > 1 && <Text color="gray"> {`(+${mappingCount - 1} more)`}</Text>}
+          <Text color="cyan">{item.file.source} → {item.file.target}</Text>
         </Box>
         <Box>
-          <Text color="gray">Status: </Text>
-          <Text color="yellow">
-            {item.missing && item.drifted ? "Missing & Drifted" : item.missing ? "Missing" : "Drifted"}
-          </Text>
+          {item.missingInstances.length > 0 && (
+            <>
+              <Text color="gray">Missing: </Text>
+              <Text color="yellow">{item.missingInstances.join(", ")}</Text>
+            </>
+          )}
+          {sourceChangedInstances.length > 0 && (
+            <>
+              <Text color="gray">{item.missingInstances.length > 0 ? " · " : ""}Source changed (sync): </Text>
+              <Text color="yellow">{sourceChangedInstances.join(", ")}</Text>
+            </>
+          )}
+          {targetChangedInstances.length > 0 && (
+            <>
+              <Text color="gray">{(item.missingInstances.length > 0 || sourceChangedInstances.length > 0) ? " · " : ""}Target changed (pullback): </Text>
+              <Text color="magenta">{targetChangedInstances.join(", ")}</Text>
+            </>
+          )}
+          {bothChangedInstances.length > 0 && (
+            <>
+              <Text color="gray">{(item.missingInstances.length > 0 || sourceChangedInstances.length > 0 || targetChangedInstances.length > 0) ? " · " : ""}Both changed: </Text>
+              <Text color="red">{bothChangedInstances.join(", ")}</Text>
+            </>
+          )}
         </Box>
       </Box>
     );
   }
 
+  // Default to plugin preview
   return (
     <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="gray" paddingX={1} height={5}>
       <Box>

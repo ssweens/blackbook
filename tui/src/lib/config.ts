@@ -1,61 +1,36 @@
 import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import type { ToolTarget, ToolInstance, Marketplace, AssetConfig, ConfigSyncConfig, ConfigMapping, PackageManager } from "./types.js";
+import type { ToolTarget, ToolInstance, Marketplace, PackageManager, PluginComponentConfig } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
+import { getAllPlaybooks, getBuiltinToolIds } from "./config/playbooks.js";
+import { getConfigDir as getConfigDirFromPath, expandPath as expandYamlPath } from "./config/path.js";
+import { loadConfig as loadYamlConfig } from "./config/loader.js";
+import { saveConfig as saveYamlConfig } from "./config/writer.js";
+import type { BlackbookConfig, FileEntry } from "./config/schema.js";
 
-const DEFAULT_TOOLS: Record<string, ToolTarget> = {
-  "claude-code": {
-    id: "claude-code",
-    name: "Claude",
-    configDir: join(homedir(), ".claude"),
-    skillsSubdir: "skills",
-    commandsSubdir: "commands",
-    agentsSubdir: "agents",
-  },
-  opencode: {
-    id: "opencode",
-    name: "OpenCode",
-    configDir: join(homedir(), ".config/opencode"),
-    skillsSubdir: "skills",
-    commandsSubdir: "commands",
-    agentsSubdir: "agents",
-  },
-  "amp-code": {
-    id: "amp-code",
-    name: "Amp",
-    configDir: join(homedir(), ".config/amp"),
-    skillsSubdir: "skills",
-    commandsSubdir: "commands",
-    agentsSubdir: "agents",
-  },
-  "openai-codex": {
-    id: "openai-codex",
-    name: "Codex",
-    configDir: join(homedir(), ".codex"),
-    skillsSubdir: "skills",
-    commandsSubdir: null,
-    agentsSubdir: null,
-  },
-  pi: {
-    id: "pi",
-    name: "Pi",
-    configDir: join(homedir(), ".pi"),
-    skillsSubdir: "agent/skills",
-    commandsSubdir: "agent/prompts",
-    agentsSubdir: null,
-  },
-  blackbook: {
-    id: "blackbook",
-    name: "Blackbook",
-    configDir: join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "blackbook"),
-    skillsSubdir: null,
-    commandsSubdir: null,
-    agentsSubdir: null,
-  },
-};
+function buildToolDefinitions(): Record<string, ToolTarget> {
+  const playbooks = getAllPlaybooks();
+  const result: Record<string, ToolTarget> = {};
+  for (const [toolId, pb] of playbooks) {
+    // Respect XDG_CONFIG_HOME for blackbook (config-only tool)
+    const configDir = toolId === "blackbook"
+      ? getConfigDirFromPath()
+      : expandPath(pb.default_instances[0].config_dir);
 
-export const TOOL_IDS = Object.keys(DEFAULT_TOOLS);
+    result[toolId] = {
+      id: toolId,
+      name: pb.default_instances[0].name,
+      configDir,
+      skillsSubdir: pb.components.skills?.install_dir?.replace(/\/$/, "") ?? null,
+      commandsSubdir: pb.components.commands?.install_dir?.replace(/\/$/, "") ?? null,
+      agentsSubdir: pb.components.agents?.install_dir?.replace(/\/$/, "") ?? null,
+    };
+  }
+  return result;
+}
+
+export const TOOL_IDS = getBuiltinToolIds();
 
 const DEFAULT_MARKETPLACES: Record<string, string> = {};
 
@@ -145,13 +120,20 @@ export interface PiMarketplacesConfig {
   [name: string]: string;  // name -> local path or git URL
 }
 
+export interface PluginComponentToml {
+  disabled_skills?: string;
+  disabled_commands?: string;
+  disabled_agents?: string;
+}
+
 export interface TomlConfig {
   marketplaces?: Record<string, string>;
   piMarketplaces?: PiMarketplacesConfig;
   tools?: Record<string, ToolConfig>;
-  assets?: AssetConfig[];
+  assets?: Record<string, any>[];
   sync?: SyncConfig;
-  configs?: ConfigSyncConfig[];
+  configs?: Record<string, any>[];
+  plugins?: Record<string, Record<string, PluginComponentToml>>;
 }
 
 export function loadConfig(configPath?: string): TomlConfig {
@@ -168,8 +150,8 @@ export function loadConfig(configPath?: string): TomlConfig {
     let currentSection = "";
     let currentTool = "";
     let currentInstance: ToolInstanceConfig | null = null;
-    let currentAsset: AssetConfig | null = null;
-    let currentConfig: ConfigSyncConfig | null = null;
+    let currentAsset: Record<string, any> | null = null;
+    let currentConfig: Record<string, any> | null = null;
     
     for (const line of content.split("\n")) {
       const trimmed = line.trim();
@@ -193,7 +175,7 @@ export function loadConfig(configPath?: string): TomlConfig {
           currentTool = "";
           currentInstance = null;
           currentConfig = null;
-          const asset: AssetConfig = { name: "" };
+          const asset: Record<string, any> = { name: "" };
           result.assets = result.assets || [];
           result.assets.push(asset);
           currentAsset = asset;
@@ -213,7 +195,7 @@ export function loadConfig(configPath?: string): TomlConfig {
           currentTool = "";
           currentInstance = null;
           currentAsset = null;
-          const config: ConfigSyncConfig = { name: "", toolId: "" };
+          const config: Record<string, any> = { name: "", toolId: "" };
           result.configs = result.configs || [];
           result.configs.push(config);
           currentConfig = config;
@@ -241,7 +223,23 @@ export function loadConfig(configPath?: string): TomlConfig {
       const sectionMatch = trimmed.match(/^\[([^\]]+)\]$/);
       if (sectionMatch) {
         const section = sectionMatch[1];
-        if (section.startsWith("tools.")) {
+        if (section.startsWith("plugins.")) {
+          // [plugins.marketplace-name.plugin-name]
+          const pluginParts = section.replace("plugins.", "").split(".");
+          if (pluginParts.length >= 2) {
+            currentSection = "plugins";
+            const marketplace = pluginParts[0];
+            const pluginName = pluginParts.slice(1).join(".");
+            result.plugins = result.plugins || {};
+            result.plugins[marketplace] = result.plugins[marketplace] || {};
+            result.plugins[marketplace][pluginName] = result.plugins[marketplace][pluginName] || {};
+            // Store reference for KV parsing
+            currentTool = `${marketplace}:${pluginName}`;
+          }
+          currentInstance = null;
+          currentAsset = null;
+          currentConfig = null;
+        } else if (section.startsWith("tools.")) {
           currentSection = "tools";
           currentTool = section.replace("tools.", "");
           result.tools![currentTool] = result.tools![currentTool] || {};
@@ -284,6 +282,11 @@ export function loadConfig(configPath?: string): TomlConfig {
         } else if (currentSection === "pi-marketplaces") {
           if (!result.piMarketplaces) result.piMarketplaces = {};
           result.piMarketplaces[key] = value;
+        } else if (currentSection === "plugins" && currentTool) {
+          const [marketplace, pluginName] = currentTool.split(":", 2);
+          if (result.plugins?.[marketplace]?.[pluginName]) {
+            (result.plugins[marketplace][pluginName] as Record<string, string>)[key] = value;
+          }
         } else if (currentSection === "tools" && currentTool) {
           const normalizedKey = key === "config_dir" ? "configDir" : key;
           (result.tools![currentTool] as Record<string, string>)[normalizedKey] = value;
@@ -445,6 +448,27 @@ export function saveConfig(config: TomlConfig, configPath?: string): void {
     }
   }
 
+  // Write plugin component configs
+  if (config.plugins) {
+    for (const [marketplace, plugins] of Object.entries(config.plugins)) {
+      for (const [pluginName, pluginConfig] of Object.entries(plugins)) {
+        const hasContent = pluginConfig.disabled_skills || pluginConfig.disabled_commands || pluginConfig.disabled_agents;
+        if (!hasContent) continue;
+        lines.push(`[plugins.${marketplace}.${pluginName}]`);
+        if (pluginConfig.disabled_skills) {
+          lines.push(`disabled_skills = "${pluginConfig.disabled_skills}"`);
+        }
+        if (pluginConfig.disabled_commands) {
+          lines.push(`disabled_commands = "${pluginConfig.disabled_commands}"`);
+        }
+        if (pluginConfig.disabled_agents) {
+          lines.push(`disabled_agents = "${pluginConfig.disabled_agents}"`);
+        }
+        lines.push("");
+      }
+    }
+  }
+
   if (hasTools) {
     for (const [toolId, toolConfig] of Object.entries(config.tools!)) {
       const orderedEntries: Array<[string, string | boolean]> = [];
@@ -514,8 +538,9 @@ const DEFAULT_INITIAL_MARKETPLACES: Record<string, string> = {
 };
 
 function buildInitialToolConfig(): Record<string, ToolConfig> {
+  const definitions = buildToolDefinitions();
   const tools: Record<string, ToolConfig> = {};
-  for (const [toolId, tool] of Object.entries(DEFAULT_TOOLS)) {
+  for (const [toolId, tool] of Object.entries(definitions)) {
     if (existsSync(tool.configDir)) {
       tools[toolId] = {
         instances: [
@@ -532,11 +557,100 @@ function buildInitialToolConfig(): Record<string, ToolConfig> {
   return tools;
 }
 
+function buildInitialYamlTools(): BlackbookConfig["tools"] {
+  const playbooks = getAllPlaybooks();
+  const tools: BlackbookConfig["tools"] = {};
+
+  for (const [toolId, playbook] of playbooks.entries()) {
+    const instances = playbook.default_instances
+      .filter((instance) => existsSync(expandYamlPath(instance.config_dir)))
+      .map((instance) => ({
+        id: instance.id,
+        name: instance.name,
+        enabled: true,
+        config_dir: instance.config_dir,
+      }));
+
+    if (instances.length > 0) {
+      tools[toolId] = instances;
+    }
+  }
+
+  return tools;
+}
+
+function buildInitialYamlFiles(tools: BlackbookConfig["tools"]): FileEntry[] {
+  const playbooks = getAllPlaybooks();
+  const files: FileEntry[] = [];
+  const usedNames = new Set<string>();
+
+  for (const [toolId, instances] of Object.entries(tools)) {
+    const playbook = playbooks.get(toolId);
+    if (!playbook || playbook.config_files.length === 0) continue;
+
+    for (const configFile of playbook.config_files) {
+      let inferredSource: string | null = null;
+
+      for (const instance of instances) {
+        const absoluteTarget = join(expandYamlPath(instance.config_dir), configFile.path);
+        if (existsSync(absoluteTarget)) {
+          inferredSource = absoluteTarget;
+          break;
+        }
+      }
+
+      if (!inferredSource) continue;
+
+      let name = `${toolId}:${configFile.name}`;
+      let suffix = 2;
+      while (usedNames.has(name)) {
+        name = `${toolId}:${configFile.name} (${suffix})`;
+        suffix += 1;
+      }
+      usedNames.add(name);
+
+      files.push({
+        name,
+        source: inferredSource,
+        target: configFile.path,
+        tools: [toolId],
+        pullback: configFile.pullback,
+      });
+    }
+  }
+
+  return files;
+}
+
+function buildInitialYamlConfig(): BlackbookConfig {
+  const tools = buildInitialYamlTools();
+  return {
+    settings: {
+      package_manager: "pnpm",
+      backup_retention: 3,
+      default_pullback: false,
+    },
+    marketplaces: { ...DEFAULT_INITIAL_MARKETPLACES },
+    tools,
+    files: buildInitialYamlFiles(tools),
+    plugins: {},
+  };
+}
+
 export function ensureConfigExists(): void {
-  const path = getConfigPath();
-  if (!existsSync(path)) {
+  const tomlPath = getConfigPath();
+  if (!existsSync(tomlPath)) {
     saveConfig({ marketplaces: DEFAULT_INITIAL_MARKETPLACES, tools: buildInitialToolConfig() });
   }
+
+  const yamlPath = join(getConfigDirFromPath(), "config.yaml");
+  if (!existsSync(yamlPath)) {
+    const yamlConfig = buildInitialYamlConfig();
+    saveYamlConfig(yamlConfig, yamlPath);
+  }
+
+  // Validate generated YAML once so startup gets deterministic defaults.
+  loadYamlConfig(yamlPath);
 }
 
 export function updateToolInstanceConfig(
@@ -575,15 +689,17 @@ export function removeMarketplace(name: string): void {
 }
 
 export function getToolDefinitions(): Record<string, ToolTarget> {
-  return DEFAULT_TOOLS;
+  return buildToolDefinitions();
 }
 
 export function getToolInstances(): ToolInstance[] {
+  const definitions = buildToolDefinitions();
   const userConfig = loadConfig();
   const instances: ToolInstance[] = [];
 
   for (const toolId of TOOL_IDS) {
-    const tool = DEFAULT_TOOLS[toolId];
+    const tool = definitions[toolId];
+    if (!tool) continue;
     const toolConfig = userConfig.tools?.[toolId];
     const toolInstances = toolConfig?.instances || [];
 
@@ -716,12 +832,8 @@ export function getAssetsRepoPath(): string | null {
 }
 
 export function getPackageManager(): PackageManager {
-  const config = loadConfig();
-  const packageManager = config.sync?.packageManager;
-  if (packageManager === "bun" || packageManager === "pnpm") {
-    return packageManager;
-  }
-  return "npm";
+  const { config } = loadYamlConfig();
+  return config.settings.package_manager;
 }
 
 /**
@@ -818,4 +930,74 @@ export function setPiMarketplaceEnabled(name: string, enabled: boolean): void {
   config.sync = config.sync || {};
   config.sync.disabledPiMarketplaces = Array.from(disabled).join(",") || undefined;
   saveConfig(config);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plugin Component Config (per-component enable/disable)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function parseCommaList(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+export function getPluginComponentConfig(marketplace: string, pluginName: string): PluginComponentConfig {
+  const config = loadConfig();
+  const pluginToml = config.plugins?.[marketplace]?.[pluginName];
+  return {
+    disabledSkills: parseCommaList(pluginToml?.disabled_skills),
+    disabledCommands: parseCommaList(pluginToml?.disabled_commands),
+    disabledAgents: parseCommaList(pluginToml?.disabled_agents),
+  };
+}
+
+export function setPluginComponentEnabled(
+  marketplace: string,
+  pluginName: string,
+  kind: "skill" | "command" | "agent",
+  componentName: string,
+  enabled: boolean
+): void {
+  const config = loadConfig();
+  config.plugins = config.plugins || {};
+  config.plugins[marketplace] = config.plugins[marketplace] || {};
+  config.plugins[marketplace][pluginName] = config.plugins[marketplace][pluginName] || {};
+
+  const pluginToml = config.plugins[marketplace][pluginName];
+  const field = kind === "skill" ? "disabled_skills" : kind === "command" ? "disabled_commands" : "disabled_agents";
+  const current = new Set(parseCommaList(pluginToml[field]));
+
+  if (enabled) {
+    current.delete(componentName);
+  } else {
+    current.add(componentName);
+  }
+
+  pluginToml[field] = Array.from(current).join(",") || undefined;
+
+  // Clean up empty plugin entries
+  if (!pluginToml.disabled_skills && !pluginToml.disabled_commands && !pluginToml.disabled_agents) {
+    delete config.plugins[marketplace][pluginName];
+    if (Object.keys(config.plugins[marketplace]).length === 0) {
+      delete config.plugins[marketplace];
+    }
+    if (Object.keys(config.plugins).length === 0) {
+      delete config.plugins;
+    }
+  }
+
+  saveConfig(config);
+}
+
+export function isPluginComponentEnabled(
+  marketplace: string,
+  pluginName: string,
+  kind: "skill" | "command" | "agent",
+  componentName: string
+): boolean {
+  const componentConfig = getPluginComponentConfig(marketplace, pluginName);
+  const disabledList = kind === "skill" ? componentConfig.disabledSkills :
+                       kind === "command" ? componentConfig.disabledCommands :
+                       componentConfig.disabledAgents;
+  return !disabledList.includes(componentName);
 }

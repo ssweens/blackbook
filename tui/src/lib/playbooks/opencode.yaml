@@ -1,0 +1,22 @@
+id: opencode
+name: OpenCode
+default_instances:
+  - id: default
+    name: OpenCode
+    config_dir: ~/.config/opencode
+structure:
+  - skills/
+  - commands/
+  - agents/
+components:
+  skills:
+    install_dir: skills/
+    strategy: symlink
+  commands:
+    install_dir: commands/
+    strategy: symlink
+  agents:
+    install_dir: agents/
+    strategy: symlink
+config_files: []
+syncable: true

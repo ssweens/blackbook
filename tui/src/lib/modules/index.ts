@@ -1,0 +1,18 @@
+export type { Module, ModuleStatus, CheckResult, ApplyResult } from "./types.js";
+export { fileCopyModule } from "./file-copy.js";
+export type { FileCopyParams } from "./file-copy.js";
+export { directorySyncModule } from "./directory-sync.js";
+export type { DirectorySyncParams } from "./directory-sync.js";
+export { symlinkCreateModule } from "./symlink-create.js";
+export type { SymlinkCreateParams } from "./symlink-create.js";
+export { createBackup, pruneBackups, listBackups, buildBackupPath } from "./backup.js";
+export { hashFile, hashDirectory, hashPath, hashString } from "./hash.js";
+export { runCheck, runApply } from "./orchestrator.js";
+export type { OrchestratorStep, StepResult, OrchestratorResult } from "./orchestrator.js";
+export { checkCleanup, applyCleanup } from "./cleanup.js";
+export type { OrphanedFile, CleanupCheckResult, CleanupApplyResult } from "./cleanup.js";
+export { pluginInstallModule } from "./plugin-install.js";
+export type { PluginInstallParams } from "./plugin-install.js";
+export { pluginRemoveModule } from "./plugin-remove.js";
+export type { PluginRemoveParams } from "./plugin-remove.js";
+export { applyPullback } from "./file-copy.js";

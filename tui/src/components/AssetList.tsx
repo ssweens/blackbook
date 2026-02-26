@@ -1,14 +1,30 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
-import type { Asset } from "../lib/types.js";
+import type { FileStatus } from "../lib/types.js";
 
 interface AssetListProps {
-  assets: Asset[];
+  assets: FileStatus[];
   selectedIndex: number;
   nameColumnWidth?: number;
   typeColumnWidth?: number;
-  marketplaceColumnWidth?: number;
+  toolColumnWidth?: number;
   maxHeight?: number;
+}
+
+function computeFlags(asset: FileStatus): {
+  installed: boolean;
+  incomplete: boolean;
+  drifted: boolean;
+  sourceMissing: boolean;
+} {
+  // In Installed tab we usually only render installed entries, but keep this robust.
+  const installed = asset.instances.some((i) => i.status !== "missing");
+  const incomplete = installed && asset.instances.some((i) => i.status === "missing");
+  const drifted = installed && asset.instances.some((i) => i.status === "drifted" || i.driftKind === "both-changed" || i.driftKind === "target-changed");
+  const sourceMissing = asset.instances.some(
+    (i) => i.message.toLowerCase().startsWith("source not found") || i.message.toLowerCase().startsWith("source pattern matched 0") || i.message.toLowerCase().startsWith("source directory not found"),
+  );
+  return { installed, incomplete, drifted, sourceMissing };
 }
 
 export function AssetList({
@@ -16,7 +32,7 @@ export function AssetList({
   selectedIndex,
   nameColumnWidth,
   typeColumnWidth,
-  marketplaceColumnWidth,
+  toolColumnWidth,
   maxHeight = 8,
 }: AssetListProps) {
   const hasSelection = selectedIndex >= 0;
@@ -28,7 +44,7 @@ export function AssetList({
   }, [assets, nameColumnWidth]);
 
   const typeWidth = typeColumnWidth ?? 6;
-  const marketplaceWidth = marketplaceColumnWidth ?? 0;
+  const toolWidth = toolColumnWidth ?? 0;
 
   const { visibleAssets, startIndex } = useMemo(() => {
     if (assets.length <= maxHeight) {
@@ -39,10 +55,7 @@ export function AssetList({
     }
 
     const maxStart = Math.max(0, assets.length - maxHeight);
-    const start = Math.min(
-      Math.max(0, effectiveIndex - (maxHeight - 1)),
-      maxStart
-    );
+    const start = Math.min(Math.max(0, effectiveIndex - (maxHeight - 1)), maxStart);
 
     return {
       visibleAssets: assets.slice(start, start + maxHeight),
@@ -65,12 +78,10 @@ export function AssetList({
         const isSelected = hasSelection && actualIndex === selectedIndex;
         const indicator = isSelected ? "❯" : " ";
 
-        const statusIcon = asset.installed ? "✔" : " ";
-        const statusColor = asset.installed ? "green" : "gray";
-        const showIncomplete = Boolean(asset.installed && asset.incomplete);
-        const showDrifted = Boolean(asset.installed && asset.drifted);
-        const showSourceMissing = asset.sourceExists === false;
-        const statusLabel = asset.installed ? "installed" : "";
+        const flags = computeFlags(asset);
+        const statusIcon = flags.installed ? "✔" : " ";
+        const statusColor = flags.installed ? "green" : "gray";
+        const statusLabel = flags.installed ? "installed" : "";
         const statusWidth = 9;
 
         const paddedName = asset.name.padEnd(maxNameLen);
@@ -84,30 +95,29 @@ export function AssetList({
               </Text>
               <Text color="gray"> </Text>
               <Text color="blue">{"Asset".padEnd(typeWidth)}</Text>
-              {marketplaceWidth > 0 && (
+              {toolWidth > 0 && (
                 <>
                   <Text color="gray"> · </Text>
-                  <Text color="gray">{"".padEnd(marketplaceWidth)}</Text>
+                  <Text color="gray">{"".padEnd(toolWidth)}</Text>
                 </>
               )}
               <Text color="gray"> </Text>
               <Text color={statusColor}>{statusIcon}</Text>
-              <Text color={statusColor}>
-                {" " + statusLabel.padEnd(statusWidth)}
-              </Text>
-              {showIncomplete && (
+              <Text color={statusColor}>{" " + statusLabel.padEnd(statusWidth)}</Text>
+
+              {flags.incomplete && (
                 <>
                   <Text color="gray"> · </Text>
                   <Text color="yellow">incomplete</Text>
                 </>
               )}
-              {showDrifted && (
+              {flags.drifted && (
                 <>
                   <Text color="gray"> · </Text>
-                  <Text color="yellow">drifted</Text>
+                  <Text color="yellow">changed</Text>
                 </>
               )}
-              {showSourceMissing && (
+              {flags.sourceMissing && (
                 <>
                   <Text color="gray"> · </Text>
                   <Text color="red">source missing</Text>

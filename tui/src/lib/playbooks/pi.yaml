@@ -1,0 +1,22 @@
+id: pi
+name: Pi
+default_instances:
+  - id: default
+    name: Pi
+    config_dir: ~/.pi
+structure:
+  - agent/skills/
+  - agent/prompts/
+components:
+  skills:
+    install_dir: agent/skills/
+    strategy: symlink
+  commands:
+    install_dir: agent/prompts/
+    strategy: symlink
+config_files:
+  - name: Pi Config
+    path: config.toml
+    format: toml
+    pullback: true
+syncable: true

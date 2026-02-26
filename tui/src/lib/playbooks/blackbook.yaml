@@ -1,0 +1,10 @@
+id: blackbook
+name: Blackbook
+default_instances:
+  - id: default
+    name: Blackbook
+    config_dir: ~/.config/blackbook
+structure: []
+components: {}
+config_files: []
+syncable: false

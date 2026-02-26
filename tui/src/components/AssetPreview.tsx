@@ -1,17 +1,23 @@
 import React from "react";
 import { Box, Text } from "ink";
-import type { Asset } from "../lib/types.js";
+import type { FileStatus } from "../lib/types.js";
 
 interface AssetPreviewProps {
-  asset: Asset | null;
+  asset: FileStatus | null;
 }
 
 export function AssetPreview({ asset }: AssetPreviewProps) {
   if (!asset) return null;
 
-
   return (
-    <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="gray" paddingX={1} height={4}>
+    <Box
+      flexDirection="column"
+      marginTop={1}
+      borderStyle="single"
+      borderColor="gray"
+      paddingX={1}
+      height={4}
+    >
       <Box>
         <Text color="gray">Source: </Text>
         <Text color="cyan">{asset.source}</Text>

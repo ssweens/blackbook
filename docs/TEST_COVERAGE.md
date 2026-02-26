@@ -3,13 +3,15 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 175
-- **Test Files:** 16
+- **Total Tests:** 315
+- **Test Files:** 32
 
 ## Critical Paths
 - [x] Plugin discovery list loads
 - [x] Plugin detail view shows actions and tool status
+- [x] Installed tab includes managed file entries with diff/missing detail access
 - [x] Plugin install/update/uninstall flow
+- [x] Plugin per-component enable/disable config parsing and round-trip
 - [x] Sync preview generation for partial installs
 - [x] Discover → plugin detail → install to all tools (E2E)
 - [x] Install failure notification stays on detail (E2E)
@@ -18,6 +20,17 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Tool lifecycle core flows (registry/view/detect/command adapters)
 - [x] Tools lifecycle UI refreshes version/status after install → update → uninstall (E2E)
 - [x] Sync tab shows tool update items with installed/latest version delta (E2E)
+- [x] Tab navigation refreshes use scoped per-tab loading to avoid cross-tab blocking
+- [x] YAML config loading with zod validation
+- [x] First-launch bootstrap creates config.yaml with inferred tools and prepopulated file entries
+- [x] YAML config.local.yaml deep merge with merge-by-key semantics
+- [x] Unified files list with check/apply module orchestration
+- [x] File sync routes directory sources through `directory-sync` (avoids EISDIR in file-copy)
+- [x] Three-way state tracking (source-changed, target-changed, both-changed drift detection)
+- [x] Pullback detection and target → source sync
+- [x] Conflict detection for both-changed files
+- [x] Cleanup detection of orphaned state entries
+- [x] Plugin install/remove via module wrappers
 
 ## Boundaries
 - [x] Marketplace fetch (remote marketplace.json)
@@ -28,6 +41,9 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Diff computation (line counts, unified diff hunks, binary detection)
 - [x] Asset repo config parsing (`sync.assets_repo`)
 - [x] Multi-file asset mappings (`[[assets.files]]`, `[assets.files.overrides]`)
+- [x] Plugin component config parsing (`[plugins.*.*]` sections)
+- [x] Plugin component config save/load round-trip
+- [x] Plugin component config cleanup of empty entries
 - [x] Asset source path resolution (`resolveAssetSourcePath`)
 - [x] Pi package source type detection (`getSourceType`)
 - [x] Pi local marketplace scanning (`scanLocalMarketplace`)
@@ -75,6 +91,7 @@ This project tracks coverage by critical user journeys and system boundaries.
 
 ## User Journeys (Happy Paths)
 - [x] Discover → open plugin → install to all tools → remain on detail view
+- [ ] Discover → open plugin → manage components → toggle skill → disabled in config
 - [ ] Discover → open plugin → install single tool → success notification
 - [ ] Discover → open plugin → update → tool statuses refresh
 - [ ] Installed → open plugin → uninstall → removed from list
@@ -109,8 +126,17 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [ ] Config with no matching tool instances shows empty state
 - [ ] Tool config dir invalid/empty shows error notification
 
+## Settings Tab
+- [ ] Settings tab displays all 4 settings (package_manager, source_repo, backup_retention, default_pullback)
+- [ ] Enum setting (package_manager) cycles through values on Enter
+- [ ] Boolean setting (default_pullback) toggles on Enter
+- [ ] Text setting (source_repo) enters edit mode on Enter, saves on Enter, cancels on Esc
+- [ ] Number setting (backup_retention) enters edit mode, validates range 1-100
+- [ ] Settings persist to config.yaml after change
+- [ ] Settings tab keyboard guard allows tab navigation but delegates up/down/enter to panel
+
 ## Gaps (Low Priority)
-- [ ] End-to-end TUI navigation across all tabs (discover → installed → tools → sync)
+- [ ] End-to-end TUI navigation across all tabs (discover → installed → tools → sync → settings)
 - [ ] Full asset lifecycle (add → drift → sync) end-to-end
 - [ ] Full config lifecycle (add → drift → sync) end-to-end
 - [ ] Marketplace add/remove persistence

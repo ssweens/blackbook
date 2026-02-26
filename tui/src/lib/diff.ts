@@ -6,11 +6,10 @@
  */
 
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
-import { join, relative, basename } from "node:path";
+import { join, relative, basename, dirname } from "node:path";
+import fg from "fast-glob";
 import { diffLines, createTwoFilesPatch, parsePatch } from "diff";
 import type {
-  Asset,
-  ConfigFile,
   DiffTarget,
   DiffFileSummary,
   DiffFileDetail,
@@ -19,9 +18,7 @@ import type {
   DiffInstanceRef,
   DiffFileStatus,
   MissingSummary,
-  ConfigSourceFile,
 } from "./types.js";
-import { getAssetToolStatus, getConfigToolStatus, getAssetSourceInfo, resolveAssetTarget } from "./install.js";
 import { getToolInstances } from "./config.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -218,6 +215,27 @@ export function getConfigSyncDirection(files: DiffFileSummary[]): SyncDirection 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// State-based sync direction (for pullback-enabled files)
+// ─────────────────────────────────────────────────────────────────────────────
+
+import type { DriftKind } from "./modules/types.js";
+
+/**
+ * Determines sync direction from three-way state drift kind.
+ * Unlike getConfigSyncDirection which uses timestamps, this uses
+ * deterministic hash comparison against last-synced state.
+ */
+export function getSyncDirectionFromDrift(driftKind: DriftKind): SyncDirection {
+  switch (driftKind) {
+    case "in-sync": return "forward";
+    case "source-changed": return "forward";
+    case "target-changed": return "pullback";
+    case "both-changed": return "both";
+    case "never-synced": return "unknown";
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // File-level diff detail (with hunks)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -259,89 +277,76 @@ function listFilesRecursive(dir: string, base: string = ""): string[] {
   return files;
 }
 
+function isGlobPath(pathValue: string): boolean {
+  return /[*?\[{]/.test(pathValue);
+}
+
+function globBaseDir(pattern: string): string {
+  const idx = pattern.search(/[*?\[{]/);
+  if (idx === -1) return dirname(pattern);
+  return dirname(pattern.slice(0, idx));
+}
+
+function isDirectory(pathValue: string): boolean {
+  if (!existsSync(pathValue)) return false;
+  try {
+    return statSync(pathValue).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Build DiffTarget for an Asset
+// Build DiffTarget / MissingSummary for unified files
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface DiffInstanceSummary extends DiffInstanceRef {
-  totalAdded: number;
-  totalRemoved: number;
-}
-
-export function getDriftedAssetInstances(asset: Asset): DiffInstanceRef[] {
-  const sourceInfo = getAssetSourceInfo(asset);
-  const statuses = getAssetToolStatus(asset, sourceInfo);
-  return statuses
-    .filter((s) => s.enabled && s.drifted)
-    .map((s) => ({
-      toolId: s.toolId,
-      instanceId: s.instanceId,
-      instanceName: s.name,
-      configDir: s.configDir,
-    }));
-}
-
-export function getDriftedAssetInstancesWithCounts(asset: Asset): DiffInstanceSummary[] {
-  const sourceInfo = getAssetSourceInfo(asset);
-  const statuses = getAssetToolStatus(asset, sourceInfo);
-  return statuses
-    .filter((s) => s.enabled && s.drifted)
-    .map((s) => {
-      const instance: DiffInstanceRef = {
-        toolId: s.toolId,
-        instanceId: s.instanceId,
-        instanceName: s.name,
-        configDir: s.configDir,
-      };
-      const diffTarget = buildAssetDiffTarget(asset, instance);
-      const totalAdded = diffTarget.files.reduce((sum, f) => sum + f.linesAdded, 0);
-      const totalRemoved = diffTarget.files.reduce((sum, f) => sum + f.linesRemoved, 0);
-      return { ...instance, totalAdded, totalRemoved };
-    });
-}
-
-export function getMissingAssetInstances(asset: Asset): DiffInstanceRef[] {
-  const sourceInfo = getAssetSourceInfo(asset);
-  const statuses = getAssetToolStatus(asset, sourceInfo);
-  return statuses
-    .filter((s) => s.enabled && !s.installed && !s.drifted)
-    .map((s) => ({
-      toolId: s.toolId,
-      instanceId: s.instanceId,
-      instanceName: s.name,
-      configDir: s.configDir,
-    }));
-}
-
-export function buildAssetDiffTarget(
-  asset: Asset,
+export function buildFileDiffTarget(
+  title: string,
+  displayPath: string,
+  sourcePath: string,
+  targetPath: string,
   instance: DiffInstanceRef
 ): DiffTarget {
-  const sourceInfo = getAssetSourceInfo(asset);
-  const sourcePath = sourceInfo.sourcePath;
-  
-  // Find the full ToolInstance to resolve the correct target path (respecting overrides)
-  const toolInstances = getToolInstances();
-  const toolInstance = toolInstances.find(
-    (t) => t.toolId === instance.toolId && t.instanceId === instance.instanceId
-  );
-  
-  let targetPath: string;
-  if (toolInstance) {
-    const targetRel = resolveAssetTarget(asset, toolInstance);
-    targetPath = join(instance.configDir, targetRel);
-  } else {
-    // Fallback if instance not found
-    targetPath = join(instance.configDir, asset.defaultTarget || asset.name);
-  }
-
   const files: DiffFileSummary[] = [];
 
   if (!existsSync(sourcePath)) {
-    // Source doesn't exist - can't diff
+    // Glob sources (e.g. settings*) do not exist as a literal path.
+    if (isGlobPath(sourcePath)) {
+      const matches = fg.sync(sourcePath, {
+        onlyFiles: true,
+        dot: true,
+        unique: true,
+        followSymbolicLinks: true,
+      });
+
+      const baseDir = globBaseDir(sourcePath);
+      const targetIsDir = isDirectory(targetPath);
+
+      for (const src of matches) {
+        const display = relative(baseDir, src) || basename(src);
+        const tgt = targetIsDir ? join(targetPath, basename(src)) : targetPath;
+        const summary = buildFileSummary(
+          display,
+          display,
+          src,
+          existsSync(tgt) ? tgt : null,
+        );
+        if (summary.status !== "modified" || summary.linesAdded > 0 || summary.linesRemoved > 0) {
+          files.push(summary);
+        }
+      }
+
+      return {
+        kind: "file",
+        title,
+        instance,
+        files,
+      };
+    }
+
     return {
-      kind: "asset",
-      title: asset.name,
+      kind: "file",
+      title,
       instance,
       files: [],
     };
@@ -350,64 +355,91 @@ export function buildAssetDiffTarget(
   const sourceStat = statSync(sourcePath);
 
   if (sourceStat.isFile()) {
-    // Single file asset
-    const summary = buildFileSummary(asset.name, asset.name, sourcePath, targetPath);
-    if (summary.linesAdded > 0 || summary.linesRemoved > 0 || summary.status !== "modified") {
+    const summary = buildFileSummary(
+      displayPath,
+      displayPath,
+      sourcePath,
+      existsSync(targetPath) ? targetPath : null
+    );
+    if (summary.status !== "modified" || summary.linesAdded > 0 || summary.linesRemoved > 0) {
       files.push(summary);
     }
   } else if (sourceStat.isDirectory()) {
-    // Directory asset
     const sourceFiles = listFilesRecursive(sourcePath);
-    const targetFiles = existsSync(targetPath) ? listFilesRecursive(targetPath) : [];
-    const allFiles = new Set([...sourceFiles, ...targetFiles]);
 
-    for (const relPath of allFiles) {
+    // Only compare files that exist in source — files only in target are
+    // unmanaged by Blackbook and must not be counted as drift.
+    const ordered = [...sourceFiles].sort();
+
+    for (const relPath of ordered) {
       const srcFile = join(sourcePath, relPath);
       const tgtFile = join(targetPath, relPath);
       const summary = buildFileSummary(
         relPath,
         relPath,
-        existsSync(srcFile) ? srcFile : null,
+        srcFile,
         existsSync(tgtFile) ? tgtFile : null
       );
-      // Only include files that actually differ
-      if (
-        summary.status !== "modified" ||
-        summary.linesAdded > 0 ||
-        summary.linesRemoved > 0
-      ) {
+      if (summary.status !== "modified" || summary.linesAdded > 0 || summary.linesRemoved > 0) {
         files.push(summary);
       }
     }
   }
 
   return {
-    kind: "asset",
-    title: asset.name,
+    kind: "file",
+    title,
     instance,
     files,
   };
 }
 
-export function buildAssetMissingSummary(
-  asset: Asset,
+export function buildFileMissingSummary(
+  title: string,
+  displayPath: string,
+  sourcePath: string,
+  targetPath: string,
   instance: DiffInstanceRef
 ): MissingSummary {
-  const sourceInfo = getAssetSourceInfo(asset);
-  const sourcePath = sourceInfo.sourcePath;
-  const targetDir = instance.configDir;
-  const targetPath = join(targetDir, asset.defaultTarget || asset.name);
-
   const missingFiles: string[] = [];
   const extraFiles: string[] = [];
 
   if (!existsSync(sourcePath)) {
+    // Glob sources (e.g. settings*) do not exist as a literal path.
+    if (isGlobPath(sourcePath)) {
+      const matches = fg.sync(sourcePath, {
+        onlyFiles: true,
+        dot: true,
+        unique: true,
+        followSymbolicLinks: true,
+      });
+
+      const baseDir = globBaseDir(sourcePath);
+      const targetIsDir = isDirectory(targetPath);
+
+      for (const src of matches) {
+        const display = relative(baseDir, src) || basename(src);
+        const tgt = targetIsDir ? join(targetPath, basename(src)) : targetPath;
+        if (!existsSync(tgt)) missingFiles.push(display);
+      }
+
+      missingFiles.sort();
+
+      return {
+        kind: "file",
+        title,
+        instance,
+        missingFiles,
+        extraFiles,
+      };
+    }
+
     return {
-      kind: "asset",
-      title: asset.name,
+      kind: "file",
+      title,
       instance,
-      missingFiles: [],
-      extraFiles: [],
+      missingFiles,
+      extraFiles,
     };
   }
 
@@ -415,141 +447,30 @@ export function buildAssetMissingSummary(
 
   if (sourceStat.isFile()) {
     if (!existsSync(targetPath)) {
-      missingFiles.push(asset.name);
+      missingFiles.push(displayPath);
     }
   } else if (sourceStat.isDirectory()) {
     const sourceFiles = listFilesRecursive(sourcePath);
     const targetFiles = existsSync(targetPath) ? listFilesRecursive(targetPath) : [];
 
-    const sourceSet = new Set(sourceFiles);
     const targetSet = new Set(targetFiles);
 
+    // Only report files that Blackbook manages (exist in source).
+    // Files only in target are unmanaged — reporting them as "extra"
+    // would flood results when the target directory contains unrelated files.
     for (const f of sourceFiles) {
-      if (!targetSet.has(f)) {
-        missingFiles.push(f);
-      }
+      if (!targetSet.has(f)) missingFiles.push(f);
     }
-    for (const f of targetFiles) {
-      if (!sourceSet.has(f)) {
-        extraFiles.push(f);
-      }
-    }
+
+    missingFiles.sort();
   }
 
   return {
-    kind: "asset",
-    title: asset.name,
+    kind: "file",
+    title,
     instance,
     missingFiles,
     extraFiles,
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Build DiffTarget for a Config
-// ─────────────────────────────────────────────────────────────────────────────
-
-export function getDriftedConfigInstances(config: ConfigFile): DiffInstanceRef[] {
-  const statuses = getConfigToolStatus(config, config.sourceFiles);
-  return statuses
-    .filter((s) => s.enabled && s.drifted)
-    .map((s) => ({
-      toolId: s.toolId,
-      instanceId: s.instanceId,
-      instanceName: s.name,
-      configDir: s.configDir,
-    }));
-}
-
-export function getDriftedConfigInstancesWithCounts(config: ConfigFile): DiffInstanceSummary[] {
-  const statuses = getConfigToolStatus(config, config.sourceFiles);
-  return statuses
-    .filter((s) => s.enabled && s.drifted)
-    .map((s) => {
-      const instance: DiffInstanceRef = {
-        toolId: s.toolId,
-        instanceId: s.instanceId,
-        instanceName: s.name,
-        configDir: s.configDir,
-      };
-      const diffTarget = buildConfigDiffTarget(config, instance);
-      const totalAdded = diffTarget.files.reduce((sum, f) => sum + f.linesAdded, 0);
-      const totalRemoved = diffTarget.files.reduce((sum, f) => sum + f.linesRemoved, 0);
-      return { ...instance, totalAdded, totalRemoved };
-    });
-}
-
-export function getMissingConfigInstances(config: ConfigFile): DiffInstanceRef[] {
-  const statuses = getConfigToolStatus(config, config.sourceFiles);
-  return statuses
-    .filter((s) => s.enabled && !s.installed && !s.drifted)
-    .map((s) => ({
-      toolId: s.toolId,
-      instanceId: s.instanceId,
-      instanceName: s.name,
-      configDir: s.configDir,
-    }));
-}
-
-export function buildConfigDiffTarget(
-  config: ConfigFile,
-  instance: DiffInstanceRef
-): DiffTarget {
-  const files: DiffFileSummary[] = [];
-  const sourceFiles = config.sourceFiles || [];
-
-  for (const sf of sourceFiles) {
-    const targetPath = join(instance.configDir, sf.targetPath);
-
-    if (!existsSync(sf.sourcePath)) {
-      continue; // Source doesn't exist, skip
-    }
-
-    if (!existsSync(targetPath)) {
-      // Missing target - include as missing
-      const summary = buildFileSummary(sf.targetPath, sf.targetPath, sf.sourcePath, null);
-      files.push(summary);
-      continue;
-    }
-
-    // Check if content differs by computing diff
-    const summary = buildFileSummary(sf.targetPath, sf.targetPath, sf.sourcePath, targetPath);
-    if (
-      summary.status !== "modified" ||
-      summary.linesAdded > 0 ||
-      summary.linesRemoved > 0
-    ) {
-      files.push(summary);
-    }
-  }
-
-  return {
-    kind: "config",
-    title: config.name,
-    instance,
-    files,
-  };
-}
-
-export function buildConfigMissingSummary(
-  config: ConfigFile,
-  instance: DiffInstanceRef
-): MissingSummary {
-  const missingFiles: string[] = [];
-  const sourceFiles = config.sourceFiles || [];
-
-  for (const sf of sourceFiles) {
-    const targetPath = join(instance.configDir, sf.targetPath);
-    if (existsSync(sf.sourcePath) && !existsSync(targetPath)) {
-      missingFiles.push(sf.targetPath);
-    }
-  }
-
-  return {
-    kind: "config",
-    title: config.name,
-    instance,
-    missingFiles,
-    extraFiles: [], // Configs don't track extras
-  };
-}

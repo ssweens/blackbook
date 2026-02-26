@@ -1,14 +1,36 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
-import type { ConfigFile } from "../lib/types.js";
+import type { FileStatus } from "../lib/types.js";
 
 interface ConfigListProps {
-  configs: ConfigFile[];
+  configs: FileStatus[];
   selectedIndex: number;
   nameColumnWidth?: number;
   typeColumnWidth?: number;
-  marketplaceColumnWidth?: number;
+  toolColumnWidth?: number;
   maxHeight?: number;
+}
+
+function getToolId(config: FileStatus): string {
+  if (config.tools && config.tools.length > 0) {
+    return config.tools[0] ?? "";
+  }
+  return "";
+}
+
+function computeFlags(config: FileStatus): {
+  installed: boolean;
+  incomplete: boolean;
+  drifted: boolean;
+  sourceMissing: boolean;
+} {
+  const installed = config.instances.some((i) => i.status !== "missing");
+  const incomplete = installed && config.instances.some((i) => i.status === "missing");
+  const drifted = installed && config.instances.some((i) => i.status === "drifted" || i.driftKind === "both-changed" || i.driftKind === "target-changed");
+  const sourceMissing = config.instances.some(
+    (i) => i.message.toLowerCase().startsWith("source not found") || i.message.toLowerCase().startsWith("source pattern matched 0") || i.message.toLowerCase().startsWith("source directory not found"),
+  );
+  return { installed, incomplete, drifted, sourceMissing };
 }
 
 export function ConfigList({
@@ -16,7 +38,7 @@ export function ConfigList({
   selectedIndex,
   nameColumnWidth,
   typeColumnWidth,
-  marketplaceColumnWidth,
+  toolColumnWidth,
   maxHeight = 8,
 }: ConfigListProps) {
   const hasSelection = selectedIndex >= 0;
@@ -28,7 +50,7 @@ export function ConfigList({
   }, [configs, nameColumnWidth]);
 
   const typeWidth = typeColumnWidth ?? 6;
-  const marketplaceWidth = marketplaceColumnWidth ?? 0;
+  const toolWidth = toolColumnWidth ?? 0;
 
   const { visibleConfigs, startIndex } = useMemo(() => {
     if (configs.length <= maxHeight) {
@@ -39,10 +61,7 @@ export function ConfigList({
     }
 
     const maxStart = Math.max(0, configs.length - maxHeight);
-    const start = Math.min(
-      Math.max(0, effectiveIndex - (maxHeight - 1)),
-      maxStart
-    );
+    const start = Math.min(Math.max(0, effectiveIndex - (maxHeight - 1)), maxStart);
 
     return {
       visibleConfigs: configs.slice(start, start + maxHeight),
@@ -65,15 +84,14 @@ export function ConfigList({
         const isSelected = hasSelection && actualIndex === selectedIndex;
         const indicator = isSelected ? "❯" : " ";
 
-        const statusIcon = config.installed ? "✔" : " ";
-        const statusColor = config.installed ? "green" : "gray";
-        const showIncomplete = Boolean(config.installed && config.incomplete);
-        const showDrifted = Boolean(config.installed && config.drifted);
-        const showSourceMissing = config.sourceExists === false;
-        const statusLabel = config.installed ? "installed" : "";
+        const flags = computeFlags(config);
+        const statusIcon = flags.installed ? "✔" : " ";
+        const statusColor = flags.installed ? "green" : "gray";
+        const statusLabel = flags.installed ? "installed" : "";
         const statusWidth = 9;
 
         const paddedName = config.name.padEnd(maxNameLen);
+        const toolId = getToolId(config);
 
         return (
           <Box key={config.name} flexDirection="column">
@@ -84,26 +102,29 @@ export function ConfigList({
               </Text>
               <Text color="gray"> </Text>
               <Text color="magenta">{"Config".padEnd(typeWidth)}</Text>
-              <Text color="gray"> · </Text>
-              <Text color="gray">{config.toolId.padEnd(marketplaceWidth)}</Text>
+              {toolWidth > 0 && (
+                <>
+                  <Text color="gray"> · </Text>
+                  <Text color="gray">{toolId.padEnd(toolWidth)}</Text>
+                </>
+              )}
               <Text color="gray"> </Text>
               <Text color={statusColor}>{statusIcon}</Text>
-              <Text color={statusColor}>
-                {" " + statusLabel.padEnd(statusWidth)}
-              </Text>
-              {showIncomplete && (
+              <Text color={statusColor}>{" " + statusLabel.padEnd(statusWidth)}</Text>
+
+              {flags.incomplete && (
                 <>
                   <Text color="gray"> · </Text>
                   <Text color="yellow">incomplete</Text>
                 </>
               )}
-              {showDrifted && (
+              {flags.drifted && (
                 <>
                   <Text color="gray"> · </Text>
-                  <Text color="yellow">drifted</Text>
+                  <Text color="yellow">changed</Text>
                 </>
               )}
-              {showSourceMissing && (
+              {flags.sourceMissing && (
                 <>
                   <Text color="gray"> · </Text>
                   <Text color="red">source missing</Text>

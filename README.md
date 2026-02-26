@@ -20,13 +20,14 @@ Plugin manager for agentic coding tools built with React/Ink. Install skills, co
 - **Unified AGENTS.md/CLAUDE.md management** — Sync shared instruction files across tools with per-tool target overrides
 - **Config file syncing** — Sync tool-specific configs (settings, themes, keybindings) from a central repository
 - **Drift detection & diff view** — SHA256-based drift detection with unified diff viewing for changed files
-- **Reverse sync (pull back)** — Pull drifted config changes from deployed instances back to the source repo
+- **Reverse sync (pull back)** — Pull `target-changed` config changes from deployed instances back to the source repo
 - **Multi-file sync** — Directory and glob pattern support for syncing multiple files at once
 - **Unified plugin management** — Install skills, commands, agents, hooks, MCP/LSP servers across tools
 - **Marketplace support** — Browse and install from official and community marketplaces
 - **Pi packages** — Built-in npm marketplace for Pi coding agent extensions, themes, and custom tools
-- **TUI interface** — Interactive terminal UI with tabs for Sync, Tools, Discover, Installed, and Marketplaces
+- **TUI interface** — Interactive terminal UI with tabs for Sync, Tools, Discover, Installed, Marketplaces, and Settings
 - **Cross-tool sync** — Install plugins to multiple tools at once, detect incomplete installs
+- **Per-component control** — Disable individual skills, commands, or agents within a plugin
 
 ## Plugin Model
 
@@ -88,7 +89,7 @@ Blackbook opens on the **Sync** tab by default.
 | Enter | Select / open details |
 | Space | Install/uninstall selected plugin |
 | / | Focus search (Discover/Installed) |
-| d | View diff for drifted item (Sync tab) |
+| d | View diff for changed item (Sync tab) |
 | p | Pull back config changes to source (Diff view) |
 | R | Refresh current tab data |
 | Esc | Back from details or exit search |
@@ -96,245 +97,102 @@ Blackbook opens on the **Sync** tab by default.
 
 ### Shortcuts
 
-- **Discover/Installed**: `s` cycle sort (name/installed), `r` reverse sort, `R` refresh tab data
+- **Discover/Installed**: `s` cycle sort (name/installed), `r` reverse sort, `R` refresh tab data (`d` opens diff for selected managed file in Installed)
 - **Marketplaces**: `u` update marketplace, `r` remove marketplace, `R` refresh all marketplaces/packages
 - **Tools**: `Enter` open detail, `i` install, `u` update, `d` uninstall, `Space` toggle enabled, `e` edit config dir, `R` refresh detection
-- **Sync**: `y` sync selected items (missing/drifted assets/configs/plugins and tool updates; press twice to confirm), `R` refresh sync inputs
+- **Sync**: `y` sync selected items (missing plus `source-changed` / `target-changed` / `both-changed` assets/configs/plugins and tool updates; press twice to confirm), `R` refresh sync inputs
 
 Blackbook also refreshes data when entering tabs (Discover, Installed, Marketplaces, Tools), throttled with a 30-second TTL per tab to avoid constant refetching/flicker while navigating. A loading indicator is shown across tabs (including Sync) while refresh is in progress.
 
 ## Configuration
 
-Blackbook uses a single config file at `~/.config/blackbook/config.toml`.
-
-### Prerequisites
-
-- `git` is required to download plugins from repositories.
-- The Claude CLI is required only for managing Claude Code instances; other tools can still use direct file copies.
-
-### Config File Location
+Blackbook uses YAML configuration files:
 
 ```
-~/.config/blackbook/config.toml
+~/.config/blackbook/config.yaml       # Primary config
+~/.config/blackbook/config.local.yaml # Machine-specific overrides (optional, gitignored)
 ```
 
-Or set `XDG_CONFIG_HOME` to use a custom location.
+On first launch, if `config.yaml` is missing, Blackbook bootstraps one from detected tool installations and prepopulates `files:` entries for known tool config files that already exist on disk. (A compatibility `config.toml` is also written for legacy paths still being migrated.)
 
-### Example Configuration
+### YAML Config
 
-```toml
-# ~/.config/blackbook/config.toml
+```yaml
+# ~/.config/blackbook/config.yaml
+settings:
+  source_repo: ~/src/playbook
+  package_manager: pnpm     # npm | pnpm | bun
+  backup_retention: 3       # Number of backups to keep per file (1-100)
+  default_pullback: false   # Enable pullback for new file entries
 
-# Marketplaces to fetch plugins from
-# These extend the initial defaults and any Claude marketplaces
-[marketplaces]
-playbook = "https://raw.githubusercontent.com/ssweens/playbook/main/.claude-plugin/marketplace.json"
-my-private = "https://raw.githubusercontent.com/myorg/plugins/main/.claude-plugin/marketplace.json"
+tools:
+  claude-code:
+    - id: default
+      name: Claude
+      enabled: true
+      config_dir: ~/.claude
+    - id: learning
+      name: Claude Learning
+      enabled: true
+      config_dir: ~/.claude-learning
 
-# Enable tools (required)
-[tools.claude-code]
+files:
+  - name: CLAUDE.md
+    source: CLAUDE.md         # Relative to source_repo
+    target: CLAUDE.md
+    pullback: true            # Enable three-way state tracking
+    overrides:
+      "opencode:default": AGENTS.md
+  - name: Settings
+    source: claude-code/settings.json
+    target: settings.json
+    tools: [claude-code]      # Only sync to specific tools
 
-[[tools.claude-code.instances]]
-id = "claude-main"
-name = "Claude"
-enabled = true
-config_dir = "~/.claude"
-
-[[tools.claude-code.instances]]
-id = "claude-learning"
-name = "Claude Learning"
-enabled = true
-config_dir = "~/.claude-learning"
-
-[tools.opencode]
-
-[[tools.opencode.instances]]
-id = "opencode"
-name = "OpenCode"
-enabled = true
-config_dir = "~/.config/opencode"
-
+marketplaces:
+  playbook: https://raw.githubusercontent.com/ssweens/playbook/main/.claude-plugin/marketplace.json
 ```
 
-Paths in `config_dir` (and local marketplace paths) support `~` expansion to your home directory.
+#### Local Overrides
 
-### Sync Repositories
+`config.local.yaml` is deep-merged on top of `config.yaml`. Use it for machine-specific settings:
 
-Both assets and configs use central repositories for source files:
+```yaml
+# ~/.config/blackbook/config.local.yaml
+settings:
+  source_repo: ~/alternate/dotfiles
 
-```toml
-[sync]
-config_repo = "~/src/playbook/config"    # Base for config sources
-assets_repo = "~/src/playbook/assets"    # Base for asset sources (optional, defaults to config_repo)
+tools:
+  claude-code:
+    - id: default
+      name: Claude
+      config_dir: ~/custom/.claude
 ```
 
-If `assets_repo` is not specified, it defaults to `config_repo`. This allows a single repo for everything, or separate repos for different concerns.
+Arrays of objects merge by `name` or `id` key. Set a key to `null` to delete it from the base config.
 
-### Assets vs Configs: Key Distinction
+#### Unified Files
 
-| Feature | Assets | Configs |
-|---------|--------|---------|
-| **Sync targets** | ALL enabled tools | Specific `tool_id` only |
-| **Use case** | Shared files (AGENTS.md, prompts) | Tool-specific settings |
-| **Per-instance overrides** | ✓ Different targets per tool | — |
+The `files:` list replaces the separate `assets` and `configs` concepts:
 
-### Assets
+| Feature | Description |
+|---------|-------------|
+| `tools` omitted | Syncs to all enabled, syncable tool instances |
+| `tools: [claude-code]` | Syncs only to claude-code instances |
+| `pullback: true` | Enables three-way state tracking for reverse sync |
+| `overrides` | Per-instance target path overrides |
 
-Assets sync user-level files (like `AGENTS.md`) to **all enabled tool instances**. Use assets for content that should be available everywhere.
+#### Three-Way State
 
-#### Simple Asset (Single File)
+Files with `pullback: true` use deterministic hash-based drift detection instead of timestamps:
 
-```toml
-[[assets]]
-name = "AGENTS.md"
-source = "AGENTS.md"                      # Relative to assets_repo
-default_target = "AGENTS.md"
+| Drift | Meaning | Action |
+|-------|---------|--------|
+| `source-changed` | You edited the source file | Forward sync (source → target) |
+| `target-changed` | Tool edited the config | Pullback available (target → source) |
+| `both-changed` | Both sides changed | Conflict — choose forward, pullback, or skip |
+| `in-sync` | No changes since last sync | Nothing to do |
 
-# Per-instance target overrides (optional)
-[assets.overrides]
-"claude-code:default" = "CLAUDE.md"       # Claude uses CLAUDE.md instead
-"claude-code:claude-learning" = "CLAUDE.md"
-```
-
-#### Multi-File Asset
-
-For multiple files, directories, or globs, use `[[assets.files]]`:
-
-```toml
-[[assets]]
-name = "Prompt Library"
-
-[[assets.files]]
-source = "prompts/"                       # Directory (trailing /)
-target = "prompts/"
-
-[[assets.files]]
-source = "templates/*.md"                 # Glob pattern
-target = "templates/"
-
-# Per-file overrides (optional)
-[assets.files.overrides]
-"claude-code:default" = "claude-templates/"
-```
-
-#### Path Resolution
-
-Asset `source` paths are resolved in order:
-1. **URLs** (`http://`, `https://`) — fetched and cached
-2. **Absolute paths** (`/path/to/file`) — used directly
-3. **Home-relative** (`~/path`) — expanded to home directory
-4. **Relative paths** — resolved against `assets_repo`
-
-```toml
-# All of these work:
-source = "AGENTS.md"                                    # Relative to assets_repo
-source = "~/dotfiles/AGENTS.md"                         # Home-relative
-source = "/absolute/path/to/AGENTS.md"                  # Absolute
-source = "https://example.com/AGENTS.md"                # URL (cached)
-```
-
-### Configs
-
-Configs sync tool-specific files to **only matching tool instances**. Use configs for settings that differ per tool.
-
-#### Single File Config
-
-```toml
-[[configs]]
-name = "Claude Settings"
-tool_id = "claude-code"                   # Only syncs to claude-code instances
-source_path = "claude-code/settings.json" # Relative to config_repo
-target_path = "settings.json"             # Relative to tool's config_dir
-```
-
-#### Multi-File Config
-
-For tools with multiple config files, use `[[configs.files]]`:
-
-```toml
-[[configs]]
-name = "Pi Config"
-tool_id = "pi"
-
-[[configs.files]]
-source = "pi/config.toml"
-target = "config.toml"
-
-[[configs.files]]
-source = "pi/themes/"                     # Directory sync
-target = "themes/"
-
-[[configs.files]]
-source = "pi/*.json"                      # Glob pattern
-target = "."
-```
-
-### Source Patterns (Assets & Configs)
-
-Both assets and configs support the same source patterns:
-
-| Pattern | Example | Behavior |
-|---------|---------|----------|
-| Single file | `settings.json` | Syncs one file |
-| Directory | `themes/` (trailing `/`) | Syncs all files recursively |
-| Glob | `*.json`, `prompts/*.md` | Syncs matching files |
-
-**Important behaviors:**
-- Directory/glob sources are **flattened** to target (files go directly in target, not subdirectories)
-- Files removed from source are **NOT** deleted from target (safety feature)
-- Drift detection uses SHA256 hashing
-
-### Example Repository Structure
-
-```
-~/src/playbook/
-├── config/                      # config_repo
-│   ├── claude-code/
-│   │   └── settings.json
-│   ├── pi/
-│   │   ├── config.toml
-│   │   └── themes/
-│   └── opencode/
-│       └── opencode.json
-└── assets/                      # assets_repo
-    ├── AGENTS.md
-    ├── prompts/
-    │   ├── review.md
-    │   └── triage.md
-    └── templates/
-        └── handoff.md
-```
-
-Corresponding config:
-
-```toml
-[sync]
-config_repo = "~/src/playbook/config"
-assets_repo = "~/src/playbook/assets"
-
-[[assets]]
-name = "AGENTS.md"
-source = "AGENTS.md"
-default_target = "AGENTS.md"
-
-[assets.overrides]
-"claude-code:default" = "CLAUDE.md"
-
-[[assets]]
-name = "Prompts"
-
-[[assets.files]]
-source = "prompts/"
-target = "prompts/"
-
-[[configs]]
-name = "Pi Config"
-tool_id = "pi"
-
-[[configs.files]]
-source = "pi/"
-target = "agent"
-```
+State is stored in `~/.cache/blackbook/state.json`.
 
 ### Private Repositories
 
@@ -396,9 +254,9 @@ For updates, Blackbook uses tool-native upgrade commands when available (e.g. `c
 
 Choose package manager for lifecycle commands in config (used by tools that install/update via npm/bun/pnpm):
 
-```toml
-[sync]
-package_manager = "npm"   # "npm" | "bun" | "pnpm"
+```yaml
+settings:
+  package_manager: pnpm   # npm | pnpm | bun
 ```
 
 Native command exceptions:
@@ -430,8 +288,10 @@ Downloaded plugins and HTTP cache are stored in:
 ```
 ~/.cache/blackbook/
 ├── plugins/           # Downloaded plugin sources
-└── http_cache/        # Cached marketplace data
-└── assets/            # Cached asset URL sources
+├── http_cache/        # Cached marketplace data
+├── assets/            # Cached asset URL sources
+├── backups/           # File backups before overwrite (configurable retention)
+└── state.json         # Three-way state tracking for pullback files
 ```
 
 Remote plugin marketplace responses are cached for up to 10 minutes before refetch.
@@ -463,4 +323,10 @@ npm run build
 - `tui/src/cli.tsx` entry point
 - `tui/src/App.tsx` app shell
 - `tui/src/components/` UI components
-- `tui/src/lib/` config, marketplace, install, state
+- `tui/src/lib/config/` YAML config loading, validation (zod), merge, path resolution
+- `tui/src/lib/modules/` Ansible-inspired check/apply modules (file-copy, directory-sync, symlink, backup, cleanup, plugin install/remove)
+- `tui/src/lib/playbooks/` Internal YAML tool playbooks (default tool definitions)
+- `tui/src/lib/state.ts` Three-way state tracking for pullback-enabled files
+- `tui/src/lib/store.ts` Zustand store (main state management)
+- `tui/src/lib/config.ts` Config facade (YAML loading)
+- `tui/src/lib/install.ts` Legacy plugin/file sync code (being replaced by modules)

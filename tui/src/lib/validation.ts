@@ -1,7 +1,13 @@
 import { resolve, relative } from "path";
+import type { Plugin } from "./types.js";
 
 const SAFE_NAME_PATTERN = /^[a-zA-Z0-9._-]+$/;
 const SAFE_GIT_REF_PATTERN = /^[a-zA-Z0-9._/-]+$/;
+
+export function logError(context: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`${context}: ${message}`);
+}
 
 export function validatePluginName(name: string): void {
   if (!SAFE_NAME_PATTERN.test(name) || name.includes("..") || name === ".") {
@@ -66,4 +72,18 @@ export function safePath(base: string, ...segments: string[]): string {
   }
 
   return resolved;
+}
+
+export function validatePluginMetadata(plugin: Plugin): void {
+  validateMarketplaceName(plugin.marketplace);
+  validatePluginName(plugin.name);
+  for (const skill of plugin.skills) {
+    validateItemName("skill", skill);
+  }
+  for (const cmd of plugin.commands) {
+    validateItemName("command", cmd);
+  }
+  for (const agent of plugin.agents) {
+    validateItemName("agent", agent);
+  }
 }
