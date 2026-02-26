@@ -195,12 +195,23 @@ export function getFileActions(file: FileStatus): FileAction[] {
       const totalAdded = diffTarget.files.reduce((sum, f) => sum + f.linesAdded, 0);
       const totalRemoved = diffTarget.files.reduce((sum, f) => sum + f.linesRemoved, 0);
       const summary: DiffInstanceSummary = { ...instance, totalAdded, totalRemoved };
+
+      let statusLabel = "Source changed (sync)";
+      let statusColor: "yellow" | "magenta" | "red" = "yellow";
+      if (inst.driftKind === "target-changed") {
+        statusLabel = "Target changed (pullback)";
+        statusColor = "magenta";
+      } else if (inst.driftKind === "both-changed") {
+        statusLabel = "Both changed";
+        statusColor = "red";
+      }
+
       actions.push({
         label: inst.instanceName,
         type: "diff",
         instance: summary,
-        statusColor: "yellow",
-        statusLabel: "Drifted",
+        statusColor,
+        statusLabel,
       });
       continue;
     }

@@ -35,8 +35,12 @@ export function SyncPreview({ item }: SyncPreviewProps) {
   }
 
   if (item.kind === "file") {
-    const conflictInstances = item.file.instances.filter((i) => i.driftKind === "both-changed").map((i) => i.instanceName);
-    const pullbackInstances = item.file.instances.filter((i) => i.driftKind === "target-changed").map((i) => i.instanceName);
+    const bothChangedInstances = item.file.instances.filter((i) => i.driftKind === "both-changed").map((i) => i.instanceName);
+    const targetChangedInstances = item.file.instances.filter((i) => i.driftKind === "target-changed").map((i) => i.instanceName);
+    const sourceChangedInstances = item.file.instances
+      .filter((i) => i.status === "drifted" && i.driftKind !== "target-changed" && i.driftKind !== "both-changed")
+      .map((i) => i.instanceName);
+
     return (
       <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="gray" paddingX={1} height={5}>
         <Box>
@@ -55,22 +59,22 @@ export function SyncPreview({ item }: SyncPreviewProps) {
               <Text color="yellow">{item.missingInstances.join(", ")}</Text>
             </>
           )}
-          {pullbackInstances.length > 0 && (
+          {sourceChangedInstances.length > 0 && (
             <>
-              <Text color="gray">{item.missingInstances.length > 0 ? " · " : ""}Pullback: </Text>
-              <Text color="magenta">{pullbackInstances.join(", ")}</Text>
+              <Text color="gray">{item.missingInstances.length > 0 ? " · " : ""}Source changed (sync): </Text>
+              <Text color="yellow">{sourceChangedInstances.join(", ")}</Text>
             </>
           )}
-          {conflictInstances.length > 0 && (
+          {targetChangedInstances.length > 0 && (
             <>
-              <Text color="gray">{(item.missingInstances.length > 0 || pullbackInstances.length > 0) ? " · " : ""}Conflict: </Text>
-              <Text color="red">{conflictInstances.join(", ")}</Text>
+              <Text color="gray">{(item.missingInstances.length > 0 || sourceChangedInstances.length > 0) ? " · " : ""}Target changed (pullback): </Text>
+              <Text color="magenta">{targetChangedInstances.join(", ")}</Text>
             </>
           )}
-          {item.missingInstances.length === 0 && pullbackInstances.length === 0 && conflictInstances.length === 0 && item.driftedInstances.length > 0 && (
+          {bothChangedInstances.length > 0 && (
             <>
-              <Text color="gray">Drifted: </Text>
-              <Text color="yellow">{item.driftedInstances.join(", ")}</Text>
+              <Text color="gray">{(item.missingInstances.length > 0 || sourceChangedInstances.length > 0 || targetChangedInstances.length > 0) ? " · " : ""}Both changed: </Text>
+              <Text color="red">{bothChangedInstances.join(", ")}</Text>
             </>
           )}
         </Box>

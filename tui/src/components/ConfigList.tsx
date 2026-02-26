@@ -121,7 +121,7 @@ export function ConfigList({
               {flags.drifted && (
                 <>
                   <Text color="gray"> · </Text>
-                  <Text color="yellow">drifted</Text>
+                  <Text color="yellow">changed</Text>
                 </>
               )}
               {flags.sourceMissing && (

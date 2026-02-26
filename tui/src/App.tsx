@@ -34,13 +34,14 @@ import { PiPackageList } from "./components/PiPackageList.js";
 import { PiPackagePreview } from "./components/PiPackagePreview.js";
 import { PiPackageDetail, getPiPackageActions } from "./components/PiPackageDetail.js";
 import { ComponentManager, getComponentItems } from "./components/ComponentManager.js";
+import { SettingsPanel } from "./components/SettingsPanel.js";
 import { getPluginToolStatus, togglePluginComponent } from "./lib/plugin-status.js";
 import { buildInstallCommand, buildUpdateCommand, buildUninstallCommand } from "./lib/tool-lifecycle.js";
 import { getToolRegistryEntry } from "./lib/tool-registry.js";
 import { getPackageManager } from "./lib/config.js";
 import type { Tab, SyncPreviewItem, Plugin, PiPackage, PiMarketplace, DiffInstanceRef, DiscoverSection, DiscoverSubView, ManagedToolRow, FileStatus } from "./lib/types.js";
 
-const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces"];
+const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces", "settings"];
 const TAB_REFRESH_TTL_MS = 30000;
 
 export function App() {
@@ -147,6 +148,7 @@ export function App() {
     discover: 0,
     installed: 0,
     marketplaces: 0,
+    settings: 0,
   });
   const tabRefreshInFlightRef = useRef<Record<Tab, boolean>>({
     sync: false,
@@ -154,6 +156,7 @@ export function App() {
     discover: false,
     installed: false,
     marketplaces: false,
+    settings: false,
   });
 
   // Refs to break the feedback loop in the sync preview useEffect.
@@ -235,6 +238,12 @@ export function App() {
 
     let refreshed = false;
     try {
+      if (targetTab === "settings") {
+        // Settings reads config on mount — no async load needed.
+        refreshed = true;
+        return;
+      }
+
       if (targetTab === "discover") {
         await Promise.all([loadMarketplaces(), loadPiPackages()]);
         refreshed = true;
@@ -490,12 +499,11 @@ export function App() {
   const filteredConfigs = useMemo(() => {
     const q = search.trim().toLowerCase();
     const base = files.filter(isConfigFile);
-    const installedOnly = tab === "installed" ? base.filter(isInstalledFile) : base;
 
     const filtered =
       q.length === 0
-        ? installedOnly
-        : installedOnly.filter((file) => {
+        ? base
+        : base.filter((file) => {
             const toolId = file.tools?.[0] ?? "";
             return (
               file.name.toLowerCase().includes(q) ||
@@ -516,12 +524,11 @@ export function App() {
   const filteredAssets = useMemo(() => {
     const q = search.trim().toLowerCase();
     const base = files.filter(isAssetFile);
-    const installedOnly = tab === "installed" ? base.filter(isInstalledFile) : base;
 
     const filtered =
       q.length === 0
-        ? installedOnly
-        : installedOnly.filter((file) => {
+        ? base
+        : base.filter((file) => {
             return (
               file.name.toLowerCase().includes(q) ||
               file.source.toLowerCase().includes(q) ||
@@ -890,6 +897,11 @@ export function App() {
         setTab(TABS[(idx - 1 + TABS.length) % TABS.length]);
         return;
       }
+    }
+
+    // Settings tab: SettingsPanel handles its own input (up/down/enter/esc)
+    if (tab === "settings") {
+      return;
     }
 
     // Escape - go back
@@ -1859,6 +1871,10 @@ export function App() {
                 getItemKey={getSyncItemKey}
               />
             </>
+          )}
+
+          {tab === "settings" && (
+            <SettingsPanel />
           )}
         </Box>
       )}

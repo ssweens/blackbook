@@ -72,14 +72,17 @@ export function SyncList({
           // item.kind === "file"
           name = item.file.name;
           const missingCount = item.missingInstances.length;
-          const driftedCount = item.driftedInstances.length;
-          const conflictCount = item.file.instances.filter((i) => i.driftKind === "both-changed").length;
-          const pullbackCount = item.file.instances.filter((i) => i.driftKind === "target-changed").length;
+          const targetChangedCount = item.file.instances.filter((i) => i.driftKind === "target-changed").length;
+          const bothChangedCount = item.file.instances.filter((i) => i.driftKind === "both-changed").length;
+          const sourceChangedCount = item.file.instances.filter(
+            (i) => i.status === "drifted" && i.driftKind !== "target-changed" && i.driftKind !== "both-changed",
+          ).length;
+
           const parts: string[] = [];
           if (missingCount > 0) parts.push(`Missing: ${missingCount}`);
-          if (driftedCount > 0 && pullbackCount === 0 && conflictCount === 0) parts.push(`Drifted: ${driftedCount}`);
-          if (pullbackCount > 0) parts.push(`Pullback: ${pullbackCount}`);
-          if (conflictCount > 0) parts.push(`Conflict: ${conflictCount}`);
+          if (sourceChangedCount > 0) parts.push(`Source changed (sync): ${sourceChangedCount}`);
+          if (targetChangedCount > 0) parts.push(`Target changed (pullback): ${targetChangedCount}`);
+          if (bothChangedCount > 0) parts.push(`Both changed: ${bothChangedCount}`);
           statusLabel = parts.join(" · ");
         }
 
