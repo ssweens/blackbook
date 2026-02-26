@@ -126,8 +126,17 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [ ] Config with no matching tool instances shows empty state
 - [ ] Tool config dir invalid/empty shows error notification
 
+## Settings Tab
+- [ ] Settings tab displays all 4 settings (package_manager, source_repo, backup_retention, default_pullback)
+- [ ] Enum setting (package_manager) cycles through values on Enter
+- [ ] Boolean setting (default_pullback) toggles on Enter
+- [ ] Text setting (source_repo) enters edit mode on Enter, saves on Enter, cancels on Esc
+- [ ] Number setting (backup_retention) enters edit mode, validates range 1-100
+- [ ] Settings persist to config.yaml after change
+- [ ] Settings tab keyboard guard allows tab navigation but delegates up/down/enter to panel
+
 ## Gaps (Low Priority)
-- [ ] End-to-end TUI navigation across all tabs (discover → installed → tools → sync)
+- [ ] End-to-end TUI navigation across all tabs (discover → installed → tools → sync → settings)
 - [ ] Full asset lifecycle (add → drift → sync) end-to-end
 - [ ] Full config lifecycle (add → drift → sync) end-to-end
 - [ ] Marketplace add/remove persistence

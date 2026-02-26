@@ -627,6 +627,8 @@ function buildInitialYamlConfig(): BlackbookConfig {
   return {
     settings: {
       package_manager: "pnpm",
+      backup_retention: 3,
+      default_pullback: false,
     },
     marketplaces: { ...DEFAULT_INITIAL_MARKETPLACES },
     tools,
@@ -830,12 +832,8 @@ export function getAssetsRepoPath(): string | null {
 }
 
 export function getPackageManager(): PackageManager {
-  const config = loadConfig();
-  const packageManager = config.sync?.packageManager;
-  if (packageManager === "bun" || packageManager === "pnpm") {
-    return packageManager;
-  }
-  return "npm";
+  const { config } = loadYamlConfig();
+  return config.settings.package_manager;
 }
 
 /**

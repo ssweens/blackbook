@@ -17,7 +17,7 @@ afterEach(() => {
 
 function makeConfig(overrides: Partial<BlackbookConfig> = {}): BlackbookConfig {
   return {
-    settings: { package_manager: "pnpm", ...overrides.settings },
+    settings: { package_manager: "pnpm", backup_retention: 3, default_pullback: false, ...overrides.settings },
     marketplaces: overrides.marketplaces ?? {},
     tools: overrides.tools ?? {},
     files: overrides.files ?? [],
@@ -28,7 +28,7 @@ function makeConfig(overrides: Partial<BlackbookConfig> = {}): BlackbookConfig {
 describe("saveConfig", () => {
   it("writes valid YAML that can be re-loaded", () => {
     const config = makeConfig({
-      settings: { source_repo: "~/src/config", package_manager: "bun" },
+      settings: { source_repo: "~/src/config", package_manager: "bun", backup_retention: 3, default_pullback: false },
       marketplaces: { test: "https://example.com/marketplace.json" },
       tools: {
         "claude-code": [{ id: "default", name: "Claude", enabled: true, config_dir: "~/.claude" }],
@@ -59,7 +59,7 @@ settings:
     writeFileSync(TMP_YAML, initial);
 
     const config = makeConfig({
-      settings: { source_repo: "~/src/config", package_manager: "pnpm" },
+      settings: { source_repo: "~/src/config", package_manager: "pnpm", backup_retention: 3, default_pullback: false },
     });
     saveConfig(config, TMP_YAML);
 

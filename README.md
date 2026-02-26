@@ -20,12 +20,12 @@ Plugin manager for agentic coding tools built with React/Ink. Install skills, co
 - **Unified AGENTS.md/CLAUDE.md management** — Sync shared instruction files across tools with per-tool target overrides
 - **Config file syncing** — Sync tool-specific configs (settings, themes, keybindings) from a central repository
 - **Drift detection & diff view** — SHA256-based drift detection with unified diff viewing for changed files
-- **Reverse sync (pull back)** — Pull drifted config changes from deployed instances back to the source repo
+- **Reverse sync (pull back)** — Pull `target-changed` config changes from deployed instances back to the source repo
 - **Multi-file sync** — Directory and glob pattern support for syncing multiple files at once
 - **Unified plugin management** — Install skills, commands, agents, hooks, MCP/LSP servers across tools
 - **Marketplace support** — Browse and install from official and community marketplaces
 - **Pi packages** — Built-in npm marketplace for Pi coding agent extensions, themes, and custom tools
-- **TUI interface** — Interactive terminal UI with tabs for Sync, Tools, Discover, Installed, and Marketplaces
+- **TUI interface** — Interactive terminal UI with tabs for Sync, Tools, Discover, Installed, Marketplaces, and Settings
 - **Cross-tool sync** — Install plugins to multiple tools at once, detect incomplete installs
 - **Per-component control** — Disable individual skills, commands, or agents within a plugin
 
@@ -89,7 +89,7 @@ Blackbook opens on the **Sync** tab by default.
 | Enter | Select / open details |
 | Space | Install/uninstall selected plugin |
 | / | Focus search (Discover/Installed) |
-| d | View diff for drifted item (Sync tab) |
+| d | View diff for changed item (Sync tab) |
 | p | Pull back config changes to source (Diff view) |
 | R | Refresh current tab data |
 | Esc | Back from details or exit search |
@@ -100,7 +100,7 @@ Blackbook opens on the **Sync** tab by default.
 - **Discover/Installed**: `s` cycle sort (name/installed), `r` reverse sort, `R` refresh tab data (`d` opens diff for selected managed file in Installed)
 - **Marketplaces**: `u` update marketplace, `r` remove marketplace, `R` refresh all marketplaces/packages
 - **Tools**: `Enter` open detail, `i` install, `u` update, `d` uninstall, `Space` toggle enabled, `e` edit config dir, `R` refresh detection
-- **Sync**: `y` sync selected items (missing/drifted assets/configs/plugins and tool updates; press twice to confirm), `R` refresh sync inputs
+- **Sync**: `y` sync selected items (missing plus `source-changed` / `target-changed` / `both-changed` assets/configs/plugins and tool updates; press twice to confirm), `R` refresh sync inputs
 
 Blackbook also refreshes data when entering tabs (Discover, Installed, Marketplaces, Tools), throttled with a 30-second TTL per tab to avoid constant refetching/flicker while navigating. A loading indicator is shown across tabs (including Sync) while refresh is in progress.
 
@@ -122,6 +122,8 @@ On first launch, if `config.yaml` is missing, Blackbook bootstraps one from dete
 settings:
   source_repo: ~/src/playbook
   package_manager: pnpm     # npm | pnpm | bun
+  backup_retention: 3       # Number of backups to keep per file (1-100)
+  default_pullback: false   # Enable pullback for new file entries
 
 tools:
   claude-code:
@@ -252,9 +254,9 @@ For updates, Blackbook uses tool-native upgrade commands when available (e.g. `c
 
 Choose package manager for lifecycle commands in config (used by tools that install/update via npm/bun/pnpm):
 
-```toml
-[sync]
-package_manager = "npm"   # "npm" | "bun" | "pnpm"
+```yaml
+settings:
+  package_manager: pnpm   # npm | pnpm | bun
 ```
 
 Native command exceptions:
@@ -288,7 +290,7 @@ Downloaded plugins and HTTP cache are stored in:
 ├── plugins/           # Downloaded plugin sources
 ├── http_cache/        # Cached marketplace data
 ├── assets/            # Cached asset URL sources
-├── backups/           # File backups before overwrite (last 3 per file)
+├── backups/           # File backups before overwrite (configurable retention)
 └── state.json         # Three-way state tracking for pullback files
 ```
 

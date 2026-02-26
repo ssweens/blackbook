@@ -148,7 +148,7 @@ export interface PluginComponentConfig {
   disabledAgents: string[];
 }
 
-export type Tab = "discover" | "installed" | "marketplaces" | "tools" | "sync";
+export type Tab = "discover" | "installed" | "marketplaces" | "tools" | "sync" | "settings";
 
 export interface Notification {
   id: string;
