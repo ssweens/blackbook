@@ -902,6 +902,7 @@ export const useStore = create<Store>((set, get) => ({
               owner: `file:${fileEntry.name}`,
               stateKey,
               pullback: fileEntry.pullback,
+              backupRetention: config.settings.backup_retention,
             },
           }];
 
@@ -1149,7 +1150,7 @@ export const useStore = create<Store>((set, get) => ({
             return {
               label: `${item.file.name}:${i.toolId}:${i.instanceId}`,
               module: getSyncModule(sourcePath) as any,
-              params: { sourcePath, targetPath, owner: `file:${item.file.name}`, stateKey, pullback: item.file.pullback },
+              params: { sourcePath, targetPath, owner: `file:${item.file.name}`, stateKey, pullback: item.file.pullback, backupRetention: configResult.config.settings.backup_retention },
             };
           });
 
@@ -1409,6 +1410,10 @@ export const useStore = create<Store>((set, get) => ({
 
     try {
       const stateKey = buildStateKey(file.name, picked.toolId, picked.instanceId, picked.targetRelPath);
+      const configResult = loadYamlConfig();
+      const backupRetention = configResult.errors.length === 0
+        ? configResult.config.settings.backup_retention
+        : undefined;
 
       // Glob sources cannot be pulled back by swapping paths (the destination is a pattern).
       // Instead, let glob-copy interpret pullback=true as target→source.
@@ -1423,6 +1428,7 @@ export const useStore = create<Store>((set, get) => ({
               targetPath: picked.targetPath,
               owner: `file:${file.name}`,
               pullback: true,
+              backupRetention,
             },
           }
         : {
@@ -1434,6 +1440,7 @@ export const useStore = create<Store>((set, get) => ({
               owner: `file:${file.name}`,
               stateKey,
               pullback: true,
+              backupRetention,
             },
           };
 

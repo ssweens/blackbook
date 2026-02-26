@@ -14,6 +14,8 @@ export interface GlobCopyParams {
   owner: string;
   /** When true, copy from targetPath back into the directory containing sourcePath. */
   pullback?: boolean;
+  /** Number of backups to retain per file. */
+  backupRetention?: number;
 }
 
 function isGlobPath(pathValue: string): boolean {
@@ -116,7 +118,7 @@ export const globCopyModule: Module<GlobCopyParams> = {
   },
 
   async apply(params): Promise<ApplyResult> {
-    const { sourcePath, targetPath, owner, pullback } = params;
+    const { sourcePath, targetPath, owner, pullback, backupRetention } = params;
 
     if (!isGlobPath(sourcePath)) {
       return {
@@ -153,7 +155,7 @@ export const globCopyModule: Module<GlobCopyParams> = {
 
       // Backup before overwriting.
       createBackup(to, owner);
-      pruneBackups(owner);
+      pruneBackups(owner, backupRetention);
 
       // Ensure destination directory exists.
       mkdirSync(dirname(to), { recursive: true });

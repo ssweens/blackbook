@@ -16,6 +16,8 @@ export interface FileCopyParams {
   stateKey?: string;
   /** When true, this file supports pullback (target → source). */
   pullback?: boolean;
+  /** Number of backups to retain per file. */
+  backupRetention?: number;
 }
 
 function readTextSafe(path: string): string {
@@ -100,7 +102,7 @@ export const fileCopyModule: Module<FileCopyParams> = {
   },
 
   async apply(params): Promise<ApplyResult> {
-    const { sourcePath, targetPath, owner, stateKey } = params;
+    const { sourcePath, targetPath, owner, stateKey, backupRetention } = params;
 
     if (!existsSync(sourcePath)) {
       return { changed: false, message: `Source not found: ${sourcePath}`, error: `Source not found: ${sourcePath}` };
@@ -108,7 +110,7 @@ export const fileCopyModule: Module<FileCopyParams> = {
 
     // Create backup before overwriting
     const backup = createBackup(targetPath, owner);
-    pruneBackups(owner);
+    pruneBackups(owner, backupRetention);
 
     // Ensure target directory exists
     mkdirSync(dirname(targetPath), { recursive: true });
@@ -137,7 +139,7 @@ export const fileCopyModule: Module<FileCopyParams> = {
  * This is separate from the standard apply() which copies source → target.
  */
 export async function applyPullback(params: FileCopyParams): Promise<ApplyResult> {
-  const { sourcePath, targetPath, owner, stateKey } = params;
+  const { sourcePath, targetPath, owner, stateKey, backupRetention } = params;
 
   if (!existsSync(targetPath)) {
     return { changed: false, message: `Target not found: ${targetPath}`, error: `Target not found: ${targetPath}` };
@@ -145,7 +147,7 @@ export async function applyPullback(params: FileCopyParams): Promise<ApplyResult
 
   // Backup source before overwriting
   const backup = createBackup(sourcePath, owner);
-  pruneBackups(owner);
+  pruneBackups(owner, backupRetention);
 
   // Ensure source directory exists
   mkdirSync(dirname(sourcePath), { recursive: true });

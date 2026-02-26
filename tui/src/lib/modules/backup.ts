@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, cpSync, readdirSync, rmSync, statSync } from "fs
 import { join, basename } from "path";
 import { getCacheDir } from "../config/path.js";
 
-const MAX_BACKUPS_PER_FILE = 3;
+const DEFAULT_BACKUP_RETENTION = 3;
 
 function getBackupBaseDir(): string {
   return join(getCacheDir(), "backups");
@@ -31,7 +31,8 @@ export function createBackup(targetPath: string, owner: string): string | null {
   return backupPath;
 }
 
-export function pruneBackups(owner: string): void {
+export function pruneBackups(owner: string, retention?: number): void {
+  const limit = retention ?? DEFAULT_BACKUP_RETENTION;
   const ownerDir = join(getBackupBaseDir(), owner);
   if (!existsSync(ownerDir)) return;
 
@@ -44,7 +45,7 @@ export function pruneBackups(owner: string): void {
     .reverse(); // Newest first (ISO timestamps sort lexicographically)
 
   // Remove entries beyond retention limit
-  for (const entry of entries.slice(MAX_BACKUPS_PER_FILE)) {
+  for (const entry of entries.slice(limit)) {
     rmSync(join(ownerDir, entry), { recursive: true, force: true });
   }
 }

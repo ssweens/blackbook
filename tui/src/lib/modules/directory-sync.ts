@@ -8,6 +8,8 @@ export interface DirectorySyncParams {
   sourcePath: string;
   targetPath: string;
   owner: string;
+  /** Number of backups to retain per file. */
+  backupRetention?: number;
 }
 
 /** Recursively list all file paths relative to `dir`. */
@@ -78,7 +80,7 @@ export const directorySyncModule: Module<DirectorySyncParams> = {
 
     // Create backup before overwriting
     const backup = createBackup(targetPath, owner);
-    pruneBackups(owner);
+    pruneBackups(owner, params.backupRetention);
 
     // Recursive copy (native node:fs)
     mkdirSync(targetPath, { recursive: true });

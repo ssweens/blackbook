@@ -77,8 +77,12 @@ export function applyCleanup(orphans: OrphanedFile[]): CleanupApplyResult {
     try {
       if (existsSync(targetPath)) {
         // Backup before removal
+        const configResult = loadConfig();
+        const retention = configResult.errors.length === 0
+          ? configResult.config.settings.backup_retention
+          : undefined;
         createBackup(targetPath, `cleanup:${orphan.fileName}`);
-        pruneBackups(`cleanup:${orphan.fileName}`);
+        pruneBackups(`cleanup:${orphan.fileName}`, retention);
         unlinkSync(targetPath);
       }
 
