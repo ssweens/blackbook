@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-02-25
+
+### Added
+- Settings tab scaffolding in the TUI, including a `SettingsPanel` for editing package manager, source repo, backup retention, and default pullback settings.
+- Configurable backup retention (`settings.backup_retention`) applied across file sync modules (file copy, directory sync, glob sync, cleanup, and pullback flows).
+
+### Changed
+- Sync/installed status wording now uses explicit drift categories: `source-changed` (sync), `target-changed` (pullback), and `both-changed`.
+- Installed view now shows all managed file entries (including missing ones), matching Sync tab visibility.
+
+### Fixed
+- Reduced ambiguity in sync UI labels by replacing generic "drifted" wording with change-state-specific status labels.
+
 ## [0.13.0] - 2026-02-12
 
 ### Added
@@ -331,7 +344,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Symlink handling for plugin assets
 
-[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/ssweens/blackbook/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/ssweens/blackbook/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/ssweens/blackbook/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/ssweens/blackbook/compare/v0.10.1...v0.12.0
