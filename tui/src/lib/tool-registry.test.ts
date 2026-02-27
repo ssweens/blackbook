@@ -22,6 +22,10 @@ describe("tool registry", () => {
     const opencode = TOOL_REGISTRY.opencode;
     expect(opencode.binaryName).toBe("opencode");
     expect(opencode.npmPackage).toBe("opencode-ai");
+
+    const codex = TOOL_REGISTRY["openai-codex"];
+    expect(codex.lifecycle?.update.strategy).toBe("package-manager");
+    expect(codex.lifecycle?.migration_cleanup.length).toBeGreaterThan(0);
   });
 
   it("returns null for unknown tools", () => {

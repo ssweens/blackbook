@@ -20,3 +20,13 @@ components:
     strategy: symlink
 config_files: []
 syncable: true
+lifecycle:
+  install:
+    strategy: package-manager
+  update:
+    strategy: native
+    command:
+      cmd: amp
+      args: [update]
+  uninstall:
+    strategy: package-manager

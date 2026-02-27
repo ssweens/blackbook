@@ -18,7 +18,7 @@ describe("loadConfig (YAML)", () => {
   it("returns defaults for missing file", () => {
     const result = loadConfig(join(TMP_DIR, "nonexistent.yaml"));
     expect(result.errors).toHaveLength(0);
-    expect(result.config.settings.package_manager).toBe("pnpm");
+    expect(result.config.settings.package_manager).toBe("npm");
     expect(result.config.files).toEqual([]);
   });
 
@@ -80,7 +80,7 @@ settings:
     writeFileSync(TMP_YAML, "");
     const result = loadConfig(TMP_YAML);
     expect(result.errors).toHaveLength(0);
-    expect(result.config.settings.package_manager).toBe("pnpm");
+    expect(result.config.settings.package_manager).toBe("npm");
   });
 
   it("handles YAML file with only comments", () => {

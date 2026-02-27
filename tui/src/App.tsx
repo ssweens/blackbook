@@ -37,8 +37,7 @@ import { PiPackageDetail, getPiPackageActions } from "./components/PiPackageDeta
 import { ComponentManager, getComponentItems } from "./components/ComponentManager.js";
 import { SettingsPanel } from "./components/SettingsPanel.js";
 import { getPluginToolStatus, togglePluginComponent } from "./lib/plugin-status.js";
-import { buildInstallCommand, buildUpdateCommand, buildUninstallCommand } from "./lib/tool-lifecycle.js";
-import { getToolRegistryEntry } from "./lib/tool-registry.js";
+import { getToolLifecycleCommand, detectInstallMethodMismatch } from "./lib/tool-lifecycle.js";
 import { getPackageManager } from "./lib/config.js";
 import { setupSourceRepository, shouldShowSourceSetupWizard, markSourceSetupWizardSeen } from "./lib/source-setup.js";
 import type { Tab, SyncPreviewItem, Plugin, PiPackage, PiMarketplace, DiffInstanceRef, DiscoverSection, DiscoverSubView, ManagedToolRow, FileStatus, Marketplace } from "./lib/types.js";
@@ -133,6 +132,8 @@ export function App() {
   const [detailToolKey, setDetailToolKey] = useState<string | null>(null);
   const [detailFile, setDetailFile] = useState<FileStatus | null>(null);
   const [toolModalAction, setToolModalAction] = useState<ToolModalAction | null>(null);
+  const [toolModalWarning, setToolModalWarning] = useState<string | null>(null);
+  const [toolModalMigrate, setToolModalMigrate] = useState(false);
   const [toolModalRunning, setToolModalRunning] = useState(false);
   const [toolModalDone, setToolModalDone] = useState(false);
   const [toolModalSuccess, setToolModalSuccess] = useState(false);
@@ -687,13 +688,54 @@ export function App() {
     [toolDetectionPending]
   );
 
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!toolModalAction || !activeToolForModal || toolModalAction === "uninstall") {
+      setToolModalWarning(null);
+      return;
+    }
+
+    const packageManager = getPackageManager();
+    const binaryPath = toolDetection[activeToolForModal.toolId]?.binaryPath ?? null;
+
+    void detectInstallMethodMismatch(activeToolForModal.toolId, packageManager, binaryPath)
+      .then((mismatch) => {
+        if (!cancelled) {
+          setToolModalWarning(mismatch?.message ?? null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setToolModalWarning(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [toolModalAction, activeToolForModal, toolDetection]);
+
   const toolsHint = useMemo(() => {
     if (tab !== "tools") return undefined;
     if (toolActionInProgress) return "(Tool action running... Esc to cancel)";
     if (pendingToolDetectionCount > 0) {
       return `(Checking tool statuses... ${pendingToolDetectionCount} remaining · R refresh)`;
     }
+
+    const supportsMigration = (detection: typeof toolDetection[string] | undefined) => {
+      const path = detection?.binaryPath;
+      if (!path || !detection?.installed) return false;
+      const detectedMethod =
+        path.startsWith("/opt/homebrew/") || path.startsWith("/usr/local/") ? "brew" : "unknown";
+      return detectedMethod === "brew";
+    };
+
     if (detailTool) {
+      const detection = toolDetection[detailTool.toolId];
+      if (supportsMigration(detection)) {
+        return "i Install · u Update · d Uninstall · m Migrate · e Edit · Space Toggle · R Refresh · Esc Back";
+      }
       return "i Install · u Update · d Uninstall · e Edit · Space Toggle · R Refresh · Esc Back";
     }
 
@@ -704,6 +746,9 @@ export function App() {
     const detection = toolDetection[selectedManagedTool.toolId];
     if (!detection?.installed) {
       return "Enter detail · i Install · e Edit · Space Toggle · R refresh · q quit";
+    }
+    if (supportsMigration(detection)) {
+      return "Enter detail · u Update · d Uninstall · m Migrate · e Edit · Space Toggle · R refresh · q quit";
     }
     if (detection.hasUpdate) {
       return "Enter detail · u Update · d Uninstall · e Edit · Space Toggle · R refresh · q quit";
@@ -819,7 +864,20 @@ export function App() {
   useInput((input, key) => {
     if (toolModalAction) {
       if (toolModalDone) {
+        if (!toolModalSuccess && (input === "m" || input === "M") && toolModalWarning) {
+          setToolModalMigrate((current) => !current);
+          return;
+        }
+
+        if (!toolModalSuccess && key.return && activeToolForModal) {
+          setToolModalDone(false);
+          void runToolAction(activeToolForModal, toolModalAction, toolModalMigrate);
+          return;
+        }
+
         setToolModalAction(null);
+        setToolModalWarning(null);
+        setToolModalMigrate(false);
         setToolModalDone(false);
         setToolModalSuccess(false);
         return;
@@ -834,11 +892,18 @@ export function App() {
 
       if (key.escape) {
         setToolModalAction(null);
+        setToolModalWarning(null);
+        setToolModalMigrate(false);
+        return;
+      }
+
+      if ((input === "m" || input === "M") && toolModalWarning) {
+        setToolModalMigrate((current) => !current);
         return;
       }
 
       if (key.return && activeToolForModal) {
-        void runToolAction(activeToolForModal, toolModalAction);
+        void runToolAction(activeToolForModal, toolModalAction, toolModalMigrate);
       }
       return;
     }
@@ -923,14 +988,14 @@ export function App() {
 
     // Left/Right arrows for main tab navigation (blocked when overlays are open)
     if (key.rightArrow) {
-      if (!detailPlugin && !detailFile && !detailMarketplace && !detailPiMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary && !discoverSubView) {
+      if (!detailPlugin && !detailFile && !detailMarketplace && !detailPiMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary) {
         const idx = TABS.indexOf(tab);
         setTab(TABS[(idx + 1) % TABS.length]);
         return;
       }
     }
     if (key.leftArrow) {
-      if (!detailPlugin && !detailFile && !detailMarketplace && !detailPiMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary && !discoverSubView) {
+      if (!detailPlugin && !detailFile && !detailMarketplace && !detailPiMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary) {
         const idx = TABS.indexOf(tab);
         setTab(TABS[(idx - 1 + TABS.length) % TABS.length]);
         return;
@@ -1275,6 +1340,8 @@ export function App() {
 
       if (input === "i" && tool && (!detection || !detection.installed)) {
         setToolModalAction("install");
+        setToolModalWarning(null);
+        setToolModalMigrate(false);
         setToolModalDone(false);
         setToolModalSuccess(false);
         return;
@@ -1282,6 +1349,8 @@ export function App() {
 
       if (input === "u" && tool && detection?.installed && detection.hasUpdate) {
         setToolModalAction("update");
+        setToolModalWarning(null);
+        setToolModalMigrate(false);
         setToolModalDone(false);
         setToolModalSuccess(false);
         return;
@@ -1289,8 +1358,25 @@ export function App() {
 
       if (input === "d" && tool && detection?.installed) {
         setToolModalAction("uninstall");
+        setToolModalWarning(null);
+        setToolModalMigrate(false);
         setToolModalDone(false);
         setToolModalSuccess(false);
+        return;
+      }
+
+      if (input === "m" && tool && detection?.installed) {
+        const path = detection.binaryPath || "";
+        const detectedMethod =
+          path.startsWith("/opt/homebrew/") || path.startsWith("/usr/local/") ? "brew" : "unknown";
+        const canMigrate = detectedMethod === "brew";
+        if (canMigrate) {
+          setToolModalAction("update");
+          setToolModalWarning(null);
+          setToolModalMigrate(true);
+          setToolModalDone(false);
+          setToolModalSuccess(false);
+        }
         return;
       }
 
@@ -1568,38 +1654,25 @@ export function App() {
   };
 
   const getToolActionCommand = (tool: ManagedToolRow, action: ToolModalAction): string => {
-    const registryEntry = getToolRegistryEntry(tool.toolId);
-    if (!registryEntry) {
-      return "Unknown tool";
-    }
     const packageManager = getPackageManager();
-    const command =
-      action === "install"
-        ? tool.toolId === "claude-code"
-          ? { cmd: "bash", args: ["-lc", "curl -fsSL https://claude.ai/install.sh | bash"] }
-          : buildInstallCommand(packageManager, registryEntry.npmPackage)
-        : action === "update"
-          ? tool.toolId === "claude-code"
-            ? { cmd: "claude", args: ["update"] }
-            : tool.toolId === "amp-code"
-              ? { cmd: "amp", args: ["update"] }
-              : tool.toolId === "opencode"
-                ? { cmd: "opencode", args: ["upgrade"] }
-                : buildUpdateCommand(packageManager, registryEntry.npmPackage)
-          : buildUninstallCommand(packageManager, registryEntry.npmPackage);
-
-    return `${command.cmd} ${command.args.join(" ")}`;
+    try {
+      const command = getToolLifecycleCommand(tool.toolId, action, packageManager);
+      if (!command) return "Unknown tool";
+      return `${command.cmd} ${command.args.join(" ")}`;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
   };
 
-  const runToolAction = async (tool: ManagedToolRow, action: ToolModalAction) => {
+  const runToolAction = async (tool: ManagedToolRow, action: ToolModalAction, migrate = false) => {
     setToolModalRunning(true);
     setToolModalDone(false);
 
     const success =
       action === "install"
-        ? await installToolAction(tool.toolId)
+        ? await installToolAction(tool.toolId, { migrate })
         : action === "update"
-          ? await updateToolAction(tool.toolId)
+          ? await updateToolAction(tool.toolId, { migrate })
           : await uninstallToolAction(tool.toolId);
 
     setToolModalRunning(false);
@@ -1704,6 +1777,9 @@ export function App() {
           toolName={activeToolForModal.displayName}
           action={toolModalAction}
           command={getToolActionCommand(activeToolForModal, toolModalAction)}
+          warning={toolModalWarning}
+          preferredPackageManager={getPackageManager()}
+          migrateSelected={toolModalMigrate}
           inProgress={toolModalRunning || toolActionInProgress === activeToolForModal.toolId}
           done={toolModalDone}
           success={toolModalSuccess}

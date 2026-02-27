@@ -1,7 +1,10 @@
 import { spawn } from "child_process";
 import { execFile } from "child_process";
+import { existsSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 import { promisify } from "util";
-import { getToolRegistryEntry } from "./tool-registry.js";
+import { getToolRegistryEntry, type ToolRegistryEntry } from "./tool-registry.js";
 import type { PackageManager } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -13,6 +16,8 @@ export type ProgressEvent =
   | { type: "timeout"; timeoutMs: number }
   | { type: "cancelled" }
   | { type: "error"; message: string };
+
+export type ToolLifecycleAction = "install" | "update" | "uninstall";
 
 export function buildInstallCommand(pm: PackageManager, pkg: string): { cmd: string; args: string[] } {
   if (pm === "npm") return { cmd: "npm", args: ["install", "-g", pkg] };
@@ -41,32 +46,132 @@ async function ensureCommandAvailable(command: string): Promise<boolean> {
   }
 }
 
-function buildInstallCommandForTool(
-  toolId: string,
-  packageManager: PackageManager,
-  npmPackage: string
+function resolveLifecycleCommand(
+  entry: ToolRegistryEntry,
+  action: ToolLifecycleAction,
+  packageManager: PackageManager
 ): { cmd: string; args: string[] } {
-  if (toolId === "claude-code") {
-    return { cmd: "bash", args: ["-lc", "curl -fsSL https://claude.ai/install.sh | bash"] };
+  const lifecycleAction = entry.lifecycle?.[action];
+
+  if (lifecycleAction?.strategy === "native") {
+    if (!lifecycleAction.command) {
+      throw new Error(`${entry.toolId} lifecycle.${action} is native but no command is configured`);
+    }
+    return {
+      cmd: lifecycleAction.command.cmd,
+      args: lifecycleAction.command.args,
+    };
   }
-  return buildInstallCommand(packageManager, npmPackage);
+
+  if (action === "install") {
+    return buildInstallCommand(packageManager, entry.npmPackage);
+  }
+  if (action === "update") {
+    return buildUpdateCommand(packageManager, entry.npmPackage);
+  }
+  return buildUninstallCommand(packageManager, entry.npmPackage);
 }
 
-function buildUpdateCommandForTool(
+export function getToolLifecycleCommand(
   toolId: string,
-  packageManager: PackageManager,
-  npmPackage: string
-): { cmd: string; args: string[] } {
-  if (toolId === "claude-code") {
-    return { cmd: "claude", args: ["update"] };
+  action: ToolLifecycleAction,
+  packageManager: PackageManager
+): { cmd: string; args: string[] } | null {
+  const registryEntry = getToolRegistryEntry(toolId);
+  if (!registryEntry) return null;
+  try {
+    return resolveLifecycleCommand(registryEntry, action, packageManager);
+  } catch {
+    return null;
   }
-  if (toolId === "amp-code") {
-    return { cmd: "amp", args: ["update"] };
+}
+
+export type InstallMethod = PackageManager | "brew" | "unknown";
+
+export interface InstallMethodMismatch {
+  preferred: PackageManager;
+  detectedMethods: InstallMethod[];
+  message: string;
+}
+
+async function isInstalledWithNpm(pkg: string): Promise<boolean> {
+  try {
+    const result = await execFileAsync("npm", ["ls", "-g", pkg, "--depth=0", "--parseable"], { timeout: 15000 });
+    return (result.stdout || "").trim().length > 0;
+  } catch {
+    return false;
   }
-  if (toolId === "opencode") {
-    return { cmd: "opencode", args: ["upgrade"] };
+}
+
+async function isInstalledWithPnpm(pkg: string): Promise<boolean> {
+  try {
+    const result = await execFileAsync("pnpm", ["ls", "-g", pkg, "--depth=0", "--parseable"], { timeout: 15000 });
+    return (result.stdout || "").trim().length > 0;
+  } catch {
+    return false;
   }
-  return buildUpdateCommand(packageManager, npmPackage);
+}
+
+function isInstalledWithBun(pkg: string): boolean {
+  const packagePath = join(homedir(), ".bun", "install", "global", "node_modules", ...pkg.split("/"));
+  return existsSync(packagePath);
+}
+
+async function detectPackageManagersForTool(entry: ToolRegistryEntry): Promise<PackageManager[]> {
+  const checks = await Promise.all([
+    isInstalledWithNpm(entry.npmPackage),
+    isInstalledWithPnpm(entry.npmPackage),
+  ]);
+
+  const managers: PackageManager[] = [];
+  if (checks[0]) managers.push("npm");
+  if (checks[1]) managers.push("pnpm");
+  if (isInstalledWithBun(entry.npmPackage)) managers.push("bun");
+  return managers;
+}
+
+function detectBinaryInstallMethod(binaryPath: string | null | undefined): InstallMethod | null {
+  if (!binaryPath) return null;
+  if (binaryPath.startsWith("/opt/homebrew/") || binaryPath.startsWith("/usr/local/")) {
+    return "brew";
+  }
+  return "unknown";
+}
+
+export async function detectInstallMethodMismatch(
+  toolId: string,
+  preferredPackageManager: PackageManager,
+  binaryPath: string | null | undefined
+): Promise<InstallMethodMismatch | null> {
+  const entry = getToolRegistryEntry(toolId);
+  if (!entry) return null;
+
+  const installStrategy = entry.lifecycle?.install?.strategy ?? "package-manager";
+  if (installStrategy !== "package-manager") {
+    return null;
+  }
+
+  const detectedPackageManagers = await detectPackageManagersForTool(entry);
+  const binaryMethod = detectBinaryInstallMethod(binaryPath);
+
+  const detectedMethods: InstallMethod[] = [
+    ...(binaryMethod ? [binaryMethod] : []),
+    ...detectedPackageManagers,
+  ].filter((value, index, arr) => arr.indexOf(value) === index);
+
+  if (detectedMethods.length === 0) {
+    return null;
+  }
+
+  if (detectedMethods.length === 1 && detectedMethods[0] === preferredPackageManager) {
+    return null;
+  }
+
+  return {
+    preferred: preferredPackageManager,
+    detectedMethods,
+    message: `Detected current install method: ${detectedMethods.join(", ")}. Preferred method is ${preferredPackageManager}. Press m to migrate methods, or Enter to continue without migration.`,
+  };
 }
 
 async function runLifecycleCommand(
@@ -77,7 +182,7 @@ async function runLifecycleCommand(
   const timeoutMs = options?.timeoutMs ?? 300000;
 
   return await new Promise<boolean>((resolve) => {
-    const child = spawn(command.cmd, command.args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command.cmd, command.args, { stdio: ["inherit", "pipe", "pipe"] });
     let finished = false;
     let timedOut = false;
     let cancelled = false;
@@ -142,12 +247,17 @@ async function runLifecycleCommand(
   });
 }
 
+export interface ToolLifecycleOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
 async function runToolCommand(
   toolId: string,
   packageManager: PackageManager,
-  commandBuilder: (toolId: string, pm: PackageManager, pkg: string) => { cmd: string; args: string[] },
+  action: ToolLifecycleAction,
   onProgress: (event: ProgressEvent) => void,
-  options?: { timeoutMs?: number; signal?: AbortSignal }
+  options?: ToolLifecycleOptions
 ): Promise<boolean> {
   const registryEntry = getToolRegistryEntry(toolId);
   if (!registryEntry) {
@@ -155,7 +265,14 @@ async function runToolCommand(
     return false;
   }
 
-  const command = commandBuilder(toolId, packageManager, registryEntry.npmPackage);
+  let command: { cmd: string; args: string[] };
+  try {
+    command = resolveLifecycleCommand(registryEntry, action, packageManager);
+  } catch (error) {
+    onProgress({ type: "error", message: error instanceof Error ? error.message : String(error) });
+    return false;
+  }
+
   const commandAvailable = await ensureCommandAvailable(command.cmd);
   if (!commandAvailable) {
     onProgress({ type: "error", message: `Command not installed: ${command.cmd}` });
@@ -165,29 +282,64 @@ async function runToolCommand(
   return runLifecycleCommand(command, onProgress, options);
 }
 
+async function runBestEffortCommand(
+  command: { cmd: string; args: string[] },
+  onProgress: (event: ProgressEvent) => void,
+  options?: ToolLifecycleOptions
+): Promise<void> {
+  const available = await ensureCommandAvailable(command.cmd);
+  if (!available) {
+    return;
+  }
+
+  onProgress({ type: "stdout", data: `cleanup: ${command.cmd} ${command.args.join(" ")}` });
+  await runLifecycleCommand(command, onProgress, options);
+}
+
+export async function reinstallTool(
+  toolId: string,
+  packageManager: PackageManager,
+  onProgress: (event: ProgressEvent) => void,
+  options?: ToolLifecycleOptions
+): Promise<boolean> {
+  const registryEntry = getToolRegistryEntry(toolId);
+  if (!registryEntry) {
+    onProgress({ type: "error", message: `Unknown tool: ${toolId}` });
+    return false;
+  }
+
+  const cleanupCommands = registryEntry.lifecycle?.migration_cleanup ?? [];
+  for (const cleanupCommand of cleanupCommands) {
+    await runBestEffortCommand(cleanupCommand, onProgress, options);
+  }
+
+  await runToolCommand(toolId, packageManager, "uninstall", onProgress, options);
+  return runToolCommand(toolId, packageManager, "install", onProgress, options);
+}
+
 export async function installTool(
   toolId: string,
   packageManager: PackageManager,
   onProgress: (event: ProgressEvent) => void,
-  options?: { timeoutMs?: number; signal?: AbortSignal }
+  options?: ToolLifecycleOptions
 ): Promise<boolean> {
-  return runToolCommand(toolId, packageManager, (id, pm, pkg) => buildInstallCommandForTool(id, pm, pkg), onProgress, options);
+  return runToolCommand(toolId, packageManager, "install", onProgress, options);
 }
 
 export async function updateTool(
   toolId: string,
   packageManager: PackageManager,
   onProgress: (event: ProgressEvent) => void,
-  options?: { timeoutMs?: number; signal?: AbortSignal }
+  options?: ToolLifecycleOptions
 ): Promise<boolean> {
-  return runToolCommand(toolId, packageManager, (id, pm, pkg) => buildUpdateCommandForTool(id, pm, pkg), onProgress, options);
+  return runToolCommand(toolId, packageManager, "update", onProgress, options);
 }
 
 export async function uninstallTool(
   toolId: string,
   packageManager: PackageManager,
   onProgress: (event: ProgressEvent) => void,
-  options?: { timeoutMs?: number; signal?: AbortSignal }
+  options?: ToolLifecycleOptions
 ): Promise<boolean> {
-  return runToolCommand(toolId, packageManager, (_toolId, pm, pkg) => buildUninstallCommand(pm, pkg), onProgress, options);
+  return runToolCommand(toolId, packageManager, "uninstall", onProgress, options);
 }

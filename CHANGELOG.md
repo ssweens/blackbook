@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] - 2026-02-26
+
+### Changed
+- Tool install/update migration UX now requires explicit user choice in the action modal (`m` to toggle migration) instead of automatic fallback migration.
+- Tool detail view now surfaces detected install method and a clear migration action label (`Migrate to preferred install tool: <manager>`).
+- Tool lifecycle commands now run with inherited stdin to avoid native updater failures such as `stdin is not a terminal`.
+- Lifecycle command preview is shown consistently in the tool action modal.
+
+### Fixed
+- Discover tab can now be selected reliably when navigating between tabs after sub-view state changes.
+- Install method mismatch detection now uses observed install signals (brew path + npm/pnpm/bun globals) instead of assuming preferred manager equals current manager.
+- Codex/tool migration messaging now explains current vs preferred method and defers migration until user explicitly opts in.
+- Default package manager for new configs is now `npm` (was `pnpm`).
+
 ## [0.15.0] - 2026-02-26
 
 ### Added

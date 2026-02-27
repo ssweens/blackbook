@@ -18,6 +18,7 @@ import {
   installTool,
   updateTool,
   uninstallTool,
+  reinstallTool,
 } from "./tool-lifecycle.js";
 
 function mockWhichAll() {
@@ -134,6 +135,69 @@ describe("tool-lifecycle operations", () => {
     expect(claudeOk).toBe(true);
     expect(spawnMock).toHaveBeenNthCalledWith(1, "amp", ["update"], expect.any(Object));
     expect(spawnMock).toHaveBeenNthCalledWith(2, "claude", ["update"], expect.any(Object));
+  });
+
+  it("uses configured package-manager update command for codex", async () => {
+    mockWhichAll();
+    const proc = createFakeProcess();
+    spawnMock.mockReturnValue(proc);
+
+    const promise = updateTool("openai-codex", "pnpm", () => {
+      // no-op
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    proc.emit("close", 0);
+    const ok = await promise;
+
+    expect(ok).toBe(true);
+    expect(spawnMock).toHaveBeenCalledWith("pnpm", ["update", "-g", "@openai/codex"], expect.any(Object));
+  });
+
+  it("reinstall runs cleanup commands then uninstall/install", async () => {
+    mockWhichAll();
+
+    const cleanup1 = createFakeProcess();
+    const cleanup2 = createFakeProcess();
+    const cleanup3 = createFakeProcess();
+    const cleanup4 = createFakeProcess();
+    const uninstallProc = createFakeProcess();
+    const installProc = createFakeProcess();
+
+    spawnMock
+      .mockReturnValueOnce(cleanup1)
+      .mockReturnValueOnce(cleanup2)
+      .mockReturnValueOnce(cleanup3)
+      .mockReturnValueOnce(cleanup4)
+      .mockReturnValueOnce(uninstallProc)
+      .mockReturnValueOnce(installProc);
+
+    const promise = reinstallTool("openai-codex", "pnpm", () => {
+      // no-op
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    cleanup1.emit("close", 0);
+    await new Promise((resolve) => setImmediate(resolve));
+    cleanup2.emit("close", 0);
+    await new Promise((resolve) => setImmediate(resolve));
+    cleanup3.emit("close", 0);
+    await new Promise((resolve) => setImmediate(resolve));
+    cleanup4.emit("close", 0);
+    await new Promise((resolve) => setImmediate(resolve));
+    uninstallProc.emit("close", 0);
+    await new Promise((resolve) => setImmediate(resolve));
+    installProc.emit("close", 0);
+
+    const ok = await promise;
+
+    expect(ok).toBe(true);
+    expect(spawnMock).toHaveBeenNthCalledWith(1, "brew", ["uninstall", "codex"], expect.any(Object));
+    expect(spawnMock).toHaveBeenNthCalledWith(2, "npm", ["uninstall", "-g", "@openai/codex"], expect.any(Object));
+    expect(spawnMock).toHaveBeenNthCalledWith(3, "pnpm", ["remove", "-g", "@openai/codex"], expect.any(Object));
+    expect(spawnMock).toHaveBeenNthCalledWith(4, "bun", ["remove", "-g", "@openai/codex"], expect.any(Object));
+    expect(spawnMock).toHaveBeenNthCalledWith(5, "pnpm", ["remove", "-g", "@openai/codex"], expect.any(Object));
+    expect(spawnMock).toHaveBeenNthCalledWith(6, "pnpm", ["add", "-g", "@openai/codex"], expect.any(Object));
   });
 
   it("supports cancellation", async () => {

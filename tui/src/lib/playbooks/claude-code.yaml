@@ -28,3 +28,18 @@ config_files:
     format: markdown
     pullback: true
 syncable: true
+lifecycle:
+  install:
+    strategy: native
+    command:
+      cmd: bash
+      args:
+        - -lc
+        - curl -fsSL https://claude.ai/install.sh | bash
+  update:
+    strategy: native
+    command:
+      cmd: claude
+      args: [update]
+  uninstall:
+    strategy: package-manager

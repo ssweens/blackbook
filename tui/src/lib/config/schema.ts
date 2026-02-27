@@ -34,7 +34,7 @@ export type ToolInstanceConfig = z.infer<typeof ToolInstanceSchema>;
 
 export const SettingsSchema = z.object({
   source_repo: z.string().optional(),
-  package_manager: z.enum(["npm", "pnpm", "bun"]).default("pnpm"),
+  package_manager: z.enum(["npm", "pnpm", "bun"]).default("npm"),
   backup_retention: z.number().int().min(1).max(100).default(3),
   default_pullback: z.boolean().default(false),
 });

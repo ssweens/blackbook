@@ -53,8 +53,8 @@ import type { OrchestratorStep } from "./modules/orchestrator.js";
 import { fetchMarketplace } from "./marketplace.js";
 import { getManagedToolRows } from "./tool-view.js";
 import { detectTool } from "./tool-detect.js";
-import { TOOL_REGISTRY } from "./tool-registry.js";
-import { installTool, uninstallTool, updateTool, type ProgressEvent } from "./tool-lifecycle.js";
+import { TOOL_REGISTRY, getToolRegistryEntry } from "./tool-registry.js";
+import { installTool, uninstallTool, updateTool, reinstallTool, detectInstallMethodMismatch, type ProgressEvent } from "./tool-lifecycle.js";
 
 import {
   getAllInstalledPlugins,
@@ -76,8 +76,8 @@ interface Actions {
   loadTools: () => void;
   refreshManagedTools: () => void;
   refreshToolDetection: () => Promise<void>;
-  installToolAction: (toolId: string) => Promise<boolean>;
-  updateToolAction: (toolId: string) => Promise<boolean>;
+  installToolAction: (toolId: string, options?: { migrate?: boolean }) => Promise<boolean>;
+  updateToolAction: (toolId: string, options?: { migrate?: boolean }) => Promise<boolean>;
   uninstallToolAction: (toolId: string) => Promise<boolean>;
   cancelToolAction: () => void;
   refreshAll: () => Promise<void>;
@@ -235,10 +235,6 @@ function buildToolSyncPreview(
 const TOOL_OUTPUT_MAX_LINES = 200;
 let toolActionAbortController: AbortController | null = null;
 
-function formatDetectedVersion(version: string | null): string {
-  return version ? `v${version}` : "unknown";
-}
-
 /** Strip ANSI escape sequences so Ink doesn't re-interpret raw codes. */
 function stripAnsi(str: string): string {
   // eslint-disable-next-line no-control-regex
@@ -333,6 +329,8 @@ export const useStore = create<Store>((set, get) => ({
             search: "",
             detailPlugin: null,
             detailMarketplace: null,
+            discoverSubView: null,
+            currentSection: "plugins",
           }
     ),
   setSearch: (search) => set({ search, selectedIndex: 0 }),
@@ -431,39 +429,48 @@ export const useStore = create<Store>((set, get) => ({
     );
   },
 
-  installToolAction: async (toolId) => {
+  installToolAction: async (toolId, options) => {
     const { notify } = get();
     if (get().toolActionInProgress) {
       notify("Another tool action is already running.", "warning");
       return false;
     }
 
+    const before = get().toolDetection[toolId];
+
     toolActionAbortController = new AbortController();
     set({ toolActionInProgress: toolId, toolActionOutput: [] });
 
+    const onProgress = (event: ProgressEvent) => {
+      if (event.type === "stdout" || event.type === "stderr") {
+        set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, event.data) }));
+        return;
+      }
+      if (event.type === "error") {
+        set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, event.message) }));
+        return;
+      }
+      if (event.type === "timeout") {
+        set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, `Timed out after ${event.timeoutMs}ms`) }));
+        return;
+      }
+      if (event.type === "cancelled") {
+        set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, "Cancelled by user") }));
+      }
+    };
+
     const packageManager = getPackageManager();
-    const success = await installTool(
-      toolId,
-      packageManager,
-      (event: ProgressEvent) => {
-        if (event.type === "stdout" || event.type === "stderr") {
-          set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, event.data) }));
-          return;
-        }
-        if (event.type === "error") {
-          set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, event.message) }));
-          return;
-        }
-        if (event.type === "timeout") {
-          set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, `Timed out after ${event.timeoutMs}ms`) }));
-          return;
-        }
-        if (event.type === "cancelled") {
-          set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, "Cancelled by user") }));
-        }
-      },
-      { signal: toolActionAbortController.signal }
-    );
+    const mismatch = await detectInstallMethodMismatch(toolId, packageManager, before?.binaryPath);
+    if (mismatch) {
+      set((state) => ({
+        toolActionOutput: appendToolOutput(state.toolActionOutput, mismatch.message),
+      }));
+    }
+
+    const shouldMigrate = options?.migrate === true;
+    const success = shouldMigrate
+      ? await reinstallTool(toolId, packageManager, onProgress, { signal: toolActionAbortController.signal })
+      : await installTool(toolId, packageManager, onProgress, { signal: toolActionAbortController.signal });
 
     toolActionAbortController = null;
     set({ toolActionInProgress: null });
@@ -482,7 +489,7 @@ export const useStore = create<Store>((set, get) => ({
     return success;
   },
 
-  updateToolAction: async (toolId) => {
+  updateToolAction: async (toolId, options) => {
     const { notify } = get();
     if (get().toolActionInProgress) {
       notify("Another tool action is already running.", "warning");
@@ -494,38 +501,53 @@ export const useStore = create<Store>((set, get) => ({
     toolActionAbortController = new AbortController();
     set({ toolActionInProgress: toolId, toolActionOutput: [] });
 
+    const onProgress = (event: ProgressEvent) => {
+      if (event.type === "stdout" || event.type === "stderr") {
+        set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, event.data) }));
+        return;
+      }
+      if (event.type === "error") {
+        set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, event.message) }));
+        return;
+      }
+      if (event.type === "timeout") {
+        set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, `Timed out after ${event.timeoutMs}ms`) }));
+        return;
+      }
+      if (event.type === "cancelled") {
+        set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, "Cancelled by user") }));
+      }
+    };
+
     const packageManager = getPackageManager();
-    const success = await updateTool(
-      toolId,
-      packageManager,
-      (event: ProgressEvent) => {
-        if (event.type === "stdout" || event.type === "stderr") {
-          set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, event.data) }));
-          return;
-        }
-        if (event.type === "error") {
-          set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, event.message) }));
-          return;
-        }
-        if (event.type === "timeout") {
-          set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, `Timed out after ${event.timeoutMs}ms`) }));
-          return;
-        }
-        if (event.type === "cancelled") {
-          set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, "Cancelled by user") }));
-        }
-      },
-      { signal: toolActionAbortController.signal }
-    );
+    const mismatch = await detectInstallMethodMismatch(toolId, packageManager, before?.binaryPath);
+    if (mismatch) {
+      set((state) => ({
+        toolActionOutput: appendToolOutput(state.toolActionOutput, mismatch.message),
+      }));
+    }
+
+    const shouldMigrate = options?.migrate === true;
+    const success = shouldMigrate
+      ? await reinstallTool(toolId, packageManager, onProgress, { signal: toolActionAbortController.signal })
+      : await updateTool(toolId, packageManager, onProgress, { signal: toolActionAbortController.signal });
 
     toolActionAbortController = null;
     set({ toolActionInProgress: null });
     await get().refreshToolDetection();
 
     const after = get().toolDetection[toolId];
-    if (success && after?.installed && after.hasUpdate && after.installedVersion === before?.installedVersion) {
+    const ineffectiveUpdate = Boolean(
+      success &&
+      after?.installed &&
+      after.hasUpdate &&
+      after.installedVersion === before?.installedVersion
+    );
+
+    if (ineffectiveUpdate || (!success && mismatch && !shouldMigrate)) {
+      const migrationNote = getToolRegistryEntry(toolId)?.lifecycle?.migration_note;
       notify(
-        `Update command completed but running binary is still ${formatDetectedVersion(after.installedVersion)} at ${after.binaryPath || "unknown path"} (latest ${formatDetectedVersion(after.latestVersion)}). This usually means a different installation is first in PATH.`,
+        `Update did not complete cleanly for the active binary (${after?.binaryPath || before?.binaryPath || "unknown path"}). ${migrationNote || "If install methods differ, retry and press m in the action modal to migrate methods."}`,
         "warning"
       );
       return false;

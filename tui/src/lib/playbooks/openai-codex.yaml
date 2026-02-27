@@ -12,3 +12,20 @@ components:
     strategy: symlink
 config_files: []
 syncable: true
+lifecycle:
+  install:
+    strategy: package-manager
+  update:
+    strategy: package-manager
+  uninstall:
+    strategy: package-manager
+  migration_cleanup:
+    - cmd: brew
+      args: [uninstall, codex]
+    - cmd: npm
+      args: [uninstall, -g, "@openai/codex"]
+    - cmd: pnpm
+      args: [remove, -g, "@openai/codex"]
+    - cmd: bun
+      args: [remove, -g, "@openai/codex"]
+  migration_note: "If install methods differ, you can choose migration in the action modal (press m) to uninstall legacy Codex installs and reinstall with your configured package manager."

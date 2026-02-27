@@ -626,7 +626,7 @@ function buildInitialYamlConfig(): BlackbookConfig {
   const tools = buildInitialYamlTools();
   return {
     settings: {
-      package_manager: "pnpm",
+      package_manager: "npm",
       backup_retention: 3,
       default_pullback: false,
     },

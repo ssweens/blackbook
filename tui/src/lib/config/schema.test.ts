@@ -4,7 +4,7 @@ import { ConfigSchema, FileEntrySchema, ToolInstanceSchema, SettingsSchema, Plug
 describe("ConfigSchema", () => {
   it("accepts empty object and fills defaults", () => {
     const result = ConfigSchema.parse({});
-    expect(result.settings.package_manager).toBe("pnpm");
+    expect(result.settings.package_manager).toBe("npm");
     expect(result.marketplaces).toEqual({});
     expect(result.tools).toEqual({});
     expect(result.files).toEqual([]);
@@ -77,9 +77,9 @@ describe("ToolInstanceSchema", () => {
 });
 
 describe("SettingsSchema", () => {
-  it("defaults package_manager to pnpm", () => {
+  it("defaults package_manager to npm", () => {
     const result = SettingsSchema.parse({});
-    expect(result.package_manager).toBe("pnpm");
+    expect(result.package_manager).toBe("npm");
   });
 
   it("accepts optional source_repo", () => {

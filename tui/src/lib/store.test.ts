@@ -202,6 +202,8 @@ describe("Store tab navigation", () => {
       search: "test",
       detailPlugin: createMockPlugin(),
       detailMarketplace: createMockMarketplace(),
+      discoverSubView: "plugins",
+      currentSection: "piPackages",
     });
   });
 
@@ -215,6 +217,8 @@ describe("Store tab navigation", () => {
     expect(state.search).toBe("");
     expect(state.detailPlugin).toBeNull();
     expect(state.detailMarketplace).toBeNull();
+    expect(state.discoverSubView).toBeNull();
+    expect(state.currentSection).toBe("plugins");
   });
 });
 

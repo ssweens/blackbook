@@ -1,4 +1,6 @@
 import { getToolDefinitions } from "./config.js";
+import { getAllPlaybooks } from "./config/playbooks.js";
+import type { PlaybookLifecycle } from "./config/playbook-schema.js";
 
 export interface ToolRegistryEntry {
   toolId: string;
@@ -8,9 +10,10 @@ export interface ToolRegistryEntry {
   npmPackage: string;
   versionArgs: string[];
   homepage: string;
+  lifecycle?: PlaybookLifecycle;
 }
 
-const TOOL_METADATA: Record<string, Omit<ToolRegistryEntry, "toolId" | "displayName" | "defaultConfigDir">> = {
+const TOOL_METADATA: Record<string, Omit<ToolRegistryEntry, "toolId" | "displayName" | "defaultConfigDir" | "lifecycle">> = {
   "claude-code": {
     binaryName: "claude",
     npmPackage: "@anthropic-ai/claude-code",
@@ -45,6 +48,7 @@ const TOOL_METADATA: Record<string, Omit<ToolRegistryEntry, "toolId" | "displayN
 
 function buildRegistry(): Record<string, ToolRegistryEntry> {
   const definitions = getToolDefinitions();
+  const playbooks = getAllPlaybooks();
   const entries: Record<string, ToolRegistryEntry> = {};
 
   for (const [toolId, definition] of Object.entries(definitions)) {
@@ -58,6 +62,7 @@ function buildRegistry(): Record<string, ToolRegistryEntry> {
       displayName: definition.name,
       defaultConfigDir: definition.configDir,
       ...metadata,
+      lifecycle: playbooks.get(toolId)?.lifecycle,
     };
   }
 
