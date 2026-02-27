@@ -58,6 +58,7 @@ export function ToolDetail({ tool, detection, pending }: ToolDetailProps) {
             {!pending && hasUpdate && detection?.latestVersion && (
               <Text color="yellow"> (update available: {detection.latestVersion})</Text>
             )}
+            {!pending && !installed && <Text color="yellow"> (installable)</Text>}
           </Box>
 
           <Box marginBottom={1}>
@@ -94,7 +95,13 @@ export function ToolDetail({ tool, detection, pending }: ToolDetailProps) {
           )}
 
           <Box flexDirection="column" marginTop={1}>
-            <Text color="gray">i Install · u Update · d Uninstall</Text>
+            {!installed ? (
+              <Text color="gray">i Install</Text>
+            ) : hasUpdate ? (
+              <Text color="gray">u Update · d Uninstall</Text>
+            ) : (
+              <Text color="gray">d Uninstall</Text>
+            )}
             <Text color="gray">e Edit config · Space Toggle · Esc Back</Text>
           </Box>
         </>

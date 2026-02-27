@@ -91,6 +91,7 @@ export function ToolsList({
         const running = actionInProgress === tool.toolId;
         const pending = detectionPending[tool.toolId] === true;
         const loading = running || pending;
+        const installable = !configOnly && !loading && result !== undefined && !result.installed;
 
         return (
           <Box key={`${tool.toolId}:${tool.instanceId}`} flexDirection="column" marginBottom={1}>
@@ -118,6 +119,7 @@ export function ToolsList({
                   <Text color={hasUpdate ? "yellow" : "gray"}>
                     {latestVersion ? ` · latest v${latestVersion}` : loading ? " · latest ..." : " · latest ?"}
                   </Text>
+                  {installable && <Text color="yellow"> · Installable (press i)</Text>}
                 </>
               )}
             </Box>

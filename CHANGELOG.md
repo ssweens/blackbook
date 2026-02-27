@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-02-26
+
+### Added
+- First-run source setup wizard to quickly add a local source directory or git repository.
+- Source setup workflow that can clone a git repo into Blackbook cache (`~/.cache/blackbook/source_repos/...`) and set `settings.source_repo` automatically.
+- Automatic import/use of a discovered `config.yaml` from the selected source repository.
+- Tool-aware Pi visibility in the UI (Pi marketplaces/packages hidden when Pi is neither enabled nor installed).
+- Clear installable state messaging in Tools list/detail for not-installed tools (`i` install action surfaced).
+
+### Changed
+- Pi package loading now keys off Pi being enabled **or** detected as installed.
+- Full refresh ordering now updates tool detection before Pi package loading.
+- File/directory sync tests updated to expect `missing` status when source is absent.
+
 ## [0.14.0] - 2026-02-25
 
 ### Added

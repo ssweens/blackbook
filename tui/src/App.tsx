@@ -12,6 +12,7 @@ import { MarketplaceDetail } from "./components/MarketplaceDetail.js";
 import { PiMarketplaceList } from "./components/PiMarketplaceList.js";
 import { PiMarketplaceDetail, getPiMarketplaceActions } from "./components/PiMarketplaceDetail.js";
 import { AddMarketplaceModal } from "./components/AddMarketplaceModal.js";
+import { SourceSetupWizard } from "./components/SourceSetupWizard.js";
 import { EditToolModal } from "./components/EditToolModal.js";
 import { ToolsList } from "./components/ToolsList.js";
 import { ToolDetail } from "./components/ToolDetail.js";
@@ -39,6 +40,7 @@ import { getPluginToolStatus, togglePluginComponent } from "./lib/plugin-status.
 import { buildInstallCommand, buildUpdateCommand, buildUninstallCommand } from "./lib/tool-lifecycle.js";
 import { getToolRegistryEntry } from "./lib/tool-registry.js";
 import { getPackageManager } from "./lib/config.js";
+import { setupSourceRepository, shouldShowSourceSetupWizard, markSourceSetupWizardSeen } from "./lib/source-setup.js";
 import type { Tab, SyncPreviewItem, Plugin, PiPackage, PiMarketplace, DiffInstanceRef, DiscoverSection, DiscoverSubView, ManagedToolRow, FileStatus } from "./lib/types.js";
 
 const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces", "settings"];
@@ -124,6 +126,7 @@ export function App() {
   const [componentManagerMode, setComponentManagerMode] = useState(false);
   const [componentIndex, setComponentIndex] = useState(0);
   const [showAddMarketplace, setShowAddMarketplace] = useState(false);
+  const [showSourceSetupWizard, setShowSourceSetupWizard] = useState(false);
   const [showAddPiMarketplace, setShowAddPiMarketplace] = useState(false);
   const [detailPiMarketplace, setDetailPiMarketplace] = useState<PiMarketplace | null>(null);
   const [editingToolId, setEditingToolId] = useState<string | null>(null);
@@ -192,6 +195,12 @@ export function App() {
     () => tools.filter((tool) => tool.enabled).map((tool) => tool.name),
     [tools]
   );
+
+  const showPiFeatures = useMemo(() => {
+    const piEnabled = tools.some((tool) => tool.toolId === "pi" && tool.enabled);
+    const piInstalled = toolDetection.pi?.installed === true;
+    return piEnabled || piInstalled;
+  }, [tools, toolDetection]);
 
   const editingTool = useMemo(() => {
     const managed = managedTools.find((tool) => `${tool.toolId}:${tool.instanceId}` === editingToolId);
@@ -294,6 +303,18 @@ export function App() {
   useEffect(() => {
     void refreshTabData(tab);
   }, [tab]);
+
+  useEffect(() => {
+    setShowSourceSetupWizard(shouldShowSourceSetupWizard());
+  }, []);
+
+  useEffect(() => {
+    void refreshToolDetection();
+  }, [refreshToolDetection]);
+
+  useEffect(() => {
+    void loadPiPackages();
+  }, [loadPiPackages, showPiFeatures]);
 
   useEffect(() => {
     if (tab !== "sync") return;
@@ -621,6 +642,10 @@ export function App() {
 
   const maxIndex = useMemo(() => {
     if (tab === "marketplaces") {
+      if (!showPiFeatures) {
+        // Plugin section only: Add(0) + marketplaces(N)
+        return marketplaces.length;
+      }
       // Plugin: Add(0) + marketplaces(N) + Pi: Add(1) + piMarketplaces(M)
       return marketplaces.length + 1 + piMarketplaces.length;
     }
@@ -631,7 +656,13 @@ export function App() {
       return Math.max(0, syncPreview.length - 1);
     }
     return Math.max(0, libraryCount - 1);
-  }, [tab, marketplaces, piMarketplaces, managedTools, syncPreview, libraryCount]);
+  }, [tab, marketplaces, piMarketplaces, managedTools, syncPreview, libraryCount, showPiFeatures]);
+
+  useEffect(() => {
+    if (selectedIndex > maxIndex) {
+      setSelectedIndex(maxIndex);
+    }
+  }, [selectedIndex, maxIndex, setSelectedIndex]);
 
   const selectedManagedTool = useMemo(() => {
     if (tab !== "tools") return null;
@@ -815,7 +846,7 @@ export function App() {
     }
 
     // Don't handle input when modal is open (modal handles its own input)
-    if (showAddMarketplace || showAddPiMarketplace || editingToolId) {
+    if (showSourceSetupWizard || showAddMarketplace || showAddPiMarketplace || editingToolId) {
       return;
     }
 
@@ -1058,6 +1089,9 @@ export function App() {
           }
           return;
         }
+        if (!showPiFeatures) {
+          return;
+        }
         if (selectedIndex === piSectionOffset) {
           setShowAddPiMarketplace(true);
           return;
@@ -1158,7 +1192,7 @@ export function App() {
           }
           return;
         }
-        if (selectedIndex > piSectionOffset) {
+        if (showPiFeatures && selectedIndex > piSectionOffset) {
           const piIdx = selectedIndex - piSectionOffset - 1;
           const pm = piMarketplaces[piIdx];
           if (pm) {
@@ -1260,7 +1294,7 @@ export function App() {
       if (selectedIndex >= 1 && selectedIndex <= marketplaces.length) {
         const m = marketplaces[selectedIndex - 1];
         if (m && m.source !== "claude") removeMarketplace(m.name);
-      } else if (selectedIndex > piSectionOffset) {
+      } else if (showPiFeatures && selectedIndex > piSectionOffset) {
         const piIdx = selectedIndex - piSectionOffset - 1;
         const pm = piMarketplaces[piIdx];
         if (pm && !pm.builtIn) {
@@ -1551,6 +1585,37 @@ export function App() {
     await refreshAll();
   };
 
+  const handleSourceWizardComplete = async (source: string) => {
+    const loadingId = notify("Configuring source repository...", "info", { spinner: true });
+    try {
+      const result = await setupSourceRepository(source);
+      clearNotification(loadingId);
+      markSourceSetupWizardSeen();
+      setShowSourceSetupWizard(false);
+      await refreshAll();
+
+      if (result.importedConfig) {
+        notify(
+          `Using blackbook config from ${result.importedConfigPath}${result.cloned ? " (repo cloned)" : ""}`,
+          "success"
+        );
+      } else {
+        notify(
+          `Source repository set to ${result.sourceRepo}${result.cloned ? " (repo cloned)" : ""}`,
+          "success"
+        );
+      }
+    } catch (error) {
+      clearNotification(loadingId);
+      notify(`Failed to configure source repository: ${error instanceof Error ? error.message : String(error)}`, "error");
+      throw error;
+    }
+  };
+
+  const handleSourceWizardSkip = () => {
+    markSourceSetupWizardSeen();
+    setShowSourceSetupWizard(false);
+  };
 
   // Memoize instances for missing summary view (instance picker still needed there)
   const missingInstances = useMemo((): DiffInstanceRef[] => {
@@ -1574,7 +1639,12 @@ export function App() {
       </Box>
 
       {/* Diff view overlay */}
-      {diffTarget ? (
+      {showSourceSetupWizard ? (
+        <SourceSetupWizard
+          onComplete={handleSourceWizardComplete}
+          onSkip={handleSourceWizardSkip}
+        />
+      ) : diffTarget ? (
         <DiffView
           target={diffTarget}
           onClose={closeDiff}
@@ -1833,13 +1903,15 @@ export function App() {
                     selectedIndex={selectedIndex <= marketplaces.length ? selectedIndex : -1}
                   />
 
-                  <Box marginTop={1}>
-                    <PiMarketplaceList
-                      marketplaces={piMarketplaces}
-                      selectedIndex={selectedIndex}
-                      indexOffset={piSectionOffset}
-                    />
-                  </Box>
+                  {showPiFeatures && (
+                    <Box marginTop={1}>
+                      <PiMarketplaceList
+                        marketplaces={piMarketplaces}
+                        selectedIndex={selectedIndex}
+                        indexOffset={piSectionOffset}
+                      />
+                    </Box>
+                  )}
                 </Box>
               )}
             </>

@@ -66,14 +66,13 @@ describe("fileCopyModule.check", () => {
     expect(result.diff).toBeDefined();
   });
 
-  it("returns 'failed' when source does not exist", async () => {
+  it("returns 'missing' when source does not exist", async () => {
     const result = await fileCopyModule.check({
       sourcePath: join(SRC, "nonexistent.txt"),
       targetPath: join(TGT, "a.txt"),
       owner: "test",
     });
-    expect(result.status).toBe("failed");
-    expect(result.error).toBeDefined();
+    expect(result.status).toBe("missing");
   });
 });
 

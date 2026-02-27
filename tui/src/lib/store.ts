@@ -594,10 +594,11 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   loadPiPackages: async () => {
-    // Check if Pi tool is enabled before loading packages
+    // Load Pi packages only when Pi is enabled in config or detected as installed.
     const tools = get().tools;
     const piEnabled = tools.some((t) => t.toolId === "pi" && t.enabled);
-    if (!piEnabled) {
+    const piInstalled = get().toolDetection.pi?.installed === true;
+    if (!piEnabled && !piInstalled) {
       set({ piPackages: [], piMarketplaces: [] });
       return;
     }
@@ -934,10 +935,10 @@ export const useStore = create<Store>((set, get) => ({
 
   refreshAll: async () => {
     await get().loadMarketplaces();
+    await get().refreshToolDetection();
     await get().loadPiPackages();
     await get().loadFiles();
     get().refreshManagedTools();
-    await get().refreshToolDetection();
   },
 
   installPlugin: async (plugin) => {

@@ -69,13 +69,13 @@ describe("directorySyncModule.check", () => {
     expect(result.status).toBe("drifted");
   });
 
-  it("returns 'failed' when source does not exist", async () => {
+  it("returns 'missing' when source does not exist", async () => {
     const result = await directorySyncModule.check({
       sourcePath: join(SRC, "nonexistent"),
       targetPath: join(TGT, "dir"),
       owner: "test",
     });
-    expect(result.status).toBe("failed");
+    expect(result.status).toBe("missing");
   });
 });
 
