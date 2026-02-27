@@ -2046,13 +2046,15 @@ export function App() {
 
           {tab === "sync" && (
             <>
-              <Box>
-                <Text color={syncArmed ? "yellow" : "gray"}>
-                  {syncArmed
-                    ? `Press y again to confirm sync (${selectedSyncCount} selected)`
-                    : `Space to toggle · Press y to sync (${selectedSyncCount} selected)`}
-                </Text>
-              </Box>
+              {syncPreview.length > 0 && (
+                <Box>
+                  <Text color={syncArmed ? "yellow" : "gray"}>
+                    {syncArmed
+                      ? `Press y again to confirm sync (${selectedSyncCount} selected)`
+                      : `Space to toggle · Press y to sync (${selectedSyncCount} selected)`}
+                  </Text>
+                </Box>
+              )}
               <SyncList
                 items={syncPreview}
                 selectedIndex={selectedIndex}

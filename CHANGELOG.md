@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.2] - 2026-02-27
+
+### Added
+- Pi package marketplaces now support git repository sources and cache clones locally under `~/.cache/blackbook/pi_marketplaces/`.
+- Add Pi Marketplace modal now accepts local paths and git repository inputs (HTTPS/SSH/GitHub shorthand).
+
+### Fixed
+- Sync tab action hint (`Space to toggle · Press y to sync`) is now shown only when at least one syncable item exists.
+
 ## [0.15.1] - 2026-02-26
 
 ### Changed

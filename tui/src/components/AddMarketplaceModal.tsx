@@ -68,6 +68,45 @@ function parsePiSource(source: string): { name: string; url: string } | null {
     return { name, url: trimmed };
   }
 
+  // GitHub HTTPS URL
+  const ghHttps = trimmed.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+  if (ghHttps) {
+    const name = ghHttps[2];
+    return { name, url: `https://github.com/${ghHttps[1]}/${name}.git` };
+  }
+
+  // GitHub SSH URL
+  const ghSsh = trimmed.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/);
+  if (ghSsh) {
+    const name = ghSsh[2];
+    return { name, url: `git@github.com:${ghSsh[1]}/${name}.git` };
+  }
+
+  // git:github.com/owner/repo shorthand
+  const gitPrefix = trimmed.match(/^git:github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+  if (gitPrefix) {
+    const name = gitPrefix[2];
+    return { name, url: `git:github.com/${gitPrefix[1]}/${name}` };
+  }
+
+  // Generic HTTPS git URL
+  if (trimmed.startsWith("https://") && trimmed.endsWith(".git")) {
+    const name = trimmed.split("/").filter(Boolean).pop()?.replace(/\.git$/, "") || "git-marketplace";
+    return { name, url: trimmed };
+  }
+
+  // Generic SSH git URL
+  if (trimmed.startsWith("git@") && trimmed.includes(":")) {
+    const name = trimmed.split("/").filter(Boolean).pop()?.replace(/\.git$/, "") || "git-marketplace";
+    return { name, url: trimmed };
+  }
+
+  // owner/repo shorthand
+  if (/^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+$/.test(trimmed)) {
+    const [owner, repo] = trimmed.split("/");
+    return { name: repo, url: `https://github.com/${owner}/${repo}.git` };
+  }
+
   return null;
 }
 
@@ -92,13 +131,15 @@ const VARIANTS: Record<MarketplaceType, {
   },
   pi: {
     title: "Add Pi Marketplace",
-    prompt: "Enter local directory containing Pi packages:",
+    prompt: "Enter local directory or git repository containing Pi packages:",
     examples: [
       "~/src/my-packages",
       "/opt/pi-packages",
-      "./local-packages",
+      "https://github.com/org/pi-packages.git",
+      "git@github.com:org/pi-packages.git",
+      "org/pi-packages",
     ],
-    errorMessage: "Enter a local directory path (e.g. ~/src/my-packages)",
+    errorMessage: "Enter a local path or git repository source",
     parse: parsePiSource,
   },
 };

@@ -14,6 +14,9 @@ describe("getSourceType", () => {
   it("detects git sources", () => {
     expect(getSourceType("git:github.com/user/repo")).toBe("git");
     expect(getSourceType("https://github.com/user/repo")).toBe("git");
+    expect(getSourceType("https://github.com/user/repo.git")).toBe("git");
+    expect(getSourceType("git@github.com:user/repo.git")).toBe("git");
+    expect(getSourceType("https://gitlab.com/group/repo.git")).toBe("git");
   });
 
   it("detects local sources", () => {

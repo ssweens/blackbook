@@ -1,10 +1,11 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { existsSync, readFileSync, readdirSync, statSync, realpathSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync, realpathSync, mkdirSync } from "fs";
 import { join, resolve, dirname } from "path";
 import { homedir } from "os";
+import { createHash } from "crypto";
 import type { PiPackage, PiMarketplace, PiSettings, PiPackageSourceType } from "./types.js";
-import { getPiMarketplaces, getDisabledPiMarketplaces } from "./config.js";
+import { getPiMarketplaces, getDisabledPiMarketplaces, getCacheDir } from "./config.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -71,9 +72,69 @@ export function isPackageInstalled(source: string, settings: PiSettings): boolea
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function getSourceType(source: string): PiPackageSourceType {
-  if (source.startsWith("npm:")) return "npm";
-  if (source.startsWith("git:") || source.startsWith("https://github.com")) return "git";
+  const trimmed = source.trim();
+  if (trimmed.startsWith("npm:")) return "npm";
+  if (
+    trimmed.startsWith("git:") ||
+    trimmed.startsWith("git@") ||
+    trimmed.startsWith("https://github.com") ||
+    trimmed.endsWith(".git")
+  ) {
+    return "git";
+  }
   return "local";
+}
+
+function normalizeGitSource(source: string): string {
+  const trimmed = source.trim();
+
+  if (trimmed.startsWith("git:")) {
+    const raw = trimmed.slice(4);
+    if (raw.startsWith("github.com/")) {
+      return `https://${raw.replace(/\.git$/, "")}.git`;
+    }
+    return raw;
+  }
+
+  if (/^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+$/.test(trimmed)) {
+    return `https://github.com/${trimmed}.git`;
+  }
+
+  if (trimmed.startsWith("https://github.com/")) {
+    return `${trimmed.replace(/\.git$/, "")}.git`;
+  }
+
+  return trimmed;
+}
+
+function getGitMarketplaceCachePath(source: string): string {
+  const cacheRoot = join(getCacheDir(), "pi_marketplaces");
+  const hash = createHash("md5").update(source).digest("hex");
+  return join(cacheRoot, hash);
+}
+
+async function ensureGitMarketplaceCached(source: string): Promise<string | null> {
+  const normalizedSource = normalizeGitSource(source);
+  const cachePath = getGitMarketplaceCachePath(normalizedSource);
+  mkdirSync(dirname(cachePath), { recursive: true });
+
+  try {
+    if (!existsSync(join(cachePath, ".git"))) {
+      await execFileAsync("git", ["clone", "--depth", "1", normalizedSource, cachePath], { timeout: 60000 });
+      return cachePath;
+    }
+
+    try {
+      await execFileAsync("git", ["-C", cachePath, "pull", "--ff-only"], { timeout: 30000 });
+    } catch {
+      // Keep stale cache when pull fails.
+    }
+
+    return cachePath;
+  } catch (error) {
+    console.error(`Failed to cache Pi git marketplace ${source}:`, error);
+    return null;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -313,8 +374,26 @@ export async function loadAllPiMarketplaces(): Promise<PiMarketplace[]> {
         enabled,
         builtIn: false,
       });
+      continue;
     }
-    // TODO: git marketplace support
+
+    if (sourceType === "git") {
+      const cachePath = enabled ? await ensureGitMarketplaceCached(source) : null;
+      const scanned = enabled && cachePath ? scanLocalMarketplace(name, cachePath) : [];
+      const packages = scanned.map((pkg) => ({
+        ...pkg,
+        sourceType: "git" as const,
+      }));
+
+      marketplaces.push({
+        name,
+        source,
+        sourceType,
+        packages,
+        enabled,
+        builtIn: false,
+      });
+    }
   }
 
   return marketplaces;
