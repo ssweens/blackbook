@@ -41,7 +41,7 @@ import { buildInstallCommand, buildUpdateCommand, buildUninstallCommand } from "
 import { getToolRegistryEntry } from "./lib/tool-registry.js";
 import { getPackageManager } from "./lib/config.js";
 import { setupSourceRepository, shouldShowSourceSetupWizard, markSourceSetupWizardSeen } from "./lib/source-setup.js";
-import type { Tab, SyncPreviewItem, Plugin, PiPackage, PiMarketplace, DiffInstanceRef, DiscoverSection, DiscoverSubView, ManagedToolRow, FileStatus } from "./lib/types.js";
+import type { Tab, SyncPreviewItem, Plugin, PiPackage, PiMarketplace, DiffInstanceRef, DiscoverSection, DiscoverSubView, ManagedToolRow, FileStatus, Marketplace } from "./lib/types.js";
 
 const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces", "settings"];
 const TAB_REFRESH_TTL_MS = 30000;
@@ -143,6 +143,7 @@ export function App() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [searchFocused, setSearchFocused] = useState(false);
   const [subViewIndex, setSubViewIndex] = useState(0);
+  const [marketplaceBrowseContext, setMarketplaceBrowseContext] = useState<Marketplace | null>(null);
   const [tabRefreshInProgress, setTabRefreshInProgress] = useState(false);
   const tabRefreshCounterRef = useRef(0);
   const lastTabRefreshRef = useRef<Record<Tab, number>>({
@@ -406,7 +407,8 @@ export function App() {
       filtered = base.filter(
         (p) =>
           p.name.toLowerCase().includes(lowerSearch) ||
-          p.description.toLowerCase().includes(lowerSearch)
+          p.description.toLowerCase().includes(lowerSearch) ||
+          p.marketplace.toLowerCase().includes(lowerSearch)
       );
     }
     
@@ -425,6 +427,11 @@ export function App() {
     
     return sorted;
   }, [tab, allPlugins, installedPlugins, search, sortBy, sortDir]);
+
+  const marketplaceBrowsePlugins = useMemo(() => {
+    if (!marketplaceBrowseContext) return filteredPlugins;
+    return filteredPlugins.filter((p) => p.marketplace === marketplaceBrowseContext.name);
+  }, [filteredPlugins, marketplaceBrowseContext]);
 
   const filteredPiPackages = useMemo(() => {
     const lowerSearch = search.toLowerCase();
@@ -956,9 +963,23 @@ export function App() {
       } else if (detailTool) {
         setDetailToolKey(null);
       } else if (discoverSubView) {
-        // Close sub-view and return to Discover dashboard
-        setDiscoverSubView(null);
-        setSubViewIndex(0);
+        if (tab === "marketplaces" && marketplaceBrowseContext) {
+          // Return to marketplace detail when browsing plugins from Marketplaces flow.
+          setDiscoverSubView(null);
+          setSubViewIndex(0);
+          setDetailMarketplace(marketplaceBrowseContext);
+          setMarketplaceBrowseContext(null);
+          setSearch("");
+        } else {
+          // Close sub-view and return to Discover dashboard
+          setDiscoverSubView(null);
+          setSubViewIndex(0);
+        }
+      } else if (tab === "marketplaces" && marketplaceBrowseContext) {
+        // Safety path: if browse context remains but sub-view is closed, return to detail.
+        setDetailMarketplace(marketplaceBrowseContext);
+        setMarketplaceBrowseContext(null);
+        setSearch("");
       }
       return;
     }
@@ -998,8 +1019,8 @@ export function App() {
         const actions = getPiPackageActions(detailPiPackage);
         setActionIndex((i) => Math.min(actions.length - 1, i + 1));
       } else if (detailMarketplace) {
-        const maxActions = detailMarketplace.source === "claude" ? 2 : 3;
-        setActionIndex((i) => Math.min(maxActions, i + 1));
+        const actionCount = detailMarketplace.source === "claude" ? 2 : 3;
+        setActionIndex((i) => Math.min(actionCount - 1, i + 1));
       } else if (detailPiMarketplace) {
         const piMktActions = getPiMarketplaceActions(detailPiMarketplace);
         setActionIndex((i) => Math.min(piMktActions.length - 1, i + 1));
@@ -1007,7 +1028,8 @@ export function App() {
         return;
       } else if (discoverSubView) {
         // Navigate within sub-view
-        const maxSubViewIndex = discoverSubView === "plugins" ? filteredPlugins.length - 1 : filteredPiPackages.length - 1;
+        const pluginList = tab === "marketplaces" ? marketplaceBrowsePlugins : filteredPlugins;
+        const maxSubViewIndex = discoverSubView === "plugins" ? pluginList.length - 1 : filteredPiPackages.length - 1;
         setSubViewIndex((i) => Math.min(maxSubViewIndex, i + 1));
       } else {
         setSelectedIndex(Math.min(maxIndex, selectedIndex + 1));
@@ -1061,7 +1083,8 @@ export function App() {
       // Handle sub-view selection (Enter on item in sub-view opens detail)
       if (discoverSubView) {
         if (discoverSubView === "plugins") {
-          const plugin = filteredPlugins[subViewIndex];
+          const list = tab === "marketplaces" ? marketplaceBrowsePlugins : filteredPlugins;
+          const plugin = list[subViewIndex];
           if (plugin) {
             setDetailPlugin(plugin);
             setActionIndex(0);
@@ -1489,17 +1512,17 @@ export function App() {
     const isReadOnly = detailMarketplace.source === "claude";
 
     switch (index) {
-      case 0: // Browse plugins
-        setTab("discover");
+      case 0: // Browse plugins (stay in Marketplaces flow)
+        setMarketplaceBrowseContext(detailMarketplace);
+        setDiscoverSubView("plugins");
+        setSubViewIndex(0);
         setSearch(detailMarketplace.name);
         setDetailMarketplace(null);
         break;
       case 1: // Update
-        updateMarketplace(detailMarketplace.name);
+        void updateMarketplace(detailMarketplace.name);
         break;
-      case 2: // Toggle auto-update
-        break;
-      case 3: // Remove (only for non-Claude marketplaces)
+      case 2: // Remove (only for non-Claude marketplaces)
         if (!isReadOnly) {
           removeMarketplace(detailMarketplace.name);
           setDetailMarketplace(null);
@@ -1895,6 +1918,24 @@ export function App() {
               {shouldShowMarketplacesLoading ? (
                 <Box marginY={1}>
                   <Text color="cyan">⠋ Loading marketplaces...</Text>
+                </Box>
+              ) : discoverSubView === "plugins" && marketplaceBrowseContext ? (
+                <Box flexDirection="column">
+                  <Box marginBottom={1}>
+                    <Text color="cyan" bold>{marketplaceBrowseContext.name} plugins </Text>
+                    <Text color="gray" dimColor>{getRange(subViewIndex, marketplaceBrowsePlugins.length, 12)}</Text>
+                    <Text color="gray"> · Press Esc to go back</Text>
+                  </Box>
+                  <PluginList
+                    plugins={marketplaceBrowsePlugins}
+                    selectedIndex={subViewIndex}
+                    maxHeight={12}
+                    nameColumnWidth={libraryNameWidth}
+                    marketplaceColumnWidth={marketplaceWidth}
+                  />
+                  <Box marginTop={1}>
+                    <PluginPreview plugin={marketplaceBrowsePlugins[subViewIndex]} />
+                  </Box>
                 </Box>
               ) : (
                 <Box flexDirection="column">

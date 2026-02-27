@@ -19,13 +19,11 @@ function formatDate(date?: Date): string {
 
 export function MarketplaceDetail({ marketplace, selectedIndex }: MarketplaceDetailProps) {
   const installed = marketplace.plugins.filter((p) => p.installed);
-  const available = marketplace.plugins.filter((p) => !p.installed);
   const isReadOnly = marketplace.source === "claude";
-  
+
   const actions = [
-    `Browse plugins (${available.length})`,
+    `Browse plugins (${marketplace.plugins.length})`,
     `Update marketplace (last updated ${formatDate(marketplace.updatedAt)})`,
-    marketplace.autoUpdate ? "Disable auto-update" : "Enable auto-update",
     ...(isReadOnly ? [] : ["Remove marketplace"]),
   ];
 
@@ -47,7 +45,7 @@ export function MarketplaceDetail({ marketplace, selectedIndex }: MarketplaceDet
       )}
 
       <Box marginBottom={1}>
-        <Text>{marketplace.availableCount} available plugins</Text>
+        <Text>{marketplace.plugins.length} total plugins</Text>
       </Box>
 
       {installed.length > 0 && (

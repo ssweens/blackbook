@@ -1245,30 +1245,40 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   updateMarketplace: async (name) => {
+    const { notify, clearNotification } = get();
     const marketplace = get().marketplaces.find((m) => m.name === name);
     if (!marketplace) return;
 
-    const plugins = await fetchMarketplace(marketplace);
-    const installedPlugins = get().installedPlugins;
+    const loadingId = notify(`Updating marketplace \"${name}\"...`, "info", { spinner: true });
+    try {
+      const plugins = await fetchMarketplace(marketplace, { forceRefresh: true });
+      const installedPlugins = get().installedPlugins;
 
-    set({
-      marketplaces: get().marketplaces.map((m) =>
-        m.name === name
-          ? {
-              ...m,
-              plugins: plugins.map((p) => ({
-                ...p,
-                installed: installedPlugins.some((ip) => ip.name === p.name),
-              })),
-              availableCount: plugins.length,
-              installedCount: plugins.filter((p) =>
-                installedPlugins.some((ip) => ip.name === p.name)
-              ).length,
-              updatedAt: new Date(),
-            }
-          : m
-      ),
-    });
+      set({
+        marketplaces: get().marketplaces.map((m) =>
+          m.name === name
+            ? {
+                ...m,
+                plugins: plugins.map((p) => ({
+                  ...p,
+                  installed: installedPlugins.some((ip) => ip.name === p.name),
+                })),
+                availableCount: plugins.length,
+                installedCount: plugins.filter((p) =>
+                  installedPlugins.some((ip) => ip.name === p.name)
+                ).length,
+                updatedAt: new Date(),
+              }
+            : m
+        ),
+      });
+
+      notify(`Updated marketplace \"${name}\" (${plugins.length} plugin${plugins.length === 1 ? "" : "s"})`, "success");
+    } catch (error) {
+      notify(`Failed to update marketplace \"${name}\": ${error instanceof Error ? error.message : String(error)}`, "error");
+    } finally {
+      clearNotification(loadingId);
+    }
   },
 
   toggleMarketplaceEnabled: async (name) => {

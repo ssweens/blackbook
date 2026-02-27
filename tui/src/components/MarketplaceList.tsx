@@ -108,7 +108,7 @@ export function MarketplaceList({
 
             <Box marginLeft={4}>
               <Text color="gray">
-                {m.availableCount} available
+                {m.plugins.length} plugins
                 {m.installedCount > 0 && ` • ${m.installedCount} installed`}
                 {m.updatedAt && ` • Updated ${formatDate(m.updatedAt)}`}
               </Text>

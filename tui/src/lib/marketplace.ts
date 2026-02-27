@@ -295,9 +295,15 @@ function scanLocalPluginContents(pluginDir: string): {
   return result;
 }
 
-export async function fetchMarketplace(marketplace: Marketplace): Promise<Plugin[]> {
+export async function fetchMarketplace(
+  marketplace: Marketplace,
+  options?: { forceRefresh?: boolean }
+): Promise<Plugin[]> {
   const cacheKey = `marketplace:${marketplace.url}`;
-  let data = cacheGet(cacheKey, MARKETPLACE_CACHE_TTL_SECONDS) as MarketplaceJson | null;
+  const forceRefresh = options?.forceRefresh ?? false;
+  let data = forceRefresh
+    ? null
+    : (cacheGet(cacheKey, MARKETPLACE_CACHE_TTL_SECONDS) as MarketplaceJson | null);
 
   if (!data) {
     try {
