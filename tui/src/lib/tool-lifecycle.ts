@@ -135,6 +135,10 @@ function detectBinaryInstallMethod(binaryPath: string | null | undefined): Insta
   if (binaryPath.startsWith("/opt/homebrew/") || binaryPath.startsWith("/usr/local/")) {
     return "brew";
   }
+  const bunBinDir = join(homedir(), ".bun", "bin");
+  if (binaryPath.startsWith(bunBinDir)) {
+    return "bun";
+  }
   return "unknown";
 }
 
@@ -163,7 +167,7 @@ export async function detectInstallMethodMismatch(
     return null;
   }
 
-  if (detectedMethods.length === 1 && detectedMethods[0] === preferredPackageManager) {
+  if (detectedMethods.includes(preferredPackageManager)) {
     return null;
   }
 
