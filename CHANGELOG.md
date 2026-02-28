@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-02-27
+
+### Added
+- Auto-inject playbook-declared config files into the file status list at runtime, making tool config files (Pi Config, OpenCode Config, Amp Config, Codex Config) visible in the UI with pullback capability without manual `config.yaml` entries.
+- Config file declarations for OpenCode (`opencode.json`), Amp (`settings.json`), and Codex (`config.toml`) playbooks.
+
+### Changed
+- Installed tab now shows a single unified **Files** section instead of separate Configs and Assets sections.
+- File detail view shows tool scope for all files and uses `source_repo` from YAML config instead of separate config/asset repo paths.
+- Pullback availability is now gated on the `file.pullback` flag directly instead of inferring from file type.
+- Pi playbook `config_dir` corrected from `~/.pi` to `~/.pi/agent` (matching actual Pi directory structure); component install paths adjusted accordingly.
+
+### Fixed
+- Bun-installed tool binaries (`~/.bun/bin/`) now correctly detected in install method check.
+- Install method mismatch check relaxed to pass when preferred package manager is among detected methods (was requiring it to be the only one).
+
 ## [0.15.2] - 2026-02-27
 
 ### Added
@@ -381,7 +397,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Symlink handling for plugin assets
 
-[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/ssweens/blackbook/compare/v0.14.0...v0.16.0
 [0.14.0]: https://github.com/ssweens/blackbook/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/ssweens/blackbook/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/ssweens/blackbook/compare/v0.12.0...v0.12.1
