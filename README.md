@@ -100,7 +100,7 @@ Blackbook opens on the **Sync** tab by default.
 - **Discover/Installed**: `s` cycle sort (name/installed), `r` reverse sort, `R` refresh tab data (`d` opens diff for selected managed file in Installed)
 - **Marketplaces**: `u` update marketplace, `r` remove marketplace, `R` refresh all marketplaces/packages
 - **Tools**: `Enter` open detail, `i` install, `u` update, `d` uninstall, `Space` toggle enabled, `e` edit config dir, `R` refresh detection
-- **Sync**: `y` sync selected items (missing plus `source-changed` / `target-changed` / `both-changed` assets/configs/plugins and tool updates; press twice to confirm), `R` refresh sync inputs
+- **Sync**: `y` sync selected items (missing plus `source-changed` / `target-changed` / `both-changed` files/plugins and tool updates; press twice to confirm), `R` refresh sync inputs
 
 Blackbook also refreshes data when entering tabs (Discover, Installed, Marketplaces, Tools), throttled with a 30-second TTL per tab to avoid constant refetching/flicker while navigating. A loading indicator is shown across tabs (including Sync) while refresh is in progress.
 
@@ -172,7 +172,7 @@ Arrays of objects merge by `name` or `id` key. Set a key to `null` to delete it 
 
 #### Unified Files
 
-The `files:` list replaces the separate `assets` and `configs` concepts:
+The `files:` list manages all synced files in a single unified list:
 
 | Feature | Description |
 |---------|-------------|

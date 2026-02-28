@@ -5,7 +5,8 @@ import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { FileStatus, DiffInstanceRef, DiffInstanceSummary } from "../lib/types.js";
 import { buildFileDiffTarget } from "../lib/diff.js";
-import { getAssetsRepoPath, getConfigRepoPath } from "../lib/config.js";
+import { loadConfig as loadYamlConfig } from "../lib/config/loader.js";
+import { expandPath } from "../lib/config/path.js";
 
 export interface FileAction {
   label: string;
@@ -34,21 +35,21 @@ function summarizeFileStatus(file: FileStatus): { label: string; color: string; 
 
 export function FileDetail({ file, selectedAction, actions }: FileDetailProps) {
   const overall = summarizeFileStatus(file);
-  const isConfig = Boolean(file.tools && file.tools.length > 0);
-  const kindLabel = isConfig ? "config" : "asset";
+  const isScoped = file.tools && file.tools.length > 0;
+  const toolScope = isScoped ? file.tools!.join(", ") : "All tools";
 
-  const repoPath = useMemo(() => (isConfig ? getConfigRepoPath() : getAssetsRepoPath()), [isConfig]);
+  const repoPath = useMemo(() => {
+    const { config } = loadYamlConfig();
+    return config.settings.source_repo ? expandPath(config.settings.source_repo) : null;
+  }, []);
 
   const sourceDisplay = useMemo(() => {
-    const prefix = isConfig ? "config/" : "assets/";
-    return file.source.startsWith(prefix) ? file.source.slice(prefix.length) : file.source;
-  }, [file.source, isConfig]);
+    return file.source;
+  }, [file.source]);
 
   const sourceMappingDisplay = useMemo(() => `${sourceDisplay} → ${file.target}`, [sourceDisplay, file.target]);
 
   const sourceFilesCount = useMemo(() => {
-    if (!isConfig) return null;
-
     const sourcePath = file.instances[0]?.sourcePath;
     if (!sourcePath) return null;
     if (sourcePath.startsWith("http://") || sourcePath.startsWith("https://")) return null;
@@ -80,7 +81,7 @@ export function FileDetail({ file, selectedAction, actions }: FileDetailProps) {
     } catch {
       return null;
     }
-  }, [file.instances, isConfig]);
+  }, [file.instances]);
 
   const sourceExists = useMemo(() => (sourceFilesCount == null ? true : sourceFilesCount > 0), [sourceFilesCount]);
 
@@ -88,30 +89,27 @@ export function FileDetail({ file, selectedAction, actions }: FileDetailProps) {
     <Box flexDirection="column">
       <Box marginBottom={1}>
         <Text bold>{file.name}</Text>
-        <Text color="gray"> · {kindLabel}</Text>
       </Box>
 
-      {isConfig && (
-        <Box marginBottom={1}>
-          <Text color="gray">Tool: </Text>
-          <Text color="magenta">{file.tools!.join(", ")}</Text>
-        </Box>
-      )}
+      <Box marginBottom={1}>
+        <Text color="gray">Tools: </Text>
+        <Text color={isScoped ? "magenta" : "blue"}>{toolScope}</Text>
+      </Box>
 
       <Box marginBottom={1}>
-        <Text color="gray">{isConfig ? "Config repo" : "Assets repo"}: </Text>
+        <Text color="gray">Source repo: </Text>
         <Text>{repoPath || "(not configured)"}</Text>
       </Box>
 
       <Box marginBottom={1}>
-        <Text color="gray">{isConfig ? "Source(s)" : "Source"}: </Text>
-        <Text>{isConfig ? sourceMappingDisplay : sourceDisplay}</Text>
+        <Text color="gray">Source: </Text>
+        <Text>{sourceMappingDisplay}</Text>
       </Box>
 
-      {isConfig && (
+      {sourceFilesCount != null && (
         <Box marginBottom={1}>
           <Text color="gray">Files: </Text>
-          <Text>{sourceFilesCount == null ? "(unknown)" : `${sourceFilesCount} file(s)`}</Text>
+          <Text>{`${sourceFilesCount} file(s)`}</Text>
         </Box>
       )}
 
@@ -121,30 +119,40 @@ export function FileDetail({ file, selectedAction, actions }: FileDetailProps) {
         {overall.drifted && <Text color="yellow"> (drifted)</Text>}
       </Box>
 
-      {isConfig && !sourceExists && (
+      {!sourceExists && (
         <Box marginBottom={1}>
           <Text color="yellow">Source empty — use p to pull from an instance</Text>
         </Box>
       )}
 
       <Box flexDirection="column" marginTop={1}>
-        <Text bold>{isConfig ? "Tools:" : "Instances:"}</Text>
+        <Text bold>Instances:</Text>
         {actions.map((action, i) => {
           const isSelected = i === selectedAction;
 
           if (action.type === "diff" || action.type === "missing" || action.type === "status") {
+            const inst = file.instances.find(
+              (fi) => fi.instanceName === action.label
+            );
             return (
-              <Box key={action.label}>
-                <Text color={isSelected ? "cyan" : "gray"}>{isSelected ? "❯ " : "  "}</Text>
-                <Text color={isSelected ? "white" : "gray"}>{action.label}:</Text>
-                <Text color={action.statusColor || "gray"}> {action.statusLabel}</Text>
-                {action.type === "diff" && action.instance && "totalAdded" in action.instance && (
-                  <>
-                    <Text color="green"> +{action.instance.totalAdded}</Text>
-                    <Text color="red"> -{action.instance.totalRemoved}</Text>
-                  </>
+              <Box key={action.label} flexDirection="column">
+                <Box>
+                  <Text color={isSelected ? "cyan" : "gray"}>{isSelected ? "❯ " : "  "}</Text>
+                  <Text color={isSelected ? "white" : "gray"}>{action.label}:</Text>
+                  <Text color={action.statusColor || "gray"}> {action.statusLabel}</Text>
+                  {action.type === "diff" && action.instance && "totalAdded" in action.instance && (
+                    <>
+                      <Text color="green"> +{action.instance.totalAdded}</Text>
+                      <Text color="red"> -{action.instance.totalRemoved}</Text>
+                    </>
+                  )}
+                  {action.type === "missing" && <Text color="yellow"> (click to view)</Text>}
+                </Box>
+                {isSelected && inst && (
+                  <Box marginLeft={4}>
+                    <Text color="gray">{inst.targetPath}</Text>
+                  </Box>
                 )}
-                {action.type === "missing" && <Text color="yellow"> (click to view)</Text>}
               </Box>
             );
           }
@@ -252,7 +260,7 @@ export function getFileActions(file: FileStatus): FileAction[] {
     actions.push({ label: "Sync to tool", type: "sync" });
   }
 
-  const shouldOfferPullback = Boolean((file.tools && file.tools.length > 0) || file.pullback);
+  const shouldOfferPullback = file.pullback;
   if (shouldOfferPullback) {
     const drifted = file.instances.filter((i) => i.status === "drifted");
 

@@ -300,7 +300,7 @@ export interface PiSettings {
 }
 
 // Section navigation for Discover/Installed tabs
-export type DiscoverSection = "configs" | "assets" | "plugins" | "piPackages";
+export type DiscoverSection = "files" | "plugins" | "piPackages";
 
 // Sub-view state for drilling into Plugins or Pi Packages
 export type DiscoverSubView = "plugins" | "piPackages" | null;

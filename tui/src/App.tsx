@@ -19,10 +19,8 @@ import { ToolDetail } from "./components/ToolDetail.js";
 import { ToolActionModal, type ToolModalAction } from "./components/ToolActionModal.js";
 import { SyncList } from "./components/SyncList.js";
 import { SyncPreview } from "./components/SyncPreview.js";
-import { AssetList } from "./components/AssetList.js";
-import { ConfigList } from "./components/ConfigList.js";
-import { AssetPreview } from "./components/AssetPreview.js";
-import { ConfigPreview } from "./components/ConfigPreview.js";
+import { FileList } from "./components/FileList.js";
+import { FilePreview } from "./components/FilePreview.js";
 import { FileDetail, getFileActions } from "./components/FileDetail.js";
 import { HintBar } from "./components/HintBar.js";
 import { StatusBar } from "./components/StatusBar.js";
@@ -504,12 +502,6 @@ export function App() {
     return maxLength(filteredPlugins.map((p) => p.marketplace.length), 10);
   }, [filteredPlugins]);
 
-  const isConfigFile = (file: FileStatus): boolean =>
-    Array.isArray(file.tools) && file.tools.length > 0;
-
-  const isAssetFile = (file: FileStatus): boolean =>
-    !file.tools || file.tools.length === 0;
-
   const isInstalledFile = (file: FileStatus): boolean => {
     if (file.instances.length === 0) return false;
     return file.instances.some((i) => {
@@ -525,20 +517,19 @@ export function App() {
     });
   };
 
-  const filteredConfigs = useMemo(() => {
+  const filteredFiles = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const base = files.filter(isConfigFile);
 
     const filtered =
       q.length === 0
-        ? base
-        : base.filter((file) => {
-            const toolId = file.tools?.[0] ?? "";
+        ? files
+        : files.filter((file) => {
+            const toolScope = file.tools?.join(", ") ?? "";
             return (
               file.name.toLowerCase().includes(q) ||
               file.source.toLowerCase().includes(q) ||
               file.target.toLowerCase().includes(q) ||
-              toolId.toLowerCase().includes(q)
+              toolScope.toLowerCase().includes(q)
             );
           });
 
@@ -550,50 +541,20 @@ export function App() {
     return sorted;
   }, [tab, files, search, sortBy, sortDir]);
 
-  const filteredAssets = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const base = files.filter(isAssetFile);
-
-    const filtered =
-      q.length === 0
-        ? base
-        : base.filter((file) => {
-            return (
-              file.name.toLowerCase().includes(q) ||
-              file.source.toLowerCase().includes(q) ||
-              file.target.toLowerCase().includes(q)
-            );
-          });
-
-    const sorted = [...filtered].sort((a, b) => {
-      const cmp = a.name.localeCompare(b.name);
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-
-    return sorted;
-  }, [tab, files, search, sortBy, sortDir]);
-
-  const configTotalCount = useMemo(() => files.filter(isConfigFile).length, [files]);
-  const assetTotalCount = useMemo(() => files.filter(isAssetFile).length, [files]);
-  const installedConfigCount = useMemo(
-    () => files.filter(isConfigFile).filter(isInstalledFile).length,
-    [files]
-  );
-  const installedAssetCount = useMemo(
-    () => files.filter(isAssetFile).filter(isInstalledFile).length,
+  const fileTotalCount = files.length;
+  const installedFileCount = useMemo(
+    () => files.filter(isInstalledFile).length,
     [files]
   );
 
   const libraryNameWidth = useMemo(() => {
     const pluginWidth = Math.min(30, maxLength(filteredPlugins.map((p) => p.name.length), 10));
-    const assetWidth = Math.min(30, maxLength(filteredAssets.map((f) => f.name.length), 10));
-    const configWidth = Math.min(30, maxLength(filteredConfigs.map((f) => f.name.length), 10));
+    const fileWidth = Math.min(30, maxLength(filteredFiles.map((f) => f.name.length), 10));
     const piPkgWidth = Math.min(30, maxLength(filteredPiPackages.map((p) => p.name.length), 10));
-    return Math.max(pluginWidth, assetWidth, configWidth, piPkgWidth);
-  }, [filteredPlugins, filteredAssets, filteredConfigs, filteredPiPackages]);
+    return Math.max(pluginWidth, fileWidth, piPkgWidth);
+  }, [filteredPlugins, filteredFiles, filteredPiPackages]);
 
-  const configCount = filteredConfigs.length;
-  const assetCount = filteredAssets.length;
+  const fileCount = filteredFiles.length;
   const pluginCount = filteredPlugins.length;
   const piPkgCount = filteredPiPackages.length;
 
@@ -603,7 +564,7 @@ export function App() {
   const piPkgSectionCount = tab === "discover" ? (piPkgCount > 0 ? 1 : 0) : piPkgCount;
 
   const libraryCount = tab === "installed"
-    ? configCount + assetCount + pluginCount + piPkgCount
+    ? fileCount + pluginCount + piPkgCount
     : pluginSectionCount + piPkgSectionCount;
 
   // Section boundaries for Tab/Shift+Tab navigation
@@ -612,13 +573,9 @@ export function App() {
     let offset = 0;
 
     if (tab === "installed") {
-      if (configCount > 0) {
-        result.push({ id: "configs", start: offset, end: offset + configCount - 1 });
-        offset += configCount;
-      }
-      if (assetCount > 0) {
-        result.push({ id: "assets", start: offset, end: offset + assetCount - 1 });
-        offset += assetCount;
+      if (fileCount > 0) {
+        result.push({ id: "files", start: offset, end: offset + fileCount - 1 });
+        offset += fileCount;
       }
       if (pluginCount > 0) {
         result.push({ id: "plugins", start: offset, end: offset + pluginCount - 1 });
@@ -639,7 +596,7 @@ export function App() {
     }
 
     return result;
-  }, [tab, configCount, assetCount, pluginCount, piPkgCount, pluginSectionCount, piPkgSectionCount]);
+  }, [tab, fileCount, pluginCount, piPkgCount, pluginSectionCount, piPkgSectionCount]);
 
   const currentSectionInfo = useMemo(() => {
     return sections.find((s) => selectedIndex >= s.start && selectedIndex <= s.end);
@@ -760,15 +717,14 @@ export function App() {
     ():
       | { kind: "plugin"; plugin: Plugin }
       | { kind: "piPackage"; piPackage: PiPackage }
-      | { kind: "config"; config: FileStatus }
-      | { kind: "asset"; asset: FileStatus }
+      | { kind: "file"; file: FileStatus }
       | { kind: "pluginSummary" }
       | { kind: "piPackageSummary" }
       | null => {
       if (tab !== "discover" && tab !== "installed") return null;
 
       // In Discover: plugins/piPackages are summary cards
-      // In Installed: configs/assets/plugins/piPackages are inline lists
+      // In Installed: files/plugins/piPackages are inline lists
       if (tab === "discover") {
         if (pluginSectionCount > 0 && selectedIndex === 0) {
           return { kind: "pluginSummary" };
@@ -779,35 +735,28 @@ export function App() {
         return null;
       }
 
-      // Installed tab - inline lists (order: configs, assets, plugins, piPackages)
-      if (selectedIndex < configCount) {
-        const config = filteredConfigs[selectedIndex];
-        return config ? { kind: "config", config } : null;
+      // Installed tab - inline lists (order: files, plugins, piPackages)
+      if (selectedIndex < fileCount) {
+        const file = filteredFiles[selectedIndex];
+        return file ? { kind: "file", file } : null;
       }
 
-      if (selectedIndex < configCount + assetCount) {
-        const asset = filteredAssets[selectedIndex - configCount];
-        return asset ? { kind: "asset", asset } : null;
-      }
-
-      if (selectedIndex < configCount + assetCount + pluginCount) {
-        const plugin = filteredPlugins[selectedIndex - configCount - assetCount];
+      if (selectedIndex < fileCount + pluginCount) {
+        const plugin = filteredPlugins[selectedIndex - fileCount];
         return plugin ? { kind: "plugin", plugin } : null;
       }
 
       const piPkg =
-        filteredPiPackages[selectedIndex - configCount - assetCount - pluginCount];
+        filteredPiPackages[selectedIndex - fileCount - pluginCount];
       return piPkg ? { kind: "piPackage", piPackage: piPkg } : null;
     },
     [
       tab,
       selectedIndex,
       filteredPlugins,
-      filteredAssets,
-      filteredConfigs,
+      filteredFiles,
       filteredPiPackages,
-      configCount,
-      assetCount,
+      fileCount,
       pluginCount,
       piPkgCount,
       pluginSectionCount,
@@ -1226,11 +1175,8 @@ export function App() {
       } else if (selectedLibraryItem?.kind === "piPackage") {
         setDetailPiPackage(selectedLibraryItem.piPackage);
         setActionIndex(0);
-      } else if (selectedLibraryItem?.kind === "config") {
-        setDetailFile(selectedLibraryItem.config);
-        setActionIndex(0);
-      } else if (selectedLibraryItem?.kind === "asset") {
-        setDetailFile(selectedLibraryItem.asset);
+      } else if (selectedLibraryItem?.kind === "file") {
+        setDetailFile(selectedLibraryItem.file);
         setActionIndex(0);
       } else if (selectedLibraryItem?.kind === "pluginSummary") {
         // Open plugins sub-view
@@ -1440,12 +1386,8 @@ export function App() {
 
     // Open diff/missing summary for installed managed file entries
     if (input === "d" && tab === "installed" && !detailPlugin && !detailFile && !detailMarketplace && !detailPiMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary && !discoverSubView) {
-      if (selectedLibraryItem?.kind === "config") {
-        openDiffFromSyncItem(toFileSyncItem(selectedLibraryItem.config));
-        return;
-      }
-      if (selectedLibraryItem?.kind === "asset") {
-        openDiffFromSyncItem(toFileSyncItem(selectedLibraryItem.asset));
+      if (selectedLibraryItem?.kind === "file") {
+        openDiffFromSyncItem(toFileSyncItem(selectedLibraryItem.file));
         return;
       }
     }
@@ -1619,7 +1561,7 @@ export function App() {
 
   const statusMessage = loading
     ? "Loading..."
-    : `${allPlugins.length} plugins, ${piPackages.length} pi-pkgs, ${assetTotalCount} assets, ${configTotalCount} configs from ${marketplaces.length} marketplaces`;
+    : `${allPlugins.length} plugins, ${piPackages.length} pi-pkgs, ${fileTotalCount} files from ${marketplaces.length} marketplaces`;
 
   const showGlobalLoadingIndicator = loading || tabRefreshInProgress;
   const shouldShowDiscoverLoading =
@@ -1628,8 +1570,7 @@ export function App() {
     loading &&
     installedPlugins.length === 0 &&
     piPackages.filter((pkg) => pkg.installed).length === 0 &&
-    installedAssetCount === 0 &&
-    installedConfigCount === 0;
+    installedFileCount === 0;
   const shouldShowMarketplacesLoading = loading && marketplaces.length === 0 && piMarketplaces.length === 0;
 
   const refreshTabLabel =
@@ -1834,7 +1775,7 @@ export function App() {
                   placeholder={
                     tab === "discover"
                       ? "Search plugins..."
-                      : "Search installed plugins, assets, and configs..."
+                      : "Search installed files and plugins..."
                   }
                   focus={searchFocused}
                   onFocus={() => setSearchFocused(true)}
@@ -1922,47 +1863,30 @@ export function App() {
                 </Box>
               ) : (
                 <Box flexDirection="column">
-                  {filteredConfigs.length > 0 && (
+                  {filteredFiles.length > 0 && (
                     <Box flexDirection="column">
                       <Box>
-                        <Text color="gray">  Configs </Text>
-                        <Text color="gray" dimColor>{getRange(selectedIndex < configCount ? selectedIndex : 0, filteredConfigs.length, 2)}</Text>
+                        <Text color="gray">  Files </Text>
+                        <Text color="gray" dimColor>{getRange(selectedIndex < fileCount ? selectedIndex : 0, filteredFiles.length, 5)}</Text>
                       </Box>
-                      <ConfigList
-                        configs={filteredConfigs}
-                        selectedIndex={selectedIndex < configCount ? selectedIndex : -1}
-                        maxHeight={2}
+                      <FileList
+                        files={filteredFiles}
+                        selectedIndex={selectedIndex < fileCount ? selectedIndex : -1}
+                        maxHeight={5}
                         nameColumnWidth={libraryNameWidth}
-                        typeColumnWidth={6}
-                        toolColumnWidth={marketplaceWidth}
-                      />
-                    </Box>
-                  )}
-                  {filteredAssets.length > 0 && (
-                    <Box flexDirection="column" marginTop={filteredConfigs.length > 0 ? 1 : 0}>
-                      <Box>
-                        <Text color="gray">  Assets </Text>
-                        <Text color="gray" dimColor>{getRange(selectedIndex >= configCount && selectedIndex < configCount + assetCount ? selectedIndex - configCount : 0, filteredAssets.length, 3)}</Text>
-                      </Box>
-                      <AssetList
-                        assets={filteredAssets}
-                        selectedIndex={selectedIndex >= configCount && selectedIndex < configCount + assetCount ? selectedIndex - configCount : -1}
-                        maxHeight={3}
-                        nameColumnWidth={libraryNameWidth}
-                        typeColumnWidth={6}
-                        toolColumnWidth={marketplaceWidth}
+                        scopeColumnWidth={marketplaceWidth}
                       />
                     </Box>
                   )}
                   {filteredPlugins.length > 0 && (
-                    <Box flexDirection="column" marginTop={(filteredConfigs.length > 0 || filteredAssets.length > 0) ? 1 : 0}>
+                    <Box flexDirection="column" marginTop={filteredFiles.length > 0 ? 1 : 0}>
                       <Box>
                         <Text color="gray">  Plugins </Text>
-                        <Text color="gray" dimColor>{getRange(selectedIndex >= configCount + assetCount && selectedIndex < configCount + assetCount + pluginCount ? selectedIndex - configCount - assetCount : 0, filteredPlugins.length, 4)}</Text>
+                        <Text color="gray" dimColor>{getRange(selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : 0, filteredPlugins.length, 4)}</Text>
                       </Box>
                       <PluginList
                         plugins={filteredPlugins}
-                        selectedIndex={selectedIndex >= configCount + assetCount && selectedIndex < configCount + assetCount + pluginCount ? selectedIndex - configCount - assetCount : -1}
+                        selectedIndex={selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : -1}
                         maxHeight={4}
                         nameColumnWidth={libraryNameWidth}
                         marketplaceColumnWidth={marketplaceWidth}
@@ -1970,14 +1894,14 @@ export function App() {
                     </Box>
                   )}
                   {filteredPiPackages.length > 0 && (
-                    <Box flexDirection="column" marginTop={(filteredConfigs.length > 0 || filteredAssets.length > 0 || filteredPlugins.length > 0) ? 1 : 0}>
+                    <Box flexDirection="column" marginTop={(filteredFiles.length > 0 || filteredPlugins.length > 0) ? 1 : 0}>
                       <Box>
                         <Text color="gray">  Pi Packages </Text>
-                        <Text color="gray" dimColor>{getRange(selectedIndex >= configCount + assetCount + pluginCount ? selectedIndex - configCount - assetCount - pluginCount : 0, filteredPiPackages.length, 3)}</Text>
+                        <Text color="gray" dimColor>{getRange(selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : 0, filteredPiPackages.length, 3)}</Text>
                       </Box>
                       <PiPackageList
                         packages={filteredPiPackages}
-                        selectedIndex={selectedIndex >= configCount + assetCount + pluginCount ? selectedIndex - configCount - assetCount - pluginCount : -1}
+                        selectedIndex={selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : -1}
                         maxHeight={3}
                         nameColumnWidth={libraryNameWidth}
                         marketplaceColumnWidth={marketplaceWidth}
@@ -2079,10 +2003,8 @@ export function App() {
           <PluginPreview plugin={selectedLibraryItem.plugin} />
         ) : selectedLibraryItem?.kind === "piPackage" ? (
           <PiPackagePreview pkg={selectedLibraryItem.piPackage} />
-        ) : selectedLibraryItem?.kind === "config" ? (
-          <ConfigPreview config={selectedLibraryItem.config} />
-        ) : selectedLibraryItem?.kind === "asset" ? (
-          <AssetPreview asset={selectedLibraryItem.asset} />
+        ) : selectedLibraryItem?.kind === "file" ? (
+          <FilePreview file={selectedLibraryItem.file} />
         ) : null
       )}
 
