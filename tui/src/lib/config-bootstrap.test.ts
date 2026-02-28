@@ -41,9 +41,9 @@ describe("ensureConfigExists bootstrap", () => {
     writeFileSync(join(claudeDir, "settings.json"), '{"theme":"dark"}');
     writeFileSync(join(claudeDir, "CLAUDE.md"), "# Claude");
 
-    const piDir = join(TMP_HOME, ".pi");
-    mkdirSync(piDir, { recursive: true });
-    writeFileSync(join(piDir, "config.toml"), "[agent]\nname='pi'");
+    const piAgentDir = join(TMP_HOME, ".pi", "agent");
+    mkdirSync(piAgentDir, { recursive: true });
+    writeFileSync(join(piAgentDir, "settings.json"), '{"theme":"dark"}');
 
     ensureConfigExists();
 
@@ -58,15 +58,15 @@ describe("ensureConfigExists bootstrap", () => {
 
     expect(config.marketplaces["claude-plugins-official"]).toContain("marketplace.json");
     expect(config.tools["claude-code"]?.[0]?.config_dir).toBe("~/.claude");
-    expect(config.tools["pi"]?.[0]?.config_dir).toBe("~/.pi");
+    expect(config.tools["pi"]?.[0]?.config_dir).toBe("~/.pi/agent");
 
     const claudeSettings = config.files.find((file) => file.target === "settings.json" && file.tools?.includes("claude-code"));
     expect(claudeSettings).toBeDefined();
     expect(claudeSettings?.source).toBe(join(TMP_HOME, ".claude", "settings.json"));
 
-    const piConfig = config.files.find((file) => file.target === "config.toml" && file.tools?.includes("pi"));
+    const piConfig = config.files.find((file) => file.target === "settings.json" && file.tools?.includes("pi"));
     expect(piConfig).toBeDefined();
-    expect(piConfig?.source).toBe(join(TMP_HOME, ".pi", "config.toml"));
+    expect(piConfig?.source).toBe(join(TMP_HOME, ".pi", "agent", "settings.json"));
   });
 
   it("does not overwrite an existing config.yaml", () => {

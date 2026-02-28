@@ -10,7 +10,11 @@ components:
   skills:
     install_dir: skills/
     strategy: symlink
-config_files: []
+config_files:
+  - name: Codex Config
+    path: config.toml
+    format: toml
+    pullback: true
 syncable: true
 lifecycle:
   install:

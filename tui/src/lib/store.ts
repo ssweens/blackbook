@@ -864,10 +864,6 @@ export const useStore = create<Store>((set, get) => ({
     }
 
     const config = configResult.config;
-    if (config.files.length === 0) {
-      set({ files: [] });
-      return [];
-    }
 
     const playbooks = getAllPlaybooks();
     const toolInstances = resolveToolInstances(config, playbooks);
@@ -879,8 +875,10 @@ export const useStore = create<Store>((set, get) => ({
     // from the legacy config to keep relative sources working.
     const legacyConfigRepo = getConfigRepoPath();
     const legacyAssetsRepo = getAssetsRepoPath();
+    const effectiveRepo = sourceRepo || legacyAssetsRepo || undefined;
 
     const files: FileStatus[] = [];
+    const coveredTargets = new Set<string>(); // "toolId:instanceId:targetRelPath"
 
     for (const fileEntry of config.files) {
       const fileStatus: FileStatus = {
@@ -905,11 +903,6 @@ export const useStore = create<Store>((set, get) => ({
           const instanceConfigDir = expandConfigPath(inst.config_dir);
           const targetOverride = fileEntry.overrides?.[`${toolId}:${inst.id}`];
           const targetRelPath = targetOverride || fileEntry.target;
-
-          // Resolve source: relative to YAML source_repo, or legacy repo paths
-          const isConfigFile = Boolean(fileEntry.tools && fileEntry.tools.length > 0);
-          const inferredRepo = isConfigFile ? legacyConfigRepo : legacyAssetsRepo;
-          const effectiveRepo = sourceRepo || inferredRepo || undefined;
 
           const sourcePath = resolveSourcePath(fileEntry.source, effectiveRepo);
           const targetPath = `${instanceConfigDir}/${targetRelPath}`;
@@ -945,10 +938,79 @@ export const useStore = create<Store>((set, get) => ({
             diff: stepResult.check.diff,
             driftKind: stepResult.check.driftKind,
           });
+          coveredTargets.add(`${toolId}:${inst.id}:${targetRelPath}`);
         }
       }
 
       files.push(fileStatus);
+    }
+
+    // Auto-inject playbook-declared config files not covered by explicit entries
+    for (const [toolId, playbook] of playbooks) {
+      if (!playbook.config_files || playbook.config_files.length === 0) continue;
+      if (!isSyncTarget(toolId, playbooks)) continue;
+
+      const instances = toolInstances.get(toolId) || [];
+      const enabledInstances = instances.filter((i) => i.enabled);
+      if (enabledInstances.length === 0) continue;
+
+      for (const configFile of playbook.config_files) {
+        const uncoveredInstances = enabledInstances.filter(
+          (inst) => !coveredTargets.has(`${toolId}:${inst.id}:${configFile.path}`)
+        );
+        if (uncoveredInstances.length === 0) continue;
+
+        const conventionalSource = `config/${toolId}/${configFile.path}`;
+        const sourcePath = resolveSourcePath(conventionalSource, effectiveRepo);
+
+        const fileStatus: FileStatus = {
+          name: configFile.name,
+          source: conventionalSource,
+          target: configFile.path,
+          pullback: configFile.pullback,
+          tools: [toolId],
+          instances: [],
+        };
+
+        for (const inst of uncoveredInstances) {
+          const instanceConfigDir = expandConfigPath(inst.config_dir);
+          const targetPath = `${instanceConfigDir}/${configFile.path}`;
+          const stateKey = buildStateKey(configFile.name, toolId, inst.id, configFile.path);
+          const steps: OrchestratorStep[] = [{
+            label: `${configFile.name}:${toolId}:${inst.id}`,
+            module: getSyncModule(sourcePath) as any,
+            params: {
+              sourcePath,
+              targetPath,
+              owner: `file:${configFile.name}`,
+              stateKey,
+              pullback: configFile.pullback,
+              backupRetention: config.settings.backup_retention,
+            },
+          }];
+
+          const result = await runCheck(steps);
+          const stepResult = result.steps[0];
+
+          fileStatus.instances.push({
+            toolId,
+            instanceId: inst.id,
+            instanceName: inst.name,
+            configDir: instanceConfigDir,
+            targetRelPath: configFile.path,
+            sourcePath,
+            targetPath,
+            status: stepResult.check.status,
+            message: stepResult.check.message,
+            diff: stepResult.check.diff,
+            driftKind: stepResult.check.driftKind,
+          });
+        }
+
+        if (fileStatus.instances.length > 0) {
+          files.push(fileStatus);
+        }
+      }
     }
 
     set({ files });

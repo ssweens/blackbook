@@ -18,7 +18,11 @@ components:
   agents:
     install_dir: agents/
     strategy: symlink
-config_files: []
+config_files:
+  - name: OpenCode Config
+    path: opencode.json
+    format: json
+    pullback: true
 syncable: true
 lifecycle:
   install:

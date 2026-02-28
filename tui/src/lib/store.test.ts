@@ -492,13 +492,17 @@ describe("Store loadFiles (YAML config)", () => {
     expect(files).toEqual([]);
   });
 
-  it("returns empty when config has no files", async () => {
+  it("returns empty when config has no files and playbooks have no config_files", async () => {
     vi.mocked(getYamlConfigPath).mockReturnValue("/tmp/blackbook/config.yaml");
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: { files: [], settings: { package_manager: "pnpm" }, tools: {}, plugins: {} } as any,
       configPath: "/tmp/blackbook/config.yaml",
       errors: [],
     });
+    vi.mocked(getAllPlaybooks).mockReturnValue(new Map([
+      ["opencode", { syncable: true, config_files: [], default_instances: [] }],
+    ]) as any);
+    vi.mocked(resolveToolInstances).mockReturnValue(new Map());
 
     const files = await useStore.getState().loadFiles();
 
@@ -631,6 +635,115 @@ describe("Store loadFiles (YAML config)", () => {
     } finally {
       rmSync(sourceRoot, { recursive: true, force: true });
     }
+  });
+
+  it("injects synthetic entries for uncovered playbook config_files", async () => {
+    vi.mocked(getYamlConfigPath).mockReturnValue("/tmp/blackbook/config.yaml");
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: {
+        files: [],
+        settings: { source_repo: "~/dotfiles", package_manager: "pnpm" },
+        tools: {},
+        plugins: {},
+      } as any,
+      configPath: "/tmp/blackbook/config.yaml",
+      errors: [],
+    });
+
+    const playbooks = new Map([
+      ["pi", {
+        syncable: true,
+        config_files: [
+          { name: "Pi Config", path: "settings.json", format: "json", pullback: true },
+        ],
+        default_instances: [{ id: "default", name: "Pi", config_dir: "~/.pi/agent" }],
+      }],
+    ]);
+    vi.mocked(getAllPlaybooks).mockReturnValue(playbooks as any);
+    vi.mocked(isSyncTarget).mockReturnValue(true);
+    vi.mocked(expandConfigPath).mockImplementation((p: string) => p.replace("~", "/home/user"));
+    vi.mocked(resolveSourcePath).mockImplementation((source: string, repo?: string) =>
+      repo ? `${repo}/${source}` : source
+    );
+    vi.mocked(resolveToolInstances).mockReturnValue(
+      new Map([
+        ["pi", [
+          { id: "default", name: "Pi", enabled: true, config_dir: "~/.pi/agent" },
+        ]],
+      ])
+    );
+    vi.mocked(runCheck).mockResolvedValue({
+      steps: [{ label: "Pi Config:pi:default", check: { status: "drifted", message: "Target changed", driftKind: "target-changed" } }],
+      summary: { ok: 0, missing: 0, drifted: 1, failed: 0, changed: 0 },
+    });
+
+    const files = await useStore.getState().loadFiles();
+
+    expect(files).toHaveLength(1);
+    expect(files[0].name).toBe("Pi Config");
+    expect(files[0].source).toBe("config/pi/settings.json");
+    expect(files[0].target).toBe("settings.json");
+    expect(files[0].pullback).toBe(true);
+    expect(files[0].tools).toEqual(["pi"]);
+    expect(files[0].instances).toHaveLength(1);
+    expect(files[0].instances[0]).toMatchObject({
+      toolId: "pi",
+      instanceId: "default",
+      instanceName: "Pi",
+      targetRelPath: "settings.json",
+      status: "drifted",
+      driftKind: "target-changed",
+    });
+  });
+
+  it("does not inject synthetic entry when explicit config covers the target", async () => {
+    vi.mocked(getYamlConfigPath).mockReturnValue("/tmp/blackbook/config.yaml");
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: {
+        files: [
+          { name: "AGENTS.md", source: "AGENTS.md", target: "AGENTS.md", pullback: false, overrides: { "claude-code:default": "CLAUDE.md" } },
+        ],
+        settings: { source_repo: "~/dotfiles", package_manager: "pnpm" },
+        tools: {},
+        plugins: {},
+      } as any,
+      configPath: "/tmp/blackbook/config.yaml",
+      errors: [],
+    });
+
+    const playbooks = new Map([
+      ["claude-code", {
+        syncable: true,
+        config_files: [
+          { name: "CLAUDE.md", path: "CLAUDE.md", format: "markdown", pullback: true },
+        ],
+        default_instances: [{ id: "default", name: "Claude", config_dir: "~/.claude" }],
+      }],
+    ]);
+    vi.mocked(getAllPlaybooks).mockReturnValue(playbooks as any);
+    vi.mocked(isSyncTarget).mockReturnValue(true);
+    vi.mocked(expandConfigPath).mockImplementation((p: string) => p.replace("~", "/home/user"));
+    vi.mocked(resolveSourcePath).mockImplementation((source: string, repo?: string) =>
+      repo ? `${repo}/${source}` : source
+    );
+    vi.mocked(resolveToolInstances).mockReturnValue(
+      new Map([
+        ["claude-code", [
+          { id: "default", name: "Claude", enabled: true, config_dir: "~/.claude" },
+        ]],
+      ])
+    );
+    vi.mocked(runCheck).mockResolvedValue({
+      steps: [{ label: "AGENTS.md:claude-code:default", check: { status: "ok", message: "In sync" } }],
+      summary: { ok: 1, missing: 0, drifted: 0, failed: 0, changed: 0 },
+    });
+
+    const files = await useStore.getState().loadFiles();
+
+    // Only the explicit AGENTS.md entry — no synthetic CLAUDE.md because
+    // the override resolved targetRelPath to "CLAUDE.md" covering it
+    expect(files).toHaveLength(1);
+    expect(files[0].name).toBe("AGENTS.md");
   });
 
   it("includes file items in sync preview for missing/drifted only", () => {

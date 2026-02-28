@@ -3,7 +3,7 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 315
+- **Total Tests:** 319
 - **Test Files:** 32
 
 ## Critical Paths
@@ -27,6 +27,8 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Unified files list with check/apply module orchestration
 - [x] File sync routes directory sources through `directory-sync` (avoids EISDIR in file-copy)
 - [x] Three-way state tracking (source-changed, target-changed, both-changed drift detection)
+- [x] Playbook config_files auto-injection for uncovered targets
+- [x] Override-based coverage prevents duplicate synthetic entries
 - [x] Pullback detection and target → source sync
 - [x] Conflict detection for both-changed files
 - [x] Cleanup detection of orphaned state entries
@@ -95,8 +97,8 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [ ] Discover → open plugin → install single tool → success notification
 - [ ] Discover → open plugin → update → tool statuses refresh
 - [ ] Installed → open plugin → uninstall → removed from list
-- [ ] Installed → open asset → sync to all tools → success notification
-- [ ] Installed → open config → sync to matching tool → success notification
+- [ ] Installed → open file → sync to all tools → success notification
+- [ ] Installed → open file → sync to matching tool → success notification
 - [ ] Sync → select items → sync → success summary
 - [ ] Sync → tool update item selected → updates binary version status
 - [ ] Marketplaces → add marketplace → appears in list and discover results
@@ -106,11 +108,10 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [ ] Tools → detection in progress shows global checking indicator until all tool checks complete
 - [ ] Global loading indicator appears across tabs (including Sync) during refresh operations
 - [ ] Search + sort → filters and ordering update list correctly
-- [x] Drifted asset → View diff → shows file list with +N/-N counts
-- [x] Drifted config → View diff → shows multi-file list with counts
+- [x] Drifted file → View diff → shows file list with +N/-N counts
 - [ ] Sync tab → press 'd' on drifted item → opens diff view
 - [ ] Sync tab → press 'd' on missing item → opens missing summary
-- [ ] Diff view → press 'p' on config diff → pulls instance files back to source repo
+- [ ] Diff view → press 'p' on file diff → pulls instance files back to source repo
 - [ ] Reverse sync backs up source file before overwriting
 - [ ] Reverse sync skips files that are already in sync
 
@@ -121,9 +122,8 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Sync with no drift/missing shows "All enabled instances are in sync"
 - [ ] Marketplace fetch failure shows error notification
 - [ ] Invalid marketplace URL rejected in add flow
-- [ ] Asset source missing shows error status and blocks sync
-- [ ] Config source missing shows error status and blocks sync
-- [ ] Config with no matching tool instances shows empty state
+- [ ] File source missing shows error status and blocks sync
+- [ ] File with no matching tool instances shows empty state
 - [ ] Tool config dir invalid/empty shows error notification
 
 ## Settings Tab
@@ -137,6 +137,5 @@ This project tracks coverage by critical user journeys and system boundaries.
 
 ## Gaps (Low Priority)
 - [ ] End-to-end TUI navigation across all tabs (discover → installed → tools → sync → settings)
-- [ ] Full asset lifecycle (add → drift → sync) end-to-end
-- [ ] Full config lifecycle (add → drift → sync) end-to-end
+- [ ] Full file lifecycle (add → drift → sync) end-to-end
 - [ ] Marketplace add/remove persistence

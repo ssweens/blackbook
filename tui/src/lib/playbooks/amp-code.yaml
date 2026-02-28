@@ -18,7 +18,11 @@ components:
   agents:
     install_dir: agents/
     strategy: symlink
-config_files: []
+config_files:
+  - name: Amp Config
+    path: settings.json
+    format: json
+    pullback: true
 syncable: true
 lifecycle:
   install:
