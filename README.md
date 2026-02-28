@@ -113,7 +113,7 @@ Blackbook uses YAML configuration files:
 ~/.config/blackbook/config.local.yaml # Machine-specific overrides (optional, gitignored)
 ```
 
-On first launch, if `config.yaml` is missing, Blackbook bootstraps one from detected tool installations and prepopulates `files:` entries for known tool config files that already exist on disk. (A compatibility `config.toml` is also written for legacy paths still being migrated.)
+On first launch, if `config.yaml` is missing, Blackbook bootstraps one from detected tool installations and prepopulates `files:` entries for known tool config files that already exist on disk.
 
 ### YAML Config
 
@@ -222,10 +222,7 @@ Pi packages can include extensions, themes, custom tools, and skills. Install/un
 
 You can also add local Pi package directories as marketplaces:
 
-```toml
-[pi-marketplaces]
-my-packages = "~/src/my-pi-packages"
-```
+Pi marketplaces are configured in the legacy config section and managed via the TUI Marketplaces tab.
 
 ### Tools
 
@@ -274,11 +271,11 @@ Incomplete installs are detected when a plugin is missing from any enabled insta
 
 **Via TUI:** Navigate to Marketplaces tab, select "Add Marketplace"
 
-**Via config file:** Edit `~/.config/blackbook/config.toml` directly
+**Via config file:** Edit `~/.config/blackbook/config.yaml` directly
 
-```toml
-[marketplaces]
-my-marketplace = "https://raw.githubusercontent.com/user/repo/main/.claude-plugin/marketplace.json"
+```yaml
+marketplaces:
+  my-marketplace: "https://raw.githubusercontent.com/user/repo/main/.claude-plugin/marketplace.json"
 ```
 
 ## Cache

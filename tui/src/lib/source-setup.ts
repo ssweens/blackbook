@@ -42,6 +42,7 @@ function findSourceConfigPath(sourceDir: string): string | null {
     join(sourceDir, "config.yaml"),
     join(sourceDir, "blackbook", "config.yaml"),
     join(sourceDir, ".blackbook", "config.yaml"),
+    join(sourceDir, "config", "blackbook", "config.yaml"),
   ];
 
   for (const candidate of candidates) {
@@ -57,6 +58,10 @@ async function ensureGitClone(source: string): Promise<{ path: string; cloned: b
   if (existsSync(targetPath)) {
     const entries = readdirSync(targetPath);
     if (entries.length > 0) {
+      // Pull latest changes
+      await execFileAsync("git", ["pull"], { cwd: targetPath, timeout: 120000 }).catch(() => {
+        // Pull failed (offline, etc.) — continue with existing checkout
+      });
       return { path: targetPath, cloned: false };
     }
   }
@@ -131,6 +136,23 @@ export async function setupSourceRepository(sourceInput: string): Promise<SetupS
     cloned,
     importedConfig: false,
   };
+}
+
+/**
+ * Pull latest changes for the configured source repo (if it's a git repo).
+ * Safe to call frequently — silently no-ops if not a git repo or offline.
+ */
+export async function pullSourceRepo(): Promise<void> {
+  const { config } = loadConfig();
+  const sourceRepo = config.settings.source_repo;
+  if (!sourceRepo) return;
+
+  const repoPath = expandPath(sourceRepo);
+  if (!existsSync(join(repoPath, ".git"))) return;
+
+  await execFileAsync("git", ["pull"], { cwd: repoPath, timeout: 120000 }).catch(() => {
+    // Offline, not a git repo, etc. — silently continue
+  });
 }
 
 export function shouldShowSourceSetupWizard(): boolean {

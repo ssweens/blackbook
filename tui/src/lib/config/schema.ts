@@ -37,6 +37,8 @@ export const SettingsSchema = z.object({
   package_manager: z.enum(["npm", "pnpm", "bun"]).default("npm"),
   backup_retention: z.number().int().min(1).max(100).default(3),
   default_pullback: z.boolean().default(false),
+  disabled_marketplaces: z.array(z.string()).default([]),
+  disabled_pi_marketplaces: z.array(z.string()).default([]),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -64,6 +66,7 @@ const SETTINGS_DEFAULT = SettingsSchema.parse({});
 export const ConfigSchema = z.object({
   settings: SettingsSchema.default(SETTINGS_DEFAULT),
   marketplaces: z.record(z.string(), z.string()).default({}),
+
   tools: z.record(z.string(), z.array(ToolInstanceSchema)).default({}),
   files: z.array(FileEntrySchema).default([]),
   plugins: z.record(z.string(), z.record(z.string(), PluginComponentSchema)).default({}),

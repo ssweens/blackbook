@@ -20,16 +20,11 @@ export interface ConfigLoadError {
 }
 
 /**
- * Determine config file path. Prefers YAML, falls back to TOML (read-only legacy).
+ * Determine config file path.
  */
 export function getConfigPath(): string {
   const dir = getConfigDir();
-  const yamlPath = join(dir, "config.yaml");
-  const tomlPath = join(dir, "config.toml");
-
-  if (existsSync(yamlPath)) return yamlPath;
-  if (existsSync(tomlPath)) return tomlPath;
-  return yamlPath; // Default for new installs
+  return join(dir, "config.yaml");
 }
 
 function parseYamlFile(filePath: string): { data: Record<string, unknown>; errors: ConfigLoadError[] } {

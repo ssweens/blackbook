@@ -4,7 +4,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { loadConfig, saveConfig, getPluginComponentConfig, setPluginComponentEnabled, isPluginComponentEnabled } from "./config.js";
 
-const TMP_PATH = join(tmpdir(), `blackbook-config-test-${Date.now()}.toml`);
+const TMP_PATH = join(tmpdir(), `blackbook-config-test-${Date.now()}.yaml`);
 
 afterEach(() => {
   try {
@@ -81,8 +81,8 @@ name = "Pi Config"
 tool_id = "pi"
 
 [[configs.files]]
-source = "pi/config.toml"
-target = "config.toml"
+source = "pi/config.yaml"
+target = "config.yaml"
 
 [[configs.files]]
 source = "pi/themes/"
@@ -96,7 +96,7 @@ target = "themes/"
     expect(cfg.name).toBe("Pi Config");
     expect(cfg.toolId).toBe("pi");
     expect(cfg.mappings).toEqual([
-      { source: "pi/config.toml", target: "config.toml" },
+      { source: "pi/config.yaml", target: "config.yaml" },
       { source: "pi/themes/", target: "themes/" },
     ]);
   });
@@ -174,9 +174,9 @@ disabled_agents = "x"
     writeFileSync(TMP_PATH, content.trim());
     // getPluginComponentConfig reads from default path, so test via loadConfig
     const config = loadConfig(TMP_PATH);
-    const pluginToml = config.plugins!["mkt"]["plg"];
-    const disabledSkills = (pluginToml.disabled_skills || "").split(",").map(s => s.trim()).filter(Boolean);
-    const disabledAgents = (pluginToml.disabled_agents || "").split(",").map(s => s.trim()).filter(Boolean);
+    const pluginEntry = config.plugins!["mkt"]["plg"];
+    const disabledSkills = (pluginEntry.disabled_skills || "").split(",").map(s => s.trim()).filter(Boolean);
+    const disabledAgents = (pluginEntry.disabled_agents || "").split(",").map(s => s.trim()).filter(Boolean);
     expect(disabledSkills).toEqual(["a", "b", "c"]);
     expect(disabledAgents).toEqual(["x"]);
   });

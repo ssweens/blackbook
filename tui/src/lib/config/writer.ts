@@ -1,10 +1,8 @@
 import { existsSync, readFileSync } from "fs";
 import { parseDocument, stringify } from "yaml";
 import type { BlackbookConfig } from "./schema.js";
-import { getConfigDir } from "./path.js";
 import { getConfigPath } from "./loader.js";
 import { atomicWriteFileSync, withFileLockSync } from "../fs-utils.js";
-import { join } from "path";
 
 /**
  * Save config to YAML, preserving comments when possible.
@@ -12,12 +10,7 @@ import { join } from "path";
  * then patches values. Otherwise writes fresh YAML.
  */
 export function saveConfig(config: BlackbookConfig, configPath?: string): void {
-  const path = configPath || getConfigPath();
-
-  // Always write YAML, even if path ends in .toml
-  const yamlPath = path.endsWith(".toml")
-    ? join(getConfigDir(), "config.yaml")
-    : path;
+  const yamlPath = configPath || getConfigPath();
 
   let content: string;
 

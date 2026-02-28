@@ -221,29 +221,29 @@ For version releases, complete these steps in order:
 
 ### Configuration File Location
 ```bash
-~/.config/blackbook/config.toml
+~/.config/blackbook/config.yaml
 ```
 
 Or use custom location via `XDG_CONFIG_HOME` environment variable.
 
 ### Example Configuration
-```toml
-[marketplaces]
-playbook = "https://raw.githubusercontent.com/ssweens/playbook/main/.claude-plugin/marketplace.json"
+```yaml
+marketplaces:
+  playbook: "https://raw.githubusercontent.com/ssweens/playbook/main/.claude-plugin/marketplace.json"
 
-[tools.claude-code]
-[[tools.claude-code.instances]]
-id = "claude-main"
-name = "Claude"
-enabled = true
-config_dir = "~/.claude"
-
-[tools.opencode]
-[[tools.opencode.instances]]
-id = "opencode"
-name = "OpenCode"
-enabled = true
-config_dir = "~/.config/opencode"
+tools:
+  claude-code:
+    instances:
+      - id: "claude-main"
+        name: "Claude"
+        enabled: true
+        config_dir: "~/.claude"
+  opencode:
+    instances:
+      - id: "opencode"
+        name: "OpenCode"
+        enabled: true
+        config_dir: "~/.config/opencode"
 ```
 
 ### Supported Tools
@@ -322,7 +322,7 @@ See `RELEASING.md` for detailed release instructions:
 ## Common Issues & Troubleshooting
 
 ### Installation Fails
-- Check `~/.config/blackbook/config.toml` for syntax errors
+- Check `~/.config/blackbook/config.yaml` for syntax errors
 - Verify Git is installed and accessible
 - Check disk space and permissions
 - Review error notifications in the TUI

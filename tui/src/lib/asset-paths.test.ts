@@ -4,7 +4,7 @@ import { join } from "path";
 import { tmpdir, homedir } from "os";
 import { loadConfig, getAssetsRepoPath, resolveAssetSourcePath } from "./config.js";
 
-const TMP_PATH = join(tmpdir(), `blackbook-asset-paths-test-${Date.now()}.toml`);
+const TMP_PATH = join(tmpdir(), `blackbook-asset-paths-test-${Date.now()}.yaml`);
 
 afterEach(() => {
   try {

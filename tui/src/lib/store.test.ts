@@ -51,7 +51,7 @@ vi.mock("./config/loader.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./config/loader.js")>();
   return {
     ...actual,
-    getConfigPath: vi.fn().mockReturnValue("/tmp/blackbook/config.toml"),
+    getConfigPath: vi.fn().mockReturnValue("/tmp/blackbook/config.yaml"),
     loadConfig: vi.fn().mockReturnValue({ config: { files: [], settings: {}, tools: {}, plugins: {} }, configPath: "/tmp/blackbook/config.yaml", errors: [] }),
   };
 });
@@ -470,7 +470,7 @@ describe("Store loadFiles (YAML config)", () => {
   });
 
   it("returns empty when config path is not YAML", async () => {
-    vi.mocked(getYamlConfigPath).mockReturnValue("/tmp/blackbook/config.toml");
+    vi.mocked(getYamlConfigPath).mockReturnValue("/tmp/blackbook/config.json");
 
     const files = await useStore.getState().loadFiles();
 

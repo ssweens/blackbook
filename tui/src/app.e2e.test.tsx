@@ -32,6 +32,14 @@ const toolLifecycleState = vi.hoisted(() => ({
   binaryPath: null as string | null,
 }));
 
+vi.mock("./lib/source-setup.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lib/source-setup.js")>();
+  return {
+    ...actual,
+    shouldShowSourceSetupWizard: vi.fn().mockReturnValue(false),
+  };
+});
+
 vi.mock("./lib/config.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/config.js")>();
   return {

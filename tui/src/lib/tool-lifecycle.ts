@@ -26,9 +26,9 @@ export function buildInstallCommand(pm: PackageManager, pkg: string): { cmd: str
 }
 
 export function buildUpdateCommand(pm: PackageManager, pkg: string): { cmd: string; args: string[] } {
-  if (pm === "npm") return { cmd: "npm", args: ["update", "-g", pkg] };
-  if (pm === "pnpm") return { cmd: "pnpm", args: ["update", "-g", pkg] };
-  return { cmd: "bun", args: ["update", "-g", pkg] };
+  if (pm === "npm") return { cmd: "npm", args: ["install", "-g", `${pkg}@latest`] };
+  if (pm === "pnpm") return { cmd: "pnpm", args: ["add", "-g", `${pkg}@latest`] };
+  return { cmd: "bun", args: ["add", "-g", `${pkg}@latest`] };
 }
 
 export function buildUninstallCommand(pm: PackageManager, pkg: string): { cmd: string; args: string[] } {
@@ -138,6 +138,14 @@ function detectBinaryInstallMethod(binaryPath: string | null | undefined): Insta
   const bunBinDir = join(homedir(), ".bun", "bin");
   if (binaryPath.startsWith(bunBinDir)) {
     return "bun";
+  }
+  // nvm/fnm/volta-managed node installs (npm/pnpm global installs land here)
+  if (binaryPath.includes("/.nvm/") || binaryPath.includes("/.fnm/") || binaryPath.includes("/.volta/")) {
+    return null; // Defer to detectPackageManagersForTool for precise detection
+  }
+  // System node paths (e.g. /usr/lib/node_modules, /usr/bin)
+  if (binaryPath.startsWith("/usr/") && !binaryPath.startsWith("/usr/local/")) {
+    return null;
   }
   return "unknown";
 }

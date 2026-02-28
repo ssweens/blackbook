@@ -24,6 +24,10 @@ export function ToolDetail({ tool, detection, pending }: ToolDetailProps) {
     const path = detection?.binaryPath;
     if (!path) return "unknown";
     if (path.startsWith("/opt/homebrew/") || path.startsWith("/usr/local/")) return "brew";
+    const home = process.env.HOME || "";
+    if (path.startsWith(`${home}/.bun/bin`)) return "bun";
+    if (path.includes("/.nvm/") || path.includes("/.fnm/") || path.includes("/.volta/")) return "npm/node";
+    if (path.startsWith("/usr/")) return "system";
     return "unknown";
   })();
 

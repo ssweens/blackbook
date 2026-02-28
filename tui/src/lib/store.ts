@@ -42,6 +42,7 @@ import {
 } from "./config.js";
 import { loadConfig as loadYamlConfig, getConfigPath as getYamlConfigPath } from "./config/loader.js";
 import { resolveSourcePath, expandPath as expandConfigPath } from "./config/path.js";
+import { pullSourceRepo } from "./source-setup.js";
 import { getAllPlaybooks, resolveToolInstances, isSyncTarget } from "./config/playbooks.js";
 import { runCheck, runApply } from "./modules/orchestrator.js";
 import { fileCopyModule } from "./modules/file-copy.js";
@@ -939,6 +940,18 @@ export const useStore = create<Store>((set, get) => ({
             driftKind: stepResult.check.driftKind,
           });
           coveredTargets.add(`${toolId}:${inst.id}:${targetRelPath}`);
+
+          // Directory sync (target ".") covers all files in the tool's config dir,
+          // including playbook-declared config_files. Mark them as covered so
+          // auto-inject doesn't duplicate them.
+          if (targetRelPath === ".") {
+            const playbook = playbooks.get(toolId);
+            if (playbook?.config_files) {
+              for (const cf of playbook.config_files) {
+                coveredTargets.add(`${toolId}:${inst.id}:${cf.path}`);
+              }
+            }
+          }
         }
       }
 
@@ -1018,6 +1031,7 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   refreshAll: async () => {
+    await pullSourceRepo();
     await get().loadMarketplaces();
     await get().refreshToolDetection();
     await get().loadPiPackages();

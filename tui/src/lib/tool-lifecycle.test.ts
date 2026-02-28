@@ -53,7 +53,7 @@ describe("tool-lifecycle command builders", () => {
   });
 
   it("builds update and uninstall commands", () => {
-    expect(buildUpdateCommand("bun", "pkg")).toEqual({ cmd: "bun", args: ["update", "-g", "pkg"] });
+    expect(buildUpdateCommand("bun", "pkg")).toEqual({ cmd: "bun", args: ["add", "-g", "pkg@latest"] });
     expect(buildUninstallCommand("bun", "pkg")).toEqual({ cmd: "bun", args: ["remove", "-g", "pkg"] });
   });
 });
@@ -151,7 +151,7 @@ describe("tool-lifecycle operations", () => {
     const ok = await promise;
 
     expect(ok).toBe(true);
-    expect(spawnMock).toHaveBeenCalledWith("pnpm", ["update", "-g", "@openai/codex"], expect.any(Object));
+    expect(spawnMock).toHaveBeenCalledWith("pnpm", ["add", "-g", "@openai/codex@latest"], expect.any(Object));
   });
 
   it("reinstall runs cleanup commands then uninstall/install", async () => {

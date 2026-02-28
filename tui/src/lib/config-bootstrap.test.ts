@@ -47,10 +47,10 @@ describe("ensureConfigExists bootstrap", () => {
 
     ensureConfigExists();
 
-    const tomlPath = join(TMP_XDG, "blackbook", "config.toml");
+    const configPath = join(TMP_XDG, "blackbook", "config.yaml");
     const yamlPath = join(TMP_XDG, "blackbook", "config.yaml");
 
-    expect(existsSync(tomlPath)).toBe(true);
+    expect(existsSync(configPath)).toBe(true);
     expect(existsSync(yamlPath)).toBe(true);
 
     const { config, errors } = loadYamlConfig(yamlPath);

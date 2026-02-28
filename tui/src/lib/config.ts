@@ -92,7 +92,7 @@ export function getConfigDir(): string {
 }
 
 export function getConfigPath(): string {
-  return join(getConfigDir(), "config.toml");
+  return join(getConfigDir(), "config.yaml");
 }
 
 export interface ToolInstanceConfig {
@@ -120,23 +120,23 @@ export interface PiMarketplacesConfig {
   [name: string]: string;  // name -> local path or git URL
 }
 
-export interface PluginComponentToml {
+export interface PluginComponentEntry {
   disabled_skills?: string;
   disabled_commands?: string;
   disabled_agents?: string;
 }
 
-export interface TomlConfig {
+export interface LegacyConfig {
   marketplaces?: Record<string, string>;
   piMarketplaces?: PiMarketplacesConfig;
   tools?: Record<string, ToolConfig>;
   assets?: Record<string, any>[];
   sync?: SyncConfig;
   configs?: Record<string, any>[];
-  plugins?: Record<string, Record<string, PluginComponentToml>>;
+  plugins?: Record<string, Record<string, PluginComponentEntry>>;
 }
 
-export function loadConfig(configPath?: string): TomlConfig {
+export function loadConfig(configPath?: string): LegacyConfig {
   const path = configPath || getConfigPath();
   
   if (!existsSync(path)) {
@@ -145,7 +145,7 @@ export function loadConfig(configPath?: string): TomlConfig {
 
   return withFileLockSync(path, () => {
     const content = readFileSync(path, "utf-8");
-    const result: TomlConfig = { marketplaces: {}, tools: {}, assets: [], configs: [] };
+    const result: LegacyConfig = { marketplaces: {}, tools: {}, assets: [], configs: [] };
 
     let currentSection = "";
     let currentTool = "";
@@ -345,7 +345,7 @@ export function loadConfig(configPath?: string): TomlConfig {
   });
 }
 
-export function saveConfig(config: TomlConfig, configPath?: string): void {
+export function saveConfig(config: LegacyConfig, configPath?: string): void {
   const path = configPath || getConfigPath();
   
   const lines: string[] = [
@@ -629,6 +629,8 @@ function buildInitialYamlConfig(): BlackbookConfig {
       package_manager: "npm",
       backup_retention: 3,
       default_pullback: false,
+      disabled_marketplaces: [],
+      disabled_pi_marketplaces: [],
     },
     marketplaces: { ...DEFAULT_INITIAL_MARKETPLACES },
     tools,
@@ -638,11 +640,6 @@ function buildInitialYamlConfig(): BlackbookConfig {
 }
 
 export function ensureConfigExists(): void {
-  const tomlPath = getConfigPath();
-  if (!existsSync(tomlPath)) {
-    saveConfig({ marketplaces: DEFAULT_INITIAL_MARKETPLACES, tools: buildInitialToolConfig() });
-  }
-
   const yamlPath = join(getConfigDirFromPath(), "config.yaml");
   if (!existsSync(yamlPath)) {
     const yamlConfig = buildInitialYamlConfig();
@@ -752,7 +749,7 @@ export function getEnabledToolInstances(): ToolInstance[] {
   return getToolInstances().filter((instance) => instance.enabled);
 }
 
-export function parseMarketplaces(config?: TomlConfig): Marketplace[] {
+export function parseMarketplaces(config?: LegacyConfig): Marketplace[] {
   const userConfig = config || loadConfig();
   const blackbookUrls = { ...DEFAULT_MARKETPLACES, ...userConfig.marketplaces };
   const hasEnabledClaudeInstance = getToolInstances().some(
@@ -865,7 +862,7 @@ export function resolveAssetSourcePath(source: string): string {
 }
 
 /**
- * Get configured Pi marketplaces from [pi-marketplaces] section.
+ * Get configured Pi marketplaces from legacy [pi-marketplaces] section.
  * Returns a map of marketplace name -> source (local path or git URL).
  */
 export function getPiMarketplaces(): PiMarketplacesConfig {
@@ -874,25 +871,22 @@ export function getPiMarketplaces(): PiMarketplacesConfig {
 }
 
 export function getDisabledMarketplaces(): string[] {
-  const config = loadConfig();
-  const raw = config.sync?.disabledMarketplaces;
-  if (!raw) return [];
-  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+  const { config } = loadYamlConfig();
+  return config.settings.disabled_marketplaces;
 }
 
 export function setMarketplaceEnabled(name: string, enabled: boolean): void {
-  const config = loadConfig();
-  const disabled = new Set(getDisabledMarketplaces());
-  
+  const { config, configPath } = loadYamlConfig();
+  const disabled = new Set(config.settings.disabled_marketplaces);
+
   if (enabled) {
     disabled.delete(name);
   } else {
     disabled.add(name);
   }
-  
-  config.sync = config.sync || {};
-  config.sync.disabledMarketplaces = Array.from(disabled).join(",") || undefined;
-  saveConfig(config);
+
+  config.settings.disabled_marketplaces = Array.from(disabled);
+  saveYamlConfig(config, configPath);
 }
 
 export function addPiMarketplace(name: string, source: string): void {
@@ -911,25 +905,22 @@ export function removePiMarketplace(name: string): void {
 }
 
 export function getDisabledPiMarketplaces(): string[] {
-  const config = loadConfig();
-  const raw = config.sync?.disabledPiMarketplaces;
-  if (!raw) return [];
-  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+  const { config } = loadYamlConfig();
+  return config.settings.disabled_pi_marketplaces;
 }
 
 export function setPiMarketplaceEnabled(name: string, enabled: boolean): void {
-  const config = loadConfig();
-  const disabled = new Set(getDisabledPiMarketplaces());
-  
+  const { config, configPath } = loadYamlConfig();
+  const disabled = new Set(config.settings.disabled_pi_marketplaces);
+
   if (enabled) {
     disabled.delete(name);
   } else {
     disabled.add(name);
   }
-  
-  config.sync = config.sync || {};
-  config.sync.disabledPiMarketplaces = Array.from(disabled).join(",") || undefined;
-  saveConfig(config);
+
+  config.settings.disabled_pi_marketplaces = Array.from(disabled);
+  saveYamlConfig(config, configPath);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -943,11 +934,11 @@ function parseCommaList(raw: string | undefined): string[] {
 
 export function getPluginComponentConfig(marketplace: string, pluginName: string): PluginComponentConfig {
   const config = loadConfig();
-  const pluginToml = config.plugins?.[marketplace]?.[pluginName];
+  const pluginEntry = config.plugins?.[marketplace]?.[pluginName];
   return {
-    disabledSkills: parseCommaList(pluginToml?.disabled_skills),
-    disabledCommands: parseCommaList(pluginToml?.disabled_commands),
-    disabledAgents: parseCommaList(pluginToml?.disabled_agents),
+    disabledSkills: parseCommaList(pluginEntry?.disabled_skills),
+    disabledCommands: parseCommaList(pluginEntry?.disabled_commands),
+    disabledAgents: parseCommaList(pluginEntry?.disabled_agents),
   };
 }
 
@@ -963,9 +954,9 @@ export function setPluginComponentEnabled(
   config.plugins[marketplace] = config.plugins[marketplace] || {};
   config.plugins[marketplace][pluginName] = config.plugins[marketplace][pluginName] || {};
 
-  const pluginToml = config.plugins[marketplace][pluginName];
+  const pluginEntry = config.plugins[marketplace][pluginName];
   const field = kind === "skill" ? "disabled_skills" : kind === "command" ? "disabled_commands" : "disabled_agents";
-  const current = new Set(parseCommaList(pluginToml[field]));
+  const current = new Set(parseCommaList(pluginEntry[field]));
 
   if (enabled) {
     current.delete(componentName);
@@ -973,10 +964,10 @@ export function setPluginComponentEnabled(
     current.add(componentName);
   }
 
-  pluginToml[field] = Array.from(current).join(",") || undefined;
+  pluginEntry[field] = Array.from(current).join(",") || undefined;
 
   // Clean up empty plugin entries
-  if (!pluginToml.disabled_skills && !pluginToml.disabled_commands && !pluginToml.disabled_agents) {
+  if (!pluginEntry.disabled_skills && !pluginEntry.disabled_commands && !pluginEntry.disabled_agents) {
     delete config.plugins[marketplace][pluginName];
     if (Object.keys(config.plugins[marketplace]).length === 0) {
       delete config.plugins[marketplace];
