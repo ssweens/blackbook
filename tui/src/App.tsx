@@ -37,7 +37,7 @@ import { SettingsPanel } from "./components/SettingsPanel.js";
 import { getPluginToolStatus, togglePluginComponent } from "./lib/plugin-status.js";
 import { getToolLifecycleCommand, detectInstallMethodMismatch } from "./lib/tool-lifecycle.js";
 import { getPackageManager } from "./lib/config.js";
-import { setupSourceRepository, shouldShowSourceSetupWizard, markSourceSetupWizardSeen } from "./lib/source-setup.js";
+import { setupSourceRepository, shouldShowSourceSetupWizard } from "./lib/source-setup.js";
 import type { Tab, SyncPreviewItem, Plugin, PiPackage, PiMarketplace, DiffInstanceRef, DiscoverSection, DiscoverSubView, ManagedToolRow, FileStatus, Marketplace } from "./lib/types.js";
 
 const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces", "settings"];
@@ -1627,7 +1627,6 @@ export function App() {
     try {
       const result = await setupSourceRepository(source);
       clearNotification(loadingId);
-      markSourceSetupWizardSeen();
       setShowSourceSetupWizard(false);
       await refreshAll();
 
@@ -1650,7 +1649,6 @@ export function App() {
   };
 
   const handleSourceWizardSkip = () => {
-    markSourceSetupWizardSeen();
     setShowSourceSetupWizard(false);
   };
 

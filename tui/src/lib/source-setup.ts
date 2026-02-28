@@ -7,7 +7,7 @@ import { saveConfig } from "./config/writer.js";
 import { getCacheDir, getConfigDir, expandPath } from "./config/path.js";
 
 const execFileAsync = promisify(execFile);
-const WIZARD_SEEN_FILE = ".source-setup-seen";
+
 
 export interface SetupSourceResult {
   sourceRepo: string;
@@ -133,20 +133,7 @@ export async function setupSourceRepository(sourceInput: string): Promise<SetupS
   };
 }
 
-export function getSourceSetupSeenPath(): string {
-  return join(getConfigDir(), WIZARD_SEEN_FILE);
-}
-
 export function shouldShowSourceSetupWizard(): boolean {
-  const seenPath = getSourceSetupSeenPath();
-  if (existsSync(seenPath)) return false;
-
   const { config } = loadConfig();
   return !config.settings.source_repo;
-}
-
-export function markSourceSetupWizardSeen(): void {
-  const seenPath = getSourceSetupSeenPath();
-  mkdirSync(dirname(seenPath), { recursive: true });
-  writeFileSync(seenPath, "seen\n");
 }
