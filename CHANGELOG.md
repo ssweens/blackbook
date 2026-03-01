@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-02-28
+
+### Added
+- **Config management setting** (`config_management`, off by default) gates visibility of tool config files (settings.json, etc.) — files always shown, configs only when enabled.
+- **Source repo git status** in Settings panel showing branch, ahead/behind, and pending changes with commit & push and pull actions.
+- **Diff viewer** for source repo pending changes — select a changed file in Settings to expand/collapse its git diff inline with syntax-colored +/- lines.
+- **Per-tool install/uninstall** actions in plugin detail view — install or remove a plugin from individual tool instances, not just all-or-nothing.
+- **Auto-detect source repo marketplace** on setup and pull — automatically registers `.claude-plugin/marketplace.json` from the source repo as a local marketplace.
+- **Detect plugins installed in Claude skills/commands/agents directories** — scans tool component dirs directly, not just the plugins cache, and matches against marketplace plugins by name.
+- **Detect npm-installed Pi packages** from global node_modules — checks for `pi.extensions` or `keywords: ["pi-package"]` in package.json and adds as `npm:<name>` sources.
+- **Playbook `kind` field** (`tool` or `self`) — Blackbook itself is `kind: self` and excluded from plugin tool status, install targets, and installed plugin scanning.
+- **npm pi-package pagination** — fetches all results from npm registry (was capped at 250, now fetches all 400+ packages).
+
+### Changed
+- Removed `pullback` field from config — pullback actions are always available for any drifted file.
+- Removed redundant config entries from files array (OpenCode, Amp, Codex, Claude configs) — these auto-inject from playbook `config_files` when `config_management` is enabled.
+- "Not configured" label for synthetic tools replaced with empty string (just detection icon).
+- Search box hidden on Discover dashboard — only shown in sub-views (plugins/pi-packages list) and Installed tab where filtering is meaningful.
+- Build script now cleans playbooks directory before copying to prevent stale files.
+
+### Fixed
+- Local marketplaces always read fresh from disk — no HTTP caching applied to file:// sources.
+- Source repo marketplace uses local clone path instead of raw GitHub URL (private repos return 404).
+- Stale remote marketplace URLs auto-replaced with local paths on pull.
+- `tools:` field on file entries correctly scopes which tool instances the file targets — does not determine file vs config classification.
+- Config files correctly gated by `config_management` setting.
+- TOML config fully removed — all config now uses YAML (`config.yaml`).
+- Early return in Claude plugin detection fixed when `plugins/cache` directory doesn't exist.
+
 ## [0.16.1] - 2026-02-28
 
 ### Fixed
@@ -402,7 +431,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Symlink handling for plugin assets
 
-[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/ssweens/blackbook/compare/v0.16.1...v0.17.0
+[0.16.1]: https://github.com/ssweens/blackbook/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/ssweens/blackbook/compare/v0.14.0...v0.16.0
 [0.14.0]: https://github.com/ssweens/blackbook/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/ssweens/blackbook/compare/v0.12.1...v0.13.0
