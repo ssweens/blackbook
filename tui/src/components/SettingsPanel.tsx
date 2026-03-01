@@ -6,9 +6,11 @@ import { saveConfig } from "../lib/config/writer.js";
 import type { Settings } from "../lib/config/schema.js";
 import {
   getSourceRepoStatus,
+  getSourceRepoDiff,
   commitAndPushSourceRepo,
   pullSourceRepoChanges,
   type SourceRepoStatus,
+  type SourceRepoChange,
 } from "../lib/source-setup.js";
 
 type SettingKey = keyof Settings;
@@ -60,30 +62,84 @@ function formatValue(def: SettingDef, value: unknown): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Repo action items that appear below settings
+// Menu item model: settings, changed files, repo actions
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface RepoAction {
-  id: string;
-  label: string;
-  available: boolean;
+type MenuItem =
+  | { kind: "setting"; def: SettingDef }
+  | { kind: "change"; change: SourceRepoChange }
+  | { kind: "action"; id: string; label: string };
+
+function buildMenuItems(
+  repoStatus: SourceRepoStatus | null,
+): MenuItem[] {
+  const items: MenuItem[] = SETTINGS_DEFS.map((def) => ({ kind: "setting" as const, def }));
+
+  if (repoStatus?.isGitRepo && repoStatus.hasChanges) {
+    for (const change of repoStatus.changes) {
+      items.push({ kind: "change", change });
+    }
+  }
+
+  if (repoStatus?.isGitRepo) {
+    if (repoStatus.hasChanges) {
+      items.push({ kind: "action", id: "commit_push", label: "Commit & push changes" });
+    }
+    if (repoStatus.behind > 0 || !repoStatus.hasChanges) {
+      items.push({ kind: "action", id: "pull", label: "Pull latest" });
+    }
+  }
+
+  return items;
 }
 
-function getRepoActions(repoStatus: SourceRepoStatus | null): RepoAction[] {
-  if (!repoStatus || !repoStatus.isGitRepo) return [];
-  return [
-    {
-      id: "commit_push",
-      label: "Commit & push changes",
-      available: repoStatus.hasChanges,
-    },
-    {
-      id: "pull",
-      label: "Pull latest",
-      available: repoStatus.behind > 0 || !repoStatus.hasChanges,
-    },
-  ];
+function changeStatusIcon(status: SourceRepoChange["status"]): { char: string; color: string } {
+  switch (status) {
+    case "added":
+    case "untracked":
+      return { char: "+", color: "green" };
+    case "deleted":
+      return { char: "-", color: "red" };
+    default:
+      return { char: "~", color: "yellow" };
+  }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Diff viewer
+// ─────────────────────────────────────────────────────────────────────────────
+
+function DiffView({ diff, maxLines }: { diff: string; maxLines: number }) {
+  const lines = diff.split("\n");
+  const display = lines.slice(0, maxLines);
+  const truncated = lines.length > maxLines;
+
+  return (
+    <Box flexDirection="column" marginLeft={4} marginBottom={1}>
+      {display.map((line, i) => {
+        let color: string = "gray";
+        if (line.startsWith("+")) color = "green";
+        else if (line.startsWith("-")) color = "red";
+        else if (line.startsWith("@@")) color = "cyan";
+
+        return (
+          <Text key={i} color={color} dimColor={line.startsWith("diff ") || line.startsWith("index ")}>
+            {line}
+          </Text>
+        );
+      })}
+      {truncated && (
+        <Text color="gray" italic>
+          ... {lines.length - maxLines} more line{lines.length - maxLines !== 1 ? "s" : ""}
+        </Text>
+      )}
+    </Box>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main component
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface SettingsPanelProps {
   active?: boolean;
@@ -100,8 +156,11 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
   const [commitEditing, setCommitEditing] = useState(false);
   const [commitMessage, setCommitMessage] = useState("chore: update playbook config and assets");
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [expandedDiff, setExpandedDiff] = useState<string | null>(null); // path of expanded file
+  const [diffContent, setDiffContent] = useState<Record<string, string>>({}); // path -> diff text
+  const [diffLoading, setDiffLoading] = useState<string | null>(null);
 
-  const totalItems = SETTINGS_DEFS.length + getRepoActions(repoStatus).filter((a) => a.available).length;
+  const menuItems = buildMenuItems(repoStatus);
 
   const refreshRepoStatus = useCallback(async () => {
     setRepoLoading(true);
@@ -138,7 +197,22 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
     setSaveMessage("Saved");
   };
 
-  const availableActions = getRepoActions(repoStatus).filter((a) => a.available);
+  const toggleDiff = async (filePath: string) => {
+    if (expandedDiff === filePath) {
+      setExpandedDiff(null);
+      return;
+    }
+
+    // Load diff if not cached
+    if (!diffContent[filePath]) {
+      setDiffLoading(filePath);
+      const diff = await getSourceRepoDiff(filePath);
+      setDiffContent((prev) => ({ ...prev, [filePath]: diff || "(no diff available)" }));
+      setDiffLoading(null);
+    }
+
+    setExpandedDiff(filePath);
+  };
 
   useInput((input, key) => {
     if (!active || !settings) return;
@@ -155,6 +229,8 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
         commitAndPushSourceRepo(msg).then((result) => {
           if (result.success) {
             setActionMessage("✔ Committed and pushed");
+            setExpandedDiff(null);
+            setDiffContent({});
             refreshRepoStatus();
           } else {
             setActionMessage(`✗ ${result.error}`);
@@ -172,7 +248,9 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
         return;
       }
       if (key.return) {
-        const def = SETTINGS_DEFS[selectedIndex];
+        const item = menuItems[selectedIndex];
+        if (item?.kind !== "setting") return;
+        const def = item.def;
         if (def.type === "number") {
           const num = parseInt(editValue, 10);
           if (isNaN(num) || num < 1 || num > 100) return;
@@ -192,15 +270,17 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
       return;
     }
     if (key.downArrow) {
-      setSelectedIndex((i) => Math.min(totalItems - 1, i + 1));
+      setSelectedIndex((i) => Math.min(menuItems.length - 1, i + 1));
       return;
     }
 
     // Action on Enter
     if (key.return) {
-      // Settings item
-      if (selectedIndex < SETTINGS_DEFS.length) {
-        const def = SETTINGS_DEFS[selectedIndex];
+      const item = menuItems[selectedIndex];
+      if (!item) return;
+
+      if (item.kind === "setting") {
+        const def = item.def;
         if (def.type === "enum" && def.enumValues) {
           const current = String(settings[def.key] ?? def.enumValues[0]);
           const idx = def.enumValues.indexOf(current);
@@ -218,27 +298,28 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
         return;
       }
 
-      // Repo action item
-      const actionIndex = selectedIndex - SETTINGS_DEFS.length;
-      const action = availableActions[actionIndex];
-      if (!action) return;
-
-      if (action.id === "commit_push") {
-        setCommitEditing(true);
+      if (item.kind === "change") {
+        toggleDiff(item.change.path);
         return;
       }
 
-      if (action.id === "pull") {
-        setActionMessage("Pulling...");
-        pullSourceRepoChanges().then((result) => {
-          if (result.success) {
-            setActionMessage("✔ Pulled latest");
-            refreshRepoStatus();
-          } else {
-            setActionMessage(`✗ ${result.error}`);
-          }
-        });
-        return;
+      if (item.kind === "action") {
+        if (item.id === "commit_push") {
+          setCommitEditing(true);
+          return;
+        }
+        if (item.id === "pull") {
+          setActionMessage("Pulling...");
+          pullSourceRepoChanges().then((result) => {
+            if (result.success) {
+              setActionMessage("✔ Pulled latest");
+              refreshRepoStatus();
+            } else {
+              setActionMessage(`✗ ${result.error}`);
+            }
+          });
+          return;
+        }
       }
     }
   });
@@ -259,19 +340,21 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
         {actionMessage && <Text color="yellow"> {actionMessage}</Text>}
       </Box>
 
-      {SETTINGS_DEFS.map((def, i) => {
+      {/* Settings */}
+      {menuItems.map((item, i) => {
+        if (item.kind !== "setting") return null;
         const isSelected = i === selectedIndex;
-        const value = settings[def.key];
+        const value = settings[item.def.key];
         const isEditing = isSelected && editing;
 
         return (
-          <Box key={def.key} flexDirection="column">
+          <Box key={item.def.key} flexDirection="column">
             <Box>
               <Text color={isSelected ? "cyan" : "white"}>
                 {isSelected ? "❯ " : "  "}
               </Text>
               <Text bold={isSelected} color={isSelected ? "white" : "gray"}>
-                {def.label}
+                {item.def.label}
               </Text>
               <Text>  </Text>
               {isEditing ? (
@@ -280,7 +363,7 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
                 </Box>
               ) : (
                 <Text color={isSelected ? "yellow" : "gray"}>
-                  {formatValue(def, value)}
+                  {formatValue(item.def, value)}
                 </Text>
               )}
             </Box>
@@ -289,13 +372,13 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
                 <Text color="gray" italic>
                   {isEditing
                     ? "Enter to save · Esc to cancel"
-                    : def.type === "enum"
-                      ? `Enter to cycle (${def.enumValues?.join(", ")})`
-                      : def.type === "boolean"
+                    : item.def.type === "enum"
+                      ? `Enter to cycle (${item.def.enumValues?.join(", ")})`
+                      : item.def.type === "boolean"
                         ? "Enter to toggle"
                         : "Enter to edit"}
                   {" · "}
-                  {def.description}
+                  {item.def.description}
                 </Text>
               </Box>
             )}
@@ -303,7 +386,7 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
         );
       })}
 
-      {/* Source Repo Status */}
+      {/* Source Repo Status header */}
       {repoStatus && repoStatus.isGitRepo && (
         <Box flexDirection="column" marginTop={1}>
           <Box marginBottom={1}>
@@ -323,62 +406,85 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
           </Box>
 
           {repoStatus.hasChanges && (
-            <Box flexDirection="column" marginBottom={1}>
+            <Box marginBottom={1}>
               <Text color="yellow" bold>
                 {repoStatus.changes.length} pending change{repoStatus.changes.length !== 1 ? "s" : ""}:
               </Text>
-              {repoStatus.changes.map((change, i) => (
-                <Box key={i} marginLeft={2}>
-                  <Text color={
-                    change.status === "added" || change.status === "untracked" ? "green"
-                    : change.status === "deleted" ? "red"
-                    : "yellow"
-                  }>
-                    {change.status === "added" || change.status === "untracked" ? "+" :
-                     change.status === "deleted" ? "-" : "~"}
-                  </Text>
-                  <Text color="gray"> {change.path}</Text>
-                </Box>
-              ))}
             </Box>
           )}
-
-          {/* Repo actions */}
-          {availableActions.map((action, i) => {
-            const globalIndex = SETTINGS_DEFS.length + i;
-            const isSelected = globalIndex === selectedIndex;
-            const isCommitAction = action.id === "commit_push" && isSelected && commitEditing;
-
-            return (
-              <Box key={action.id} flexDirection="column">
-                <Box>
-                  <Text color={isSelected ? "cyan" : "white"}>
-                    {isSelected ? "❯ " : "  "}
-                  </Text>
-                  <Text bold={isSelected} color={isSelected ? "white" : "gray"}>
-                    {action.label}
-                  </Text>
-                </Box>
-                {isCommitAction && (
-                  <Box marginLeft={4}>
-                    <Text color="gray">Message: </Text>
-                    <TextInput value={commitMessage} onChange={setCommitMessage} />
-                  </Box>
-                )}
-                {isSelected && !isCommitAction && (
-                  <Box marginLeft={4}>
-                    <Text color="gray" italic>
-                      {action.id === "commit_push"
-                        ? "Enter to commit and push all changes"
-                        : "Enter to pull latest from remote"}
-                    </Text>
-                  </Box>
-                )}
-              </Box>
-            );
-          })}
         </Box>
       )}
+
+      {/* Changed files (selectable) */}
+      {menuItems.map((item, i) => {
+        if (item.kind !== "change") return null;
+        const isSelected = i === selectedIndex;
+        const { char, color } = changeStatusIcon(item.change.status);
+        const isExpanded = expandedDiff === item.change.path;
+        const isLoading = diffLoading === item.change.path;
+
+        return (
+          <Box key={`change-${item.change.path}`} flexDirection="column">
+            <Box>
+              <Text color={isSelected ? "cyan" : "white"}>
+                {isSelected ? "❯ " : "  "}
+              </Text>
+              <Text color={color}>{char}</Text>
+              <Text color={isSelected ? "white" : "gray"}> {item.change.path}</Text>
+              {isExpanded && <Text color="gray"> ▾</Text>}
+              {!isExpanded && isSelected && <Text color="gray"> ▸</Text>}
+            </Box>
+            {isSelected && !isExpanded && (
+              <Box marginLeft={4}>
+                <Text color="gray" italic>Enter to view diff</Text>
+              </Box>
+            )}
+            {isExpanded && isLoading && (
+              <Box marginLeft={4}>
+                <Text color="gray">Loading diff...</Text>
+              </Box>
+            )}
+            {isExpanded && !isLoading && diffContent[item.change.path] && (
+              <DiffView diff={diffContent[item.change.path]} maxLines={40} />
+            )}
+          </Box>
+        );
+      })}
+
+      {/* Repo actions */}
+      {menuItems.map((item, i) => {
+        if (item.kind !== "action") return null;
+        const isSelected = i === selectedIndex;
+        const isCommitAction = item.id === "commit_push" && isSelected && commitEditing;
+
+        return (
+          <Box key={item.id} flexDirection="column">
+            <Box>
+              <Text color={isSelected ? "cyan" : "white"}>
+                {isSelected ? "❯ " : "  "}
+              </Text>
+              <Text bold={isSelected} color={isSelected ? "white" : "gray"}>
+                {item.label}
+              </Text>
+            </Box>
+            {isCommitAction && (
+              <Box marginLeft={4}>
+                <Text color="gray">Message: </Text>
+                <TextInput value={commitMessage} onChange={setCommitMessage} />
+              </Box>
+            )}
+            {isSelected && !isCommitAction && (
+              <Box marginLeft={4}>
+                <Text color="gray" italic>
+                  {item.id === "commit_push"
+                    ? "Enter to commit and push all changes"
+                    : "Enter to pull latest from remote"}
+                </Text>
+              </Box>
+            )}
+          </Box>
+        );
+      })}
     </Box>
   );
 }

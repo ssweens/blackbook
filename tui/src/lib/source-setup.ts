@@ -334,6 +334,54 @@ export async function getSourceRepoStatus(): Promise<SourceRepoStatus | null> {
   }
 }
 
+export async function getSourceRepoDiff(filePath: string): Promise<string | null> {
+  const { config } = loadConfig();
+  const sourceRepo = config.settings.source_repo;
+  if (!sourceRepo) return null;
+
+  const repoPath = expandPath(sourceRepo);
+  if (!existsSync(join(repoPath, ".git"))) return null;
+
+  try {
+    // Try tracked file diff first
+    const { stdout: tracked } = await execFileAsync(
+      "git", ["diff", "HEAD", "--", filePath],
+      { cwd: repoPath, timeout: 5000 },
+    );
+    if (tracked.trim()) return tracked;
+
+    // For untracked files, show the whole content as an "add"
+    const { stdout: statusOut } = await execFileAsync(
+      "git", ["status", "--porcelain", "--", filePath],
+      { cwd: repoPath, timeout: 5000 },
+    );
+    if (statusOut.startsWith("??") || statusOut.trim().startsWith("A")) {
+      const fullPath = join(repoPath, filePath);
+      if (existsSync(fullPath)) {
+        const content = readFileSync(fullPath, "utf-8");
+        const lines = content.split("\n");
+        return [
+          `--- /dev/null`,
+          `+++ b/${filePath}`,
+          `@@ -0,0 +1,${lines.length} @@`,
+          ...lines.map((l) => `+${l}`),
+        ].join("\n");
+      }
+    }
+
+    // Staged diff
+    const { stdout: staged } = await execFileAsync(
+      "git", ["diff", "--cached", "--", filePath],
+      { cwd: repoPath, timeout: 5000 },
+    );
+    if (staged.trim()) return staged;
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function commitAndPushSourceRepo(message: string): Promise<{ success: boolean; error?: string }> {
   const { config } = loadConfig();
   const sourceRepo = config.settings.source_repo;
