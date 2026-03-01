@@ -80,8 +80,19 @@ function importConfigFromSource(sourceConfigPath: string, sourceRepo: string): v
   writeFileSync(targetConfigPath, sourceContent);
 
   const { config } = loadConfig(targetConfigPath);
+  let changed = false;
+
   if (!config.settings.source_repo) {
     config.settings.source_repo = sourceRepo;
+    changed = true;
+  }
+
+  // Auto-detect marketplace.json in source repo and add if not already present
+  if (ensureSourceRepoMarketplace(config, sourceRepo)) {
+    changed = true;
+  }
+
+  if (changed) {
     saveConfig(config, targetConfigPath);
   }
 
@@ -92,9 +103,88 @@ function importConfigFromSource(sourceConfigPath: string, sourceRepo: string): v
   }
 }
 
+/**
+ * Check if the source repo has a marketplace.json and add it to the config
+ * if not already present. Returns true if config was modified.
+ */
+function ensureSourceRepoMarketplace(config: ReturnType<typeof loadConfig>["config"], sourceRepo: string): boolean {
+  // Look for marketplace.json in the source repo
+  const candidates = [
+    join(sourceRepo, ".claude-plugin", "marketplace.json"),
+    join(sourceRepo, "marketplace.json"),
+  ];
+
+  let marketplacePath: string | null = null;
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      marketplacePath = candidate;
+      break;
+    }
+  }
+  if (!marketplacePath) return false;
+
+  // Try to read the marketplace name
+  let marketplaceName = inferRepoName(sourceRepo);
+  try {
+    const content = JSON.parse(readFileSync(marketplacePath, "utf-8"));
+    if (content.name) marketplaceName = content.name;
+  } catch {
+    // Use inferred name
+  }
+
+  // Check if this repo's marketplace is already in the config
+  const repoUrl = getRepoRemoteUrl(sourceRepo);
+  const existingUrls = Object.values(config.marketplaces);
+  
+  // Check by URL match (handles both raw github URLs and local paths)
+  const alreadyPresent = existingUrls.some((url) => {
+    if (repoUrl && url.includes(repoUrl)) return true;
+    if (url.startsWith(sourceRepo) || url.includes(marketplaceName)) return true;
+    return false;
+  });
+
+  if (alreadyPresent) return false;
+
+  // Build the marketplace URL
+  let marketplaceUrl: string;
+  if (repoUrl) {
+    // Convert git remote to raw GitHub URL
+    const match = repoUrl.match(/github\.com[:/](.+?)(?:\.git)?$/);
+    if (match) {
+      const relativePath = marketplacePath.replace(sourceRepo, "").replace(/^\//, "");
+      marketplaceUrl = `https://raw.githubusercontent.com/${match[1]}/main/${relativePath}`;
+    } else {
+      marketplaceUrl = marketplacePath; // Local path fallback
+    }
+  } else {
+    marketplaceUrl = marketplacePath; // Local path
+  }
+
+  config.marketplaces[marketplaceName] = marketplaceUrl;
+  return true;
+}
+
+/**
+ * Get the remote origin URL for a git repo, or null if not a git repo.
+ */
+function getRepoRemoteUrl(repoPath: string): string | null {
+  try {
+    const { execFileSync } = require("child_process");
+    const url = execFileSync("git", ["remote", "get-url", "origin"], {
+      cwd: repoPath,
+      encoding: "utf-8",
+      timeout: 5000,
+    }).trim();
+    return url || null;
+  } catch {
+    return null;
+  }
+}
+
 function updateSourceRepoInConfig(sourceRepo: string): void {
   const { config, configPath } = loadConfig();
   config.settings.source_repo = sourceRepo;
+  ensureSourceRepoMarketplace(config, sourceRepo);
   saveConfig(config, configPath);
 }
 
@@ -143,7 +233,7 @@ export async function setupSourceRepository(sourceInput: string): Promise<SetupS
  * Safe to call frequently — silently no-ops if not a git repo or offline.
  */
 export async function pullSourceRepo(): Promise<void> {
-  const { config } = loadConfig();
+  const { config, configPath } = loadConfig();
   const sourceRepo = config.settings.source_repo;
   if (!sourceRepo) return;
 
@@ -153,6 +243,11 @@ export async function pullSourceRepo(): Promise<void> {
   await execFileAsync("git", ["pull"], { cwd: repoPath, timeout: 120000 }).catch(() => {
     // Offline, not a git repo, etc. — silently continue
   });
+
+  // After pull, ensure marketplace is registered if repo has one
+  if (ensureSourceRepoMarketplace(config, repoPath)) {
+    saveConfig(config, configPath);
+  }
 }
 
 export function shouldShowSourceSetupWizard(): boolean {
