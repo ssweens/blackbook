@@ -1165,9 +1165,10 @@ function getInstalledPluginsForClaudeInstance(
   // If no installed_plugins.json or it's empty, fall back to scanning cache
   // (for backwards compatibility with older Claude versions)
   const claudePluginsDir = join(instance.configDir, "plugins/cache");
-  if (!existsSync(claudePluginsDir)) return plugins;
+  // Don't early-return — even without plugins/cache, we still need to
+  // scan skills/commands/agents directories below
 
-  try {
+  if (existsSync(claudePluginsDir)) try {
     const marketplaceDirs = readdirSync(claudePluginsDir);
 
     for (const marketplace of marketplaceDirs) {
@@ -1318,6 +1319,73 @@ function getInstalledPluginsForClaudeInstance(
   } catch (error) {
     logError("Failed to scan Claude plugins directory", error);
   }
+
+  // Also scan skills/commands/agents directories for components not found
+  // in the plugin cache (e.g., manually installed or installed via Claude Code)
+  const foundPluginNames = new Set(plugins.map((p) => p.name));
+
+  const scanComponentDir = (
+    dirName: string,
+    type: "skill" | "command" | "agent",
+  ) => {
+    const dir = join(instance.configDir, dirName);
+    try {
+      if (!existsSync(dir)) return;
+      for (const item of readdirSync(dir)) {
+        if (item.startsWith(".")) continue;
+        const itemPath = join(dir, item);
+        try {
+          const stat = lstatSync(itemPath);
+          if (type === "skill") {
+            if (!stat.isDirectory() && !stat.isSymbolicLink()) continue;
+            if (!existsSync(join(itemPath, "SKILL.md"))) continue;
+          } else {
+            if (!item.endsWith(".md")) continue;
+          }
+
+          const name = type === "skill" ? item : item.replace(/\.md$/, "");
+
+          // Skip if already found via plugin cache
+          if (foundPluginNames.has(name)) continue;
+
+          // Check if a plugin already contains this component
+          const existingPlugin = plugins.find(
+            (p) =>
+              p.skills.includes(name) ||
+              p.commands.includes(name) ||
+              p.agents.includes(name),
+          );
+          if (existingPlugin) continue;
+
+          // Create a standalone plugin entry for this component
+          foundPluginNames.add(name);
+          plugins.push({
+            name,
+            marketplace: "local",
+            description: "",
+            source: itemPath,
+            skills: type === "skill" ? [name] : [],
+            commands: type === "command" ? [name] : [],
+            agents: type === "agent" ? [name] : [],
+            hooks: [],
+            hasMcp: false,
+            hasLsp: false,
+            homepage: "",
+            installed: true,
+            scope: "user",
+          });
+        } catch {
+          // Ignore individual item errors
+        }
+      }
+    } catch {
+      // Ignore if directory doesn't exist
+    }
+  };
+
+  scanComponentDir("skills", "skill");
+  scanComponentDir("commands", "command");
+  scanComponentDir("agents", "agent");
 
   return plugins;
 }
