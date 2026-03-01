@@ -86,8 +86,8 @@ export function ToolsList({
         const installedVersion = result?.installedVersion;
         const latestVersion = result?.latestVersion;
         const hasUpdate = result?.hasUpdate;
-        const enabledLabel = tool.synthetic ? "Not configured" : tool.enabled ? "Enabled" : "Disabled";
-        const enabledColor = tool.synthetic ? "yellow" : tool.enabled ? "green" : "gray";
+        const enabledLabel = tool.synthetic ? "" : tool.enabled ? "Enabled" : "Disabled";
+        const enabledColor = tool.enabled ? "green" : "gray";
         const running = actionInProgress === tool.toolId;
         const pending = detectionPending[tool.toolId] === true;
         const loading = running || pending;
@@ -101,8 +101,12 @@ export function ToolsList({
                 {tool.displayName}
               </Text>
               <Text color="gray"> ({tool.toolId}:{tool.instanceId})</Text>
-              <Text> </Text>
-              <Text color={enabledColor}>{enabledLabel}</Text>
+              {enabledLabel ? (
+                <>
+                  <Text> </Text>
+                  <Text color={enabledColor}>{enabledLabel}</Text>
+                </>
+              ) : null}
               <Text> </Text>
               {loading && !configOnly ? (
                 <Text color="gray">⟳</Text>

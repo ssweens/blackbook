@@ -80,8 +80,8 @@ export function SyncList({
 
           const parts: string[] = [];
           if (missingCount > 0) parts.push(`Missing: ${missingCount}`);
-          if (sourceChangedCount > 0) parts.push(`Source changed (sync): ${sourceChangedCount}`);
-          if (targetChangedCount > 0) parts.push(`Target changed (pullback): ${targetChangedCount}`);
+          if (sourceChangedCount > 0) parts.push(`Source changed: ${sourceChangedCount}`);
+          if (targetChangedCount > 0) parts.push(`Target changed: ${targetChangedCount}`);
           if (bothChangedCount > 0) parts.push(`Both changed: ${bothChangedCount}`);
           statusLabel = parts.join(" · ");
         }

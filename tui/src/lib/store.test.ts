@@ -52,7 +52,7 @@ vi.mock("./config/loader.js", async (importOriginal) => {
   return {
     ...actual,
     getConfigPath: vi.fn().mockReturnValue("/tmp/blackbook/config.yaml"),
-    loadConfig: vi.fn().mockReturnValue({ config: { files: [], settings: {}, tools: {}, plugins: {} }, configPath: "/tmp/blackbook/config.yaml", errors: [] }),
+    loadConfig: vi.fn().mockReturnValue({ config: { files: [], settings: {}, tools: {}, plugins: {}, configs: [] }, configPath: "/tmp/blackbook/config.yaml", errors: [] }),
   };
 });
 
@@ -482,7 +482,7 @@ describe("Store loadFiles (YAML config)", () => {
   it("returns empty when YAML config has errors", async () => {
     vi.mocked(getYamlConfigPath).mockReturnValue("/tmp/blackbook/config.yaml");
     vi.mocked(loadYamlConfig).mockReturnValue({
-      config: { files: [], settings: { package_manager: "pnpm" }, tools: {}, plugins: {} } as any,
+      config: { files: [], settings: { package_manager: "pnpm" }, tools: {}, plugins: {}, configs: [] } as any,
       configPath: "/tmp/blackbook/config.yaml",
       errors: [{ source: "yaml", message: "parse error" }],
     });
@@ -495,7 +495,7 @@ describe("Store loadFiles (YAML config)", () => {
   it("returns empty when config has no files and playbooks have no config_files", async () => {
     vi.mocked(getYamlConfigPath).mockReturnValue("/tmp/blackbook/config.yaml");
     vi.mocked(loadYamlConfig).mockReturnValue({
-      config: { files: [], settings: { package_manager: "pnpm" }, tools: {}, plugins: {} } as any,
+      config: { files: [], settings: { package_manager: "pnpm" }, tools: {}, plugins: {}, configs: [] } as any,
       configPath: "/tmp/blackbook/config.yaml",
       errors: [],
     });
@@ -514,11 +514,12 @@ describe("Store loadFiles (YAML config)", () => {
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: {
         files: [
-          { name: "CLAUDE.md", source: "CLAUDE.md", target: "CLAUDE.md", pullback: false },
+          { name: "CLAUDE.md", source: "CLAUDE.md", target: "CLAUDE.md" },
         ],
-        settings: { source_repo: "~/dotfiles", package_manager: "pnpm" },
+        settings: { source_repo: "~/dotfiles", package_manager: "pnpm", config_management: true },
         tools: {},
         plugins: {},
+        configs: [],
       } as any,
       configPath: "/tmp/blackbook/config.yaml",
       errors: [],
@@ -563,11 +564,12 @@ describe("Store loadFiles (YAML config)", () => {
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: {
         files: [
-          { name: "settings.json", source: "settings.json", target: "settings.json", pullback: false },
+          { name: "settings.json", source: "settings.json", target: "settings.json" },
         ],
-        settings: { package_manager: "pnpm" },
+        settings: { package_manager: "pnpm", config_management: true },
         tools: {},
         plugins: {},
+        configs: [],
       } as any,
       configPath: "/tmp/blackbook/config.yaml",
       errors: [],
@@ -602,11 +604,12 @@ describe("Store loadFiles (YAML config)", () => {
       vi.mocked(loadYamlConfig).mockReturnValue({
         config: {
           files: [
-            { name: "read", source: "read", target: "read", pullback: false },
+            { name: "read", source: "read", target: "read" },
           ],
-          settings: { package_manager: "pnpm" },
+          settings: { package_manager: "pnpm", config_management: true },
           tools: {},
           plugins: {},
+          configs: [],
         } as any,
         configPath: "/tmp/blackbook/config.yaml",
         errors: [],
@@ -642,9 +645,10 @@ describe("Store loadFiles (YAML config)", () => {
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: {
         files: [],
-        settings: { source_repo: "~/dotfiles", package_manager: "pnpm" },
+        settings: { source_repo: "~/dotfiles", package_manager: "pnpm", config_management: true },
         tools: {},
         plugins: {},
+        configs: [],
       } as any,
       configPath: "/tmp/blackbook/config.yaml",
       errors: [],
@@ -654,7 +658,7 @@ describe("Store loadFiles (YAML config)", () => {
       ["pi", {
         syncable: true,
         config_files: [
-          { name: "Pi Config", path: "settings.json", format: "json", pullback: true },
+          { name: "Pi Config", path: "settings.json", format: "json" },
         ],
         default_instances: [{ id: "default", name: "Pi", config_dir: "~/.pi/agent" }],
       }],
@@ -683,7 +687,6 @@ describe("Store loadFiles (YAML config)", () => {
     expect(files[0].name).toBe("Pi Config");
     expect(files[0].source).toBe("config/pi/settings.json");
     expect(files[0].target).toBe("settings.json");
-    expect(files[0].pullback).toBe(true);
     expect(files[0].tools).toEqual(["pi"]);
     expect(files[0].instances).toHaveLength(1);
     expect(files[0].instances[0]).toMatchObject({
@@ -701,11 +704,12 @@ describe("Store loadFiles (YAML config)", () => {
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: {
         files: [
-          { name: "AGENTS.md", source: "AGENTS.md", target: "AGENTS.md", pullback: false, overrides: { "claude-code:default": "CLAUDE.md" } },
+          { name: "AGENTS.md", source: "AGENTS.md", target: "AGENTS.md", overrides: { "claude-code:default": "CLAUDE.md" } },
         ],
-        settings: { source_repo: "~/dotfiles", package_manager: "pnpm" },
+        settings: { source_repo: "~/dotfiles", package_manager: "pnpm", config_management: true },
         tools: {},
         plugins: {},
+        configs: [],
       } as any,
       configPath: "/tmp/blackbook/config.yaml",
       errors: [],
@@ -715,7 +719,7 @@ describe("Store loadFiles (YAML config)", () => {
       ["claude-code", {
         syncable: true,
         config_files: [
-          { name: "CLAUDE.md", path: "CLAUDE.md", format: "markdown", pullback: true },
+          { name: "CLAUDE.md", path: "CLAUDE.md", format: "markdown" },
         ],
         default_instances: [{ id: "default", name: "Claude", config_dir: "~/.claude" }],
       }],
@@ -753,14 +757,14 @@ describe("Store loadFiles (YAML config)", () => {
           name: "ok-file",
           source: "ok.md",
           target: "ok.md",
-          pullback: false,
+          kind: "file",
           instances: [{ toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/tmp", targetRelPath: "ok.md", sourcePath: "/src/ok.md", targetPath: "/tmp/ok.md", status: "ok", message: "File matches" }],
         },
         {
           name: "missing-file",
           source: "missing.md",
           target: "missing.md",
-          pullback: false,
+          kind: "file",
           instances: [{ toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/tmp", targetRelPath: "missing.md", sourcePath: "/src/missing.md", targetPath: "/tmp/missing.md", status: "missing", message: "Not found" }],
         },
       ],
@@ -792,7 +796,7 @@ describe("Store syncTools with file items", () => {
 
   it("syncs file items via orchestrator runApply", async () => {
     vi.mocked(loadYamlConfig).mockReturnValue({
-      config: { files: [], settings: { source_repo: "~/dotfiles", package_manager: "pnpm" }, tools: {}, plugins: {} } as any,
+      config: { files: [], settings: { source_repo: "~/dotfiles", package_manager: "pnpm" }, tools: {}, plugins: {}, configs: [] } as any,
       configPath: "/tmp/config.yaml",
       errors: [],
     });
@@ -812,7 +816,7 @@ describe("Store syncTools with file items", () => {
           name: "CLAUDE.md",
           source: "CLAUDE.md",
           target: "CLAUDE.md",
-          pullback: false,
+          kind: "file",
           instances: [
             { toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/home/user/.claude", targetRelPath: "CLAUDE.md", sourcePath: "/home/user/dotfiles/CLAUDE.md", targetPath: "/home/user/.claude/CLAUDE.md", status: "missing", message: "Not found" },
           ],
@@ -835,7 +839,7 @@ describe("Store syncTools with file items", () => {
 
     try {
       vi.mocked(loadYamlConfig).mockReturnValue({
-        config: { files: [], settings: { package_manager: "pnpm" }, tools: {}, plugins: {} } as any,
+        config: { files: [], settings: { package_manager: "pnpm" }, tools: {}, plugins: {}, configs: [] } as any,
         configPath: "/tmp/config.yaml",
         errors: [],
       });
@@ -853,7 +857,7 @@ describe("Store syncTools with file items", () => {
             name: "read",
             source: "read",
             target: "read",
-            pullback: false,
+            kind: "file",
             instances: [
               { toolId: "opencode", instanceId: "default", instanceName: "OpenCode", configDir: "/tmp/opencode", targetRelPath: "read", sourcePath: sourceDir, targetPath: "/tmp/opencode/read", status: "missing", message: "Not found" },
             ],
@@ -872,7 +876,7 @@ describe("Store syncTools with file items", () => {
 
   it("reports errors when config fails to load during file sync", async () => {
     vi.mocked(loadYamlConfig).mockReturnValue({
-      config: { files: [], settings: { package_manager: "pnpm" }, tools: {}, plugins: {} } as any,
+      config: { files: [], settings: { package_manager: "pnpm" }, tools: {}, plugins: {}, configs: [] } as any,
       configPath: "/tmp/config.yaml",
       errors: [{ source: "yaml", message: "bad config" }],
     });
@@ -884,7 +888,7 @@ describe("Store syncTools with file items", () => {
           name: "test.md",
           source: "test.md",
           target: "test.md",
-          pullback: false,
+          kind: "file",
           instances: [
             { toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/tmp", targetRelPath: "test.md", sourcePath: "/src/test.md", targetPath: "/tmp/test.md", status: "missing", message: "Not found" },
           ],

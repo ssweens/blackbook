@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import { parseDocument } from "yaml";
 import type { ToolTarget, ToolInstance, Marketplace, PackageManager, PluginComponentConfig } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
 import { getAllPlaybooks, getBuiltinToolIds } from "./config/playbooks.js";
@@ -614,7 +615,6 @@ function buildInitialYamlFiles(tools: BlackbookConfig["tools"]): FileEntry[] {
         source: inferredSource,
         target: configFile.path,
         tools: [toolId],
-        pullback: configFile.pullback,
       });
     }
   }
@@ -628,13 +628,14 @@ function buildInitialYamlConfig(): BlackbookConfig {
     settings: {
       package_manager: "npm",
       backup_retention: 3,
-      default_pullback: false,
+      config_management: false,
       disabled_marketplaces: [],
       disabled_pi_marketplaces: [],
     },
     marketplaces: { ...DEFAULT_INITIAL_MARKETPLACES },
     tools,
     files: buildInitialYamlFiles(tools),
+    configs: [],
     plugins: {},
   };
 }
@@ -647,7 +648,63 @@ export function ensureConfigExists(): void {
   }
 
   // Validate generated YAML once so startup gets deterministic defaults.
-  loadYamlConfig(yamlPath);
+  const result = loadYamlConfig(yamlPath);
+
+  // Migrate: strip removed fields (pullback, default_pullback) from existing configs
+  if (result.errors.length === 0) {
+    migrateConfig(yamlPath);
+  }
+}
+
+/**
+ * Remove deprecated fields from an existing YAML config file.
+ * Uses the YAML document API to surgically strip fields without
+ * disrupting comments or formatting.
+ */
+function migrateConfig(yamlPath: string): void {
+  let raw: string;
+  try {
+    raw = readFileSync(yamlPath, "utf-8");
+  } catch {
+    return;
+  }
+
+  // Quick check: if no deprecated fields exist, skip the migration entirely.
+  if (!raw.includes("pullback") && !raw.includes("default_pullback")) {
+    return;
+  }
+
+  const doc = parseDocument(raw);
+  let changed = false;
+
+  // Remove settings.default_pullback
+  const settings = doc.get("settings") as any;
+  if (settings && typeof settings === "object" && "delete" in settings) {
+    if (settings.has?.("default_pullback")) {
+      settings.delete("default_pullback");
+      changed = true;
+    }
+  }
+
+  // Remove pullback from each file entry
+  const files = doc.get("files") as any;
+  if (files && Array.isArray(files?.items ?? files)) {
+    const items = files.items ?? files;
+    for (const item of items) {
+      if (item && typeof item === "object" && "delete" in item) {
+        if (item.has?.("pullback")) {
+          item.delete("pullback");
+          changed = true;
+        }
+      }
+    }
+  }
+
+  if (changed) {
+    withFileLockSync(yamlPath, () => {
+      atomicWriteFileSync(yamlPath, doc.toString());
+    });
+  }
 }
 
 export function updateToolInstanceConfig(
@@ -655,34 +712,35 @@ export function updateToolInstanceConfig(
   instanceId: string,
   updates: ToolInstanceConfig
 ): void {
-  const config = loadConfig();
-  config.tools = config.tools || {};
-  const toolConfig: ToolConfig = config.tools[toolId] || {};
-  const instances = toolConfig.instances ? [...toolConfig.instances] : [];
-  const index = instances.findIndex((instance) => instance.id === instanceId);
+  const { config, configPath } = loadYamlConfig();
+  const instances = config.tools[toolId] || [];
+  const index = instances.findIndex((inst) => inst.id === instanceId);
   if (index >= 0) {
-    instances[index] = { ...instances[index], ...updates };
+    if (updates.name) instances[index].name = updates.name;
+    if (updates.configDir) instances[index].config_dir = updates.configDir;
+    if (typeof updates.enabled === "boolean") instances[index].enabled = updates.enabled;
   } else {
-    instances.push({ id: instanceId, ...updates });
+    instances.push({
+      id: instanceId,
+      name: updates.name || toolId,
+      enabled: updates.enabled ?? true,
+      config_dir: updates.configDir || "",
+    });
   }
-  toolConfig.instances = instances;
-  config.tools[toolId] = toolConfig;
-  saveConfig(config);
+  config.tools[toolId] = instances;
+  saveYamlConfig(config, configPath);
 }
 
 export function addMarketplace(name: string, url: string): void {
-  const config = loadConfig();
-  config.marketplaces = config.marketplaces || {};
+  const { config, configPath } = loadYamlConfig();
   config.marketplaces[name] = url;
-  saveConfig(config);
+  saveYamlConfig(config, configPath);
 }
 
 export function removeMarketplace(name: string): void {
-  const config = loadConfig();
-  if (config.marketplaces) {
-    delete config.marketplaces[name];
-    saveConfig(config);
-  }
+  const { config, configPath } = loadYamlConfig();
+  delete config.marketplaces[name];
+  saveYamlConfig(config, configPath);
 }
 
 export function getToolDefinitions(): Record<string, ToolTarget> {
@@ -691,14 +749,19 @@ export function getToolDefinitions(): Record<string, ToolTarget> {
 
 export function getToolInstances(): ToolInstance[] {
   const definitions = buildToolDefinitions();
-  const userConfig = loadConfig();
+  const { config: yamlConfig } = loadYamlConfig();
   const instances: ToolInstance[] = [];
 
   for (const toolId of TOOL_IDS) {
     const tool = definitions[toolId];
     if (!tool) continue;
-    const toolConfig = userConfig.tools?.[toolId];
-    const toolInstances = toolConfig?.instances || [];
+    const yamlInstances = yamlConfig.tools[toolId] || [];
+    const toolInstances = yamlInstances.map((inst) => ({
+      id: inst.id,
+      name: inst.name,
+      enabled: inst.enabled,
+      configDir: inst.config_dir,
+    }));
 
     if (toolInstances.length === 0) {
       const configOnly = !tool.skillsSubdir && !tool.commandsSubdir && !tool.agentsSubdir;
@@ -750,8 +813,9 @@ export function getEnabledToolInstances(): ToolInstance[] {
 }
 
 export function parseMarketplaces(config?: LegacyConfig): Marketplace[] {
-  const userConfig = config || loadConfig();
-  const blackbookUrls = { ...DEFAULT_MARKETPLACES, ...userConfig.marketplaces };
+  // Use YAML config for marketplaces (legacy TOML parser can't read YAML)
+  const { config: yamlConfig } = loadYamlConfig();
+  const blackbookUrls = { ...DEFAULT_MARKETPLACES, ...yamlConfig.marketplaces };
   const hasEnabledClaudeInstance = getToolInstances().some(
     (instance) => instance.toolId === "claude-code" && instance.enabled
   );
@@ -811,21 +875,15 @@ export function expandPath(pathValue: string): string {
 }
 
 export function getConfigRepoPath(): string | null {
-  const config = loadConfig();
-  if (!config.sync?.configRepo) return null;
-  return expandPath(config.sync.configRepo);
+  const { config } = loadYamlConfig();
+  if (!config.settings.source_repo) return null;
+  return expandPath(config.settings.source_repo);
 }
 
 export function getAssetsRepoPath(): string | null {
-  const config = loadConfig();
-  // assets_repo defaults to config_repo if not specified
-  if (config.sync?.assetsRepo) {
-    return expandPath(config.sync.assetsRepo);
-  }
-  if (config.sync?.configRepo) {
-    return expandPath(config.sync.configRepo);
-  }
-  return null;
+  const { config } = loadYamlConfig();
+  if (!config.settings.source_repo) return null;
+  return expandPath(config.settings.source_repo);
 }
 
 export function getPackageManager(): PackageManager {
@@ -933,12 +991,12 @@ function parseCommaList(raw: string | undefined): string[] {
 }
 
 export function getPluginComponentConfig(marketplace: string, pluginName: string): PluginComponentConfig {
-  const config = loadConfig();
+  const { config } = loadYamlConfig();
   const pluginEntry = config.plugins?.[marketplace]?.[pluginName];
   return {
-    disabledSkills: parseCommaList(pluginEntry?.disabled_skills),
-    disabledCommands: parseCommaList(pluginEntry?.disabled_commands),
-    disabledAgents: parseCommaList(pluginEntry?.disabled_agents),
+    disabledSkills: pluginEntry?.disabled_skills ?? [],
+    disabledCommands: pluginEntry?.disabled_commands ?? [],
+    disabledAgents: pluginEntry?.disabled_agents ?? [],
   };
 }
 
@@ -949,14 +1007,15 @@ export function setPluginComponentEnabled(
   componentName: string,
   enabled: boolean
 ): void {
-  const config = loadConfig();
-  config.plugins = config.plugins || {};
-  config.plugins[marketplace] = config.plugins[marketplace] || {};
-  config.plugins[marketplace][pluginName] = config.plugins[marketplace][pluginName] || {};
+  const { config, configPath } = loadYamlConfig();
+  if (!config.plugins[marketplace]) config.plugins[marketplace] = {};
+  if (!config.plugins[marketplace][pluginName]) {
+    config.plugins[marketplace][pluginName] = { disabled_skills: [], disabled_commands: [], disabled_agents: [] };
+  }
 
   const pluginEntry = config.plugins[marketplace][pluginName];
   const field = kind === "skill" ? "disabled_skills" : kind === "command" ? "disabled_commands" : "disabled_agents";
-  const current = new Set(parseCommaList(pluginEntry[field]));
+  const current = new Set(pluginEntry[field]);
 
   if (enabled) {
     current.delete(componentName);
@@ -964,20 +1023,17 @@ export function setPluginComponentEnabled(
     current.add(componentName);
   }
 
-  pluginEntry[field] = Array.from(current).join(",") || undefined;
+  pluginEntry[field] = Array.from(current);
 
   // Clean up empty plugin entries
-  if (!pluginEntry.disabled_skills && !pluginEntry.disabled_commands && !pluginEntry.disabled_agents) {
+  if (pluginEntry.disabled_skills.length === 0 && pluginEntry.disabled_commands.length === 0 && pluginEntry.disabled_agents.length === 0) {
     delete config.plugins[marketplace][pluginName];
     if (Object.keys(config.plugins[marketplace]).length === 0) {
       delete config.plugins[marketplace];
     }
-    if (Object.keys(config.plugins).length === 0) {
-      delete config.plugins;
-    }
   }
 
-  saveConfig(config);
+  saveYamlConfig(config, configPath);
 }
 
 export function isPluginComponentEnabled(

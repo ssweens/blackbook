@@ -1054,7 +1054,7 @@ export function App() {
       return;
     }
 
-    // p - pull to source (configs/assets with pullback)
+    // p - pull to source from drifted instance
     if (input === "p" && detailFile && !diffTarget && !missingSummary) {
       const pullAction = fileActions.find((a) => a.type === "pullback");
       if (pullAction?.instance) {

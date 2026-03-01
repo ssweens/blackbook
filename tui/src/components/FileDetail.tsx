@@ -204,10 +204,10 @@ export function getFileActions(file: FileStatus): FileAction[] {
       const totalRemoved = diffTarget.files.reduce((sum, f) => sum + f.linesRemoved, 0);
       const summary: DiffInstanceSummary = { ...instance, totalAdded, totalRemoved };
 
-      let statusLabel = "Source changed (sync)";
+      let statusLabel = "Source changed";
       let statusColor: "yellow" | "magenta" | "red" = "yellow";
       if (inst.driftKind === "target-changed") {
-        statusLabel = "Target changed (pullback)";
+        statusLabel = "Target changed";
         statusColor = "magenta";
       } else if (inst.driftKind === "both-changed") {
         statusLabel = "Both changed";
@@ -260,37 +260,34 @@ export function getFileActions(file: FileStatus): FileAction[] {
     actions.push({ label: "Sync to tool", type: "sync" });
   }
 
-  const shouldOfferPullback = file.pullback;
-  if (shouldOfferPullback) {
-    const drifted = file.instances.filter((i) => i.status === "drifted");
+  const drifted = file.instances.filter((i) => i.status === "drifted");
 
-    if (drifted.length > 0) {
-      for (const inst of drifted) {
-        actions.push({
-          label: `Pull to source from ${inst.instanceName}`,
-          type: "pullback",
-          instance: {
-            toolId: inst.toolId,
-            instanceId: inst.instanceId,
-            instanceName: inst.instanceName,
-            configDir: inst.configDir,
-          },
-        });
-      }
-    } else {
-      // Source doesn't exist / no drift information — still allow pulling from any enabled instance.
-      for (const inst of file.instances) {
-        actions.push({
-          label: `Pull to source from ${inst.instanceName}`,
-          type: "pullback",
-          instance: {
-            toolId: inst.toolId,
-            instanceId: inst.instanceId,
-            instanceName: inst.instanceName,
-            configDir: inst.configDir,
-          },
-        });
-      }
+  if (drifted.length > 0) {
+    for (const inst of drifted) {
+      actions.push({
+        label: `Pull to source from ${inst.instanceName}`,
+        type: "pullback",
+        instance: {
+          toolId: inst.toolId,
+          instanceId: inst.instanceId,
+          instanceName: inst.instanceName,
+          configDir: inst.configDir,
+        },
+      });
+    }
+  } else {
+    // Source doesn't exist / no drift information — still allow pulling from any enabled instance.
+    for (const inst of file.instances) {
+      actions.push({
+        label: `Pull to source from ${inst.instanceName}`,
+        type: "pullback",
+        instance: {
+          toolId: inst.toolId,
+          instanceId: inst.instanceId,
+          instanceName: inst.instanceName,
+          configDir: inst.configDir,
+        },
+      });
     }
   }
 

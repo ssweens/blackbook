@@ -22,7 +22,6 @@ config_files:
   - name: Amp Config
     path: settings.json
     format: json
-    pullback: true
 syncable: true
 lifecycle:
   install:

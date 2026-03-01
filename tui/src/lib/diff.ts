@@ -215,7 +215,7 @@ export function getConfigSyncDirection(files: DiffFileSummary[]): SyncDirection 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// State-based sync direction (for pullback-enabled files)
+// State-based sync direction (three-way drift detection)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { DriftKind } from "./modules/types.js";

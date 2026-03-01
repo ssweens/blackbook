@@ -108,14 +108,12 @@ describe("getPlaybookMetadata", () => {
   it("returns metadata for known config files", () => {
     const meta = getPlaybookMetadata("claude-code", "settings.json");
     expect(meta).not.toBeNull();
-    expect(meta!.pullback).toBe(true);
     expect(meta!.format).toBe("json");
   });
 
   it("returns metadata for CLAUDE.md", () => {
     const meta = getPlaybookMetadata("claude-code", "CLAUDE.md");
     expect(meta).not.toBeNull();
-    expect(meta!.pullback).toBe(true);
   });
 
   it("returns null for unknown paths", () => {

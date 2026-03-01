@@ -628,7 +628,41 @@ export const useStore = create<Store>((set, get) => ({
 
     try {
       const marketplaces = await loadAllPiMarketplaces();
-      const packages = getAllPiPackages(marketplaces);
+      let packages = getAllPiPackages(marketplaces);
+
+      // Add installed npm packages that aren't in any marketplace
+      const settings = loadPiSettings();
+      const existingSources = new Set(packages.map((p) => p.source.toLowerCase()));
+
+      for (const source of settings.packages) {
+        if (existingSources.has(source.toLowerCase())) continue;
+        if (!source.startsWith("npm:")) continue;
+
+        // Fetch package details from npm
+        const pkgName = source.slice(4);
+        const details = await fetchNpmPackageDetails(pkgName);
+        if (!details) continue;
+
+        const pkg: PiPackage = {
+          name: details.name ?? pkgName,
+          description: details.description ?? "",
+          version: details.version ?? "0.0.0",
+          source,
+          sourceType: "npm",
+          marketplace: "npm",
+          installed: true,
+          extensions: details.extensions ?? [],
+          skills: details.skills ?? [],
+          prompts: details.prompts ?? [],
+          themes: details.themes ?? [],
+          homepage: details.homepage,
+          repository: details.repository,
+          author: details.author,
+          license: details.license,
+        };
+        packages.push(pkg);
+      }
+
       set({ piPackages: packages, piMarketplaces: marketplaces });
     } catch (error) {
       console.error("Failed to load Pi packages:", error);
@@ -865,6 +899,7 @@ export const useStore = create<Store>((set, get) => ({
     }
 
     const config = configResult.config;
+    const configManagementEnabled = config.settings.config_management;
 
     const playbooks = getAllPlaybooks();
     const toolInstances = resolveToolInstances(config, playbooks);
@@ -881,14 +916,24 @@ export const useStore = create<Store>((set, get) => ({
     const files: FileStatus[] = [];
     const coveredTargets = new Set<string>(); // "toolId:instanceId:targetRelPath"
 
+    // Load files from config
+    // Entries WITHOUT tools: are FILES (always shown)
+    // Entries WITH tools: are CONFIGS (gated by config_management)
     for (const fileEntry of config.files) {
+      const isConfig = fileEntry.tools && fileEntry.tools.length > 0;
+
+      // Skip configs if config_management is disabled
+      if (isConfig && !configManagementEnabled) {
+        continue;
+      }
+
       const fileStatus: FileStatus = {
         name: fileEntry.name,
         source: fileEntry.source,
         target: fileEntry.target,
-        pullback: fileEntry.pullback,
         tools: fileEntry.tools,
         instances: [],
+        kind: isConfig ? "config" : "file",
       };
 
       // Determine which tool instances this file targets
@@ -918,7 +963,6 @@ export const useStore = create<Store>((set, get) => ({
               targetPath,
               owner: `file:${fileEntry.name}`,
               stateKey,
-              pullback: fileEntry.pullback,
               backupRetention: config.settings.backup_retention,
             },
           }];
@@ -958,70 +1002,153 @@ export const useStore = create<Store>((set, get) => ({
       files.push(fileStatus);
     }
 
-    // Auto-inject playbook-declared config files not covered by explicit entries
-    for (const [toolId, playbook] of playbooks) {
-      if (!playbook.config_files || playbook.config_files.length === 0) continue;
-      if (!isSyncTarget(toolId, playbooks)) continue;
-
-      const instances = toolInstances.get(toolId) || [];
-      const enabledInstances = instances.filter((i) => i.enabled);
-      if (enabledInstances.length === 0) continue;
-
-      for (const configFile of playbook.config_files) {
-        const uncoveredInstances = enabledInstances.filter(
-          (inst) => !coveredTargets.has(`${toolId}:${inst.id}:${configFile.path}`)
-        );
-        if (uncoveredInstances.length === 0) continue;
-
-        const conventionalSource = `config/${toolId}/${configFile.path}`;
-        const sourcePath = resolveSourcePath(conventionalSource, effectiveRepo);
-
+    // Load configs (tool-specific settings) only if config_management is enabled
+    if (configManagementEnabled) {
+      for (const configEntry of config.configs) {
         const fileStatus: FileStatus = {
-          name: configFile.name,
-          source: conventionalSource,
-          target: configFile.path,
-          pullback: configFile.pullback,
-          tools: [toolId],
+          name: configEntry.name,
+          source: configEntry.source,
+          target: configEntry.target,
+          tools: configEntry.tools,
           instances: [],
+          kind: "config",
         };
 
-        for (const inst of uncoveredInstances) {
-          const instanceConfigDir = expandConfigPath(inst.config_dir);
-          const targetPath = `${instanceConfigDir}/${configFile.path}`;
-          const stateKey = buildStateKey(configFile.name, toolId, inst.id, configFile.path);
-          const steps: OrchestratorStep[] = [{
-            label: `${configFile.name}:${toolId}:${inst.id}`,
-            module: getSyncModule(sourcePath) as any,
-            params: {
+        // Determine which tool instances this config targets
+        const targetToolIds = configEntry.tools
+          ? configEntry.tools.filter((t) => isSyncTarget(t, playbooks))
+          : [...toolInstances.keys()].filter((t) => isSyncTarget(t, playbooks));
+
+        for (const toolId of targetToolIds) {
+          const instances = toolInstances.get(toolId) || [];
+          for (const inst of instances) {
+            if (!inst.enabled) continue;
+
+            const instanceConfigDir = expandConfigPath(inst.config_dir);
+            const targetOverride = configEntry.overrides?.[`${toolId}:${inst.id}`];
+            const targetRelPath = targetOverride || configEntry.target;
+
+            const sourcePath = resolveSourcePath(configEntry.source, effectiveRepo);
+            const targetPath = `${instanceConfigDir}/${targetRelPath}`;
+
+            // Build orchestrator step and run check
+            const stateKey = buildStateKey(configEntry.name, toolId, inst.id, targetRelPath);
+            const steps: OrchestratorStep[] = [{
+              label: `${configEntry.name}:${toolId}:${inst.id}`,
+              module: getSyncModule(sourcePath) as any,
+              params: {
+                sourcePath,
+                targetPath,
+                owner: `config:${configEntry.name}`,
+                stateKey,
+                backupRetention: config.settings.backup_retention,
+              },
+            }];
+
+            const result = await runCheck(steps);
+            const stepResult = result.steps[0];
+
+            fileStatus.instances.push({
+              toolId,
+              instanceId: inst.id,
+              instanceName: inst.name,
+              configDir: instanceConfigDir,
+              targetRelPath,
               sourcePath,
               targetPath,
-              owner: `file:${configFile.name}`,
-              stateKey,
-              pullback: configFile.pullback,
-              backupRetention: config.settings.backup_retention,
-            },
-          }];
+              status: stepResult.check.status,
+              message: stepResult.check.message,
+              diff: stepResult.check.diff,
+              driftKind: stepResult.check.driftKind,
+            });
+            coveredTargets.add(`${toolId}:${inst.id}:${targetRelPath}`);
 
-          const result = await runCheck(steps);
-          const stepResult = result.steps[0];
-
-          fileStatus.instances.push({
-            toolId,
-            instanceId: inst.id,
-            instanceName: inst.name,
-            configDir: instanceConfigDir,
-            targetRelPath: configFile.path,
-            sourcePath,
-            targetPath,
-            status: stepResult.check.status,
-            message: stepResult.check.message,
-            diff: stepResult.check.diff,
-            driftKind: stepResult.check.driftKind,
-          });
+            // Directory sync (target ".") covers all files in the tool's config dir,
+            // including playbook-declared config_files. Mark them as covered so
+            // auto-inject doesn't duplicate them.
+            if (targetRelPath === ".") {
+              const playbook = playbooks.get(toolId);
+              if (playbook?.config_files) {
+                for (const cf of playbook.config_files) {
+                  coveredTargets.add(`${toolId}:${inst.id}:${cf.path}`);
+                }
+              }
+            }
+          }
         }
 
         if (fileStatus.instances.length > 0) {
           files.push(fileStatus);
+        }
+      }
+    }
+
+    // Auto-inject playbook-declared config files not covered by explicit entries
+    // Only when config_management is enabled
+    if (configManagementEnabled) {
+      for (const [toolId, playbook] of playbooks) {
+        if (!playbook.config_files || playbook.config_files.length === 0) continue;
+        if (!isSyncTarget(toolId, playbooks)) continue;
+
+        const instances = toolInstances.get(toolId) || [];
+        const enabledInstances = instances.filter((i) => i.enabled);
+        if (enabledInstances.length === 0) continue;
+
+        for (const configFile of playbook.config_files) {
+          const uncoveredInstances = enabledInstances.filter(
+            (inst) => !coveredTargets.has(`${toolId}:${inst.id}:${configFile.path}`)
+          );
+          if (uncoveredInstances.length === 0) continue;
+
+          const conventionalSource = `config/${toolId}/${configFile.path}`;
+          const sourcePath = resolveSourcePath(conventionalSource, effectiveRepo);
+
+          const fileStatus: FileStatus = {
+            name: configFile.name,
+            source: conventionalSource,
+            target: configFile.path,
+            tools: [toolId],
+            instances: [],
+            kind: "config",
+          };
+
+          for (const inst of uncoveredInstances) {
+            const instanceConfigDir = expandConfigPath(inst.config_dir);
+            const targetPath = `${instanceConfigDir}/${configFile.path}`;
+            const stateKey = buildStateKey(configFile.name, toolId, inst.id, configFile.path);
+            const steps: OrchestratorStep[] = [{
+              label: `${configFile.name}:${toolId}:${inst.id}`,
+              module: getSyncModule(sourcePath) as any,
+              params: {
+                sourcePath,
+                targetPath,
+                owner: `file:${configFile.name}`,
+                stateKey,
+                backupRetention: config.settings.backup_retention,
+              },
+            }];
+
+            const result = await runCheck(steps);
+            const stepResult = result.steps[0];
+
+            fileStatus.instances.push({
+              toolId,
+              instanceId: inst.id,
+              instanceName: inst.name,
+              configDir: instanceConfigDir,
+              targetRelPath: configFile.path,
+              sourcePath,
+              targetPath,
+              status: stepResult.check.status,
+              message: stepResult.check.message,
+              diff: stepResult.check.diff,
+              driftKind: stepResult.check.driftKind,
+            });
+          }
+
+          if (fileStatus.instances.length > 0) {
+            files.push(fileStatus);
+          }
         }
       }
     }
@@ -1249,7 +1376,7 @@ export const useStore = create<Store>((set, get) => ({
             return {
               label: `${item.file.name}:${i.toolId}:${i.instanceId}`,
               module: getSyncModule(sourcePath) as any,
-              params: { sourcePath, targetPath, owner: `file:${item.file.name}`, stateKey, pullback: item.file.pullback, backupRetention: configResult.config.settings.backup_retention },
+              params: { sourcePath, targetPath, owner: `file:${item.file.name}`, stateKey, backupRetention: configResult.config.settings.backup_retention },
             };
           });
 
@@ -1508,12 +1635,6 @@ export const useStore = create<Store>((set, get) => ({
     );
     if (!picked) {
       notify(`Unknown instance: ${instance.toolId}:${instance.instanceId}`, "error");
-      return false;
-    }
-
-    const isConfigFile = Boolean(file.tools && file.tools.length > 0);
-    if (!file.pullback && !isConfigFile) {
-      notify("Pullback is not enabled for this file.", "error");
       return false;
     }
 

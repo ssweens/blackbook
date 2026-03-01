@@ -46,7 +46,6 @@ export function SyncPreview({ item }: SyncPreviewProps) {
         <Box>
           <Text color="gray">File: </Text>
           <Text color="white">{item.file.name}</Text>
-          {item.file.pullback && <Text color="magenta"> (pullback)</Text>}
         </Box>
         <Box>
           <Text color="gray">Source: </Text>
@@ -61,13 +60,13 @@ export function SyncPreview({ item }: SyncPreviewProps) {
           )}
           {sourceChangedInstances.length > 0 && (
             <>
-              <Text color="gray">{item.missingInstances.length > 0 ? " · " : ""}Source changed (sync): </Text>
+              <Text color="gray">{item.missingInstances.length > 0 ? " · " : ""}Source changed: </Text>
               <Text color="yellow">{sourceChangedInstances.join(", ")}</Text>
             </>
           )}
           {targetChangedInstances.length > 0 && (
             <>
-              <Text color="gray">{(item.missingInstances.length > 0 || sourceChangedInstances.length > 0) ? " · " : ""}Target changed (pullback): </Text>
+              <Text color="gray">{(item.missingInstances.length > 0 || sourceChangedInstances.length > 0) ? " · " : ""}Target changed: </Text>
               <Text color="magenta">{targetChangedInstances.join(", ")}</Text>
             </>
           )}

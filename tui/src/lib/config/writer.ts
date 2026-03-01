@@ -24,6 +24,7 @@ export function saveConfig(config: BlackbookConfig, configPath?: string): void {
     doc.set("marketplaces", config.marketplaces);
     doc.set("tools", config.tools);
     doc.set("files", config.files);
+    doc.set("configs", config.configs);
     doc.set("plugins", config.plugins);
 
     content = doc.toString();
@@ -52,6 +53,10 @@ function serializeConfig(config: BlackbookConfig): string {
 
   if (config.files.length > 0) {
     obj.files = config.files;
+  }
+
+  if (config.configs.length > 0) {
+    obj.configs = config.configs;
   }
 
   if (Object.keys(config.plugins).length > 0) {

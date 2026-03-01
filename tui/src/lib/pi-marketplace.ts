@@ -1,6 +1,6 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { existsSync, readFileSync, readdirSync, statSync, realpathSync, mkdirSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync, realpathSync, mkdirSync, lstatSync } from "fs";
 import { join, resolve, dirname } from "path";
 import { homedir } from "os";
 import { createHash } from "crypto";
@@ -9,6 +9,9 @@ import { getPiMarketplaces, getDisabledPiMarketplaces, getCacheDir } from "./con
 
 const execFileAsync = promisify(execFile);
 
+// Synchronous execFile for initial load
+import { execFileSync as execSync } from "child_process";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Pi Settings (installed packages)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -16,17 +19,113 @@ const execFileAsync = promisify(execFile);
 const PI_SETTINGS_PATH = join(homedir(), ".pi", "agent", "settings.json");
 
 export function loadPiSettings(): PiSettings {
+  const packages: string[] = [];
+
+  // Read from Pi settings.json (packages array)
   try {
-    if (!existsSync(PI_SETTINGS_PATH)) {
-      return { packages: [] };
+    if (existsSync(PI_SETTINGS_PATH)) {
+      const content = readFileSync(PI_SETTINGS_PATH, "utf-8");
+      const settings = JSON.parse(content);
+      if (Array.isArray(settings.packages)) {
+        packages.push(...settings.packages);
+      }
     }
-    const content = readFileSync(PI_SETTINGS_PATH, "utf-8");
-    const settings = JSON.parse(content);
-    return {
-      packages: Array.isArray(settings.packages) ? settings.packages : [],
-    };
   } catch {
-    return { packages: [] };
+    // Ignore errors
+  }
+
+  // Scan global node_modules for npm-installed Pi packages
+  const npmPackages = scanGlobalNpmForPiPackages();
+  for (const pkgName of npmPackages) {
+    const source = `npm:${pkgName}`;
+    if (!packages.includes(source)) {
+      packages.push(source);
+    }
+  }
+
+  return { packages };
+}
+
+/**
+ * Scan global node_modules for packages that are Pi extensions.
+ * A package is a Pi extension if it has:
+ * - `pi.extensions` in package.json, OR
+ * - `keywords` containing "pi-package"
+ */
+function scanGlobalNpmForPiPackages(): string[] {
+  const packages: string[] = [];
+
+  // Get global node_modules path via npm root -g
+  let globalNodeModules: string;
+  try {
+    const result = execSync("npm", ["root", "-g"], { encoding: "utf-8", timeout: 5000 });
+    globalNodeModules = result.trim();
+    if (!existsSync(globalNodeModules)) return [];
+  } catch {
+    return [];
+  }
+
+  try {
+    const entries = readdirSync(globalNodeModules);
+    for (const entry of entries) {
+      // Skip hidden dirs and node_modules itself
+      if (entry.startsWith(".")) continue;
+      if (entry === "node_modules") continue;
+
+      const entryPath = join(globalNodeModules, entry);
+
+      // Handle scoped packages (@scope/package)
+      if (entry.startsWith("@")) {
+        try {
+          const scopedEntries = readdirSync(entryPath);
+          for (const scopedPkg of scopedEntries) {
+            const pkgPath = join(entryPath, scopedPkg);
+            if (isPiPackageDir(pkgPath)) {
+              packages.push(`${entry}/${scopedPkg}`);
+            }
+          }
+        } catch {
+          // Ignore errors reading scoped dir
+        }
+        continue;
+      }
+
+      // Regular package
+      if (isPiPackageDir(entryPath)) {
+        packages.push(entry);
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+
+  return packages;
+}
+
+/**
+ * Check if a directory is a Pi package by examining its package.json.
+ */
+function isPiPackageDir(pkgPath: string): boolean {
+  const pkgJsonPath = join(pkgPath, "package.json");
+  if (!existsSync(pkgJsonPath)) return false;
+
+  try {
+    const content = readFileSync(pkgJsonPath, "utf-8");
+    const pkg = JSON.parse(content);
+
+    // Check for pi.extensions
+    if (pkg.pi?.extensions && Array.isArray(pkg.pi.extensions) && pkg.pi.extensions.length > 0) {
+      return true;
+    }
+
+    // Check for pi-package keyword
+    if (Array.isArray(pkg.keywords) && pkg.keywords.includes("pi-package")) {
+      return true;
+    }
+
+    return false;
+  } catch {
+    return false;
   }
 }
 

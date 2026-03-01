@@ -22,11 +22,9 @@ config_files:
   - name: Settings
     path: settings.json
     format: json
-    pullback: true
   - name: CLAUDE.md
     path: CLAUDE.md
     format: markdown
-    pullback: true
 syncable: true
 lifecycle:
   install:

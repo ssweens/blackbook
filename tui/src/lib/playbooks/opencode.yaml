@@ -22,7 +22,6 @@ config_files:
   - name: OpenCode Config
     path: opencode.json
     format: json
-    pullback: true
 syncable: true
 lifecycle:
   install:

@@ -94,9 +94,10 @@ export interface FileStatus {
   name: string;
   source: string;
   target: string;
-  pullback: boolean;
   tools?: string[];
   instances: FileInstanceStatus[];
+  /** "file" for general files (always shown), "config" for tool configs (gated by config_management) */
+  kind: "file" | "config";
 }
 
 export type SyncPreviewItem =

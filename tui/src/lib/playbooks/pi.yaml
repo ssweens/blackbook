@@ -18,5 +18,4 @@ config_files:
   - name: Pi Config
     path: settings.json
     format: json
-    pullback: true
 syncable: true

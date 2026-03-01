@@ -36,10 +36,10 @@ const SETTINGS_DEFS: SettingDef[] = [
     description: "Number of backups to keep per file (1-100)",
   },
   {
-    key: "default_pullback",
-    label: "Default Pullback",
+    key: "config_management",
+    label: "Config Management",
     type: "boolean",
-    description: "Enable pullback (target → source) for new file entries",
+    description: "Track and sync tool config files (settings.json, etc.)",
   },
 ];
 

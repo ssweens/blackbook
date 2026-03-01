@@ -106,7 +106,7 @@ export function isSyncTarget(toolId: string, playbooks?: Map<string, Playbook>):
 
 /**
  * Get playbook config_file metadata for a given target path.
- * Returns the matching config_file entry if the path matches, including pullback flag.
+ * Returns the matching config_file entry if the path matches.
  */
 export function getPlaybookMetadata(
   toolId: string,

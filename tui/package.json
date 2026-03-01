@@ -36,7 +36,7 @@
   },
   "scripts": {
     "dev": "tsx src/cli.tsx",
-    "build": "tsc",
+    "build": "tsc && cp -r src/lib/playbooks dist/lib/playbooks",
     "start": "node dist/cli.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

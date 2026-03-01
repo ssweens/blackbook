@@ -12,10 +12,8 @@ export interface FileCopyParams {
   sourcePath: string;
   targetPath: string;
   owner: string;
-  /** When set, enables three-way state tracking for pullback detection. */
+  /** When set, enables three-way state tracking for drift detection. */
   stateKey?: string;
-  /** When true, this file supports pullback (target → source). */
-  pullback?: boolean;
   /** Number of backups to retain per file. */
   backupRetention?: number;
 }
@@ -32,17 +30,16 @@ export const fileCopyModule: Module<FileCopyParams> = {
   name: "file-copy",
 
   async check(params): Promise<CheckResult> {
-    const { sourcePath, targetPath, stateKey, pullback } = params;
+    const { sourcePath, targetPath, stateKey } = params;
 
     if (!existsSync(sourcePath)) {
-      // For configs/assets, the repo/source may legitimately be empty/missing while
-      // the tool still has a working installed target. Treat this as "ok" when
-      // the target exists so the UI can offer pullback without showing a failure.
+      // Source may legitimately be empty/missing while the tool still has a
+      // working installed target. Show as drifted so the UI can offer pullback.
       if (existsSync(targetPath)) {
         return {
-          status: "ok",
+          status: "drifted",
           message: `Source not found: ${sourcePath}`,
-          driftKind: pullback ? "target-changed" : undefined,
+          driftKind: "target-changed",
         };
       }
 
@@ -68,15 +65,15 @@ export const fileCopyModule: Module<FileCopyParams> = {
       return { status: "ok", message: "Files match", driftKind: "in-sync" };
     }
 
-    // Three-way state detection for pullback-enabled files
-    if (stateKey && pullback) {
+    // Three-way state detection when state key is available
+    if (stateKey) {
       const driftKind = detectDrift(stateKey, sourceHash, targetHash);
 
       if (driftKind === "target-changed") {
         const oldText = readTextSafe(sourcePath);
         const newText = readTextSafe(targetPath);
         const diff = createTwoFilesPatch("source", "target (changed)", oldText, newText, "", "", { context: 3 });
-        return { status: "drifted", message: "Target changed (pullback available)", diff, driftKind };
+        return { status: "drifted", message: "Target changed", diff, driftKind };
       }
 
       if (driftKind === "both-changed") {
@@ -93,7 +90,7 @@ export const fileCopyModule: Module<FileCopyParams> = {
       return { status: "drifted", message: "Source changed", diff, driftKind };
     }
 
-    // Standard two-way comparison (no pullback)
+    // No state key — two-way comparison only
     const oldText = readTextSafe(targetPath);
     const newText = readTextSafe(sourcePath);
     const diff = createTwoFilesPatch("target", "source", oldText, newText, "", "", { context: 3 });

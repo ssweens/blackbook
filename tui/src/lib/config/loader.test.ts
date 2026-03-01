@@ -45,7 +45,6 @@ files:
     source: settings.json
     target: settings.json
     tools: [claude-code]
-    pullback: true
 `.trim());
 
     const result = loadConfig(TMP_YAML);
@@ -57,7 +56,6 @@ files:
     expect(result.config.tools["claude-code"][0].enabled).toBe(true);
     expect(result.config.files).toHaveLength(2);
     expect(result.config.files[0].name).toBe("AGENTS.md");
-    expect(result.config.files[1].pullback).toBe(true);
   });
 
   it("reports parse errors for invalid YAML", () => {

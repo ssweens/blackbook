@@ -143,8 +143,8 @@ describe("fileCopyModule.apply", () => {
   });
 });
 
-describe("fileCopyModule three-way state (pullback)", () => {
-  const stateKey = "pullback:claude-code:default:settings.json";
+describe("fileCopyModule three-way state detection", () => {
+  const stateKey = "test:claude-code:default:settings.json";
 
   it("detects source-changed when source differs from last sync", async () => {
     const srcFile = join(SRC, "s.json");
@@ -168,7 +168,6 @@ describe("fileCopyModule three-way state (pullback)", () => {
       targetPath: tgtFile,
       owner: "test",
       stateKey,
-      pullback: true,
     });
 
     expect(check.status).toBe("drifted");
@@ -176,7 +175,7 @@ describe("fileCopyModule three-way state (pullback)", () => {
     expect(check.message).toContain("Source changed");
   });
 
-  it("detects target-changed for pullback offer", async () => {
+  it("detects target-changed when target is edited", async () => {
     const srcFile = join(SRC, "s.json");
     const tgtFile = join(TGT, "s.json");
 
@@ -197,12 +196,11 @@ describe("fileCopyModule three-way state (pullback)", () => {
       targetPath: tgtFile,
       owner: "test",
       stateKey,
-      pullback: true,
     });
 
     expect(check.status).toBe("drifted");
     expect(check.driftKind).toBe("target-changed");
-    expect(check.message).toContain("pullback");
+    expect(check.message).toContain("Target changed");
   });
 
   it("detects both-changed as conflict", async () => {
@@ -227,7 +225,6 @@ describe("fileCopyModule three-way state (pullback)", () => {
       targetPath: tgtFile,
       owner: "test",
       stateKey,
-      pullback: true,
     });
 
     expect(check.status).toBe("drifted");
@@ -253,7 +250,6 @@ describe("fileCopyModule three-way state (pullback)", () => {
       targetPath: tgtFile,
       owner: "test",
       stateKey,
-      pullback: true,
     });
 
     expect(check.status).toBe("ok");

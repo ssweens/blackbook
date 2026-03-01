@@ -15,7 +15,6 @@ const ConfigFileSchema = z.object({
   name: z.string().min(1),
   path: z.string().min(1),
   format: z.enum(["json", "toml", "yaml", "markdown", "text"]).default("text"),
-  pullback: z.boolean().default(false),
 });
 
 const LifecycleCommandSchema = z.object({

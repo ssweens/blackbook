@@ -22,7 +22,7 @@ describe("ConfigSchema", () => {
       },
       files: [
         { name: "AGENTS.md", source: "AGENTS.md", target: "AGENTS.md" },
-        { name: "Settings", source: "settings.json", target: "settings.json", tools: ["claude-code"], pullback: true },
+        { name: "Settings", source: "settings.json", target: "settings.json", tools: ["claude-code"] },
       ],
       plugins: {
         playbook: {
@@ -36,7 +36,6 @@ describe("ConfigSchema", () => {
     expect(result.tools["claude-code"]).toHaveLength(1);
     expect(result.tools["claude-code"][0].enabled).toBe(true);
     expect(result.files).toHaveLength(2);
-    expect(result.files[1].pullback).toBe(true);
     expect(result.files[1].tools).toEqual(["claude-code"]);
     expect(result.plugins.playbook["my-plugin"].disabled_skills).toEqual(["a", "b"]);
   });
