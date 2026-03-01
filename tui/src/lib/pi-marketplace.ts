@@ -27,7 +27,14 @@ export function loadPiSettings(): PiSettings {
       const content = readFileSync(PI_SETTINGS_PATH, "utf-8");
       const settings = JSON.parse(content);
       if (Array.isArray(settings.packages)) {
-        packages.push(...settings.packages);
+        for (const entry of settings.packages) {
+          if (typeof entry === "string") {
+            packages.push(entry);
+          } else if (entry && typeof entry === "object" && typeof entry.source === "string") {
+            // Pi supports object entries like { source: "npm:foo", extensions: ["-bar.ts"] }
+            packages.push(entry.source);
+          }
+        }
       }
     }
   } catch {

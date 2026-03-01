@@ -10,8 +10,10 @@ ASSETS_DIR="$REPO_DIR/assets"
 TUI_DIR="$REPO_DIR/tui"
 TMP_DIR="/tmp/blackbook-screenshots-$$"
 
-# Tab names in order (left to right)
-TABS=("discover" "installed" "marketplaces" "tools" "sync")
+# Tab names in order as they appear in the tab bar (left to right).
+# We skip Library and Settings — only capture the 5 functional tabs.
+# Tab bar order: Library | Sync | Tools | Discover | Installed | Marketplaces | Settings
+TABS=("sync" "tools" "discover" "installed" "marketplaces")
 
 
 
@@ -42,7 +44,7 @@ pnpm build >/dev/null 2>&1
 
 # Window size in pixels
 WIN_WIDTH=1080
-WIN_HEIGHT=600
+WIN_HEIGHT=820
 
 # Launch blackbook in iTerm with specific window size
 echo "🚀 Launching Blackbook in iTerm..."
@@ -116,6 +118,25 @@ next_tab() {
     '
     sleep 0.5
 }
+
+# Navigate to first capture tab (Sync).
+# The app starts on Installed. The tab cycle (Library excluded) is:
+#   Sync → Tools → Discover → Installed → Marketplaces → Settings → (wraps)
+# From Installed, 3 lefts reaches Sync. Use 15 (3 + 2 full cycles) for safety.
+# Each press needs enough delay for the TUI to process.
+echo ""
+echo "🔄 Navigating to Sync tab..."
+osascript -e '
+tell application "iTerm" to activate
+delay 0.3
+tell application "System Events"
+    repeat 15 times
+        key code 123 -- left arrow
+        delay 0.15
+    end repeat
+end tell
+'
+sleep 1
 
 # Capture each tab
 echo ""
