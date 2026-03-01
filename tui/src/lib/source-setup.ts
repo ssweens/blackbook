@@ -132,34 +132,26 @@ function ensureSourceRepoMarketplace(config: ReturnType<typeof loadConfig>["conf
     // Use inferred name
   }
 
-  // Check if this repo's marketplace is already in the config
+  // Use the local path directly — the repo is already cloned,
+  // and it may be private (raw GitHub URLs would 404)
+  const marketplaceUrl = marketplacePath;
+
+  // Check if already registered with correct local path
+  const existingEntry = config.marketplaces[marketplaceName];
+  if (existingEntry === marketplaceUrl) return false;
+
+  // Check if registered under a different name pointing to same repo
   const repoUrl = getRepoRemoteUrl(sourceRepo);
-  const existingUrls = Object.values(config.marketplaces);
-  
-  // Check by URL match (handles both raw github URLs and local paths)
-  const alreadyPresent = existingUrls.some((url) => {
-    if (repoUrl && url.includes(repoUrl)) return true;
-    if (url.startsWith(sourceRepo) || url.includes(marketplaceName)) return true;
-    return false;
-  });
-
-  if (alreadyPresent) return false;
-
-  // Build the marketplace URL
-  let marketplaceUrl: string;
-  if (repoUrl) {
-    // Convert git remote to raw GitHub URL
-    const match = repoUrl.match(/github\.com[:/](.+?)(?:\.git)?$/);
-    if (match) {
-      const relativePath = marketplacePath.replace(sourceRepo, "").replace(/^\//, "");
-      marketplaceUrl = `https://raw.githubusercontent.com/${match[1]}/main/${relativePath}`;
-    } else {
-      marketplaceUrl = marketplacePath; // Local path fallback
+  for (const [name, url] of Object.entries(config.marketplaces)) {
+    if (url === marketplaceUrl) return false;
+    // If pointing to a stale remote URL for this repo, replace with local path
+    if (repoUrl && url.includes("raw.githubusercontent.com") && repoUrl.includes(name)) {
+      config.marketplaces[name] = marketplaceUrl;
+      return true;
     }
-  } else {
-    marketplaceUrl = marketplacePath; // Local path
   }
 
+  // Add or update the marketplace entry
   config.marketplaces[marketplaceName] = marketplaceUrl;
   return true;
 }
