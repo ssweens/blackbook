@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, readdirSync } from "fs";
-import { join, dirname, resolve } from "path";
+import { join, dirname, basename, resolve } from "path";
 import { createHash } from "crypto";
 import { homedir } from "os";
 import { fileURLToPath } from "url";
@@ -360,16 +360,26 @@ export async function fetchMarketplace(
   const repoInfo = parseGithubRepoFromUrl(marketplace.url);
   const localMarketplacePath = resolveLocalMarketplacePath(marketplace.url, marketplace.isLocal);
 
-  // For local marketplaces, determine the base directory for resolving relative plugin sources
-  // If the path is a directory, use it directly; if it's a file (marketplace.json), use its parent
+  // For local marketplaces, determine the base directory for resolving relative plugin sources.
+  // Plugin `source` paths (e.g. "./plugins/foo") are relative to the repo root.
+  // If marketplace.json lives under .claude-plugin/, go up to the repo root.
   let localBaseDir: string | null = null;
   if (localMarketplacePath) {
     try {
-      localBaseDir = statSync(localMarketplacePath).isDirectory()
+      let dir = statSync(localMarketplacePath).isDirectory()
         ? localMarketplacePath
         : dirname(localMarketplacePath);
+      // .claude-plugin/marketplace.json → sources are relative to repo root
+      if (basename(dir) === ".claude-plugin") {
+        dir = dirname(dir);
+      }
+      localBaseDir = dir;
     } catch {
-      localBaseDir = dirname(localMarketplacePath);
+      let dir = dirname(localMarketplacePath);
+      if (basename(dir) === ".claude-plugin") {
+        dir = dirname(dir);
+      }
+      localBaseDir = dir;
     }
   }
 
