@@ -246,3 +246,137 @@ export function shouldShowSourceSetupWizard(): boolean {
   const { config } = loadConfig();
   return !config.settings.source_repo;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Source Repo Git Status
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface SourceRepoChange {
+  path: string;
+  status: "modified" | "added" | "deleted" | "renamed" | "untracked";
+}
+
+export interface SourceRepoStatus {
+  isGitRepo: boolean;
+  branch: string;
+  ahead: number;
+  behind: number;
+  changes: SourceRepoChange[];
+  hasChanges: boolean;
+}
+
+export async function getSourceRepoStatus(): Promise<SourceRepoStatus | null> {
+  const { config } = loadConfig();
+  const sourceRepo = config.settings.source_repo;
+  if (!sourceRepo) return null;
+
+  const repoPath = expandPath(sourceRepo);
+  if (!existsSync(join(repoPath, ".git"))) {
+    return { isGitRepo: false, branch: "", ahead: 0, behind: 0, changes: [], hasChanges: false };
+  }
+
+  try {
+    // Fetch to get accurate ahead/behind (non-blocking, ignore failures)
+    await execFileAsync("git", ["fetch", "--quiet"], { cwd: repoPath, timeout: 15000 }).catch(() => {});
+
+    // Get branch name
+    const { stdout: branchOut } = await execFileAsync(
+      "git", ["rev-parse", "--abbrev-ref", "HEAD"],
+      { cwd: repoPath, timeout: 5000 }
+    );
+    const branch = branchOut.trim();
+
+    // Get ahead/behind
+    let ahead = 0;
+    let behind = 0;
+    try {
+      const { stdout: countOut } = await execFileAsync(
+        "git", ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
+        { cwd: repoPath, timeout: 5000 }
+      );
+      const parts = countOut.trim().split(/\s+/);
+      ahead = parseInt(parts[0], 10) || 0;
+      behind = parseInt(parts[1], 10) || 0;
+    } catch {
+      // No upstream configured
+    }
+
+    // Get changed files
+    const { stdout: statusOut } = await execFileAsync(
+      "git", ["status", "--porcelain"],
+      { cwd: repoPath, timeout: 5000 }
+    );
+
+    const changes: SourceRepoChange[] = statusOut
+      .split("\n")
+      .filter((line) => line.length > 2)
+      .map((line) => {
+        const code = line[0] + line[1]; // XY status codes (2 chars)
+        const filePath = line.slice(3); // skip "XY " prefix
+        let status: SourceRepoChange["status"] = "modified";
+        if (code === "??" ) status = "untracked";
+        else if (code.includes("A")) status = "added";
+        else if (code.includes("D")) status = "deleted";
+        else if (code.includes("R")) status = "renamed";
+        return { path: filePath, status };
+      });
+
+    return {
+      isGitRepo: true,
+      branch,
+      ahead,
+      behind,
+      changes,
+      hasChanges: changes.length > 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function commitAndPushSourceRepo(message: string): Promise<{ success: boolean; error?: string }> {
+  const { config } = loadConfig();
+  const sourceRepo = config.settings.source_repo;
+  if (!sourceRepo) return { success: false, error: "No source repo configured" };
+
+  const repoPath = expandPath(sourceRepo);
+  if (!existsSync(join(repoPath, ".git"))) {
+    return { success: false, error: "Not a git repository" };
+  }
+
+  try {
+    // Stage all changes
+    await execFileAsync("git", ["add", "-A"], { cwd: repoPath, timeout: 10000 });
+
+    // Commit
+    await execFileAsync("git", ["commit", "-m", message], { cwd: repoPath, timeout: 10000 });
+
+    // Pull rebase then push
+    await execFileAsync("git", ["pull", "--rebase"], { cwd: repoPath, timeout: 30000 }).catch(() => {});
+    await execFileAsync("git", ["push"], { cwd: repoPath, timeout: 30000 });
+
+    return { success: true };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { success: false, error: msg };
+  }
+}
+
+export async function pullSourceRepoChanges(): Promise<{ success: boolean; error?: string }> {
+  const { config } = loadConfig();
+  const sourceRepo = config.settings.source_repo;
+  if (!sourceRepo) return { success: false, error: "No source repo configured" };
+
+  const repoPath = expandPath(sourceRepo);
+  if (!existsSync(join(repoPath, ".git"))) {
+    return { success: false, error: "Not a git repository" };
+  }
+
+  try {
+    await execFileAsync("git", ["pull", "--rebase"], { cwd: repoPath, timeout: 30000 });
+    return { success: true };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { success: false, error: msg };
+  }
+}
