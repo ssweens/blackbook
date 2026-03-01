@@ -455,6 +455,20 @@ export async function installPlugin(
   return result;
 }
 
+export function uninstallPluginFromInstance(
+  plugin: Plugin,
+  toolId: string,
+  instanceId: string,
+): boolean {
+  validatePluginMetadata(plugin);
+  const instances = getToolInstances().filter((i) => i.kind === "tool");
+  const instance = instances.find(
+    (i) => i.toolId === toolId && i.instanceId === instanceId,
+  );
+  if (!instance) return false;
+  return uninstallPluginItemsFromInstance(plugin.name, instance) > 0;
+}
+
 export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
   validatePluginMetadata(plugin);
   const enabledInstances = getEnabledToolInstances();

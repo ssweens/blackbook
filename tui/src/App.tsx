@@ -6,7 +6,7 @@ import { TabBar } from "./components/TabBar.js";
 import { SearchBox } from "./components/SearchBox.js";
 import { PluginList } from "./components/PluginList.js";
 import { PluginPreview } from "./components/PluginPreview.js";
-import { PluginDetail } from "./components/PluginDetail.js";
+import { PluginDetail, buildPluginActions, type PluginAction } from "./components/PluginDetail.js";
 import { MarketplaceList } from "./components/MarketplaceList.js";
 import { MarketplaceDetail } from "./components/MarketplaceDetail.js";
 import { PiMarketplaceList } from "./components/PiMarketplaceList.js";
@@ -35,6 +35,7 @@ import { PiPackageDetail, getPiPackageActions } from "./components/PiPackageDeta
 import { ComponentManager, getComponentItems } from "./components/ComponentManager.js";
 import { SettingsPanel } from "./components/SettingsPanel.js";
 import { getPluginToolStatus, togglePluginComponent } from "./lib/plugin-status.js";
+import { syncPluginInstances, uninstallPluginFromInstance } from "./lib/install.js";
 import { getToolLifecycleCommand, detectInstallMethodMismatch } from "./lib/tool-lifecycle.js";
 import { getPackageManager } from "./lib/config.js";
 import { setupSourceRepository, shouldShowSourceSetupWizard } from "./lib/source-setup.js";
@@ -768,20 +769,11 @@ export function App() {
     return detailFile ? getFileActions(detailFile) : [];
   }, [detailFile]);
 
-  const getPluginActions = (plugin: typeof detailPlugin) => {
-    if (!plugin) return [] as string[];
-    if (!plugin.installed) return ["Install", "Back to plugin list"];
-
+  const getPluginActions = (plugin: typeof detailPlugin): PluginAction[] => {
+    if (!plugin) return [];
     const toolStatuses = getPluginToolStatus(plugin);
-    const supportedTools = toolStatuses.filter(t => t.supported && t.enabled);
-    const installedCount = supportedTools.filter(t => t.installed).length;
-    const needsRepair = installedCount < supportedTools.length && supportedTools.length > 0;
-    const hasComponents = plugin.skills.length > 0 || plugin.commands.length > 0 || plugin.agents.length > 0;
-    const actions = ["Uninstall", "Update now"];
-    if (hasComponents) actions.push("Manage components");
-    if (needsRepair) actions.push("Install to all tools");
-    actions.push("Back to plugin list");
-    return actions;
+    const isIncomplete = plugin.installed && plugin.incomplete;
+    return buildPluginActions(plugin, toolStatuses, isIncomplete);
   };
 
   const getPluginActionCount = (plugin: typeof detailPlugin) => {
@@ -1458,29 +1450,45 @@ export function App() {
     const action = actions[index];
     if (!action) return;
 
-    switch (action) {
-      case "Uninstall":
+    switch (action.type) {
+      case "uninstall":
         await doUninstall(detailPlugin);
         refreshDetailPlugin(detailPlugin);
         break;
-      case "Update now":
+      case "update":
         await doUpdate(detailPlugin);
         refreshDetailPlugin(detailPlugin);
         break;
-      case "Install to all tools":
-      case "Install":
+      case "install":
         await doInstall(detailPlugin);
         refreshDetailPlugin(detailPlugin);
         break;
-      case "Manage components":
-        setComponentManagerMode(true);
-        setComponentIndex(0);
+      case "install_tool": {
+        if (!action.toolStatus) break;
+        const marketplace = marketplaces.find((m) => m.name === detailPlugin.marketplace);
+        const { notify, clearNotification } = useStore.getState();
+        const loadingId = notify(`Installing ${detailPlugin.name} to ${action.toolStatus.name}...`, "info", { spinner: true });
+        await syncPluginInstances(detailPlugin, marketplace?.url, [action.toolStatus]);
+        clearNotification(loadingId);
+        notify(`✓ Installed ${detailPlugin.name} to ${action.toolStatus.name}`, "success");
+        await useStore.getState().refreshAll();
+        refreshDetailPlugin(detailPlugin);
         break;
-      case "Back to plugin list":
+      }
+      case "uninstall_tool": {
+        if (!action.toolStatus) break;
+        const { notify, clearNotification } = useStore.getState();
+        const loadingId = notify(`Uninstalling ${detailPlugin.name} from ${action.toolStatus.name}...`, "info", { spinner: true });
+        await uninstallPluginFromInstance(detailPlugin, action.toolStatus.toolId, action.toolStatus.instanceId);
+        clearNotification(loadingId);
+        notify(`✓ Uninstalled ${detailPlugin.name} from ${action.toolStatus.name}`, "success");
+        await useStore.getState().refreshAll();
+        refreshDetailPlugin(detailPlugin);
+        break;
+      }
+      case "back":
         setDetailPlugin(null);
         setActionIndex(0);
-        break;
-      default:
         break;
     }
   };
@@ -1740,6 +1748,7 @@ export function App() {
           plugin={detailPlugin}
           selectedAction={actionIndex}
           onAction={() => {}}
+          actions={getPluginActions(detailPlugin)}
         />
       ) : detailMarketplace ? (
         <MarketplaceDetail

@@ -1,34 +1,34 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
 import type { Plugin } from "../lib/types.js";
-import { getPluginToolStatus } from "../lib/plugin-status.js";
+import { getPluginToolStatus, type ToolInstallStatus } from "../lib/plugin-status.js";
 import { getPluginComponentConfig } from "../lib/config.js";
+
+export interface PluginAction {
+  id: string;
+  label: string;
+  type: "install" | "uninstall" | "update" | "install_tool" | "uninstall_tool" | "back";
+  toolStatus?: ToolInstallStatus;
+}
 
 interface PluginDetailProps {
   plugin: Plugin;
   onAction: (action: "install" | "uninstall" | "update" | "repair" | "back") => void;
   selectedAction: number;
+  actions?: PluginAction[];
 }
 
-export function PluginDetail({ plugin, selectedAction }: PluginDetailProps) {
+export function PluginDetail({ plugin, selectedAction, actions: externalActions }: PluginDetailProps) {
   const toolStatuses = getPluginToolStatus(plugin);
   const componentConfig = getPluginComponentConfig(plugin.marketplace, plugin.name);
   const disabledCount = componentConfig.disabledSkills.length + componentConfig.disabledCommands.length + componentConfig.disabledAgents.length;
-  
-  // Use store-calculated incomplete status for consistency with list views
+
   const isIncomplete = plugin.installed && plugin.incomplete;
-  
+
   const actions = useMemo(() => {
-    if (plugin.installed) {
-      const base = ["Uninstall", "Update now"];
-      if (isIncomplete) {
-        base.push("Install to all tools");
-      }
-      base.push("Back to plugin list");
-      return base;
-    }
-    return ["Install", "Back to plugin list"];
-  }, [plugin.installed, isIncomplete]);
+    if (externalActions) return externalActions;
+    return buildPluginActions(plugin, toolStatuses, isIncomplete);
+  }, [plugin, toolStatuses, isIncomplete, externalActions]);
 
   return (
     <Box flexDirection="column">
@@ -165,21 +165,21 @@ export function PluginDetail({ plugin, selectedAction }: PluginDetailProps) {
         {actions.map((action, i) => {
           const isSelected = i === selectedAction;
           const color =
-            action === "Uninstall"
+            action.type === "uninstall" || action.type === "uninstall_tool"
               ? "red"
-              : action === "Install" || action === "Install to all tools"
+              : action.type === "install" || action.type === "install_tool"
                 ? "green"
-                : action.includes("Update")
+                : action.type === "update"
                   ? "cyan"
                   : "white";
 
           return (
-            <Box key={action}>
+            <Box key={action.id}>
               <Text color={isSelected ? "cyan" : "gray"}>
                 {isSelected ? "❯ " : "  "}
               </Text>
               <Text bold={isSelected} color={isSelected ? color : "gray"}>
-                {action}
+                {action.label}
               </Text>
             </Box>
           );
@@ -188,4 +188,61 @@ export function PluginDetail({ plugin, selectedAction }: PluginDetailProps) {
 
     </Box>
   );
+}
+
+export function buildPluginActions(
+  plugin: Plugin,
+  toolStatuses: ToolInstallStatus[],
+  isIncomplete?: boolean,
+): PluginAction[] {
+  const actions: PluginAction[] = [];
+
+  if (plugin.installed) {
+    actions.push({ id: "uninstall", label: "Uninstall from all tools", type: "uninstall" });
+    actions.push({ id: "update", label: "Update now", type: "update" });
+
+    if (isIncomplete) {
+      actions.push({ id: "install_all", label: "Install to all tools", type: "install" });
+    }
+
+    // Per-tool actions
+    for (const status of toolStatuses) {
+      if (!status.enabled || !status.supported) continue;
+
+      if (status.installed) {
+        actions.push({
+          id: `uninstall_${status.toolId}:${status.instanceId}`,
+          label: `Uninstall from ${status.name}`,
+          type: "uninstall_tool",
+          toolStatus: status,
+        });
+      } else {
+        actions.push({
+          id: `install_${status.toolId}:${status.instanceId}`,
+          label: `Install to ${status.name}`,
+          type: "install_tool",
+          toolStatus: status,
+        });
+      }
+    }
+
+    actions.push({ id: "back", label: "Back to plugin list", type: "back" });
+  } else {
+    actions.push({ id: "install", label: "Install to all tools", type: "install" });
+
+    // Per-tool install
+    for (const status of toolStatuses) {
+      if (!status.enabled || !status.supported) continue;
+      actions.push({
+        id: `install_${status.toolId}:${status.instanceId}`,
+        label: `Install to ${status.name}`,
+        type: "install_tool",
+        toolStatus: status,
+      });
+    }
+
+    actions.push({ id: "back", label: "Back to plugin list", type: "back" });
+  }
+
+  return actions;
 }
