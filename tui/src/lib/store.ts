@@ -913,34 +913,14 @@ export const useStore = create<Store>((set, get) => ({
     const legacyAssetsRepo = getAssetsRepoPath();
     const effectiveRepo = sourceRepo || legacyAssetsRepo || undefined;
 
-    // Helper: Check if a file entry matches a playbook config_file
-    // A match means: for each tool in the entry, the target path matches a config_file path
-    const isPlaybookConfigFile = (entry: typeof config.files[1]): boolean => {
-      if (!entry.tools || entry.tools.length === 0) return false;
-      
-      for (const toolId of entry.tools) {
-        const playbook = playbooks.get(toolId);
-        if (!playbook?.config_files) continue;
-        
-        for (const cf of playbook.config_files) {
-          // Direct path match (e.g., target: "opencode.json" matches path: "opencode.json")
-          if (entry.target === cf.path) {
-            return true;
-          }
-        }
-      }
-      return false;
-    };
-
     const files: FileStatus[] = [];
     const coveredTargets = new Set<string>(); // "toolId:instanceId:targetRelPath"
 
     // Load files from config
-    // FILES: entries without tools OR entries that don't match playbook config_files
-    // CONFIGS: entries with tools that match playbook config_files (gated by config_management)
+    // Entries WITHOUT tools: are FILES (always shown)
+    // Entries WITH tools: are CONFIGS (gated by config_management)
     for (const fileEntry of config.files) {
-      const matchesConfigFile = isPlaybookConfigFile(fileEntry);
-      const isConfig = matchesConfigFile;
+      const isConfig = fileEntry.tools && fileEntry.tools.length > 0;
 
       // Skip configs if config_management is disabled
       if (isConfig && !configManagementEnabled) {
