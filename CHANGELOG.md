@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.1] - 2026-02-28
+
+### Fixed
+- Local marketplace plugin sources (e.g. `./plugins/eval-model`) now resolve relative to the repo root, not the `.claude-plugin/` directory — fixes plugins showing "Not supported" with empty components.
+- Settings panel diff viewer: stripped git metadata headers, truncated long lines at 100 chars, fixed-height scrollable diff panel (12 lines) with ↑/↓ scroll and Esc to close.
+- Settings panel layout stability: all menu items render at constant 1-line height with a single hint line at a fixed position — eliminates jumpiness when navigating.
+
 ## [0.17.0] - 2026-02-28
 
 ### Added
@@ -431,7 +438,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Symlink handling for plugin assets
 
-[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.17.1...HEAD
+[0.17.1]: https://github.com/ssweens/blackbook/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/ssweens/blackbook/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/ssweens/blackbook/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/ssweens/blackbook/compare/v0.14.0...v0.16.0
