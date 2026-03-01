@@ -916,24 +916,17 @@ export const useStore = create<Store>((set, get) => ({
     const files: FileStatus[] = [];
     const coveredTargets = new Set<string>(); // "toolId:instanceId:targetRelPath"
 
-    // Load files from config
-    // Entries WITHOUT tools: are FILES (always shown)
-    // Entries WITH tools: are CONFIGS (gated by config_management)
+    // Load files from config — ALL are files, always shown.
+    // tools: field just scopes which tool instances the file targets.
+    // Configs come ONLY from playbook config_files (injected below).
     for (const fileEntry of config.files) {
-      const isConfig = fileEntry.tools && fileEntry.tools.length > 0;
-
-      // Skip configs if config_management is disabled
-      if (isConfig && !configManagementEnabled) {
-        continue;
-      }
-
       const fileStatus: FileStatus = {
         name: fileEntry.name,
         source: fileEntry.source,
         target: fileEntry.target,
         tools: fileEntry.tools,
         instances: [],
-        kind: isConfig ? "config" : "file",
+        kind: "file",
       };
 
       // Determine which tool instances this file targets
