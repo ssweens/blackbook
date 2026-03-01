@@ -272,20 +272,40 @@ interface NpmRegistryResult {
 
 export async function fetchNpmPackages(): Promise<PiPackage[]> {
   try {
-    // Use npm registry API directly for more results and popularity data
-    const response = await fetch(
-      "https://registry.npmjs.org/-/v1/search?text=keywords:pi-package&size=250",
+    const PAGE_SIZE = 250;
+    const allObjects: NpmRegistryResult["objects"] = [];
+
+    // Fetch first page to get total count
+    const firstResponse = await fetch(
+      `https://registry.npmjs.org/-/v1/search?text=keywords:pi-package&size=${PAGE_SIZE}`,
       { signal: AbortSignal.timeout(30000) }
     );
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    if (!firstResponse.ok) {
+      throw new Error(`HTTP ${firstResponse.status}: ${firstResponse.statusText}`);
     }
 
-    const data: NpmRegistryResult = await response.json();
+    const firstData: NpmRegistryResult = await firstResponse.json();
+    allObjects.push(...firstData.objects);
+
+    // Fetch remaining pages if needed
+    const total = firstData.total;
+    const remaining = Math.ceil((total - PAGE_SIZE) / PAGE_SIZE);
+    for (let page = 1; page <= remaining; page++) {
+      const from = page * PAGE_SIZE;
+      const response = await fetch(
+        `https://registry.npmjs.org/-/v1/search?text=keywords:pi-package&size=${PAGE_SIZE}&from=${from}`,
+        { signal: AbortSignal.timeout(30000) }
+      );
+      if (!response.ok) break;
+      const data: NpmRegistryResult = await response.json();
+      if (data.objects.length === 0) break;
+      allObjects.push(...data.objects);
+    }
+
     const settings = loadPiSettings();
 
-    return data.objects.map((item): PiPackage => {
+    return allObjects.map((item): PiPackage => {
       const pkg = item.package;
       const source = `npm:${pkg.name}`;
       return {

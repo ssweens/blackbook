@@ -1773,16 +1773,18 @@ export function App() {
         />
       ) : (
         <Box flexDirection="column" height={tab === "sync" ? 19 : (tab === "discover" || tab === "installed") ? 20 : 25}>
-          {(tab === "discover" || tab === "installed") && (
+          {(tab === "installed" || (tab === "discover" && discoverSubView)) && (
             <Box flexDirection="row" justifyContent="space-between">
               <Box flexGrow={1}>
                 <SearchBox
                   value={search}
                   onChange={setSearch}
                   placeholder={
-                    tab === "discover"
+                    discoverSubView === "plugins"
                       ? "Search plugins..."
-                      : "Search installed files and plugins..."
+                      : discoverSubView === "piPackages"
+                        ? "Search pi packages..."
+                        : "Search installed files and plugins..."
                   }
                   focus={searchFocused}
                   onFocus={() => setSearchFocused(true)}
