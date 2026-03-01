@@ -301,33 +301,43 @@ export async function fetchMarketplace(
 ): Promise<Plugin[]> {
   const cacheKey = `marketplace:${marketplace.url}`;
   const forceRefresh = options?.forceRefresh ?? false;
-  let data = forceRefresh
-    ? null
-    : (cacheGet(cacheKey, MARKETPLACE_CACHE_TTL_SECONDS) as MarketplaceJson | null);
 
-  if (!data) {
+  // Local marketplaces: always read fresh from disk, never cache
+  const localPath = resolveLocalMarketplacePath(marketplace.url, marketplace.isLocal);
+  let data: MarketplaceJson | null = null;
+
+  if (localPath) {
     try {
-      const localPath = resolveLocalMarketplacePath(marketplace.url, marketplace.isLocal);
-      if (localPath) {
-        let targetPath = localPath;
-        if (existsSync(localPath) && statSync(localPath).isDirectory()) {
-          const candidate = join(localPath, "marketplace.json");
-          const fallback = join(localPath, ".claude-plugin", "marketplace.json");
-          if (existsSync(candidate)) {
-            targetPath = candidate;
-          } else if (existsSync(fallback)) {
-            targetPath = fallback;
-          } else {
-            console.error(`Local marketplace directory missing marketplace.json: ${localPath}`);
-            return [];
-          }
-        }
-        if (!existsSync(targetPath)) {
-          console.error(`Local marketplace path not found: ${targetPath}`);
+      let targetPath = localPath;
+      if (existsSync(localPath) && statSync(localPath).isDirectory()) {
+        const candidate = join(localPath, "marketplace.json");
+        const fallback = join(localPath, ".claude-plugin", "marketplace.json");
+        if (existsSync(candidate)) {
+          targetPath = candidate;
+        } else if (existsSync(fallback)) {
+          targetPath = fallback;
+        } else {
+          console.error(`Local marketplace directory missing marketplace.json: ${localPath}`);
           return [];
         }
-        data = JSON.parse(readFileSync(targetPath, "utf-8"));
-      } else {
+      }
+      if (!existsSync(targetPath)) {
+        console.error(`Local marketplace path not found: ${targetPath}`);
+        return [];
+      }
+      data = JSON.parse(readFileSync(targetPath, "utf-8"));
+    } catch (error) {
+      console.error(`Failed to read local marketplace ${marketplace.url}: ${error instanceof Error ? error.message : String(error)}`);
+      return [];
+    }
+  } else {
+    // Remote marketplaces: use HTTP cache
+    data = forceRefresh
+      ? null
+      : (cacheGet(cacheKey, MARKETPLACE_CACHE_TTL_SECONDS) as MarketplaceJson | null);
+
+    if (!data) {
+      try {
         const headers: Record<string, string> = {};
         const token = getGitHubToken();
         if (token && isGitHubHost(marketplace.url)) {
@@ -340,10 +350,10 @@ export async function fetchMarketplace(
         }
         data = await res.json();
         cacheSet(cacheKey, data);
+      } catch (error) {
+        console.error(`Failed to fetch marketplace ${marketplace.url}: ${error instanceof Error ? error.message : String(error)}`);
+        return [];
       }
-    } catch (error) {
-      console.error(`Failed to fetch marketplace ${marketplace.url}: ${error instanceof Error ? error.message : String(error)}`);
-      return [];
     }
   }
 
