@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { loadConfig } from "../lib/config/loader.js";
@@ -62,7 +62,7 @@ function formatValue(def: SettingDef, value: unknown): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Menu item model: settings, changed files, repo actions
+// Menu item model
 // ─────────────────────────────────────────────────────────────────────────────
 
 type MenuItem =
@@ -70,9 +70,7 @@ type MenuItem =
   | { kind: "change"; change: SourceRepoChange }
   | { kind: "action"; id: string; label: string };
 
-function buildMenuItems(
-  repoStatus: SourceRepoStatus | null,
-): MenuItem[] {
+function buildMenuItems(repoStatus: SourceRepoStatus | null): MenuItem[] {
   const items: MenuItem[] = SETTINGS_DEFS.map((def) => ({ kind: "setting" as const, def }));
 
   if (repoStatus?.isGitRepo && repoStatus.hasChanges) {
@@ -93,7 +91,7 @@ function buildMenuItems(
   return items;
 }
 
-function changeStatusIcon(status: SourceRepoChange["status"]): { char: string; color: string } {
+function changeStatusChar(status: SourceRepoChange["status"]): { char: string; color: string } {
   switch (status) {
     case "added":
     case "untracked":
@@ -106,33 +104,68 @@ function changeStatusIcon(status: SourceRepoChange["status"]): { char: string; c
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Diff viewer
+// Diff processing — strip git headers, truncate long lines
 // ─────────────────────────────────────────────────────────────────────────────
 
-function DiffView({ diff, maxLines }: { diff: string; maxLines: number }) {
-  const lines = diff.split("\n");
-  const display = lines.slice(0, maxLines);
-  const truncated = lines.length > maxLines;
+function parseDiffLines(raw: string, maxLineWidth: number): string[] {
+  return raw
+    .split("\n")
+    .filter((line) => {
+      // Strip git metadata headers
+      if (line.startsWith("diff --git")) return false;
+      if (line.startsWith("index ")) return false;
+      if (line.startsWith("--- ")) return false;
+      if (line.startsWith("+++ ")) return false;
+      return true;
+    })
+    .map((line) => (line.length > maxLineWidth ? line.slice(0, maxLineWidth - 1) + "…" : line));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fixed-height diff panel
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DIFF_HEIGHT = 12;
+
+function DiffPanel({
+  lines,
+  scrollOffset,
+}: {
+  lines: string[];
+  scrollOffset: number;
+}) {
+  const visible = lines.slice(scrollOffset, scrollOffset + DIFF_HEIGHT);
+  const hasMore = scrollOffset + DIFF_HEIGHT < lines.length;
+  const hasAbove = scrollOffset > 0;
+
+  // Pad to fixed height
+  const padded = [...visible];
+  while (padded.length < DIFF_HEIGHT) {
+    padded.push("");
+  }
 
   return (
-    <Box flexDirection="column" marginLeft={4} marginBottom={1}>
-      {display.map((line, i) => {
+    <Box flexDirection="column" height={DIFF_HEIGHT + 1} marginLeft={4}>
+      {padded.map((line, i) => {
+        if (!line) {
+          return <Text key={i}> </Text>;
+        }
         let color: string = "gray";
         if (line.startsWith("+")) color = "green";
         else if (line.startsWith("-")) color = "red";
         else if (line.startsWith("@@")) color = "cyan";
 
-        return (
-          <Text key={i} color={color} dimColor={line.startsWith("diff ") || line.startsWith("index ")}>
-            {line}
-          </Text>
-        );
+        return <Text key={i} color={color} wrap="truncate">{line}</Text>;
       })}
-      {truncated && (
-        <Text color="gray" italic>
-          ... {lines.length - maxLines} more line{lines.length - maxLines !== 1 ? "s" : ""}
-        </Text>
-      )}
+      <Text color="gray" italic>
+        {hasAbove && hasMore
+          ? `↑↓ scroll · ${lines.length} lines · Esc to close`
+          : hasMore
+            ? `↓ more below · ${lines.length} lines · Esc to close`
+            : hasAbove
+              ? `↑ more above · ${lines.length} lines · Esc to close`
+              : `${lines.length} lines · Esc to close`}
+      </Text>
     </Box>
   );
 }
@@ -156,9 +189,10 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
   const [commitEditing, setCommitEditing] = useState(false);
   const [commitMessage, setCommitMessage] = useState("chore: update playbook config and assets");
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [expandedDiff, setExpandedDiff] = useState<string | null>(null); // path of expanded file
-  const [diffContent, setDiffContent] = useState<Record<string, string>>({}); // path -> diff text
+  const [expandedDiff, setExpandedDiff] = useState<string | null>(null);
+  const [diffContent, setDiffContent] = useState<Record<string, string[]>>({});
   const [diffLoading, setDiffLoading] = useState<string | null>(null);
+  const [diffScroll, setDiffScroll] = useState(0);
 
   const menuItems = buildMenuItems(repoStatus);
 
@@ -169,14 +203,12 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
     setRepoLoading(false);
   }, []);
 
-  // Load settings and repo status on mount
   useEffect(() => {
     const { config } = loadConfig();
     setSettings(config.settings);
     refreshRepoStatus();
   }, [refreshRepoStatus]);
 
-  // Clear save/action messages after a delay
   useEffect(() => {
     if (!saveMessage) return;
     const timer = setTimeout(() => setSaveMessage(null), 2000);
@@ -200,22 +232,78 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
   const toggleDiff = async (filePath: string) => {
     if (expandedDiff === filePath) {
       setExpandedDiff(null);
+      setDiffScroll(0);
       return;
     }
 
-    // Load diff if not cached
     if (!diffContent[filePath]) {
       setDiffLoading(filePath);
-      const diff = await getSourceRepoDiff(filePath);
-      setDiffContent((prev) => ({ ...prev, [filePath]: diff || "(no diff available)" }));
+      const raw = await getSourceRepoDiff(filePath);
+      const lines = raw ? parseDiffLines(raw, 100) : ["(no diff available)"];
+      setDiffContent((prev) => ({ ...prev, [filePath]: lines }));
       setDiffLoading(null);
     }
 
     setExpandedDiff(filePath);
+    setDiffScroll(0);
   };
+
+  // Hint text for the selected item (always 1 line)
+  const selectedHint = useMemo((): string => {
+    const item = menuItems[selectedIndex];
+    if (!item) return "";
+
+    if (item.kind === "setting") {
+      const def = item.def;
+      if (editing) return "Enter to save · Esc to cancel";
+      if (def.type === "enum") return `Enter to cycle (${def.enumValues?.join(", ")}) · ${def.description}`;
+      if (def.type === "boolean") return `Enter to toggle · ${def.description}`;
+      return `Enter to edit · ${def.description}`;
+    }
+
+    if (item.kind === "change") {
+      if (expandedDiff === item.change.path) return "";
+      return "Enter to view diff";
+    }
+
+    if (item.kind === "action") {
+      if (commitEditing) return "";
+      return item.id === "commit_push"
+        ? "Enter to commit and push all changes"
+        : "Enter to pull latest from remote";
+    }
+
+    return "";
+  }, [menuItems, selectedIndex, editing, expandedDiff, commitEditing]);
 
   useInput((input, key) => {
     if (!active || !settings) return;
+
+    // Diff scrolling mode
+    if (expandedDiff) {
+      if (key.escape) {
+        setExpandedDiff(null);
+        setDiffScroll(0);
+        return;
+      }
+      const lines = diffContent[expandedDiff] ?? [];
+      const maxScroll = Math.max(0, lines.length - DIFF_HEIGHT);
+      if (key.upArrow) {
+        setDiffScroll((s) => Math.max(0, s - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setDiffScroll((s) => Math.min(maxScroll, s + 1));
+        return;
+      }
+      // Enter toggles diff off too
+      if (key.return) {
+        setExpandedDiff(null);
+        setDiffScroll(0);
+        return;
+      }
+      return;
+    }
 
     // Commit message editing
     if (commitEditing) {
@@ -229,7 +317,6 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
         commitAndPushSourceRepo(msg).then((result) => {
           if (result.success) {
             setActionMessage("✔ Committed and pushed");
-            setExpandedDiff(null);
             setDiffContent({});
             refreshRepoStatus();
           } else {
@@ -340,7 +427,7 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
         {actionMessage && <Text color="yellow"> {actionMessage}</Text>}
       </Box>
 
-      {/* Settings */}
+      {/* Settings items — each is exactly 1 line */}
       {menuItems.map((item, i) => {
         if (item.kind !== "setting") return null;
         const isSelected = i === selectedIndex;
@@ -348,110 +435,64 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
         const isEditing = isSelected && editing;
 
         return (
-          <Box key={item.def.key} flexDirection="column">
-            <Box>
-              <Text color={isSelected ? "cyan" : "white"}>
-                {isSelected ? "❯ " : "  "}
+          <Box key={item.def.key}>
+            <Text color={isSelected ? "cyan" : "white"}>
+              {isSelected ? "❯ " : "  "}
+            </Text>
+            <Text bold={isSelected} color={isSelected ? "white" : "gray"}>
+              {item.def.label}
+            </Text>
+            <Text>  </Text>
+            {isEditing ? (
+              <TextInput value={editValue} onChange={setEditValue} />
+            ) : (
+              <Text color={isSelected ? "yellow" : "gray"}>
+                {formatValue(item.def, value)}
               </Text>
-              <Text bold={isSelected} color={isSelected ? "white" : "gray"}>
-                {item.def.label}
-              </Text>
-              <Text>  </Text>
-              {isEditing ? (
-                <Box>
-                  <TextInput value={editValue} onChange={setEditValue} />
-                </Box>
-              ) : (
-                <Text color={isSelected ? "yellow" : "gray"}>
-                  {formatValue(item.def, value)}
-                </Text>
-              )}
-            </Box>
-            {isSelected && (
-              <Box marginLeft={4}>
-                <Text color="gray" italic>
-                  {isEditing
-                    ? "Enter to save · Esc to cancel"
-                    : item.def.type === "enum"
-                      ? `Enter to cycle (${item.def.enumValues?.join(", ")})`
-                      : item.def.type === "boolean"
-                        ? "Enter to toggle"
-                        : "Enter to edit"}
-                  {" · "}
-                  {item.def.description}
-                </Text>
-              </Box>
             )}
           </Box>
         );
       })}
 
-      {/* Source Repo Status header */}
+      {/* Source Repo header */}
       {repoStatus && repoStatus.isGitRepo && (
-        <Box flexDirection="column" marginTop={1}>
-          <Box marginBottom={1}>
-            <Text bold color="cyan">Source Repo</Text>
-            <Text color="gray">  </Text>
-            <Text color="gray">{repoStatus.branch}</Text>
-            {repoStatus.ahead > 0 && (
-              <Text color="green"> ↑{repoStatus.ahead}</Text>
-            )}
-            {repoStatus.behind > 0 && (
-              <Text color="red"> ↓{repoStatus.behind}</Text>
-            )}
-            {!repoStatus.hasChanges && repoStatus.ahead === 0 && repoStatus.behind === 0 && (
-              <Text color="green"> ✔ clean</Text>
-            )}
-            {repoLoading && <Text color="gray"> (checking...)</Text>}
-          </Box>
-
+        <Box marginTop={1}>
+          <Text bold color="cyan">Source Repo</Text>
+          <Text color="gray">  </Text>
+          <Text color="gray">{repoStatus.branch}</Text>
+          {repoStatus.ahead > 0 && <Text color="green"> ↑{repoStatus.ahead}</Text>}
+          {repoStatus.behind > 0 && <Text color="red"> ↓{repoStatus.behind}</Text>}
+          {!repoStatus.hasChanges && repoStatus.ahead === 0 && repoStatus.behind === 0 && (
+            <Text color="green"> ✔ clean</Text>
+          )}
+          {repoLoading && <Text color="gray"> (checking...)</Text>}
           {repoStatus.hasChanges && (
-            <Box marginBottom={1}>
-              <Text color="yellow" bold>
-                {repoStatus.changes.length} pending change{repoStatus.changes.length !== 1 ? "s" : ""}:
-              </Text>
-            </Box>
+            <Text color="yellow"> · {repoStatus.changes.length} pending</Text>
           )}
         </Box>
       )}
 
-      {/* Changed files (selectable) */}
+      {/* Changed files — each is exactly 1 line */}
       {menuItems.map((item, i) => {
         if (item.kind !== "change") return null;
         const isSelected = i === selectedIndex;
-        const { char, color } = changeStatusIcon(item.change.status);
+        const { char, color } = changeStatusChar(item.change.status);
         const isExpanded = expandedDiff === item.change.path;
-        const isLoading = diffLoading === item.change.path;
 
         return (
-          <Box key={`change-${item.change.path}`} flexDirection="column">
-            <Box>
-              <Text color={isSelected ? "cyan" : "white"}>
-                {isSelected ? "❯ " : "  "}
-              </Text>
-              <Text color={color}>{char}</Text>
-              <Text color={isSelected ? "white" : "gray"}> {item.change.path}</Text>
-              {isExpanded && <Text color="gray"> ▾</Text>}
-              {!isExpanded && isSelected && <Text color="gray"> ▸</Text>}
-            </Box>
-            {isSelected && !isExpanded && (
-              <Box marginLeft={4}>
-                <Text color="gray" italic>Enter to view diff</Text>
-              </Box>
-            )}
-            {isExpanded && isLoading && (
-              <Box marginLeft={4}>
-                <Text color="gray">Loading diff...</Text>
-              </Box>
-            )}
-            {isExpanded && !isLoading && diffContent[item.change.path] && (
-              <DiffView diff={diffContent[item.change.path]} maxLines={40} />
-            )}
+          <Box key={`change-${item.change.path}`}>
+            <Text color={isSelected ? "cyan" : "white"}>
+              {isSelected ? "❯ " : "  "}
+            </Text>
+            <Text color={color}>{char}</Text>
+            <Text color={isSelected ? "white" : "gray"}> {item.change.path}</Text>
+            {isExpanded && <Text color="cyan"> ▾</Text>}
+            {!isExpanded && isSelected && <Text color="gray"> ▸</Text>}
           </Box>
         );
       })}
 
-      {/* Repo actions */}
+      {/* Repo actions — each is exactly 1 line */}
       {menuItems.map((item, i) => {
         if (item.kind !== "action") return null;
         const isSelected = i === selectedIndex;
@@ -473,18 +514,24 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
                 <TextInput value={commitMessage} onChange={setCommitMessage} />
               </Box>
             )}
-            {isSelected && !isCommitAction && (
-              <Box marginLeft={4}>
-                <Text color="gray" italic>
-                  {item.id === "commit_push"
-                    ? "Enter to commit and push all changes"
-                    : "Enter to pull latest from remote"}
-                </Text>
-              </Box>
-            )}
           </Box>
         );
       })}
+
+      {/* Hint line — always 1 line, consistent position */}
+      <Box marginTop={0} marginLeft={4} height={1}>
+        <Text color="gray" italic wrap="truncate">{selectedHint}</Text>
+      </Box>
+
+      {/* Diff panel — fixed height, shown when expanded */}
+      {expandedDiff && diffContent[expandedDiff] && (
+        <DiffPanel lines={diffContent[expandedDiff]} scrollOffset={diffScroll} />
+      )}
+      {expandedDiff && diffLoading === expandedDiff && (
+        <Box marginLeft={4} height={DIFF_HEIGHT + 1}>
+          <Text color="gray">Loading diff...</Text>
+        </Box>
+      )}
     </Box>
   );
 }
