@@ -26,6 +26,7 @@ function buildToolDefinitions(): Record<string, ToolTarget> {
       skillsSubdir: pb.components.skills?.install_dir?.replace(/\/$/, "") ?? null,
       commandsSubdir: pb.components.commands?.install_dir?.replace(/\/$/, "") ?? null,
       agentsSubdir: pb.components.agents?.install_dir?.replace(/\/$/, "") ?? null,
+      kind: pb.kind,
     };
   }
   return result;
@@ -775,6 +776,7 @@ export function getToolInstances(): ToolInstance[] {
           commandsSubdir: tool.commandsSubdir,
           agentsSubdir: tool.agentsSubdir,
           enabled: true,
+          kind: tool.kind,
         });
         continue;
       }
@@ -801,6 +803,7 @@ export function getToolInstances(): ToolInstance[] {
         commandsSubdir: tool.commandsSubdir,
         agentsSubdir: tool.agentsSubdir,
         enabled,
+        kind: tool.kind,
       });
     });
   }

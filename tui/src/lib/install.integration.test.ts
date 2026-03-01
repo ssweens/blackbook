@@ -721,7 +721,7 @@ describe("getInstalledPluginsForInstance", () => {
       configDir: "/tmp/nonexistent-tool",
       skillsSubdir: null,
       commandsSubdir: null,
-      agentsSubdir: null,
+      agentsSubdir: null, kind: "tool" as const,
       enabled: true,
     });
     expect(plugins).toEqual([]);

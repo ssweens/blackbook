@@ -199,7 +199,7 @@ const createToolInstances = (): ToolInstance[] => [
     configDir: "/tmp/opencode",
     skillsSubdir: "skills",
     commandsSubdir: "commands",
-    agentsSubdir: "agents",
+    agentsSubdir: "agents", kind: "tool" as const,
   },
   {
     toolId: "opencode",
@@ -209,7 +209,7 @@ const createToolInstances = (): ToolInstance[] => [
     configDir: "/tmp/opencode-secondary",
     skillsSubdir: "skills",
     commandsSubdir: "commands",
-    agentsSubdir: "agents",
+    agentsSubdir: "agents", kind: "tool" as const,
   },
 ];
 

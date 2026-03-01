@@ -31,7 +31,7 @@ export function getPluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
     logError(`Invalid plugin metadata for ${plugin.name}`, error);
     return statuses;
   }
-  const instances = getToolInstances();
+  const instances = getToolInstances().filter((i) => i.kind === "tool");
 
   for (const instance of instances) {
     const hasSkills = plugin.skills.length > 0;

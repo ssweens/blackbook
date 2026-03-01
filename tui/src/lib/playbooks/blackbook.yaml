@@ -1,5 +1,6 @@
 id: blackbook
 name: Blackbook
+kind: self
 default_instances:
   - id: default
     name: Blackbook

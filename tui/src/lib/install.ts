@@ -1607,7 +1607,7 @@ export function getAllInstalledPlugins(): {
   const byTool: Record<string, Plugin[]> = {};
   const allPlugins: Plugin[] = [];
   const seen = new Set<string>();
-  const instances = getToolInstances();
+  const instances = getToolInstances().filter((i) => i.kind === "tool");
 
   for (const instance of instances) {
     const key = instanceKey(instance);

@@ -5,6 +5,7 @@ export interface ToolTarget {
   skillsSubdir: string | null;
   commandsSubdir: string | null;
   agentsSubdir: string | null;
+  kind: "tool" | "self";
 }
 
 export interface ToolInstance {
@@ -16,6 +17,7 @@ export interface ToolInstance {
   commandsSubdir: string | null;
   agentsSubdir: string | null;
   enabled: boolean;
+  kind: "tool" | "self";
 }
 
 export type PackageManager = "npm" | "bun" | "pnpm";

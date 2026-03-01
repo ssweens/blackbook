@@ -38,6 +38,7 @@ const LifecycleSchema = z.object({
 export const PlaybookSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
+  kind: z.enum(["tool", "self"]).default("tool"),
   default_instances: z.array(PlaybookInstanceSchema).min(1),
   structure: z.array(z.string()).default([]),
   components: z.record(z.string(), ComponentSchema).default({}),

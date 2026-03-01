@@ -128,6 +128,7 @@ function createMockTool(overrides: Partial<ToolInstance> = {}): ToolInstance {
     commandsSubdir: "commands",
     agentsSubdir: "agents",
     enabled: true,
+    kind: "tool",
     ...overrides,
   };
 }
