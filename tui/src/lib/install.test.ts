@@ -844,4 +844,7 @@ describe("Asset sync adapters", () => {
     cleanupTestDirs();
   });
 
+  it("placeholder for future asset sync tests", () => {
+    expect(true).toBe(true);
+  });
 });

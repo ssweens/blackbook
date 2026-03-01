@@ -20,6 +20,7 @@ import {
   getPluginToolStatus,
   installPlugin,
 } from "./lib/install.js";
+import { getPluginToolStatus as getPluginToolStatusDirect } from "./lib/plugin-status.js";
 import { fetchMarketplace } from "./lib/marketplace.js";
 import { parseMarketplaces, getToolInstances, loadConfig, ensureConfigExists } from "./lib/config.js";
 import { detectTool } from "./lib/tool-detect.js";
@@ -66,6 +67,14 @@ vi.mock("./lib/install.js", async (importOriginal) => {
     getAllInstalledPlugins: vi.fn(),
     getPluginToolStatus: vi.fn(),
     installPlugin: vi.fn(),
+  };
+});
+
+vi.mock("./lib/plugin-status.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lib/plugin-status.js")>();
+  return {
+    ...actual,
+    getPluginToolStatus: vi.fn(),
   };
 });
 
@@ -226,7 +235,7 @@ describe("App E2E flows", () => {
       plugins: [createPlugin()],
       byTool: {},
     });
-    vi.mocked(getPluginToolStatus).mockReturnValue([
+    const toolStatusMock = [
       {
         toolId: "opencode",
         instanceId: "default",
@@ -243,7 +252,9 @@ describe("App E2E flows", () => {
         supported: true,
         enabled: true,
       },
-    ]);
+    ];
+    vi.mocked(getPluginToolStatus).mockReturnValue(toolStatusMock);
+    vi.mocked(getPluginToolStatusDirect).mockReturnValue(toolStatusMock);
     vi.mocked(getToolInstances).mockReturnValue(createToolInstances());
     vi.mocked(loadConfig).mockReturnValue({ assets: [] });
     vi.mocked(ensureConfigExists).mockImplementation(() => {});
