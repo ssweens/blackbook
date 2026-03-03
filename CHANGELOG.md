@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.2] - 2026-03-02
+
+### Added
+- Brew formula registry entries for Claude Code, OpenCode, and Codex — enables install-method-aware uninstall.
+- `detectInstallMethodFromPath()` utility for consistent binary origin detection across the codebase.
+
+### Changed
+- Uninstall now matches the detected install method (e.g. `brew uninstall` for brew-installed tools) instead of always using the preferred package manager.
+- Tool detail "Migrate to preferred" logic accounts for native install strategies, not just brew vs npm.
+- Tool detail labels simplified: "Installed via:" instead of "Detected Install Method:".
+
+### Fixed
+- Pi settings loader handles object package entries (e.g. `{ source: "npm:foo", extensions: [...] }`) — was crashing on non-string array items.
+
 ## [0.17.1] - 2026-02-28
 
 ### Fixed
@@ -438,7 +452,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Symlink handling for plugin assets
 
-[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.17.1...HEAD
+[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.17.2...HEAD
+[0.17.2]: https://github.com/ssweens/blackbook/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/ssweens/blackbook/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/ssweens/blackbook/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/ssweens/blackbook/compare/v0.16.0...v0.16.1
