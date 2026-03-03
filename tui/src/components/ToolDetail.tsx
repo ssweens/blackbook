@@ -3,7 +3,7 @@ import { Box, Text } from "ink";
 import type { ManagedToolRow, ToolDetectionResult } from "../lib/types.js";
 import { getToolRegistryEntry, TOOL_REGISTRY } from "../lib/tool-registry.js";
 import { getPackageManager } from "../lib/config.js";
-import { getToolLifecycleCommand } from "../lib/tool-lifecycle.js";
+import { getToolLifecycleCommand, detectInstallMethodFromPath } from "../lib/tool-lifecycle.js";
 
 interface ToolDetailProps {
   tool: ManagedToolRow;
@@ -20,23 +20,29 @@ export function ToolDetail({ tool, detection, pending }: ToolDetailProps) {
   const statusLabel = pending ? "Checking..." : installed ? "Installed" : "Not installed";
   const statusColor = pending ? "gray" : installed ? "green" : "yellow";
 
-  const detectedInstallMethod = (() => {
-    const path = detection?.binaryPath;
-    if (!path) return "unknown";
-    if (path.startsWith("/opt/homebrew/") || path.startsWith("/usr/local/")) return "brew";
-    const home = process.env.HOME || "";
-    if (path.startsWith(`${home}/.bun/bin`)) return "bun";
-    if (path.includes("/.nvm/") || path.includes("/.fnm/") || path.includes("/.volta/")) return "npm/node";
-    if (path.startsWith("/usr/")) return "system";
-    return "unknown";
-  })();
+  const detectedInstallMethod = detectInstallMethodFromPath(detection?.binaryPath);
 
   const packageManager = getPackageManager();
-  const canMigrateToPreferred = installed && detectedInstallMethod === "brew";
+
+  // Show migration when the detected install method doesn't match the preferred.
+  // For tools with native lifecycle (e.g. claude-code), the preferred is the native
+  // install command — if currently installed via brew, offer to migrate.
+  // For tools with package-manager lifecycle, the preferred is the configured PM.
+  const lifecycle = registryEntry?.lifecycle;
+  const installIsNative = lifecycle?.install?.strategy === "native";
+  // When install strategy is native, any detected non-unknown method (brew, npm, etc.)
+  // means the tool wasn't installed the preferred way.
+  // When install strategy is package-manager, only brew is a mismatch.
+  const canMigrateToPreferred =
+    installed &&
+    detectedInstallMethod !== "unknown" &&
+    (installIsNative || detectedInstallMethod === "brew");
+
+  const preferredLabel = installIsNative ? "native install" : packageManager;
 
   const safeCommandFor = (action: "install" | "update" | "uninstall") => {
     try {
-      return getToolLifecycleCommand(tool.toolId, action, packageManager);
+      return getToolLifecycleCommand(tool.toolId, action, packageManager, detectedInstallMethod);
     } catch {
       return null;
     }
@@ -96,7 +102,7 @@ export function ToolDetail({ tool, detection, pending }: ToolDetailProps) {
           </Box>
 
           <Box marginBottom={1}>
-            <Text color="gray">Detected Install Method: </Text>
+            <Text color="gray">Installed via: </Text>
             <Text>{pending ? "..." : detectedInstallMethod}</Text>
           </Box>
 
@@ -138,7 +144,7 @@ export function ToolDetail({ tool, detection, pending }: ToolDetailProps) {
 
           {canMigrateToPreferred && (
             <Box marginBottom={1}>
-              <Text color="cyan">Migrate to preferred install tool: {packageManager} (press m)</Text>
+              <Text color="cyan">Migrate to preferred install method: {preferredLabel} (press m)</Text>
             </Box>
           )}
 
@@ -157,7 +163,7 @@ export function ToolDetail({ tool, detection, pending }: ToolDetailProps) {
             ) : (
               <Text color="gray">d Uninstall</Text>
             )}
-            {canMigrateToPreferred && <Text color="gray">m Migrate to preferred install tool</Text>}
+            {canMigrateToPreferred && <Text color="gray">m Migrate to preferred install method</Text>}
             <Text color="gray">e Edit config · Space Toggle · Esc Back</Text>
           </Box>
         </>

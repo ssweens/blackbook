@@ -8,6 +8,7 @@ export interface ToolRegistryEntry {
   defaultConfigDir: string;
   binaryName: string;
   npmPackage: string;
+  brewFormula?: string;
   versionArgs: string[];
   homepage: string;
   lifecycle?: PlaybookLifecycle;
@@ -17,12 +18,14 @@ const TOOL_METADATA: Record<string, Omit<ToolRegistryEntry, "toolId" | "displayN
   "claude-code": {
     binaryName: "claude",
     npmPackage: "@anthropic-ai/claude-code",
+    brewFormula: "claude-code",
     versionArgs: ["--version"],
     homepage: "https://docs.anthropic.com/en/docs/claude-code",
   },
   opencode: {
     binaryName: "opencode",
     npmPackage: "opencode-ai",
+    brewFormula: "opencode",
     versionArgs: ["--version"],
     homepage: "https://github.com/opencode-ai/opencode",
   },
@@ -35,6 +38,7 @@ const TOOL_METADATA: Record<string, Omit<ToolRegistryEntry, "toolId" | "displayN
   "openai-codex": {
     binaryName: "codex",
     npmPackage: "@openai/codex",
+    brewFormula: "codex",
     versionArgs: ["--version"],
     homepage: "https://developers.openai.com/codex/cli",
   },

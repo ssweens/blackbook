@@ -37,6 +37,10 @@ export function buildUninstallCommand(pm: PackageManager, pkg: string): { cmd: s
   return { cmd: "bun", args: ["remove", "-g", pkg] };
 }
 
+export function buildBrewUninstallCommand(formula: string): { cmd: string; args: string[] } {
+  return { cmd: "brew", args: ["uninstall", formula] };
+}
+
 async function ensureCommandAvailable(command: string): Promise<boolean> {
   try {
     await execFileAsync("which", [command], { timeout: 5000 });
@@ -72,13 +76,41 @@ function resolveLifecycleCommand(
   return buildUninstallCommand(packageManager, entry.npmPackage);
 }
 
+export function detectInstallMethodFromPath(binaryPath: string | null | undefined): InstallMethod {
+  if (!binaryPath) return "unknown";
+  if (binaryPath.startsWith("/opt/homebrew/") || binaryPath.startsWith("/usr/local/")) {
+    return "brew";
+  }
+  const home = process.env.HOME || homedir();
+  const bunBinDir = join(home, ".bun", "bin");
+  if (binaryPath.startsWith(bunBinDir)) {
+    return "bun";
+  }
+  if (binaryPath.includes("/.nvm/") || binaryPath.includes("/.fnm/") || binaryPath.includes("/.volta/")) {
+    return "npm/node";
+  }
+  if (binaryPath.startsWith("/usr/")) {
+    return "system";
+  }
+  return "unknown";
+}
+
 export function getToolLifecycleCommand(
   toolId: string,
   action: ToolLifecycleAction,
-  packageManager: PackageManager
+  packageManager: PackageManager,
+  detectedInstallMethod?: InstallMethod
 ): { cmd: string; args: string[] } | null {
   const registryEntry = getToolRegistryEntry(toolId);
   if (!registryEntry) return null;
+
+  // For uninstall, always match the detected install method — there's only one right answer.
+  if (action === "uninstall" && detectedInstallMethod === "brew") {
+    if (registryEntry.brewFormula) {
+      return buildBrewUninstallCommand(registryEntry.brewFormula);
+    }
+  }
+
   try {
     return resolveLifecycleCommand(registryEntry, action, packageManager);
   } catch {
@@ -86,7 +118,7 @@ export function getToolLifecycleCommand(
   }
 }
 
-export type InstallMethod = PackageManager | "brew" | "unknown";
+export type InstallMethod = PackageManager | "brew" | "npm/node" | "system" | "unknown";
 
 export interface InstallMethodMismatch {
   preferred: PackageManager;
@@ -351,7 +383,20 @@ export async function uninstallTool(
   toolId: string,
   packageManager: PackageManager,
   onProgress: (event: ProgressEvent) => void,
-  options?: ToolLifecycleOptions
+  options?: ToolLifecycleOptions & { detectedInstallMethod?: InstallMethod }
 ): Promise<boolean> {
+  // For uninstall, always match the detected install method.
+  if (options?.detectedInstallMethod === "brew") {
+    const registryEntry = getToolRegistryEntry(toolId);
+    if (registryEntry?.brewFormula) {
+      const command = buildBrewUninstallCommand(registryEntry.brewFormula);
+      const commandAvailable = await ensureCommandAvailable(command.cmd);
+      if (!commandAvailable) {
+        onProgress({ type: "error", message: `Command not installed: ${command.cmd}` });
+        return false;
+      }
+      return runLifecycleCommand(command, onProgress, options);
+    }
+  }
   return runToolCommand(toolId, packageManager, "uninstall", onProgress, options);
 }

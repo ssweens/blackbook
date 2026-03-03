@@ -55,7 +55,7 @@ import { fetchMarketplace } from "./marketplace.js";
 import { getManagedToolRows } from "./tool-view.js";
 import { detectTool } from "./tool-detect.js";
 import { TOOL_REGISTRY, getToolRegistryEntry } from "./tool-registry.js";
-import { installTool, uninstallTool, updateTool, reinstallTool, detectInstallMethodMismatch, type ProgressEvent } from "./tool-lifecycle.js";
+import { installTool, uninstallTool, updateTool, reinstallTool, detectInstallMethodMismatch, detectInstallMethodFromPath, type ProgressEvent } from "./tool-lifecycle.js";
 
 import {
   getAllInstalledPlugins,
@@ -565,10 +565,13 @@ export const useStore = create<Store>((set, get) => ({
       return false;
     }
 
+    const before = get().toolDetection[toolId];
+
     toolActionAbortController = new AbortController();
     set({ toolActionInProgress: toolId, toolActionOutput: [] });
 
     const packageManager = getPackageManager();
+    const detectedInstallMethod = detectInstallMethodFromPath(before?.binaryPath);
     const success = await uninstallTool(
       toolId,
       packageManager,
@@ -589,7 +592,7 @@ export const useStore = create<Store>((set, get) => ({
           set((state) => ({ toolActionOutput: appendToolOutput(state.toolActionOutput, "Cancelled by user") }));
         }
       },
-      { signal: toolActionAbortController.signal }
+      { signal: toolActionAbortController.signal, detectedInstallMethod }
     );
 
     toolActionAbortController = null;
