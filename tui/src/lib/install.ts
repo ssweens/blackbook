@@ -1663,6 +1663,56 @@ function findInstance(toolId: string, instanceId: string): ToolInstance | null {
   );
 }
 
+function buildStandalonePluginRoot(plugin: Plugin, sourcePath: string): string | null {
+  const stagedRoot = join(
+    tmpdir(),
+    `blackbook-standalone-${plugin.name}-${Date.now()}-${process.pid}`,
+  );
+
+  let stagedCount = 0;
+
+  // Standalone skill source: /path/to/skill-dir/SKILL.md
+  if (existsSync(join(sourcePath, "SKILL.md"))) {
+    const skillName = basename(sourcePath);
+    if (plugin.skills.includes(skillName)) {
+      const dest = safePath(stagedRoot, "skills", skillName);
+      mkdirSync(dirname(dest), { recursive: true });
+      cpSync(sourcePath, dest, { recursive: true });
+      stagedCount++;
+    }
+  }
+
+  // Standalone command/agent source: /path/to/name.md
+  const sourceIsMarkdownFile = sourcePath.endsWith(".md") && existsSync(sourcePath);
+  if (sourceIsMarkdownFile) {
+    const fileName = basename(sourcePath);
+    const commandName = fileName.replace(/\.md$/, "");
+
+    if (plugin.commands.includes(commandName)) {
+      const dest = safePath(stagedRoot, "commands", fileName);
+      mkdirSync(dirname(dest), { recursive: true });
+      copyFileSync(sourcePath, dest);
+      stagedCount++;
+    }
+
+    if (plugin.agents.includes(commandName)) {
+      const dest = safePath(stagedRoot, "agents", fileName);
+      mkdirSync(dirname(dest), { recursive: true });
+      copyFileSync(sourcePath, dest);
+      stagedCount++;
+    }
+  }
+
+  if (stagedCount === 0) {
+    if (existsSync(stagedRoot)) {
+      rmSync(stagedRoot, { recursive: true, force: true });
+    }
+    return null;
+  }
+
+  return stagedRoot;
+}
+
 export async function syncPluginInstances(
   plugin: Plugin,
   marketplaceUrl: string | undefined,
@@ -1680,8 +1730,13 @@ export async function syncPluginInstances(
     .map((status) => findInstance(status.toolId, status.instanceId))
     .filter((instance): instance is ToolInstance => Boolean(instance));
 
-  // Get or download plugin source once for all instances
+  // Get or download plugin source once for all instances.
+  // Installed-only plugins discovered from tool directories may have source paths
+  // that are standalone component paths (e.g. /.../skills/my-skill).
   let sourcePath = getPluginSourcePath(plugin);
+  if (!sourcePath && typeof plugin.source === "string" && existsSync(plugin.source)) {
+    sourcePath = plugin.source;
+  }
   if (!sourcePath && marketplaceUrl) {
     sourcePath = await downloadPlugin(plugin, marketplaceUrl);
   }
@@ -1691,22 +1746,49 @@ export async function syncPluginInstances(
     return result;
   }
 
-  // Sync (install) to all missing instances using the same method
-  for (const instance of missingInstances) {
-    try {
-      const { count, errors } = installPluginItemsToInstance(
-        plugin.name,
-        sourcePath,
-        instance,
-        plugin.marketplace,
-      );
-      result.syncedInstances[instanceKey(instance)] = count;
-      result.errors.push(...errors);
-    } catch (error) {
-      logError(`Sync failed for ${plugin.name} in ${instance.name}`, error);
-      result.errors.push(
-        `Sync failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`,
-      );
+  let stagedStandaloneRoot: string | null = null;
+
+  try {
+    // Sync (install) to all missing instances using the same method
+    for (const instance of missingInstances) {
+      try {
+        let { count, errors } = installPluginItemsToInstance(
+          plugin.name,
+          sourcePath,
+          instance,
+          plugin.marketplace,
+        );
+
+        // Fallback for standalone component source paths discovered from installed
+        // directories (no package root with skills/commands/agents subdirs).
+        if (count === 0 && errors.length === 0) {
+          if (!stagedStandaloneRoot) {
+            stagedStandaloneRoot = buildStandalonePluginRoot(plugin, sourcePath);
+          }
+          if (stagedStandaloneRoot) {
+            const fallback = installPluginItemsToInstance(
+              plugin.name,
+              stagedStandaloneRoot,
+              instance,
+              plugin.marketplace,
+            );
+            count += fallback.count;
+            errors = errors.concat(fallback.errors);
+          }
+        }
+
+        result.syncedInstances[instanceKey(instance)] = count;
+        result.errors.push(...errors);
+      } catch (error) {
+        logError(`Sync failed for ${plugin.name} in ${instance.name}`, error);
+        result.errors.push(
+          `Sync failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`,
+        );
+      }
+    }
+  } finally {
+    if (stagedStandaloneRoot && existsSync(stagedStandaloneRoot)) {
+      rmSync(stagedStandaloneRoot, { recursive: true, force: true });
     }
   }
 

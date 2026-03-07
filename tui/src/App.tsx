@@ -1468,9 +1468,20 @@ export function App() {
         const marketplace = marketplaces.find((m) => m.name === detailPlugin.marketplace);
         const { notify, clearNotification } = useStore.getState();
         const loadingId = notify(`Installing ${detailPlugin.name} to ${action.toolStatus.name}...`, "info", { spinner: true });
-        await syncPluginInstances(detailPlugin, marketplace?.url, [action.toolStatus]);
+        const result = await syncPluginInstances(detailPlugin, marketplace?.url, [action.toolStatus]);
         clearNotification(loadingId);
-        notify(`✓ Installed ${detailPlugin.name} to ${action.toolStatus.name}`, "success");
+
+        const targetKey = `${action.toolStatus.toolId}:${action.toolStatus.instanceId}`;
+        const linkedCount = result.syncedInstances[targetKey] ?? 0;
+        if (linkedCount > 0) {
+          notify(`✓ Installed ${detailPlugin.name} to ${action.toolStatus.name} (${linkedCount})`, "success");
+        } else {
+          const detail = result.errors.length > 0
+            ? result.errors.join("; ")
+            : `No components were linked for ${action.toolStatus.name}`;
+          notify(`✗ Failed to install ${detailPlugin.name} to ${action.toolStatus.name}: ${detail}`, "error");
+        }
+
         await useStore.getState().refreshAll();
         refreshDetailPlugin(detailPlugin);
         break;

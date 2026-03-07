@@ -25,6 +25,7 @@ import {
   removeSymlink,
   getPluginsCacheDir,
   getPluginToolStatus,
+  syncPluginInstances,
 } from "./install.js";
 import { getCacheDir, getToolInstances, updateToolInstanceConfig, TOOL_IDS } from "./config.js";
 import type { Plugin, ToolInstance } from "./types.js";
@@ -839,6 +840,49 @@ describe("createSymlink and removeSymlink", () => {
 
     expect(result.success).toBe(false);
     expect(existsSync(TARGET_FILE)).toBe(true);
+  });
+});
+
+describe("syncPluginInstances", () => {
+  it("syncs standalone installed skill sources (no package root) to missing instances", async () => {
+    const standaloneSource = join(TEST_ROOT, "standalone-skill-source", TEST_SKILL_NAME);
+    mkdirSync(standaloneSource, { recursive: true });
+    writeFileSync(join(standaloneSource, "SKILL.md"), "# Standalone Skill");
+
+    const plugin: Plugin = {
+      name: TEST_SKILL_NAME,
+      marketplace: "local",
+      description: "Standalone skill",
+      source: standaloneSource,
+      skills: [TEST_SKILL_NAME],
+      commands: [],
+      agents: [],
+      hooks: [],
+      hasMcp: false,
+      hasLsp: false,
+      homepage: "",
+      installed: true,
+      scope: "user",
+    };
+
+    const piInstance = getInstance("pi");
+    const target = join(piInstance.configDir, piInstance.skillsSubdir!, TEST_SKILL_NAME, "SKILL.md");
+    rmSync(join(piInstance.configDir, piInstance.skillsSubdir!, TEST_SKILL_NAME), { recursive: true, force: true });
+
+    const result = await syncPluginInstances(plugin, undefined, [
+      {
+        toolId: "pi",
+        instanceId: piInstance.instanceId,
+        name: piInstance.name,
+        installed: false,
+        supported: true,
+        enabled: true,
+      },
+    ]);
+
+    expect(result.success).toBe(true);
+    expect(result.syncedInstances[`pi:${piInstance.instanceId}`]).toBeGreaterThan(0);
+    expect(existsSync(target)).toBe(true);
   });
 });
 
