@@ -26,6 +26,7 @@ Plugin manager for agentic coding tools built with React/Ink. Install skills, co
 - **Marketplace support** — Browse and install from official and community marketplaces
 - **Pi packages** — Built-in npm marketplace for Pi coding agent extensions, themes, and custom tools
 - **TUI interface** — Interactive terminal UI with tabs for Sync, Tools, Discover, Installed, Marketplaces, and Settings
+- **Source repo git controls** — Settings tab shows upstream state (ahead/behind/diverged) and supports pull/commit flows
 - **Cross-tool sync** — Install plugins to multiple tools at once, detect incomplete installs
 - **Per-component control** — Disable individual skills, commands, or agents within a plugin
 

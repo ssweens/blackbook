@@ -261,6 +261,7 @@ export interface SourceRepoStatus {
   branch: string;
   ahead: number;
   behind: number;
+  hasUpstream: boolean;
   changes: SourceRepoChange[];
   hasChanges: boolean;
 }
@@ -272,7 +273,7 @@ export async function getSourceRepoStatus(): Promise<SourceRepoStatus | null> {
 
   const repoPath = expandPath(sourceRepo);
   if (!existsSync(join(repoPath, ".git"))) {
-    return { isGitRepo: false, branch: "", ahead: 0, behind: 0, changes: [], hasChanges: false };
+    return { isGitRepo: false, branch: "", ahead: 0, behind: 0, hasUpstream: false, changes: [], hasChanges: false };
   }
 
   try {
@@ -289,6 +290,7 @@ export async function getSourceRepoStatus(): Promise<SourceRepoStatus | null> {
     // Get ahead/behind
     let ahead = 0;
     let behind = 0;
+    let hasUpstream = false;
     try {
       const { stdout: countOut } = await execFileAsync(
         "git", ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
@@ -297,6 +299,7 @@ export async function getSourceRepoStatus(): Promise<SourceRepoStatus | null> {
       const parts = countOut.trim().split(/\s+/);
       ahead = parseInt(parts[0], 10) || 0;
       behind = parseInt(parts[1], 10) || 0;
+      hasUpstream = true;
     } catch {
       // No upstream configured
     }
@@ -326,6 +329,7 @@ export async function getSourceRepoStatus(): Promise<SourceRepoStatus | null> {
       branch,
       ahead,
       behind,
+      hasUpstream,
       changes,
       hasChanges: changes.length > 0,
     };

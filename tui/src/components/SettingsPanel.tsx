@@ -70,7 +70,7 @@ type MenuItem =
   | { kind: "change"; change: SourceRepoChange }
   | { kind: "action"; id: string; label: string };
 
-function buildMenuItems(repoStatus: SourceRepoStatus | null): MenuItem[] {
+export function buildMenuItems(repoStatus: SourceRepoStatus | null): MenuItem[] {
   const items: MenuItem[] = SETTINGS_DEFS.map((def) => ({ kind: "setting" as const, def }));
 
   if (repoStatus?.isGitRepo && repoStatus.hasChanges) {
@@ -83,12 +83,20 @@ function buildMenuItems(repoStatus: SourceRepoStatus | null): MenuItem[] {
     if (repoStatus.hasChanges) {
       items.push({ kind: "action", id: "commit_push", label: "Commit & push changes" });
     }
-    if (repoStatus.behind > 0 || !repoStatus.hasChanges) {
-      items.push({ kind: "action", id: "pull", label: "Pull latest" });
-    }
+    items.push({ kind: "action", id: "pull", label: "Pull latest" });
   }
 
   return items;
+}
+
+export function getUpstreamStateLabel(repoStatus: SourceRepoStatus): string {
+  if (!repoStatus.hasUpstream) return "no upstream configured";
+  if (repoStatus.ahead > 0 && repoStatus.behind > 0) {
+    return `diverged (ahead ${repoStatus.ahead}, behind ${repoStatus.behind})`;
+  }
+  if (repoStatus.behind > 0) return `behind by ${repoStatus.behind}`;
+  if (repoStatus.ahead > 0) return `ahead by ${repoStatus.ahead}`;
+  return "up to date";
 }
 
 function changeStatusChar(status: SourceRepoChange["status"]): { char: string; color: string } {
@@ -268,13 +276,13 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
 
     if (item.kind === "action") {
       if (commitEditing) return "";
-      return item.id === "commit_push"
-        ? "Enter to commit and push all changes"
-        : "Enter to pull latest from remote";
+      if (item.id === "commit_push") return "Enter to commit and push all changes";
+      if (repoStatus?.hasChanges) return "Commit/stash local changes before pulling";
+      return "Enter to pull latest from remote";
     }
 
     return "";
-  }, [menuItems, selectedIndex, editing, expandedDiff, commitEditing]);
+  }, [menuItems, selectedIndex, editing, expandedDiff, commitEditing, repoStatus]);
 
   useInput((input, key) => {
     if (!active || !settings) return;
@@ -396,6 +404,11 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
           return;
         }
         if (item.id === "pull") {
+          if (repoStatus?.hasChanges) {
+            setActionMessage("✗ Local changes detected. Commit or stash before pulling.");
+            return;
+          }
+
           setActionMessage("Pulling...");
           pullSourceRepoChanges().then((result) => {
             if (result.success) {
@@ -462,13 +475,14 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
           <Text color="gray">{repoStatus.branch}</Text>
           {repoStatus.ahead > 0 && <Text color="green"> ↑{repoStatus.ahead}</Text>}
           {repoStatus.behind > 0 && <Text color="red"> ↓{repoStatus.behind}</Text>}
-          {!repoStatus.hasChanges && repoStatus.ahead === 0 && repoStatus.behind === 0 && (
+          {!repoStatus.hasChanges && repoStatus.ahead === 0 && repoStatus.behind === 0 && repoStatus.hasUpstream && (
             <Text color="green"> ✔ clean</Text>
           )}
           {repoLoading && <Text color="gray"> (checking...)</Text>}
           {repoStatus.hasChanges && (
             <Text color="yellow"> · {repoStatus.changes.length} pending</Text>
           )}
+          <Text color="gray"> · upstream: {getUpstreamStateLabel(repoStatus)}</Text>
         </Box>
       )}
 

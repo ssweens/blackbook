@@ -134,6 +134,7 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [ ] Number setting (backup_retention) enters edit mode, validates range 1-100
 - [ ] Settings persist to config.yaml after change
 - [ ] Settings tab keyboard guard allows tab navigation but delegates up/down/enter to panel
+- [x] Source repo actions include Pull latest entry and upstream state visibility logic is unit tested
 
 ## Gaps (Low Priority)
 - [ ] End-to-end TUI navigation across all tabs (discover → installed → tools → sync → settings)
