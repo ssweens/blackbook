@@ -1761,8 +1761,7 @@ function startFileWatchers(refresh: () => Promise<void>, notify: (message: strin
 
 export function initializeStore(): void {
   ensureConfigExists();
-  const { refreshAll, notify } = useStore.getState();
-  startFileWatchers(refreshAll, notify);
+  // No dynamic background refreshes; updates are startup + manual refresh only.
   // Check source repo for updates at launch (silently no-ops if not configured/offline)
   void pullSourceRepo();
 }
