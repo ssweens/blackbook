@@ -931,10 +931,7 @@ export function App() {
       const item = syncPreview[selectedIndex];
       if (item) {
         if (item.kind === "plugin") {
-          setDetailPlugin(item.plugin);
-          setDetailPluginDrift(null);
-          void computePluginDrift(item.plugin).then(setDetailPluginDrift);
-          setActionIndex(0);
+          openPluginDetail(item.plugin);
         } else if (item.kind === "tool") {
           const tool = managedTools.find((entry) => entry.toolId === item.toolId);
           if (tool) setDetailToolKey(`${tool.toolId}:${tool.instanceId}`);
@@ -948,10 +945,7 @@ export function App() {
 
     // Installed / Discover tabs — open item detail
     if (selectedLibraryItem?.kind === "plugin") {
-      setDetailPlugin(selectedLibraryItem.plugin);
-      setDetailPluginDrift(null);
-      void computePluginDrift(selectedLibraryItem.plugin).then(setDetailPluginDrift);
-      setActionIndex(0);
+      openPluginDetail(selectedLibraryItem.plugin);
     } else if (selectedLibraryItem?.kind === "piPackage") {
       setDetailPiPackage(selectedLibraryItem.piPackage);
       setActionIndex(0);
@@ -966,6 +960,15 @@ export function App() {
       setSubViewIndex(0);
     }
   };
+
+  const openPluginDetail = (plugin: Plugin) => {
+    setDetailPlugin(plugin); setDetailPluginDrift(null);
+    void computePluginDrift(plugin).then(setDetailPluginDrift);
+    setActionIndex(0);
+  };
+
+  const toggleInstall = (plugin: Plugin) => plugin.installed ? doUninstall(plugin) : doInstall(plugin);
+  const toggleInstallPiPkg = (pkg: PiPackage) => pkg.installed ? doUninstallPiPkg(pkg) : doInstallPiPkg(pkg);
 
   const handleSpaceToggle = () => {
     if (tab === "sync") {
@@ -1004,23 +1007,18 @@ export function App() {
     // Sub-views: toggle install/uninstall
     if (discoverSubView === "plugins") {
       const plugin = filteredPlugins[subViewIndex];
-      if (plugin) { plugin.installed ? doUninstall(plugin) : doInstall(plugin); }
+      if (plugin) toggleInstall(plugin);
       return;
     }
     if (discoverSubView === "piPackages") {
       const pkg = filteredPiPackages[subViewIndex];
-      if (pkg) { pkg.installed ? doUninstallPiPkg(pkg) : doInstallPiPkg(pkg); }
+      if (pkg) toggleInstallPiPkg(pkg);
       return;
     }
 
     // Library items
-    if (selectedLibraryItem?.kind === "plugin") {
-      const plugin = selectedLibraryItem.plugin;
-      plugin.installed ? doUninstall(plugin) : doInstall(plugin);
-    } else if (selectedLibraryItem?.kind === "piPackage") {
-      const pkg = selectedLibraryItem.piPackage;
-      pkg.installed ? doUninstallPiPkg(pkg) : doInstallPiPkg(pkg);
-    }
+    if (selectedLibraryItem?.kind === "plugin") toggleInstall(selectedLibraryItem.plugin);
+    else if (selectedLibraryItem?.kind === "piPackage") toggleInstallPiPkg(selectedLibraryItem.piPackage);
   };
 
   /** True when any detail/diff/missing overlay is open — blocks global navigation. */
@@ -1275,12 +1273,7 @@ export function App() {
         if (discoverSubView === "plugins") {
           const list = tab === "marketplaces" ? marketplaceBrowsePlugins : filteredPlugins;
           const plugin = list[subViewIndex];
-          if (plugin) {
-            setDetailPlugin(plugin);
-            setDetailPluginDrift(null);
-            void computePluginDrift(plugin).then(setDetailPluginDrift);
-            setActionIndex(0);
-          }
+          if (plugin) openPluginDetail(plugin);
         } else if (discoverSubView === "piPackages") {
           const pkg = filteredPiPackages[subViewIndex];
           if (pkg) {
