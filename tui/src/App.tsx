@@ -826,10 +826,6 @@ export function App() {
     return buildPluginActions(plugin, toolStatuses, isIncomplete, drift);
   };
 
-  const getPluginActionCount = (plugin: typeof detailPlugin) => {
-    return getPluginActions(plugin).length;
-  };
-
   // Convert existing PluginAction[] to ItemAction[] for ItemDetail
   const toItemActions = (actions: PluginAction[]): ItemAction[] =>
     actions.map((a) => ({
@@ -885,6 +881,21 @@ export function App() {
     if (!detailPiPackage) return null;
     return piPackageToManagedItem(detailPiPackage);
   }, [detailPiPackage]);
+
+  /** Active detail context — the currently-open entity + its actions + metadata node. */
+  const activeDetail = useMemo((): { item: ManagedItem; actions: ItemAction[]; metadata: React.ReactNode } | null => {
+    if (detailFile && detailFileItem) {
+      return { item: detailFileItem, actions: toFileItemActions(fileActions), metadata: <FileMetadata item={detailFileItem} /> };
+    }
+    if (detailPlugin && detailPluginItem) {
+      return { item: detailPluginItem, actions: toItemActions(getPluginActions(detailPlugin)), metadata: <PluginMetadata item={detailPluginItem} /> };
+    }
+    if (detailPiPackage && detailPiPkgItem) {
+      return { item: detailPiPkgItem, actions: toPiPkgItemActions(detailPiPackage), metadata: <PiPackageMetadata item={detailPiPkgItem} /> };
+    }
+    return null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailFile, detailFileItem, detailPlugin, detailPluginItem, detailPiPackage, detailPiPkgItem, fileActions]);
 
   const refreshDetailPlugin = (plugin: Plugin) => {
     const state = useStore.getState();
@@ -1236,7 +1247,7 @@ export function App() {
         // DiffView and MissingSummaryView handle their own navigation
         return;
       }
-      if (detailPlugin || detailFile || detailMarketplace || detailPiMarketplace || detailPiPackage) {
+      if (activeDetail || detailMarketplace || detailPiMarketplace) {
         setActionIndex((i) => Math.max(0, i - 1));
       } else if (detailTool) {
         return;
@@ -1256,13 +1267,8 @@ export function App() {
         // DiffView and MissingSummaryView handle their own navigation
         return;
       }
-      if (detailFile) {
-        setActionIndex((i) => Math.min(fileActions.length - 1, i + 1));
-      } else if (detailPlugin) {
-        const actionCount = getPluginActionCount(detailPlugin);
-        setActionIndex((i) => Math.min(actionCount - 1, i + 1));
-      } else if (detailPiPackage) {
-        setActionIndex((i) => Math.min(toPiPkgItemActions(detailPiPackage).length - 1, i + 1));
+      if (activeDetail) {
+        setActionIndex((i) => Math.min(activeDetail.actions.length - 1, i + 1));
       } else if (detailMarketplace) {
         const actionCount = detailMarketplace.source === "claude" ? 2 : 3;
         setActionIndex((i) => Math.min(actionCount - 1, i + 1));
@@ -1296,7 +1302,7 @@ export function App() {
 
     // Enter - select
     if (key.return) {
-      if (detailFile || detailPlugin || detailPiPackage) {
+      if (activeDetail) {
         void handleEntityAction(actionIndex);
         return;
       }
@@ -1549,21 +1555,8 @@ export function App() {
 
   // Unified action handler for file, plugin, and pi-package detail views
   const handleEntityAction = async (index: number) => {
-    let item: ManagedItem | null = null;
-    let actions: ItemAction[] = [];
-
-    if (detailFile && detailFileItem) {
-      item = detailFileItem;
-      actions = toFileItemActions(fileActions);
-    } else if (detailPlugin && detailPluginItem) {
-      item = detailPluginItem;
-      actions = toItemActions(getPluginActions(detailPlugin));
-    } else if (detailPiPackage && detailPiPkgItem) {
-      item = detailPiPkgItem;
-      actions = toPiPkgItemActions(detailPiPackage);
-    }
-
-    if (!item) return;
+    if (!activeDetail) return;
+    const { item, actions } = activeDetail;
     const action = actions[index];
     if (!action) return;
 
@@ -1813,12 +1806,12 @@ export function App() {
           plugin={detailPlugin}
           selectedIndex={componentIndex}
         />
-      ) : detailPlugin && detailPluginItem ? (
+      ) : activeDetail && !componentManagerMode ? (
         <ItemDetail
-          item={detailPluginItem}
+          item={activeDetail.item}
           selectedAction={actionIndex}
-          actions={toItemActions(getPluginActions(detailPlugin))}
-          metadata={<PluginMetadata item={detailPluginItem} />}
+          actions={activeDetail.actions}
+          metadata={activeDetail.metadata}
         />
       ) : detailMarketplace ? (
         <MarketplaceDetail
@@ -1829,20 +1822,6 @@ export function App() {
         <PiMarketplaceDetail
           marketplace={detailPiMarketplace}
           selectedIndex={actionIndex}
-        />
-      ) : detailFile && detailFileItem ? (
-        <ItemDetail
-          item={detailFileItem}
-          selectedAction={actionIndex}
-          actions={toFileItemActions(fileActions)}
-          metadata={<FileMetadata item={detailFileItem} />}
-        />
-      ) : detailPiPackage && detailPiPkgItem ? (
-        <ItemDetail
-          item={detailPiPkgItem}
-          selectedAction={actionIndex}
-          actions={toPiPkgItemActions(detailPiPackage)}
-          metadata={<PiPackageMetadata item={detailPiPkgItem} />}
         />
       ) : (
         <Box flexDirection="column" height={tab === "sync" ? 19 : (tab === "discover" || tab === "installed") ? 20 : 25}>
