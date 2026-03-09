@@ -187,7 +187,7 @@ interface Marketplace {
 **Goal:** Remove copy-pasted utilities.
 
 **Tasks:**
-- [ ] Delete hash functions from install.ts, use modules/hash.ts everywhere
+- [x] Delete hash functions from install.ts, import from modules/hash.ts (removed ~60 lines of duplication)
 - [ ] Consolidate source path resolution (marketplace.ts `resolveLocalMarketplacePath`, plugin-drift.ts `resolvePluginSource`, install.ts marketplace base resolution) into one `resolveMarketplaceSourceDir(marketplace)` function
 - [ ] Single `scanPluginContents(dir)` used by both marketplace.ts and install.ts
 

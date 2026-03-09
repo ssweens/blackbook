@@ -14,7 +14,7 @@ import {
 } from "fs";
 import { promisify } from "util";
 import { execFile, execFileSync } from "child_process";
-import { createHash } from "crypto";
+import { hashBuffer, hashFile, hashPath, hashString, hashDirectory } from "./modules/hash.js";
 
 const execFileAsync = promisify(execFile);
 import { join, dirname, resolve, basename } from "path";
@@ -104,70 +104,7 @@ function extractPluginInfoFromSource(
   return null;
 }
 
-function hashBuffer(buffer: Buffer): string {
-  return createHash("sha256").update(buffer).digest("hex");
-}
-
-function hashFile(path: string): string {
-  const data = readFileSync(path);
-  return hashBuffer(data);
-}
-
-function hashPath(path: string): { hash: string; isDirectory: boolean } {
-  const stat = lstatSync(path);
-  if (stat.isSymbolicLink()) {
-    const resolved = realpathSync(path);
-    return hashPath(resolved);
-  }
-  if (stat.isDirectory()) {
-    return { hash: hashDirectory(path), isDirectory: true };
-  }
-  return { hash: hashFile(path), isDirectory: false };
-}
-
-function hashString(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function hashDirectory(path: string): string {
-  const entries: string[] = [];
-  const walk = (dir: string, prefix: string) => {
-    const children = readdirSync(dir);
-    children.sort();
-    for (const child of children) {
-      const fullPath = join(dir, child);
-      const relPath = prefix ? `${prefix}/${child}` : child;
-      const stat = lstatSync(fullPath);
-      if (stat.isSymbolicLink()) {
-        const resolved = realpathSync(fullPath);
-        const resolvedStat = lstatSync(resolved);
-        if (resolvedStat.isDirectory()) {
-          walk(resolved, relPath);
-        } else if (resolvedStat.isFile()) {
-          entries.push(relPath);
-        }
-      } else if (stat.isDirectory()) {
-        walk(fullPath, relPath);
-      } else if (stat.isFile()) {
-        entries.push(relPath);
-      }
-    }
-  };
-
-  walk(path, "");
-  entries.sort();
-
-  const hasher = createHash("sha256");
-  for (const entry of entries) {
-    const filePath = join(path, entry);
-    const fileHash = hashFile(filePath);
-    hasher.update(entry);
-    hasher.update("\0");
-    hasher.update(fileHash);
-    hasher.update("\0");
-  }
-  return hasher.digest("hex");
-}
+// Hash functions imported from modules/hash.ts (single source of truth)
 
 function isConfigOnlyInstance(instance: ToolInstance): boolean {
   return (
