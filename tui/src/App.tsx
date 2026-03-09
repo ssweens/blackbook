@@ -29,7 +29,7 @@ import { MissingSummaryView } from "./components/MissingSummary.js";
 import { PluginSummary } from "./components/PluginSummary.js";
 import { PiPackageSummary } from "./components/PiPackageSummary.js";
 import { PiPackagePreview } from "./components/PiPackagePreview.js";
-import { getPiPackageActions } from "./components/PiPackageDetail.js";
+// PiPackageDetail import removed — actions built via toPiPkgItemActions
 import { ComponentManager, getComponentItems } from "./components/ComponentManager.js";
 import { SettingsPanel } from "./components/SettingsPanel.js";
 import { getPluginToolStatus, togglePluginComponent } from "./lib/plugin-status.js";
@@ -1132,8 +1132,7 @@ export function App() {
         const actionCount = getPluginActionCount(detailPlugin);
         setActionIndex((i) => Math.min(actionCount - 1, i + 1));
       } else if (detailPiPackage) {
-        const actions = getPiPackageActions(detailPiPackage);
-        setActionIndex((i) => Math.min(actions.length - 1, i + 1));
+        setActionIndex((i) => Math.min(toPiPkgItemActions(detailPiPackage).length - 1, i + 1));
       } else if (detailMarketplace) {
         const actionCount = detailMarketplace.source === "claude" ? 2 : 3;
         setActionIndex((i) => Math.min(actionCount - 1, i + 1));
@@ -1167,18 +1166,8 @@ export function App() {
 
     // Enter - select
     if (key.return) {
-      if (detailFile) {
-        handleFileAction(actionIndex);
-        return;
-      }
-
-      if (detailPlugin) {
-        handlePluginAction(actionIndex);
-        return;
-      }
-
-      if (detailPiPackage) {
-        handlePiPackageAction(actionIndex);
+      if (detailFile || detailPlugin || detailPiPackage) {
+        void handleEntityAction(actionIndex);
         return;
       }
 
@@ -1527,170 +1516,107 @@ export function App() {
     }
   });
 
-  const handleFileAction = async (index: number) => {
-    if (!detailFile) return;
-    const action = fileActions[index];
-    if (!action) return;
+  // Build plugin diff target for unified action dispatch
+  const buildPluginDiffTargetCb = async (plugin: Plugin, toolId: string, instanceId: string) => {
+    const sourcePaths = resolvePluginSourcePaths(plugin);
+    if (!sourcePaths) return null;
+    const pluginDrift = detailPluginDrift ?? pluginDriftMap[plugin.name];
+    if (!pluginDrift) return null;
+    const inst = tools.find((t) => t.toolId === toolId && t.instanceId === instanceId);
+    if (!inst) return null;
 
-    switch (action.type) {
-      case "diff":
-        if (action.instance) {
-          openDiffForFile(detailFile, action.instance as DiffInstanceRef);
-        }
-        break;
-      case "missing":
-        if (action.instance) {
-          openMissingSummaryForFile(detailFile, action.instance as DiffInstanceRef);
-        }
-        break;
-      case "sync":
-        await syncTools([toFileSyncItem(detailFile)]);
-        break;
-      case "pullback":
-        if (action.instance) {
-          await pullbackFileInstance(detailFile, action.instance as DiffInstanceRef);
-        }
-        break;
-      case "back":
-        setDetailFile(null);
-        setActionIndex(0);
-        break;
-      case "status":
-        break;
+    const { buildFileDiffTarget } = await import("./lib/diff.js");
+    const allFiles: import("./lib/types.js").DiffFileSummary[] = [];
+    const instance: DiffInstanceRef = {
+      toolId: inst.toolId, instanceId: inst.instanceId,
+      instanceName: inst.name, configDir: inst.configDir,
+    };
+    for (const [key, status] of Object.entries(pluginDrift)) {
+      if (status === "in-sync") continue;
+      const [kind, name] = key.split(":");
+      const subdir = kind === "skill" ? inst.skillsSubdir : kind === "command" ? inst.commandsSubdir : inst.agentsSubdir;
+      if (!subdir) continue;
+      const srcSuffix = kind === "skill" ? name : `${name}.md`;
+      try {
+        const dt = buildFileDiffTarget(`${kind}s/${name}`, srcSuffix,
+          join(sourcePaths.pluginDir, `${kind}s`, srcSuffix),
+          join(inst.configDir, subdir, srcSuffix), instance);
+        allFiles.push(...dt.files);
+      } catch { /* skip */ }
     }
+    return { kind: "file" as const, title: `${plugin.name} — ${inst.name}`, instance, files: allFiles };
   };
 
-  const handlePluginAction = async (index: number) => {
-    if (!detailPlugin) return;
-    const actions = getPluginActions(detailPlugin);
+  // Install plugin to specific tool instance (for unified dispatch)
+  const installPluginToInstanceCb = async (plugin: Plugin, toolId: string, instanceId: string) => {
+    const toolStatus = getPluginToolStatus(plugin).find((s) => s.toolId === toolId && s.instanceId === instanceId);
+    if (!toolStatus) return;
+    const mkt = marketplaces.find((m) => m.name === plugin.marketplace);
+    const { notify: n, clearNotification: cn } = useStore.getState();
+    const lid = n(`Installing ${plugin.name} to ${toolStatus.name}...`, "info", { spinner: true });
+    const result = await syncPluginInstances(plugin, mkt?.url, [toolStatus]);
+    cn(lid);
+    const key = `${toolStatus.toolId}:${toolStatus.instanceId}`;
+    const count = result.syncedInstances[key] ?? 0;
+    if (count > 0) {
+      n(`✓ Installed ${plugin.name} to ${toolStatus.name} (${count})`, "success");
+    } else {
+      n(`✗ Failed to install ${plugin.name} to ${toolStatus.name}: ${result.errors.join("; ") || "No components linked"}`, "error");
+    }
+    await useStore.getState().refreshAll();
+  };
+
+  // Uninstall plugin from specific tool instance (for unified dispatch)
+  const uninstallPluginFromInstanceCb = async (plugin: Plugin, toolId: string, instanceId: string) => {
+    const toolStatus = getPluginToolStatus(plugin).find((s) => s.toolId === toolId && s.instanceId === instanceId);
+    const { notify: n, clearNotification: cn } = useStore.getState();
+    const lid = n(`Uninstalling ${plugin.name} from ${toolStatus?.name ?? instanceId}...`, "info", { spinner: true });
+    await uninstallPluginFromInstance(plugin, toolId, instanceId);
+    cn(lid);
+    n(`✓ Uninstalled ${plugin.name} from ${toolStatus?.name ?? instanceId}`, "success");
+    await useStore.getState().refreshAll();
+  };
+
+  // Unified action handler for file, plugin, and pi-package detail views
+  const handleEntityAction = async (index: number) => {
+    let item: ManagedItem | null = null;
+    let actions: ItemAction[] = [];
+
+    if (detailFile && detailFileItem) {
+      item = detailFileItem;
+      actions = toFileItemActions(fileActions);
+    } else if (detailPlugin && detailPluginItem) {
+      item = detailPluginItem;
+      actions = toItemActions(getPluginActions(detailPlugin));
+    } else if (detailPiPackage && detailPiPkgItem) {
+      item = detailPiPkgItem;
+      actions = toPiPkgItemActions(detailPiPackage);
+    }
+
+    if (!item) return;
     const action = actions[index];
     if (!action) return;
 
-    switch (action.type) {
-      case "diff": {
-        if (!action.toolStatus || !action.instance) break;
-        const sourcePaths = resolvePluginSourcePaths(detailPlugin);
-        if (!sourcePaths) break;
-
-        const pluginDrift = detailPluginDrift ?? pluginDriftMap[detailPlugin.name];
-        if (!pluginDrift) break;
-
-        const inst = tools.find((t) => t.toolId === action.toolStatus!.toolId && t.instanceId === action.toolStatus!.instanceId);
-        if (!inst) break;
-
-        // Combine all drifted components into one DiffTarget
-        const { buildFileDiffTarget } = await import("./lib/diff.js");
-        const allFiles: import("./lib/types.js").DiffFileSummary[] = [];
-        const instance: import("./lib/types.js").DiffInstanceRef = {
-          toolId: inst.toolId,
-          instanceId: inst.instanceId,
-          instanceName: inst.name,
-          configDir: inst.configDir,
-        };
-
-        for (const [key, status] of Object.entries(pluginDrift)) {
-          if (status === "in-sync") continue;
-          const [kind, name] = key.split(":");
-          const subdir = kind === "skill" ? inst.skillsSubdir : kind === "command" ? inst.commandsSubdir : inst.agentsSubdir;
-          if (!subdir) continue;
-
-          const srcSuffix = kind === "skill" ? name : `${name}.md`;
-          const srcPath = join(sourcePaths.pluginDir, `${kind}s`, srcSuffix);
-          const destPath = join(inst.configDir, subdir, srcSuffix);
-
-          try {
-            const dt = buildFileDiffTarget(`${kind}s/${name}`, srcSuffix, srcPath, destPath, instance);
-            allFiles.push(...dt.files);
-          } catch { /* skip */ }
-        }
-
-        useStore.setState({
-          diffTarget: {
-            kind: "file",
-            title: `${detailPlugin.name} — ${inst.name}`,
-            instance,
-            files: allFiles,
-          },
-        });
-        break;
-      }
-      case "uninstall":
-        await doUninstall(detailPlugin);
-        refreshDetailPlugin(detailPlugin);
-        break;
-      case "update":
-        await doUpdate(detailPlugin);
-        refreshDetailPlugin(detailPlugin);
-        break;
-      case "install":
-        await doInstall(detailPlugin);
-        refreshDetailPlugin(detailPlugin);
-        break;
-      case "install_tool": {
-        if (!action.toolStatus) break;
-        const marketplace = marketplaces.find((m) => m.name === detailPlugin.marketplace);
-        const { notify, clearNotification } = useStore.getState();
-        const loadingId = notify(`Installing ${detailPlugin.name} to ${action.toolStatus.name}...`, "info", { spinner: true });
-        const result = await syncPluginInstances(detailPlugin, marketplace?.url, [action.toolStatus]);
-        clearNotification(loadingId);
-
-        const targetKey = `${action.toolStatus.toolId}:${action.toolStatus.instanceId}`;
-        const linkedCount = result.syncedInstances[targetKey] ?? 0;
-        if (linkedCount > 0) {
-          notify(`✓ Installed ${detailPlugin.name} to ${action.toolStatus.name} (${linkedCount})`, "success");
-        } else {
-          const detail = result.errors.length > 0
-            ? result.errors.join("; ")
-            : `No components were linked for ${action.toolStatus.name}`;
-          notify(`✗ Failed to install ${detailPlugin.name} to ${action.toolStatus.name}: ${detail}`, "error");
-        }
-
-        await useStore.getState().refreshAll();
-        refreshDetailPlugin(detailPlugin);
-        break;
-      }
-      case "uninstall_tool": {
-        if (!action.toolStatus) break;
-        const { notify, clearNotification } = useStore.getState();
-        const loadingId = notify(`Uninstalling ${detailPlugin.name} from ${action.toolStatus.name}...`, "info", { spinner: true });
-        await uninstallPluginFromInstance(detailPlugin, action.toolStatus.toolId, action.toolStatus.instanceId);
-        clearNotification(loadingId);
-        notify(`✓ Uninstalled ${detailPlugin.name} from ${action.toolStatus.name}`, "success");
-        await useStore.getState().refreshAll();
-        refreshDetailPlugin(detailPlugin);
-        break;
-      }
-      case "back":
-        setDetailPlugin(null);
-        setActionIndex(0);
-        break;
-    }
-  };
-
-  const handlePiPackageAction = async (index: number) => {
-    if (!detailPiPackage) return;
-    const actions = getPiPackageActions(detailPiPackage);
-    const action = actions[index];
-    if (!action) return;
-
-    switch (action.type) {
-      case "install":
-        await doInstallPiPkg(detailPiPackage);
-        refreshDetailPiPackage(detailPiPackage);
-        break;
-      case "uninstall":
-        await doUninstallPiPkg(detailPiPackage);
-        refreshDetailPiPackage(detailPiPackage);
-        break;
-      case "update":
-        await doUpdatePiPkg(detailPiPackage);
-        refreshDetailPiPackage(detailPiPackage);
-        break;
-      case "back":
-        setDetailPiPackage(null);
-        setActionIndex(0);
-        break;
-    }
+    const { handleItemAction: dispatch } = await import("./lib/action-dispatch.js");
+    await dispatch(item, action, {
+      closeDetail: () => { setDetailFile(null); setDetailPlugin(null); setDetailPiPackage(null); setActionIndex(0); },
+      openDiffForFile,
+      openMissingSummaryForFile,
+      setDiffTarget: (target) => useStore.setState({ diffTarget: target }),
+      installPlugin: doInstall,
+      uninstallPlugin: doUninstall,
+      updatePlugin: doUpdate,
+      installPluginToInstance: installPluginToInstanceCb,
+      uninstallPluginFromInstance: uninstallPluginFromInstanceCb,
+      refreshDetailPlugin,
+      syncFiles: syncTools,
+      pullbackFileInstance,
+      installPiPackage: doInstallPiPkg,
+      uninstallPiPackage: doUninstallPiPkg,
+      updatePiPackage: doUpdatePiPkg,
+      refreshDetailPiPackage,
+      buildPluginDiffTarget: buildPluginDiffTargetCb,
+    });
   };
 
   const handlePiMarketplaceAction = (index: number) => {
