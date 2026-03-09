@@ -952,6 +952,36 @@ export function App() {
   };
 
   const handleEnterOnList = () => {
+    // Marketplaces tab
+    if (tab === "marketplaces") {
+      if (selectedIndex === 0) {
+        setShowAddMarketplace(true);
+        return;
+      }
+      if (selectedIndex <= marketplaces.length) {
+        const m = marketplaces[selectedIndex - 1];
+        if (m) { setDetailMarketplace(m); setActionIndex(0); }
+        return;
+      }
+      if (!showPiFeatures) return;
+      if (selectedIndex === piSectionOffset) {
+        setShowAddPiMarketplace(true);
+        return;
+      }
+      const piIdx = selectedIndex - piSectionOffset - 1;
+      const pm = piMarketplaces[piIdx];
+      if (pm) { setDetailPiMarketplace(pm); setActionIndex(0); }
+      return;
+    }
+
+    // Tools tab
+    if (tab === "tools") {
+      const tool = managedTools[selectedIndex];
+      if (tool) setDetailToolKey(`${tool.toolId}:${tool.instanceId}`);
+      return;
+    }
+
+    // Sync tab
     if (tab === "sync" && !diffTarget && !missingSummary) {
       const item = syncPreview[selectedIndex];
       if (item) {
@@ -962,9 +992,7 @@ export function App() {
           setActionIndex(0);
         } else if (item.kind === "tool") {
           const tool = managedTools.find((entry) => entry.toolId === item.toolId);
-          if (tool) {
-            setDetailToolKey(`${tool.toolId}:${tool.instanceId}`);
-          }
+          if (tool) setDetailToolKey(`${tool.toolId}:${tool.instanceId}`);
         } else if (item.kind === "file") {
           setDetailFile(item.file);
           setActionIndex(0);
@@ -973,6 +1001,7 @@ export function App() {
       return;
     }
 
+    // Installed / Discover tabs — open item detail
     if (selectedLibraryItem?.kind === "plugin") {
       setDetailPlugin(selectedLibraryItem.plugin);
       setDetailPluginDrift(null);
@@ -990,6 +1019,62 @@ export function App() {
     } else if (selectedLibraryItem?.kind === "piPackageSummary") {
       setDiscoverSubView("piPackages");
       setSubViewIndex(0);
+    }
+  };
+
+  const handleSpaceToggle = () => {
+    if (tab === "sync") {
+      const item = syncPreview[selectedIndex];
+      if (!item) return;
+      const k = getSyncItemKey(item);
+      setSyncSelection((current) => {
+        const next = new Set(current);
+        if (next.has(k)) next.delete(k); else next.add(k);
+        return next;
+      });
+      setSyncArmed(false);
+      return;
+    }
+
+    if (tab === "tools") {
+      const tool = managedTools[selectedIndex];
+      if (tool) void toggleToolEnabled(tool.toolId, tool.instanceId);
+      return;
+    }
+
+    if (tab === "marketplaces") {
+      if (selectedIndex >= 1 && selectedIndex <= marketplaces.length) {
+        const m = marketplaces[selectedIndex - 1];
+        if (m) void toggleMarketplaceEnabled(m.name);
+        return;
+      }
+      if (showPiFeatures && selectedIndex > piSectionOffset) {
+        const piIdx = selectedIndex - piSectionOffset - 1;
+        const pm = piMarketplaces[piIdx];
+        if (pm) void togglePiMarketplaceEnabled(pm.name);
+        return;
+      }
+    }
+
+    // Sub-views: toggle install/uninstall
+    if (discoverSubView === "plugins") {
+      const plugin = filteredPlugins[subViewIndex];
+      if (plugin) { plugin.installed ? doUninstall(plugin) : doInstall(plugin); }
+      return;
+    }
+    if (discoverSubView === "piPackages") {
+      const pkg = filteredPiPackages[subViewIndex];
+      if (pkg) { pkg.installed ? doUninstallPiPkg(pkg) : doInstallPiPkg(pkg); }
+      return;
+    }
+
+    // Library items
+    if (selectedLibraryItem?.kind === "plugin") {
+      const plugin = selectedLibraryItem.plugin;
+      plugin.installed ? doUninstall(plugin) : doInstall(plugin);
+    } else if (selectedLibraryItem?.kind === "piPackage") {
+      const pkg = selectedLibraryItem.piPackage;
+      pkg.installed ? doUninstallPiPkg(pkg) : doInstallPiPkg(pkg);
     }
   };
 
@@ -1251,133 +1336,13 @@ export function App() {
         return;
       }
 
-      if (tab === "marketplaces") {
-        if (selectedIndex === 0) {
-          setShowAddMarketplace(true);
-          return;
-        }
-        if (selectedIndex <= marketplaces.length) {
-          const m = marketplaces[selectedIndex - 1];
-          if (m) {
-            setDetailMarketplace(m);
-            setActionIndex(0);
-          }
-          return;
-        }
-        if (!showPiFeatures) {
-          return;
-        }
-        if (selectedIndex === piSectionOffset) {
-          setShowAddPiMarketplace(true);
-          return;
-        }
-        const piIdx = selectedIndex - piSectionOffset - 1;
-        const pm = piMarketplaces[piIdx];
-        if (pm) {
-          setDetailPiMarketplace(pm);
-          setActionIndex(0);
-        }
-        return;
-      }
-
-      if (tab === "tools") {
-        const tool = managedTools[selectedIndex];
-        if (tool) {
-          setDetailToolKey(`${tool.toolId}:${tool.instanceId}`);
-        }
-        return;
-      }
-
       handleEnterOnList();
       return;
     }
 
     // Space - toggle install/uninstall
     if (input === " " && !detailPlugin && !detailFile && !detailMarketplace && !detailPiMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary) {
-      if (tab === "sync") {
-        const item = syncPreview[selectedIndex];
-        if (!item) return;
-        const key = getSyncItemKey(item);
-        setSyncSelection((current) => {
-          const next = new Set(current);
-          if (next.has(key)) {
-            next.delete(key);
-          } else {
-            next.add(key);
-          }
-          return next;
-        });
-        setSyncArmed(false);
-        return;
-      }
-
-      if (tab === "tools") {
-        const tool = managedTools[selectedIndex];
-        if (tool) {
-          void toggleToolEnabled(tool.toolId, tool.instanceId);
-        }
-        return;
-      }
-
-      // Handle Space for marketplaces (toggle enabled)
-      if (tab === "marketplaces") {
-        if (selectedIndex >= 1 && selectedIndex <= marketplaces.length) {
-          const m = marketplaces[selectedIndex - 1];
-          if (m) {
-            void toggleMarketplaceEnabled(m.name);
-          }
-          return;
-        }
-        if (showPiFeatures && selectedIndex > piSectionOffset) {
-          const piIdx = selectedIndex - piSectionOffset - 1;
-          const pm = piMarketplaces[piIdx];
-          if (pm) {
-            void togglePiMarketplaceEnabled(pm.name);
-          }
-          return;
-        }
-      }
-
-      // Handle Space in sub-views
-      if (discoverSubView === "plugins") {
-        const plugin = filteredPlugins[subViewIndex];
-        if (plugin) {
-          if (plugin.installed) {
-            doUninstall(plugin);
-          } else {
-            doInstall(plugin);
-          }
-        }
-        return;
-      }
-
-      if (discoverSubView === "piPackages") {
-        const pkg = filteredPiPackages[subViewIndex];
-        if (pkg) {
-          if (pkg.installed) {
-            doUninstallPiPkg(pkg);
-          } else {
-            doInstallPiPkg(pkg);
-          }
-        }
-        return;
-      }
-
-      if (selectedLibraryItem?.kind === "plugin") {
-        const plugin = selectedLibraryItem.plugin;
-        if (plugin.installed) {
-          doUninstall(plugin);
-        } else {
-          doInstall(plugin);
-        }
-      } else if (selectedLibraryItem?.kind === "piPackage") {
-        const pkg = selectedLibraryItem.piPackage;
-        if (pkg.installed) {
-          doUninstallPiPkg(pkg);
-        } else {
-          doInstallPiPkg(pkg);
-        }
-      }
+      handleSpaceToggle();
       return;
     }
 
