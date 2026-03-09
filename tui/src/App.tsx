@@ -35,6 +35,7 @@ import { SettingsPanel } from "./components/SettingsPanel.js";
 import { getPluginToolStatus, togglePluginComponent } from "./lib/plugin-status.js";
 import { syncPluginInstances, uninstallPluginFromInstance } from "./lib/install.js";
 import { computePluginDrift, resolvePluginSourcePaths, type PluginDrift } from "./lib/plugin-drift.js";
+import { buildFileDiffTarget } from "./lib/diff.js";
 import { getToolLifecycleCommand, detectInstallMethodMismatch } from "./lib/tool-lifecycle.js";
 import { getPackageManager } from "./lib/config.js";
 import { setupSourceRepository, shouldShowSourceSetupWizard } from "./lib/source-setup.js";
@@ -42,6 +43,7 @@ import { ItemList, FILE_COLUMNS, PLUGIN_COLUMNS } from "./components/ItemList.js
 import { ItemDetail, PluginMetadata, FileMetadata, PiPackageMetadata, type ItemAction } from "./components/ItemDetail.js";
 import { pluginToManagedItem, fileToManagedItem, piPackageToManagedItem } from "./lib/managed-item.js";
 import type { ManagedItem } from "./lib/managed-item.js";
+import { handleItemAction } from "./lib/action-dispatch.js";
 import type { Tab, SyncPreviewItem, Plugin, PiPackage, PiMarketplace, DiffInstanceRef, DiscoverSection, DiscoverSubView, ManagedToolRow, FileStatus, Marketplace } from "./lib/types.js";
 
 const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces", "settings"];
@@ -1380,7 +1382,6 @@ export function App() {
     const inst = tools.find((t) => t.toolId === toolId && t.instanceId === instanceId);
     if (!inst) return null;
 
-    const { buildFileDiffTarget } = await import("./lib/diff.js");
     const allFiles: import("./lib/types.js").DiffFileSummary[] = [];
     const instance: DiffInstanceRef = {
       toolId: inst.toolId, instanceId: inst.instanceId,
@@ -1439,8 +1440,7 @@ export function App() {
     const action = actions[index];
     if (!action) return;
 
-    const { handleItemAction: dispatch } = await import("./lib/action-dispatch.js");
-    await dispatch(item, action, {
+    await handleItemAction(item, action, {
       closeDetail: () => { setDetailFile(null); setDetailPlugin(null); setDetailPiPackage(null); setActionIndex(0); },
       openDiffForFile,
       openMissingSummaryForFile,
