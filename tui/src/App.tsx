@@ -1642,7 +1642,7 @@ export function App() {
           selectedIndex={actionIndex}
         />
       ) : (
-        <Box flexDirection="column" height={tab === "sync" ? 19 : (tab === "discover" || tab === "installed") ? 20 : 25}>
+        <Box flexDirection="column" height={(({ sync: 19, discover: 20, installed: 20 } as Record<string, number>)[tab] ?? 25)}>
           {(tab === "installed" || (tab === "discover" && discoverSubView)) && (
             <Box flexDirection="row" justifyContent="space-between">
               <Box flexGrow={1}>
