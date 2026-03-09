@@ -135,12 +135,21 @@ export function App() {
   const [editingToolId, setEditingToolId] = useState<string | null>(null);
   const [detailToolKey, setDetailToolKey] = useState<string | null>(null);
   const [detailFile, setDetailFile] = useState<FileStatus | null>(null);
-  const [toolModalAction, setToolModalAction] = useState<ToolModalAction | null>(null);
-  const [toolModalWarning, setToolModalWarning] = useState<string | null>(null);
-  const [toolModalMigrate, setToolModalMigrate] = useState(false);
-  const [toolModalRunning, setToolModalRunning] = useState(false);
-  const [toolModalDone, setToolModalDone] = useState(false);
-  const [toolModalSuccess, setToolModalSuccess] = useState(false);
+  const [toolModal, setToolModal] = useState<{
+    action: ToolModalAction | null; warning: string | null; migrate: boolean;
+    running: boolean; done: boolean; success: boolean;
+  }>({ action: null, warning: null, migrate: false, running: false, done: false, success: false });
+  // Destructure for backward compat within this component
+  const { action: toolModalAction, warning: toolModalWarning, migrate: toolModalMigrate,
+    running: toolModalRunning, done: toolModalDone, success: toolModalSuccess } = toolModal;
+  const setToolModalAction = (v: ToolModalAction | null) => setToolModal((s) => ({ ...s, action: v }));
+  const setToolModalWarning = (v: string | null) => setToolModal((s) => ({ ...s, warning: v }));
+  const setToolModalMigrate = (v: boolean | ((b: boolean) => boolean)) =>
+    setToolModal((s) => ({ ...s, migrate: typeof v === "function" ? v(s.migrate) : v }));
+  const setToolModalRunning = (v: boolean) => setToolModal((s) => ({ ...s, running: v }));
+  const setToolModalDone = (v: boolean) => setToolModal((s) => ({ ...s, done: v }));
+  const setToolModalSuccess = (v: boolean) => setToolModal((s) => ({ ...s, success: v }));
+  const resetToolModal = () => setToolModal({ action: null, warning: null, migrate: false, running: false, done: false, success: false });
   const [syncPreview, setSyncPreview] = useState<SyncPreviewItem[]>([]);
   const [syncSelection, setSyncSelection] = useState<Set<string>>(new Set());
   const [syncArmed, setSyncArmed] = useState(false);
@@ -1089,6 +1098,9 @@ export function App() {
     }
   };
 
+  /** True when any detail/diff/missing overlay is open — blocks global navigation. */
+  const isOverlayOpen = !!(activeDetail || detailMarketplace || detailPiMarketplace || detailTool || diffTarget || missingSummary);
+
   const handleToolModalInput = (input: string, key: Parameters<Parameters<typeof useInput>[0]>[1]) => {
     if (toolModalDone) {
       if (!toolModalSuccess && (input === "m" || input === "M") && toolModalWarning) {
@@ -1100,12 +1112,11 @@ export function App() {
         void runToolAction(activeToolForModal, toolModalAction!, toolModalMigrate);
         return;
       }
-      setToolModalAction(null); setToolModalWarning(null); setToolModalMigrate(false);
-      setToolModalDone(false); setToolModalSuccess(false);
+      resetToolModal();
       return;
     }
     if (toolModalRunning) { if (key.escape) cancelToolAction(); return; }
-    if (key.escape) { setToolModalAction(null); setToolModalWarning(null); setToolModalMigrate(false); return; }
+    if (key.escape) { setToolModal((s) => ({ ...s, action: null, warning: null, migrate: false })); return; }
     if ((input === "m" || input === "M") && toolModalWarning) { setToolModalMigrate((c) => !c); return; }
     if (key.return && activeToolForModal) void runToolAction(activeToolForModal, toolModalAction!, toolModalMigrate);
   };
@@ -1127,13 +1138,8 @@ export function App() {
   const handleToolShortcut = (input: string): boolean => {
     const tool = detailTool || managedTools[selectedIndex];
     const detection = tool ? toolDetection[tool.toolId] : null;
-    const openModal = (action: "install" | "update" | "uninstall", migrate = false) => {
-      setToolModalAction(action);
-      setToolModalWarning(null);
-      setToolModalMigrate(migrate);
-      setToolModalDone(false);
-      setToolModalSuccess(false);
-    };
+    const openModal = (action: "install" | "update" | "uninstall", migrate = false) =>
+      setToolModal({ action, warning: null, migrate, running: false, done: false, success: false });
 
     if (input === "i" && tool && (!detection || !detection.installed)) { openModal("install"); return true; }
     if (input === "u" && tool && detection?.installed && detection.hasUpdate) { openModal("update"); return true; }
@@ -1226,8 +1232,7 @@ export function App() {
       return;
     }
 
-    // isOverlayOpen: any detail/diff/missing is open (blocks global navigation)
-    const isOverlayOpen = !!(activeDetail || detailMarketplace || detailPiMarketplace || detailTool || diffTarget || missingSummary);
+    // isOverlayOpen defined at component scope below
 
     // Tab/Shift+Tab for section navigation in Discover/Installed tabs
     if (key.tab && (tab === "discover" || tab === "installed") && !discoverSubView && !isOverlayOpen) {
@@ -1603,19 +1608,12 @@ export function App() {
   };
 
   const runToolAction = async (tool: ManagedToolRow, action: ToolModalAction, migrate = false) => {
-    setToolModalRunning(true);
-    setToolModalDone(false);
-
+    setToolModal((s) => ({ ...s, running: true, done: false }));
     const success =
-      action === "install"
-        ? await installToolAction(tool.toolId, { migrate })
-        : action === "update"
-          ? await updateToolAction(tool.toolId, { migrate })
-          : await uninstallToolAction(tool.toolId);
-
-    setToolModalRunning(false);
-    setToolModalDone(true);
-    setToolModalSuccess(success);
+      action === "install" ? await installToolAction(tool.toolId, { migrate })
+      : action === "update" ? await updateToolAction(tool.toolId, { migrate })
+      : await uninstallToolAction(tool.toolId);
+    setToolModal((s) => ({ ...s, running: false, done: true, success }));
     await refreshAll();
   };
 
@@ -1975,7 +1973,7 @@ export function App() {
         </Box>
       )}
 
-      {(tab === "discover" || tab === "installed") && !detailPlugin && !detailFile && !detailMarketplace && !detailPiPackage && !detailTool && (
+      {(tab === "discover" || tab === "installed") && !isOverlayOpen && (
         discoverSubView === "plugins" ? (
           <PluginPreview plugin={filteredPlugins[subViewIndex] ?? null} />
         ) : discoverSubView === "piPackages" ? (
