@@ -125,16 +125,20 @@ export function App() {
 
   const [actionIndex, setActionIndex] = useState(0);
   const [componentManagerMode, setComponentManagerMode] = useState(false);
+  const [componentIndex, setComponentIndex] = useState(0);
   const [detailPluginDrift, setDetailPluginDrift] = useState<PluginDrift | null>(null);
   const [pluginDriftMap, setPluginDriftMap] = useState<Record<string, PluginDrift>>({});
-  const [componentIndex, setComponentIndex] = useState(0);
-  const [showAddMarketplace, setShowAddMarketplace] = useState(false);
-  const [showSourceSetupWizard, setShowSourceSetupWizard] = useState(false);
-  const [showAddPiMarketplace, setShowAddPiMarketplace] = useState(false);
-  const [detailPiMarketplace, setDetailPiMarketplace] = useState<PiMarketplace | null>(null);
-  const [editingToolId, setEditingToolId] = useState<string | null>(null);
-  const [detailToolKey, setDetailToolKey] = useState<string | null>(null);
   const [detailFile, setDetailFile] = useState<FileStatus | null>(null);
+  const [detailPiMarketplace, setDetailPiMarketplace] = useState<PiMarketplace | null>(null);
+  const [detailToolKey, setDetailToolKey] = useState<string | null>(null);
+  const [editingToolId, setEditingToolId] = useState<string | null>(null);
+  const [modalVisible, setModalVisible] = useState<"addMarketplace" | "addPiMarketplace" | "sourceSetupWizard" | null>(null);
+  const showAddMarketplace = modalVisible === "addMarketplace";
+  const showAddPiMarketplace = modalVisible === "addPiMarketplace";
+  const showSourceSetupWizard = modalVisible === "sourceSetupWizard";
+  const setShowAddMarketplace = (v: boolean) => setModalVisible(v ? "addMarketplace" : null);
+  const setShowAddPiMarketplace = (v: boolean) => setModalVisible(v ? "addPiMarketplace" : null);
+  const setShowSourceSetupWizard = (v: boolean) => setModalVisible(v ? "sourceSetupWizard" : null);
   const [toolModal, setToolModal] = useState<{
     action: ToolModalAction | null; warning: string | null; migrate: boolean;
     running: boolean; done: boolean; success: boolean;
@@ -153,8 +157,12 @@ export function App() {
   const [syncPreview, setSyncPreview] = useState<SyncPreviewItem[]>([]);
   const [syncSelection, setSyncSelection] = useState<Set<string>>(new Set());
   const [syncArmed, setSyncArmed] = useState(false);
-  const [sortBy, setSortBy] = useState<"default" | "name" | "installed" | "popularity">("default");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [sort, setSort] = useState<{ by: "default" | "name" | "installed" | "popularity"; dir: "asc" | "desc" }>({ by: "default", dir: "asc" });
+  const sortBy = sort.by; const sortDir = sort.dir;
+  const setSortBy = (v: typeof sortBy | ((p: typeof sortBy) => typeof sortBy)) =>
+    setSort((s) => ({ ...s, by: typeof v === "function" ? v(s.by) : v }));
+  const setSortDir = (v: typeof sortDir | ((p: typeof sortDir) => typeof sortDir)) =>
+    setSort((s) => ({ ...s, dir: typeof v === "function" ? v(s.dir) : v }));
   const [searchFocused, setSearchFocused] = useState(false);
   const [subViewIndex, setSubViewIndex] = useState(0);
   const [marketplaceBrowseContext, setMarketplaceBrowseContext] = useState<Marketplace | null>(null);
@@ -1399,25 +1407,16 @@ export function App() {
     // Sort shortcuts (s to cycle sort, r to reverse) - only when search not focused
     if ((tab === "discover" || tab === "installed") && !detailPlugin && !detailFile && !searchFocused) {
       if (input === "s") {
-        setSortBy((prev) => {
-          if (prev === "default") {
-            setSortDir("asc");
-            return "name";
-          }
-          if (prev === "name") return "installed";
-          if (prev === "installed") {
-            // Default to descending for popularity (most popular first)
-            setSortDir("desc");
-            return "popularity";
-          }
-          // Back to default
-          setSortDir("asc");
-          return "default";
+        setSort((s) => {
+          if (s.by === "default") return { by: "name", dir: "asc" };
+          if (s.by === "name") return { by: "installed", dir: s.dir };
+          if (s.by === "installed") return { by: "popularity", dir: "desc" };
+          return { by: "default", dir: "asc" };
         });
         return;
       }
       if (input === "r") {
-        setSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
+        setSort((s) => ({ ...s, dir: s.dir === "asc" ? "desc" : "asc" }));
         return;
       }
     }
