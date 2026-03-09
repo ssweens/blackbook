@@ -301,7 +301,9 @@ export function App() {
     let refreshed = false;
     try {
       switch (targetTab) {
-        case "settings": refreshed = true; return; // reads config on mount, no async needed
+        case "settings":
+          await refreshAll();
+          break;
         case "discover":
         case "marketplaces": await Promise.all([loadMarketplaces(), loadPiPackages()]); break;
         case "installed":
@@ -334,20 +336,13 @@ export function App() {
   };
 
   useEffect(() => {
-    void refreshTabData(tab);
-  }, [tab]);
-
-  useEffect(() => {
     setShowSourceSetupWizard(shouldShowSourceSetupWizard());
   }, []);
 
+  // Single startup scan for all item/update state; no navigation-triggered refreshes.
   useEffect(() => {
-    void refreshToolDetection();
-  }, [refreshToolDetection]);
-
-  useEffect(() => {
-    void loadPiPackages();
-  }, [loadPiPackages, showPiFeatures]);
+    void refreshAll();
+  }, [refreshAll]);
 
   useEffect(() => {
     if (tab !== "sync") return;

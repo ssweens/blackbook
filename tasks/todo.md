@@ -197,7 +197,7 @@ interface Marketplace {
 
 | Metric | Before | Current | Target |
 |--------|--------|---------|--------|
-| App.tsx lines | 2131 | **1797 (−334)** | ~1200 |
+| App.tsx lines | 2131 | **1792 (−339)** | ~1200 |
 | App.tsx if-branches | 245 | **201 (−44)** | ~100 |
 | App.tsx useState hooks | 28 | **20 (−8)** | ~15 |
 | useInput callback | 604 lines | **102 lines (−83%)** ✅ | ~200 |
@@ -214,7 +214,7 @@ interface Marketplace {
 | **New generic components** | — | **3 (ItemList + ItemDetail + MarketplaceDetailView)** ✅ | — |
 | **New modules** | — | **9 (managed-item, action-dispatch, item-actions, path-utils, marketplace-detail, marketplace-row, input-hooks, item-drift + store helper)** ✅ | — |
 | **New test count** | 346 | **441 (+95)** ✅ | — |
-| **Net from main** | — | **+4926 / -3704** | — |
+| **Net from main** | — | **+5097 / -3715** | — |
 
 ## Execution Order
 

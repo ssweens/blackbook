@@ -14,7 +14,7 @@ const HINTS: Record<Tab, string> = {
   marketplaces: "Enter select · u update · r remove · R refresh · q quit",
   tools: "Enter detail · i install · u update · d uninstall · e edit config · Space toggle · R refresh · q quit",
   sync: "y to sync missing/changed items (press twice) · Enter details · d diff/missing · R refresh · q quit",
-  settings: "↑/↓ select · Enter edit · Esc cancel · q quit",
+  settings: "↑/↓ select · Enter edit · Esc cancel · R refresh · q quit",
 };
 
 export function HintBar({ tab, hasDetail, toolsHint }: HintBarProps) {
