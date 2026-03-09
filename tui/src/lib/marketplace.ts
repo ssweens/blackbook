@@ -1,10 +1,10 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, readdirSync } from "fs";
 import { join, dirname, basename, resolve } from "path";
 import { createHash } from "crypto";
-import { homedir } from "os";
 import { fileURLToPath } from "url";
 import { getCacheDir } from "./config.js";
 import { getGitHubToken, isGitHubHost } from "./github.js";
+import { expandTilde } from "./path-utils.js";
 import type { Marketplace, Plugin } from "./types.js";
 
 export const MARKETPLACE_CACHE_TTL_SECONDS = 600;
@@ -78,34 +78,18 @@ interface GitHubTreeResponse {
 function resolveLocalMarketplacePath(url: string, isLocal: boolean): string | null {
   if (!url) return null;
   if (url.startsWith("file://")) {
-    try {
-      return fileURLToPath(url);
-    } catch {
-      return null;
-    }
+    try { return fileURLToPath(url); } catch { return null; }
   }
 
-  const looksLocal =
-    isLocal ||
-    url.startsWith("/") ||
-    url.startsWith("~") ||
-    url.startsWith("./") ||
-    url.startsWith("../");
+  const looksLocal = isLocal || url.startsWith("/") || url.startsWith("~") ||
+    url.startsWith("./") || url.startsWith("../");
 
   if (!looksLocal && url.includes("://")) return null;
 
-  let normalized = url;
-  if (normalized.startsWith("~")) {
-    normalized = resolve(homedir(), normalized.slice(1));
-  } else if (!normalized.startsWith("/")) {
-    normalized = resolve(process.cwd(), normalized);
-  }
+  let normalized = expandTilde(url);
+  if (!normalized.startsWith("/")) normalized = resolve(process.cwd(), normalized);
 
-  if (looksLocal || existsSync(normalized)) {
-    return normalized;
-  }
-
-  return null;
+  return (looksLocal || existsSync(normalized)) ? normalized : null;
 }
 
 async function fetchGitHubTree(repo: string, branch: string, path: string): Promise<GitHubTreeItem[]> {

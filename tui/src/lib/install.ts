@@ -18,7 +18,7 @@ import { hashBuffer, hashFile, hashPath, hashString, hashDirectory } from "./mod
 
 const execFileAsync = promisify(execFile);
 import { join, dirname, resolve, basename } from "path";
-import { tmpdir, homedir } from "os";
+import { tmpdir } from "os";
 import {
   expandPath,
   getCacheDir,
@@ -37,6 +37,7 @@ import type {
   DiffInstanceRef,
 } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
+import { expandTilde } from "./path-utils.js";
 import {
   safePath,
   validateGitRef,
@@ -201,9 +202,7 @@ export async function downloadPlugin(
   ) {
     // Resolve marketplace base directory
     let marketplaceBase = marketplaceUrl;
-    if (marketplaceBase.startsWith("~")) {
-      marketplaceBase = join(homedir(), marketplaceBase.slice(1));
-    }
+    marketplaceBase = expandTilde(marketplaceBase);
     if (!marketplaceBase.startsWith("/")) {
       marketplaceBase = resolve(process.cwd(), marketplaceBase);
     }
