@@ -1089,52 +1089,113 @@ export function App() {
     }
   };
 
-  useInput((input, key) => {
-    if (toolModalAction) {
-      if (toolModalDone) {
-        if (!toolModalSuccess && (input === "m" || input === "M") && toolModalWarning) {
-          setToolModalMigrate((current) => !current);
-          return;
-        }
-
-        if (!toolModalSuccess && key.return && activeToolForModal) {
-          setToolModalDone(false);
-          void runToolAction(activeToolForModal, toolModalAction, toolModalMigrate);
-          return;
-        }
-
-        setToolModalAction(null);
-        setToolModalWarning(null);
-        setToolModalMigrate(false);
+  const handleToolModalInput = (input: string, key: Parameters<Parameters<typeof useInput>[0]>[1]) => {
+    if (toolModalDone) {
+      if (!toolModalSuccess && (input === "m" || input === "M") && toolModalWarning) {
+        setToolModalMigrate((c) => !c);
+        return;
+      }
+      if (!toolModalSuccess && key.return && activeToolForModal) {
         setToolModalDone(false);
-        setToolModalSuccess(false);
+        void runToolAction(activeToolForModal, toolModalAction!, toolModalMigrate);
         return;
       }
-
-      if (toolModalRunning) {
-        if (key.escape) {
-          cancelToolAction();
-        }
-        return;
-      }
-
-      if (key.escape) {
-        setToolModalAction(null);
-        setToolModalWarning(null);
-        setToolModalMigrate(false);
-        return;
-      }
-
-      if ((input === "m" || input === "M") && toolModalWarning) {
-        setToolModalMigrate((current) => !current);
-        return;
-      }
-
-      if (key.return && activeToolForModal) {
-        void runToolAction(activeToolForModal, toolModalAction, toolModalMigrate);
-      }
+      setToolModalAction(null); setToolModalWarning(null); setToolModalMigrate(false);
+      setToolModalDone(false); setToolModalSuccess(false);
       return;
     }
+    if (toolModalRunning) { if (key.escape) cancelToolAction(); return; }
+    if (key.escape) { setToolModalAction(null); setToolModalWarning(null); setToolModalMigrate(false); return; }
+    if ((input === "m" || input === "M") && toolModalWarning) { setToolModalMigrate((c) => !c); return; }
+    if (key.return && activeToolForModal) void runToolAction(activeToolForModal, toolModalAction!, toolModalMigrate);
+  };
+
+  const handleComponentManagerInput = (input: string, key: Parameters<Parameters<typeof useInput>[0]>[1]) => {
+    if (!detailPlugin) return;
+    if (key.escape) { setComponentManagerMode(false); return; }
+    const items = getComponentItems(detailPlugin);
+    if (items.length === 0) { setComponentManagerMode(false); return; }
+    if (key.upArrow) { setComponentIndex((i) => Math.max(0, i - 1)); return; }
+    if (key.downArrow) { setComponentIndex((i) => Math.min(items.length - 1, i + 1)); return; }
+    if (key.return || input === " ") {
+      const item = items[componentIndex];
+      if (item) { togglePluginComponent(detailPlugin, item.kind, item.name, !item.enabled); refreshDetailPlugin(detailPlugin); }
+    }
+  };
+
+  /** Returns true if the shortcut was handled. */
+  const handleToolShortcut = (input: string): boolean => {
+    const tool = detailTool || managedTools[selectedIndex];
+    const detection = tool ? toolDetection[tool.toolId] : null;
+    const openModal = (action: "install" | "update" | "uninstall", migrate = false) => {
+      setToolModalAction(action);
+      setToolModalWarning(null);
+      setToolModalMigrate(migrate);
+      setToolModalDone(false);
+      setToolModalSuccess(false);
+    };
+
+    if (input === "i" && tool && (!detection || !detection.installed)) { openModal("install"); return true; }
+    if (input === "u" && tool && detection?.installed && detection.hasUpdate) { openModal("update"); return true; }
+    if (input === "d" && tool && detection?.installed) { openModal("uninstall"); return true; }
+    if (input === "m" && tool && detection?.installed) {
+      const path = detection.binaryPath ?? "";
+      const canMigrate = path.startsWith("/opt/homebrew/") || path.startsWith("/usr/local/");
+      if (canMigrate) openModal("update", true);
+      return true;
+    }
+    if (input === "e" && tool) { setEditingToolId(`${tool.toolId}:${tool.instanceId}`); return true; }
+    if (input === " " && tool) { void toggleToolEnabled(tool.toolId, tool.instanceId); return true; }
+    return false;
+  };
+
+  const handleMarketplaceShortcut = (input: string): boolean => {
+    if (input === "u") {
+      if (selectedIndex >= 1 && selectedIndex <= marketplaces.length) {
+        const m = marketplaces[selectedIndex - 1];
+        if (m) updateMarketplace(m.name);
+      }
+      return true;
+    }
+    if (input === "r") {
+      if (selectedIndex >= 1 && selectedIndex <= marketplaces.length) {
+        const m = marketplaces[selectedIndex - 1];
+        if (m && m.source !== "claude") removeMarketplace(m.name);
+      } else if (showPiFeatures && selectedIndex > piSectionOffset) {
+        const pm = piMarketplaces[selectedIndex - piSectionOffset - 1];
+        if (pm && !pm.builtIn) void removePiMarketplace(pm.name);
+      }
+      return true;
+    }
+    return false;
+  };
+
+  const handleSyncShortcut = (input: string): boolean => {
+    if (input === "y") {
+      if (syncArmed) {
+        const items = syncPreview.filter((item) => syncSelection.has(getSyncItemKey(item)));
+        if (items.length === 0) {
+          notify("Select at least one item to sync.", "warning");
+          setSyncArmed(false);
+          return true;
+        }
+        void syncTools(items);
+        setSyncArmed(false);
+      } else {
+        setSyncArmed(true);
+      }
+      return true;
+    }
+    if (input === "d") {
+      const item = syncPreview[selectedIndex];
+      if (item) openDiffFromSyncItem(item);
+      return true;
+    }
+    return false;
+  };
+
+  useInput((input, key) => {
+    if (toolModalAction) { handleToolModalInput(input, key); return; }
 
     // Sticky notifications (warnings/errors) are acknowledged with any key.
     const stickyNotifications = notifications.filter(
@@ -1150,38 +1211,8 @@ export function App() {
       return;
     }
 
-    // Component manager mode input handling
-    if (componentManagerMode && detailPlugin) {
-      if (key.escape) {
-        setComponentManagerMode(false);
-        return;
-      }
-
-      const items = getComponentItems(detailPlugin);
-      if (items.length === 0) {
-        setComponentManagerMode(false);
-        return;
-      }
-
-      if (key.upArrow) {
-        setComponentIndex((i) => Math.max(0, i - 1));
-        return;
-      }
-      if (key.downArrow) {
-        setComponentIndex((i) => Math.min(items.length - 1, i + 1));
-        return;
-      }
-      if (key.return || input === " ") {
-        const item = items[componentIndex];
-        if (item) {
-          togglePluginComponent(detailPlugin, item.kind, item.name, !item.enabled);
-          // Force re-render by refreshing the detail plugin
-          refreshDetailPlugin(detailPlugin);
-        }
-        return;
-      }
-      return;
-    }
+    // Component manager mode
+    if (componentManagerMode && detailPlugin) { handleComponentManagerInput(input, key); return; }
 
     // Manual refresh of current tab
     if (input === "R") {
@@ -1195,39 +1226,30 @@ export function App() {
       return;
     }
 
+    // isOverlayOpen: any detail/diff/missing is open (blocks global navigation)
+    const isOverlayOpen = !!(activeDetail || detailMarketplace || detailPiMarketplace || detailTool || diffTarget || missingSummary);
+
     // Tab/Shift+Tab for section navigation in Discover/Installed tabs
-    if (key.tab && (tab === "discover" || tab === "installed") && !discoverSubView) {
-      if (!detailPlugin && !detailFile && !detailMarketplace && !detailPiMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary) {
-        if (sections.length > 0) {
-          const currentIdx = sections.findIndex((s) => selectedIndex >= s.start && selectedIndex <= s.end);
-          if (key.shift) {
-            // Shift+Tab: go to previous section
-            const prevIdx = currentIdx <= 0 ? sections.length - 1 : currentIdx - 1;
-            setSelectedIndex(sections[prevIdx].start);
-          } else {
-            // Tab: go to next section
-            const nextIdx = currentIdx >= sections.length - 1 ? 0 : currentIdx + 1;
-            setSelectedIndex(sections[nextIdx].start);
-          }
-          return;
+    if (key.tab && (tab === "discover" || tab === "installed") && !discoverSubView && !isOverlayOpen) {
+      if (sections.length > 0) {
+        const currentIdx = sections.findIndex((s) => selectedIndex >= s.start && selectedIndex <= s.end);
+        if (key.shift) {
+          const prevIdx = currentIdx <= 0 ? sections.length - 1 : currentIdx - 1;
+          setSelectedIndex(sections[prevIdx].start);
+        } else {
+          const nextIdx = currentIdx >= sections.length - 1 ? 0 : currentIdx + 1;
+          setSelectedIndex(sections[nextIdx].start);
         }
+        return;
       }
     }
 
     // Left/Right arrows for main tab navigation (blocked when overlays are open)
-    if (key.rightArrow) {
-      if (!detailPlugin && !detailFile && !detailMarketplace && !detailPiMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary) {
-        const idx = TABS.indexOf(tab);
-        setTab(TABS[(idx + 1) % TABS.length]);
-        return;
-      }
+    if (key.rightArrow && !isOverlayOpen) {
+      const idx = TABS.indexOf(tab); setTab(TABS[(idx + 1) % TABS.length]); return;
     }
-    if (key.leftArrow) {
-      if (!detailPlugin && !detailFile && !detailMarketplace && !detailPiMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary) {
-        const idx = TABS.indexOf(tab);
-        setTab(TABS[(idx - 1 + TABS.length) % TABS.length]);
-        return;
-      }
+    if (key.leftArrow && !isOverlayOpen) {
+      const idx = TABS.indexOf(tab); setTab(TABS[(idx - 1 + TABS.length) % TABS.length]); return;
     }
 
     // Settings tab: SettingsPanel handles its own input (up/down/enter/esc)
@@ -1347,119 +1369,23 @@ export function App() {
     }
 
     // Space - toggle install/uninstall
-    if (input === " " && !detailPlugin && !detailFile && !detailMarketplace && !detailPiMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary) {
+    if (input === " " && !isOverlayOpen) {
       handleSpaceToggle();
       return;
     }
 
-    // Shortcuts
+    // Tab-specific shortcuts
     if (tab === "tools" || detailTool) {
-      const tool = detailTool || managedTools[selectedIndex];
-      const detection = tool ? toolDetection[tool.toolId] : null;
-
-      if (input === "i" && tool && (!detection || !detection.installed)) {
-        setToolModalAction("install");
-        setToolModalWarning(null);
-        setToolModalMigrate(false);
-        setToolModalDone(false);
-        setToolModalSuccess(false);
-        return;
-      }
-
-      if (input === "u" && tool && detection?.installed && detection.hasUpdate) {
-        setToolModalAction("update");
-        setToolModalWarning(null);
-        setToolModalMigrate(false);
-        setToolModalDone(false);
-        setToolModalSuccess(false);
-        return;
-      }
-
-      if (input === "d" && tool && detection?.installed) {
-        setToolModalAction("uninstall");
-        setToolModalWarning(null);
-        setToolModalMigrate(false);
-        setToolModalDone(false);
-        setToolModalSuccess(false);
-        return;
-      }
-
-      if (input === "m" && tool && detection?.installed) {
-        const path = detection.binaryPath || "";
-        const detectedMethod =
-          path.startsWith("/opt/homebrew/") || path.startsWith("/usr/local/") ? "brew" : "unknown";
-        const canMigrate = detectedMethod === "brew";
-        if (canMigrate) {
-          setToolModalAction("update");
-          setToolModalWarning(null);
-          setToolModalMigrate(true);
-          setToolModalDone(false);
-          setToolModalSuccess(false);
-        }
-        return;
-      }
-
-      if (input === "e" && tool) {
-        setEditingToolId(`${tool.toolId}:${tool.instanceId}`);
-        return;
-      }
-
-      if (input === " " && tool) {
-        void toggleToolEnabled(tool.toolId, tool.instanceId);
-        return;
-      }
+      if (handleToolShortcut(input)) return;
     }
-
-    if (input === "u" && tab === "marketplaces" && !detailMarketplace && !detailPiMarketplace) {
-      if (selectedIndex >= 1 && selectedIndex <= marketplaces.length) {
-        const m = marketplaces[selectedIndex - 1];
-        if (m) updateMarketplace(m.name);
-      }
-      return;
+    if (tab === "marketplaces" && !detailMarketplace && !detailPiMarketplace) {
+      if (handleMarketplaceShortcut(input)) return;
     }
-
-    if (input === "r" && tab === "marketplaces" && !detailMarketplace && !detailPiMarketplace) {
-      if (selectedIndex >= 1 && selectedIndex <= marketplaces.length) {
-        const m = marketplaces[selectedIndex - 1];
-        if (m && m.source !== "claude") removeMarketplace(m.name);
-      } else if (showPiFeatures && selectedIndex > piSectionOffset) {
-        const piIdx = selectedIndex - piSectionOffset - 1;
-        const pm = piMarketplaces[piIdx];
-        if (pm && !pm.builtIn) {
-          void removePiMarketplace(pm.name);
-        }
-      }
-      return;
+    if (tab === "sync" && !activeDetail && !detailMarketplace && !diffTarget && !missingSummary) {
+      if (handleSyncShortcut(input)) return;
     }
-
-    if (input === "y" && tab === "sync" && !detailPlugin && !detailMarketplace && !diffTarget && !missingSummary) {
-      if (syncArmed) {
-        const items = syncPreview.filter((item) => syncSelection.has(getSyncItemKey(item)));
-        if (items.length === 0) {
-          notify("Select at least one item to sync.", "warning");
-          setSyncArmed(false);
-          return;
-        }
-        void syncTools(items);
-        setSyncArmed(false);
-        return;
-      }
-      setSyncArmed(true);
-      return;
-    }
-
-    // Open diff/missing summary for sync items
-    if (input === "d" && tab === "sync" && !detailPlugin && !detailMarketplace && !diffTarget && !missingSummary) {
-      const item = syncPreview[selectedIndex];
-      if (item) {
-        openDiffFromSyncItem(item);
-      }
-      return;
-    }
-
-    // Open diff/missing summary for installed managed file entries
-    if (input === "d" && tab === "installed" && !detailPlugin && !detailFile && !detailMarketplace && !detailPiMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary && !discoverSubView) {
-      if (selectedLibraryItem?.kind === "file") {
+    if (tab === "installed" && !activeDetail && !detailMarketplace && !detailPiMarketplace && !detailTool && !diffTarget && !missingSummary && !discoverSubView) {
+      if (input === "d" && selectedLibraryItem?.kind === "file") {
         openDiffFromSyncItem(toFileSyncItem(selectedLibraryItem.file));
         return;
       }
