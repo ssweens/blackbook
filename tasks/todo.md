@@ -155,11 +155,11 @@ const inputRouter = useInputRouter({
 ```
 
 **Tasks:**
-- [ ] Extract input handling into composable hooks per view state
-- [ ] `useListInput(items, onSelect, onBack)` — shared by all list views
-- [ ] `useDetailInput(actions, onAction, onBack)` — shared by all detail views
-- [ ] `useDiffInput()` — diff view keys
-- [ ] App.tsx becomes: render current view, attach current view's input hook
+- [x] Extract input handling into composable hooks per view state (`input-hooks.ts`)
+- [x] `useListInput(items, onSelect, onBack)` — shared list/sub-view input behavior
+- [x] `useDetailInput(actions, onAction, onBack)` — shared detail/action input behavior
+- [x] `useDiffInput()` — diff/missing overlay key handling
+- [x] App.tsx now composes view input hooks (`handleDiffInput` → `handleDetailInput` → `handleListInput`)
 
 ### Phase 6: Unified Marketplace
 **Goal:** One marketplace system, not two.
@@ -197,10 +197,10 @@ interface Marketplace {
 
 | Metric | Before | Current | Target |
 |--------|--------|---------|--------|
-| App.tsx lines | 2131 | **1827 (−304)** | ~1200 |
-| App.tsx if-branches | 245 | **221 (−24)** | ~100 |
+| App.tsx lines | 2131 | **1769 (−362)** | ~1200 |
+| App.tsx if-branches | 245 | **199 (−46)** | ~100 |
 | App.tsx useState hooks | 28 | **20 (−8)** | ~15 |
-| useInput callback | 604 lines | **195 lines (−68%)** ✅ | ~200 |
+| useInput callback | 604 lines | **102 lines (−83%)** ✅ | ~200 |
 | List components | 5 (copy-pasted) | **1 (generic)** ✅ | 1 |
 | Detail components | 6 | **1 (ItemDetail)** ✅ | 1 |
 | Action handlers | 5 | **1 (handleEntityAction)** ✅ | 1 |
@@ -212,9 +212,9 @@ interface Marketplace {
 | spinner/loading boilerplate | 8+ sites | **withSpinner helper** ✅ | 1 |
 | **Deleted component files** | — | **11 files** ✅ | — |
 | **New generic components** | — | **3 (ItemList + ItemDetail + MarketplaceDetailView)** ✅ | — |
-| **New modules** | — | **7 (managed-item, action-dispatch, item-actions, path-utils, marketplace-detail, marketplace-row + store helper)** ✅ | — |
-| **New test count** | 346 | **432 (+86)** ✅ | — |
-| **Net from main** | — | **+4426 / -3609** | — |
+| **New modules** | — | **8 (managed-item, action-dispatch, item-actions, path-utils, marketplace-detail, marketplace-row, input-hooks + store helper)** ✅ | — |
+| **New test count** | 346 | **438 (+92)** ✅ | — |
+| **Net from main** | — | **+4444 / -3685** | — |
 
 ## Execution Order
 

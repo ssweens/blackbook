@@ -43,6 +43,7 @@ import { pluginToManagedItem, fileToManagedItem, piPackageToManagedItem } from "
 import type { ManagedItem } from "./lib/managed-item.js";
 import { getMarketplaceDetailActions, type MarketplaceDetailContext } from "./lib/marketplace-detail.js";
 import { buildMarketplaceRows, type MarketplaceRow } from "./lib/marketplace-row.js";
+import { useDetailInput, useDiffInput, useListInput } from "./lib/input-hooks.js";
 import { handleItemAction } from "./lib/action-dispatch.js";
 import type { Tab, SyncPreviewItem, Plugin, PiPackage, PiMarketplace, DiffInstanceRef, DiscoverSection, DiscoverSubView, ManagedToolRow, FileStatus, Marketplace } from "./lib/types.js";
 
@@ -1130,6 +1131,40 @@ export function App() {
     return false;
   };
 
+  const handleDiffInput = useDiffInput(diffTarget, missingSummary);
+  const handleDetailInput = useDetailInput({
+    activeDetail,
+    activeMarketplaceDetail,
+    detailToolOpen: !!detailTool,
+    detailFile,
+    actionIndex,
+    diffTarget,
+    missingSummary,
+    setActionIndex,
+    onEntityAction: (index) => { void handleEntityAction(index); },
+    onMarketplaceAction: (index) => handleMarketplaceDetailAction(index),
+    onPullback: (file, instance) => { void pullbackFileInstance(file, instance); },
+  });
+  const handleListInput = useListInput({
+    discoverSubView,
+    tab,
+    subViewIndex,
+    maxIndex,
+    selectedIndex,
+    filteredPlugins,
+    marketplaceBrowsePlugins,
+    filteredPiPackages,
+    isOverlayOpen,
+    setSubViewIndex,
+    setSelectedIndex,
+    setDetailPiPackage: (pkg) => { void setDetailPiPackage(pkg); },
+    setActionIndex,
+    setSyncArmed,
+    onOpenPluginDetail: openPluginDetail,
+    onEnterList: handleEnterOnList,
+    onSpaceToggle: handleSpaceToggle,
+  });
+
   useInput((input, key) => {
     if (toolModalAction) { handleToolModalInput(input, key); return; }
 
@@ -1194,102 +1229,9 @@ export function App() {
       return;
     }
 
-    // Up/Down navigation
-    if (key.upArrow) {
-      if (diffTarget || missingSummary) {
-        // DiffView and MissingSummaryView handle their own navigation
-        return;
-      }
-      if (activeDetail || activeMarketplaceDetail) {
-        setActionIndex((i) => Math.max(0, i - 1));
-      } else if (detailTool) {
-        return;
-      } else if (discoverSubView) {
-        // Navigate within sub-view
-        setSubViewIndex((i) => Math.max(0, i - 1));
-      } else {
-        setSelectedIndex(Math.max(0, selectedIndex - 1));
-        if (tab === "sync") {
-          setSyncArmed(false);
-        }
-      }
-      return;
-    }
-    if (key.downArrow) {
-      if (diffTarget || missingSummary) {
-        // DiffView and MissingSummaryView handle their own navigation
-        return;
-      }
-      if (activeDetail) {
-        setActionIndex((i) => Math.min(activeDetail.actions.length - 1, i + 1));
-      } else if (activeMarketplaceDetail) {
-        setActionIndex((i) => Math.min(activeMarketplaceDetail.actions.length - 1, i + 1));
-      } else if (detailTool) {
-        return;
-      } else if (discoverSubView) {
-        // Navigate within sub-view
-        const pluginList = tab === "marketplaces" ? marketplaceBrowsePlugins : filteredPlugins;
-        const maxSubViewIndex = discoverSubView === "plugins" ? pluginList.length - 1 : filteredPiPackages.length - 1;
-        setSubViewIndex((i) => Math.min(maxSubViewIndex, i + 1));
-      } else {
-        setSelectedIndex(Math.min(maxIndex, selectedIndex + 1));
-        if (tab === "sync") {
-          setSyncArmed(false);
-        }
-      }
-      return;
-    }
-
-    // p - pull to source from drifted instance
-    if (input === "p" && detailFile && !diffTarget && !missingSummary) {
-      const pullAction = activeDetail?.actions.find((a) => a.type === "pullback");
-      if (pullAction?.instance) {
-        void pullbackFileInstance(detailFile, pullAction.instance as DiffInstanceRef);
-      }
-      return;
-    }
-
-    // Enter - select
-    if (key.return) {
-      if (activeDetail) {
-        void handleEntityAction(actionIndex);
-        return;
-      }
-
-      if (activeMarketplaceDetail) {
-        handleMarketplaceDetailAction(actionIndex);
-        return;
-      }
-
-      if (detailTool) {
-        return;
-      }
-
-      // Handle sub-view selection (Enter on item in sub-view opens detail)
-      if (discoverSubView) {
-        if (discoverSubView === "plugins") {
-          const list = tab === "marketplaces" ? marketplaceBrowsePlugins : filteredPlugins;
-          const plugin = list[subViewIndex];
-          if (plugin) openPluginDetail(plugin);
-        } else if (discoverSubView === "piPackages") {
-          const pkg = filteredPiPackages[subViewIndex];
-          if (pkg) {
-            setDetailPiPackage(pkg);
-            setActionIndex(0);
-          }
-        }
-        return;
-      }
-
-      handleEnterOnList();
-      return;
-    }
-
-    // Space - toggle install/uninstall
-    if (input === " " && !isOverlayOpen) {
-      handleSpaceToggle();
-      return;
-    }
+    if (handleDiffInput(input, key)) return;
+    if (handleDetailInput(input, key)) return;
+    if (handleListInput(input, key)) return;
 
     // Tab-specific shortcuts
     if (tab === "tools" || detailTool) {
