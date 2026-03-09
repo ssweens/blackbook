@@ -297,11 +297,11 @@ describe("App E2E flows", () => {
     const { stdin, stdout, unmount } = render(<App />);
 
     try {
-      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Tool Status:"));
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Instances:"));
 
       await useStore.getState().installPlugin(createPlugin({ incomplete: true }));
 
-      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Tool Status:"));
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Instances:"));
       expect(stdout.lastFrame()).toContain("Back to plugin list");
     } finally {
       unmount();
@@ -321,12 +321,12 @@ describe("App E2E flows", () => {
     const { stdin, stdout, unmount } = render(<App />);
 
     try {
-      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Tool Status:"));
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Instances:"));
 
       const ok = await useStore.getState().installPlugin(createPlugin({ incomplete: true }));
 
       expect(ok).toBe(false);
-      expect(stdout.lastFrame()).toContain("Tool Status:");
+      expect(stdout.lastFrame()).toContain("Instances:");
     } finally {
       unmount();
     }

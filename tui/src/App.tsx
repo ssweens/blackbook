@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo, useRef } from "react";
+import { join } from "path";
 import { existsSync } from "fs";
 import { Box, Text, useInput, useApp } from "ink";
 import { useStore } from "./lib/store.js";
@@ -36,6 +37,7 @@ import { ComponentManager, getComponentItems } from "./components/ComponentManag
 import { SettingsPanel } from "./components/SettingsPanel.js";
 import { getPluginToolStatus, togglePluginComponent } from "./lib/plugin-status.js";
 import { syncPluginInstances, uninstallPluginFromInstance } from "./lib/install.js";
+import { computePluginDrift, resolvePluginSourcePaths, type PluginDrift } from "./lib/plugin-drift.js";
 import { getToolLifecycleCommand, detectInstallMethodMismatch } from "./lib/tool-lifecycle.js";
 import { getPackageManager } from "./lib/config.js";
 import { setupSourceRepository, shouldShowSourceSetupWizard } from "./lib/source-setup.js";
@@ -122,6 +124,8 @@ export function App() {
 
   const [actionIndex, setActionIndex] = useState(0);
   const [componentManagerMode, setComponentManagerMode] = useState(false);
+  const [detailPluginDrift, setDetailPluginDrift] = useState<PluginDrift | null>(null);
+  const [pluginDriftMap, setPluginDriftMap] = useState<Record<string, PluginDrift>>({});
   const [componentIndex, setComponentIndex] = useState(0);
   const [showAddMarketplace, setShowAddMarketplace] = useState(false);
   const [showSourceSetupWizard, setShowSourceSetupWizard] = useState(false);
@@ -377,6 +381,23 @@ export function App() {
       setDetailFile(refreshed);
     }
   }, [files, detailFile]);
+
+  // Compute drift for all installed plugins (for list badges + detail view)
+  useEffect(() => {
+    if (installedPlugins.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const map: Record<string, PluginDrift> = {};
+      await Promise.all(
+        installedPlugins.map(async (p) => {
+          const drift = await computePluginDrift(p);
+          if (!cancelled) map[p.name] = drift;
+        })
+      );
+      if (!cancelled) setPluginDriftMap(map);
+    })();
+    return () => { cancelled = true; };
+  }, [installedPlugins]);
 
   useEffect(() => {
     if (!syncArmed) return;
@@ -773,7 +794,8 @@ export function App() {
     if (!plugin) return [];
     const toolStatuses = getPluginToolStatus(plugin);
     const isIncomplete = plugin.installed && plugin.incomplete;
-    return buildPluginActions(plugin, toolStatuses, isIncomplete);
+    const drift = detailPluginDrift ?? pluginDriftMap[plugin.name];
+    return buildPluginActions(plugin, toolStatuses, isIncomplete, drift);
   };
 
   const getPluginActionCount = (plugin: typeof detailPlugin) => {
@@ -788,7 +810,10 @@ export function App() {
     const fromInstalled = state.installedPlugins.find(
       (p) => p.name === plugin.name && p.marketplace === plugin.marketplace
     );
-    setDetailPlugin(fromMarketplace || fromInstalled || plugin);
+    const resolved = fromMarketplace || fromInstalled || plugin;
+    setDetailPlugin(resolved);
+    setDetailPluginDrift(null);
+    void computePluginDrift(resolved).then(setDetailPluginDrift);
   };
 
   const refreshDetailPiPackage = (pkg: PiPackage) => {
@@ -952,6 +977,7 @@ export function App() {
     if (key.escape) {
       if (detailPlugin) {
         setDetailPlugin(null);
+        setDetailPluginDrift(null);
         setActionIndex(0);
         setComponentManagerMode(false);
       } else if (detailFile) {
@@ -1093,6 +1119,8 @@ export function App() {
           const plugin = list[subViewIndex];
           if (plugin) {
             setDetailPlugin(plugin);
+            setDetailPluginDrift(null);
+            void computePluginDrift(plugin).then(setDetailPluginDrift);
             setActionIndex(0);
           }
         } else if (discoverSubView === "piPackages") {
@@ -1147,6 +1175,8 @@ export function App() {
         if (item) {
           if (item.kind === "plugin") {
             setDetailPlugin(item.plugin);
+            setDetailPluginDrift(null);
+            void computePluginDrift(item.plugin).then(setDetailPluginDrift);
             setActionIndex(0);
           } else if (item.kind === "tool") {
             const tool = managedTools.find((entry) => entry.toolId === item.toolId);
@@ -1163,6 +1193,8 @@ export function App() {
 
       if (selectedLibraryItem?.kind === "plugin") {
         setDetailPlugin(selectedLibraryItem.plugin);
+        setDetailPluginDrift(null);
+        void computePluginDrift(selectedLibraryItem.plugin).then(setDetailPluginDrift);
         setActionIndex(0);
       } else if (selectedLibraryItem?.kind === "piPackage") {
         setDetailPiPackage(selectedLibraryItem.piPackage);
@@ -1451,6 +1483,53 @@ export function App() {
     if (!action) return;
 
     switch (action.type) {
+      case "diff": {
+        if (!action.toolStatus || !action.instance) break;
+        const sourcePaths = resolvePluginSourcePaths(detailPlugin);
+        if (!sourcePaths) break;
+
+        const pluginDrift = detailPluginDrift ?? pluginDriftMap[detailPlugin.name];
+        if (!pluginDrift) break;
+
+        const inst = tools.find((t) => t.toolId === action.toolStatus!.toolId && t.instanceId === action.toolStatus!.instanceId);
+        if (!inst) break;
+
+        // Combine all drifted components into one DiffTarget
+        const { buildFileDiffTarget } = await import("./lib/diff.js");
+        const allFiles: import("./lib/types.js").DiffFileSummary[] = [];
+        const instance: import("./lib/types.js").DiffInstanceRef = {
+          toolId: inst.toolId,
+          instanceId: inst.instanceId,
+          instanceName: inst.name,
+          configDir: inst.configDir,
+        };
+
+        for (const [key, status] of Object.entries(pluginDrift)) {
+          if (status === "in-sync") continue;
+          const [kind, name] = key.split(":");
+          const subdir = kind === "skill" ? inst.skillsSubdir : kind === "command" ? inst.commandsSubdir : inst.agentsSubdir;
+          if (!subdir) continue;
+
+          const srcSuffix = kind === "skill" ? name : `${name}.md`;
+          const srcPath = join(sourcePaths.pluginDir, `${kind}s`, srcSuffix);
+          const destPath = join(inst.configDir, subdir, srcSuffix);
+
+          try {
+            const dt = buildFileDiffTarget(`${kind}s/${name}`, srcSuffix, srcPath, destPath, instance);
+            allFiles.push(...dt.files);
+          } catch { /* skip */ }
+        }
+
+        useStore.setState({
+          diffTarget: {
+            kind: "file",
+            title: `${detailPlugin.name} — ${inst.name}`,
+            instance,
+            files: allFiles,
+          },
+        });
+        break;
+      }
       case "uninstall":
         await doUninstall(detailPlugin);
         refreshDetailPlugin(detailPlugin);
@@ -1760,6 +1839,7 @@ export function App() {
           selectedAction={actionIndex}
           onAction={() => {}}
           actions={getPluginActions(detailPlugin)}
+          drift={detailPluginDrift ?? pluginDriftMap[detailPlugin.name] ?? undefined}
         />
       ) : detailMarketplace ? (
         <MarketplaceDetail
@@ -1833,6 +1913,7 @@ export function App() {
                     maxHeight={12}
                     nameColumnWidth={libraryNameWidth}
                     marketplaceColumnWidth={marketplaceWidth}
+                    driftMap={pluginDriftMap}
                   />
                 </Box>
               ) : discoverSubView === "piPackages" ? (
@@ -1910,6 +1991,7 @@ export function App() {
                         maxHeight={4}
                         nameColumnWidth={libraryNameWidth}
                         marketplaceColumnWidth={marketplaceWidth}
+                        driftMap={pluginDriftMap}
                       />
                     </Box>
                   )}

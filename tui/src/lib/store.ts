@@ -811,16 +811,20 @@ export const useStore = create<Store>((set, get) => ({
 
       // Replace scanned plugin with marketplace plugin entirely when available
       // Scanned plugins only tell us "something is installed" - for all metadata
-      // (marketplace, description, full component list), use marketplace plugin
+      // (marketplace, description), use marketplace plugin.
+      // But use scanned skills/commands/agents to show what's actually installed on disk.
       const allMarketplacePlugins = enrichedMarketplaces.flatMap((m) => m.plugins);
       const installedWithStatus = installedPlugins.map((scannedPlugin) => {
         const marketplacePlugin = allMarketplacePlugins.find((mp) => mp.name === scannedPlugin.name);
         if (marketplacePlugin) {
-          // Use marketplace plugin entirely - has correct marketplace, description, components
-          // Plugin IS installed (it's in the scanned list), but may be incomplete
+          // Merge marketplace metadata with actually-installed components
           const status = getInstallStatus(marketplacePlugin, true);
           return {
             ...marketplacePlugin,
+            // Override with actually-installed components from scan
+            skills: scannedPlugin.skills,
+            commands: scannedPlugin.commands,
+            agents: scannedPlugin.agents,
             installed: true, // Always true since it was found on disk
             incomplete: status.incomplete,
           };
@@ -857,16 +861,20 @@ export const useStore = create<Store>((set, get) => ({
     }));
     // Replace scanned plugin with marketplace plugin entirely when available
     // Scanned plugins only tell us "something is installed" - for all metadata
-    // (marketplace, description, full component list), use marketplace plugin
+    // (marketplace, description), use marketplace plugin.
+    // But use scanned skills/commands/agents to show what's actually installed on disk.
     const allMarketplacePlugins = marketplaces.flatMap((m) => m.plugins);
     const installedWithStatus = installed.map((scannedPlugin) => {
       const marketplacePlugin = allMarketplacePlugins.find((mp) => mp.name === scannedPlugin.name);
       if (marketplacePlugin) {
-        // Use marketplace plugin entirely - has correct marketplace, description, components
-        // Plugin IS installed (it's in the scanned list), but may be incomplete
+        // Merge marketplace metadata with actually-installed components
         const status = getInstallStatus(marketplacePlugin, true);
         return {
           ...marketplacePlugin,
+          // Override with actually-installed components from scan
+          skills: scannedPlugin.skills,
+          commands: scannedPlugin.commands,
+          agents: scannedPlugin.agents,
           installed: true, // Always true since it was found on disk
           incomplete: status.incomplete,
         };
@@ -1154,7 +1162,6 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   refreshAll: async () => {
-    await pullSourceRepo();
     await get().loadMarketplaces();
     await get().refreshToolDetection();
     await get().loadPiPackages();

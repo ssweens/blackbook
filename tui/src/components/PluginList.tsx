@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
 import type { Plugin } from "../lib/types.js";
+import type { PluginDrift } from "../lib/plugin-drift.js";
 
 interface PluginListProps {
   plugins: Plugin[];
@@ -8,6 +9,7 @@ interface PluginListProps {
   nameColumnWidth?: number;
   marketplaceColumnWidth?: number;
   maxHeight?: number;
+  driftMap?: Record<string, PluginDrift>;
 }
 
 export function PluginList({
@@ -16,6 +18,7 @@ export function PluginList({
   nameColumnWidth,
   marketplaceColumnWidth,
   maxHeight = 12,
+  driftMap,
 }: PluginListProps) {
   const hasSelection = selectedIndex >= 0;
   const effectiveIndex = hasSelection ? selectedIndex : 0;
@@ -69,6 +72,8 @@ export function PluginList({
         const statusIcon = plugin.installed ? "✔" : " ";
         const statusColor = plugin.installed ? "green" : "gray";
         const showIncomplete = Boolean(plugin.installed && plugin.incomplete);
+        const pluginDrift = driftMap?.[plugin.name];
+        const showChanged = Boolean(plugin.installed && pluginDrift && Object.values(pluginDrift).some((s) => s !== "in-sync"));
         const statusLabel = plugin.installed ? "installed" : "";
         const statusWidth = 9;
 
@@ -94,6 +99,12 @@ export function PluginList({
                 <>
                   <Text color="gray"> · </Text>
                   <Text color="yellow">incomplete</Text>
+                </>
+              )}
+              {showChanged && (
+                <>
+                  <Text color="gray"> · </Text>
+                  <Text color="yellow">changed</Text>
                 </>
               )}
             </Box>
