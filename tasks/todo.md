@@ -50,10 +50,12 @@ interface ItemInstanceStatus {
 ```
 
 **Tasks:**
-- [ ] Define `ManagedItem` and `ItemInstanceStatus` in types.ts
-- [ ] Adapter functions: `pluginToManagedItem()`, `fileToManagedItem()`, `piPackageToManagedItem()`
-- [ ] Migrate store to use `ManagedItem[]` instead of separate `installedPlugins`, `files`, `piPackages`
-- [ ] Single `computeItemDrift()` that handles all item kinds (absorbs plugin-drift.ts, file-copy check, directory-sync check)
+- [x] Define `ManagedItem` and `ItemInstanceStatus` in `lib/managed-item.ts`
+- [x] Adapter functions: `pluginToManagedItem()`, `fileToManagedItem()`, `piPackageToManagedItem()`
+- [x] Batch converters: `pluginsToManagedItems()`, `filesToManagedItems()`, `piPackagesToManagedItems()`
+- [x] Tests: 24 tests covering all adapters, status mapping, line count extraction, batch conversion
+- [ ] Migrate store to use `ManagedItem[]` instead of separate `installedPlugins`, `files`, `piPackages` (deferred — blocked on Phase 2-3)
+- [ ] Single `computeItemDrift()` that handles all item kinds (deferred — absorbs plugin-drift.ts, file-copy check, directory-sync check)
 
 ### Phase 2: Generic List Component
 **Goal:** One list component for all entity types.
