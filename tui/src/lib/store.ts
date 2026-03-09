@@ -1153,17 +1153,10 @@ export const useStore = create<Store>((set, get) => ({
 
   installPlugin: async (plugin) => {
     const { notify, clearNotification } = get();
-    const marketplace = get().marketplaces.find(
-      (m) => m.name === plugin.marketplace
-    );
-    if (!marketplace) {
-      notify(`Marketplace not found for ${plugin.name}`, "error");
-      return false;
-    }
-
-    const loadingId = notify(`Installing ${plugin.name}...`, "info", { spinner: true });
-    const result = await installPlugin(plugin, marketplace.url);
-    clearNotification(loadingId);
+    const marketplace = get().marketplaces.find((m) => m.name === plugin.marketplace);
+    if (!marketplace) { notify(`Marketplace not found for ${plugin.name}`, "error"); return false; }
+    const result = await withSpinner(`Installing ${plugin.name}...`,
+      () => installPlugin(plugin, marketplace.url), notify, clearNotification);
     
     if (result.success) {
       await get().refreshAll();
@@ -1197,19 +1190,10 @@ export const useStore = create<Store>((set, get) => ({
   uninstallPlugin: async (plugin) => {
     const { notify, clearNotification } = get();
     const enabledInstances = getEnabledToolInstances();
-    if (enabledInstances.length === 0) {
-      notify("No tools enabled in config.", "error");
-      return false;
-    }
-    const loadingId = notify(`Uninstalling ${plugin.name}...`, "info", { spinner: true });
-    const success = await uninstallPlugin(plugin);
-    clearNotification(loadingId);
+    if (enabledInstances.length === 0) { notify("No tools enabled in config.", "error"); return false; }
+    const success = await withSpinner(`Uninstalling ${plugin.name}...`, () => uninstallPlugin(plugin), notify, clearNotification);
     await get().refreshAll();
-    if (success) {
-      notify(`✓ Uninstalled ${plugin.name}`, "success");
-    } else {
-      notify(`✓ Removed ${plugin.name} from other tools`, "success");
-    }
+    notify(success ? `✓ Uninstalled ${plugin.name}` : `✓ Removed ${plugin.name} from other tools`, "success");
     return success;
   },
 
