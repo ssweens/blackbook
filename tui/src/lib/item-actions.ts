@@ -266,3 +266,29 @@ export function getPiPackageActions(pkg: PiPackage): ItemAction[] {
   actions.push({ id: "back", label: "Back to list", type: "back" });
   return actions;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Unified Entry Point
+// ─────────────────────────────────────────────────────────────────────────────
+
+import type { ManagedItem } from "./managed-item.js";
+import { getPluginToolStatus } from "./plugin-status.js";
+
+/**
+ * Build actions for any ManagedItem — routes to the kind-specific builder.
+ * Pass drift for plugin items to get per-instance diff status.
+ */
+export function buildItemActions(item: ManagedItem, drift?: PluginDrift): ItemAction[] {
+  if (item._plugin) {
+    const toolStatuses = getPluginToolStatus(item._plugin);
+    const isIncomplete = item._plugin.installed && item._plugin.incomplete;
+    return buildPluginActions(item._plugin, toolStatuses, isIncomplete, drift);
+  }
+  if (item._file) {
+    return getFileActions(item._file).map((a, i) => ({ id: `${a.type}_${i}`, ...a }));
+  }
+  if (item._piPackage) {
+    return getPiPackageActions(item._piPackage);
+  }
+  return [];
+}

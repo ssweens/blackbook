@@ -6,7 +6,7 @@ import { useStore } from "./lib/store.js";
 import { TabBar } from "./components/TabBar.js";
 import { SearchBox } from "./components/SearchBox.js";
 import { PluginPreview } from "./components/PluginPreview.js";
-import { buildPluginActions, getFileActions, getPiPackageActions } from "./lib/item-actions.js";
+import { buildItemActions, getPiPackageActions } from "./lib/item-actions.js";
 import { MarketplaceList } from "./components/MarketplaceList.js";
 import { MarketplaceDetail } from "./components/MarketplaceDetail.js";
 import { PiMarketplaceList } from "./components/PiMarketplaceList.js";
@@ -811,24 +811,7 @@ export function App() {
     ]
   );
 
-  const fileActions = useMemo(() => {
-    return detailFile ? getFileActions(detailFile) : [];
-  }, [detailFile]);
-
-  const getPluginActions = (plugin: typeof detailPlugin): ItemAction[] => {
-    if (!plugin) return [];
-    const toolStatuses = getPluginToolStatus(plugin);
-    const isIncomplete = plugin.installed && plugin.incomplete;
-    const drift = detailPluginDrift ?? pluginDriftMap[plugin.name];
-    return buildPluginActions(plugin, toolStatuses, isIncomplete, drift);
-  };
-
-  // FileAction → ItemAction (adds stable id)
-  const toFileItemActions = (actions: ReturnType<typeof getFileActions>): ItemAction[] =>
-    actions.map((a, i) => ({ id: `${a.type}_${i}`, ...a }));
-
-  // Convert PiPackage actions to ItemAction[]
-  const toPiPkgItemActions = getPiPackageActions;
+  const toPiPkgItemActions = getPiPackageActions; // kept for down-arrow handler
 
   // ManagedItem for currently open detail views
   const detailPluginItem = useMemo((): ManagedItem | null => {
@@ -853,18 +836,18 @@ export function App() {
 
   /** Active detail context — the currently-open entity + its actions + metadata node. */
   const activeDetail = useMemo((): { item: ManagedItem; actions: ItemAction[]; metadata: React.ReactNode } | null => {
+    const drift = detailPlugin ? (detailPluginDrift ?? pluginDriftMap[detailPlugin.name]) : undefined;
     if (detailFile && detailFileItem) {
-      return { item: detailFileItem, actions: toFileItemActions(fileActions), metadata: <FileMetadata item={detailFileItem} /> };
+      return { item: detailFileItem, actions: buildItemActions(detailFileItem), metadata: <FileMetadata item={detailFileItem} /> };
     }
     if (detailPlugin && detailPluginItem) {
-      return { item: detailPluginItem, actions: getPluginActions(detailPlugin), metadata: <PluginMetadata item={detailPluginItem} /> };
+      return { item: detailPluginItem, actions: buildItemActions(detailPluginItem, drift), metadata: <PluginMetadata item={detailPluginItem} /> };
     }
     if (detailPiPackage && detailPiPkgItem) {
-      return { item: detailPiPkgItem, actions: toPiPkgItemActions(detailPiPackage), metadata: <PiPackageMetadata item={detailPiPkgItem} /> };
+      return { item: detailPiPkgItem, actions: buildItemActions(detailPiPkgItem), metadata: <PiPackageMetadata item={detailPiPkgItem} /> };
     }
     return null;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detailFile, detailFileItem, detailPlugin, detailPluginItem, detailPiPackage, detailPiPkgItem, fileActions]);
+  }, [detailFile, detailFileItem, detailPlugin, detailPluginItem, detailPluginDrift, pluginDriftMap, detailPiPackage, detailPiPkgItem]);
 
   const refreshDetailPlugin = (plugin: Plugin) => {
     const state = useStore.getState();
@@ -1259,7 +1242,7 @@ export function App() {
 
     // p - pull to source from drifted instance
     if (input === "p" && detailFile && !diffTarget && !missingSummary) {
-      const pullAction = fileActions.find((a) => a.type === "pullback");
+      const pullAction = activeDetail?.actions.find((a) => a.type === "pullback");
       if (pullAction?.instance) {
         void pullbackFileInstance(detailFile, pullAction.instance as DiffInstanceRef);
       }
