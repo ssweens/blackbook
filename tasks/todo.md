@@ -197,21 +197,22 @@ interface Marketplace {
 
 | Metric | Before | Current | Target |
 |--------|--------|---------|--------|
-| App.tsx lines | 2131 | **2084** | ~1200 |
-| App.tsx if-branches | 245 | **238** | ~100 |
-| App.tsx useState hooks | 28 | 28 | ~15 |
-| useInput callback | 604 lines | **402 lines** (−33%) | ~200 |
+| App.tsx lines | 2131 | **1861 (−270)** | ~1200 |
+| App.tsx if-branches | 245 | **231 (−14)** | ~100 |
+| App.tsx useState hooks | 28 | **20 (−8)** | ~15 |
+| useInput callback | 604 lines | **211 lines (−65%)** ✅ | ~200 |
 | List components | 5 (copy-pasted) | **1 (generic)** ✅ | 1 |
 | Detail components | 6 | **1 (ItemDetail)** ✅ | 1 |
 | Action handlers | 5 | **1 (handleEntityAction)** ✅ | 1 |
+| Action builders | 3 (one per type) | **1 (buildItemActions)** ✅ | 1 |
 | Drift detection | 3 implementations | 3 | 1 |
 | Hash function copies | 2 | **1** ✅ | 1 |
 | Source resolution | 4 places | 4 | 1 |
 | **Deleted component files** | — | **8 files, -1406 lines** ✅ | — |
 | **New generic components** | — | **2 (ItemList + ItemDetail)** ✅ | — |
-| **New modules** | — | **3 (managed-item + action-dispatch + item-actions)** ✅ | — |
+| **New modules** | — | **4 (managed-item + action-dispatch + item-actions + managed-item)** ✅ | — |
 | **New test count** | 346 | **432 (+86)** ✅ | — |
-| **Net from main** | — | **+3257 / -1943** | — |
+| **Net from main** | — | **+3405 / -2295** | — |
 
 ## Execution Order
 
