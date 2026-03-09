@@ -1887,7 +1887,7 @@ export function App() {
       <Notifications notifications={notifications} onClear={clearNotification} />
       <HintBar
         tab={tab}
-        hasDetail={Boolean(detailPlugin || detailFile || detailMarketplace || detailPiMarketplace || detailPiPackage || detailTool)}
+        hasDetail={isOverlayOpen}
         toolsHint={toolsHint}
       />
       <StatusBar
