@@ -219,6 +219,9 @@ export function App() {
     [tools]
   );
 
+  const isBrewManagedTool = (binaryPath: string | null | undefined): boolean =>
+    Boolean(binaryPath && (binaryPath.startsWith("/opt/homebrew/") || binaryPath.startsWith("/usr/local/")));
+
   const showPiFeatures = useMemo(() => {
     const piEnabled = tools.some((tool) => tool.toolId === "pi" && tool.enabled);
     const piInstalled = toolDetection.pi?.installed === true;
@@ -727,13 +730,8 @@ export function App() {
       return `(Checking tool statuses... ${pendingToolDetectionCount} remaining · R refresh)`;
     }
 
-    const supportsMigration = (detection: typeof toolDetection[string] | undefined) => {
-      const path = detection?.binaryPath;
-      if (!path || !detection?.installed) return false;
-      const detectedMethod =
-        path.startsWith("/opt/homebrew/") || path.startsWith("/usr/local/") ? "brew" : "unknown";
-      return detectedMethod === "brew";
-    };
+    const supportsMigration = (detection: typeof toolDetection[string] | undefined) =>
+      detection?.installed === true && isBrewManagedTool(detection.binaryPath);
 
     if (detailTool) {
       const detection = toolDetection[detailTool.toolId];
@@ -1106,8 +1104,7 @@ export function App() {
     if (input === "d" && tool && detection?.installed) { openModal("uninstall"); return true; }
     if (input === "m" && tool && detection?.installed) {
       const path = detection.binaryPath ?? "";
-      const canMigrate = path.startsWith("/opt/homebrew/") || path.startsWith("/usr/local/");
-      if (canMigrate) openModal("update", true);
+      if (isBrewManagedTool(path)) openModal("update", true);
       return true;
     }
     if (input === "e" && tool) { setEditingToolId(`${tool.toolId}:${tool.instanceId}`); return true; }
