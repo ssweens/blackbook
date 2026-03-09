@@ -188,8 +188,8 @@ interface Marketplace {
 
 **Tasks:**
 - [x] Delete hash functions from install.ts, import from modules/hash.ts (removed ~60 lines of duplication)
-- [ ] Consolidate source path resolution (marketplace.ts `resolveLocalMarketplacePath`, plugin-drift.ts `resolvePluginSource`, install.ts marketplace base resolution) into one `resolveMarketplaceSourceDir(marketplace)` function
-- [ ] Single `scanPluginContents(dir)` used by both marketplace.ts and install.ts
+- [x] Consolidate `expandTilde` — extracted to `path-utils.ts`, applied to marketplace.ts, plugin-drift.ts, install.ts (3 sites → 1)
+- [x] Single `scanPluginContents(dir)` in path-utils.ts used by marketplace.ts and install.ts (removed ~115 lines of duplication)
 
 ---
 
@@ -197,22 +197,24 @@ interface Marketplace {
 
 | Metric | Before | Current | Target |
 |--------|--------|---------|--------|
-| App.tsx lines | 2131 | **1861 (−270)** | ~1200 |
+| App.tsx lines | 2131 | **1850 (−281)** | ~1200 |
 | App.tsx if-branches | 245 | **231 (−14)** | ~100 |
 | App.tsx useState hooks | 28 | **20 (−8)** | ~15 |
-| useInput callback | 604 lines | **211 lines (−65%)** ✅ | ~200 |
+| useInput callback | 604 lines | **202 lines (−67%)** ✅ | ~200 |
 | List components | 5 (copy-pasted) | **1 (generic)** ✅ | 1 |
 | Detail components | 6 | **1 (ItemDetail)** ✅ | 1 |
 | Action handlers | 5 | **1 (handleEntityAction)** ✅ | 1 |
 | Action builders | 3 (one per type) | **1 (buildItemActions)** ✅ | 1 |
 | Drift detection | 3 implementations | 3 | 1 |
 | Hash function copies | 2 | **1** ✅ | 1 |
-| Source resolution | 4 places | 4 | 1 |
+| expandTilde copies | 3 | **1 (path-utils.ts)** ✅ | 1 |
+| scanPluginContents copies | 2 | **1 (path-utils.ts)** ✅ | 1 |
+| spinner/loading boilerplate | 8+ sites | **withSpinner helper** ✅ | 1 |
 | **Deleted component files** | — | **8 files, -1406 lines** ✅ | — |
 | **New generic components** | — | **2 (ItemList + ItemDetail)** ✅ | — |
-| **New modules** | — | **4 (managed-item + action-dispatch + item-actions + managed-item)** ✅ | — |
+| **New modules** | — | **5 (managed-item, action-dispatch, item-actions, path-utils + store helper)** ✅ | — |
 | **New test count** | 346 | **432 (+86)** ✅ | — |
-| **Net from main** | — | **+3405 / -2295** | — |
+| **Net from main** | — | **+3432 / -2350** | — |
 
 ## Execution Order
 
