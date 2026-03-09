@@ -4,7 +4,7 @@ import { createHash } from "crypto";
 import { fileURLToPath } from "url";
 import { getCacheDir } from "./config.js";
 import { getGitHubToken, isGitHubHost } from "./github.js";
-import { expandTilde } from "./path-utils.js";
+import { expandTilde, scanPluginContents } from "./path-utils.js";
 import type { Marketplace, Plugin } from "./types.js";
 
 export const MARKETPLACE_CACHE_TTL_SECONDS = 600;
@@ -217,68 +217,6 @@ async function fetchPluginContents(
   }
 }
 
-/**
- * Scan a local plugin directory for skills, commands, agents, hooks, and MCP.
- */
-function scanLocalPluginContents(pluginDir: string): {
-  skills: string[];
-  commands: string[];
-  agents: string[];
-  hooks: string[];
-  hasMcp: boolean;
-} {
-  const result = { skills: [] as string[], commands: [] as string[], agents: [] as string[], hooks: [] as string[], hasMcp: false };
-
-  if (!existsSync(pluginDir)) return result;
-
-  try {
-    const skillsDir = join(pluginDir, "skills");
-    if (existsSync(skillsDir)) {
-      for (const item of readdirSync(skillsDir)) {
-        const itemPath = join(skillsDir, item);
-        if (statSync(itemPath).isDirectory() && existsSync(join(itemPath, "SKILL.md"))) {
-          result.skills.push(item);
-        }
-      }
-    }
-
-    const commandsDir = join(pluginDir, "commands");
-    if (existsSync(commandsDir)) {
-      for (const item of readdirSync(commandsDir)) {
-        if (item.endsWith(".md")) {
-          result.commands.push(item.replace(/\.md$/, ""));
-        }
-      }
-    }
-
-    const agentsDir = join(pluginDir, "agents");
-    if (existsSync(agentsDir)) {
-      for (const item of readdirSync(agentsDir)) {
-        if (item.endsWith(".md")) {
-          result.agents.push(item.replace(/\.md$/, ""));
-        }
-      }
-    }
-
-    const hooksDir = join(pluginDir, "hooks");
-    if (existsSync(hooksDir)) {
-      for (const item of readdirSync(hooksDir)) {
-        if (item.endsWith(".md") || item.endsWith(".json")) {
-          result.hooks.push(item.replace(/\.(md|json)$/, ""));
-        }
-      }
-    }
-
-    if (existsSync(join(pluginDir, "mcp.json")) || existsSync(join(pluginDir, ".mcp.json"))) {
-      result.hasMcp = true;
-    }
-  } catch (error) {
-    console.error(`Failed to scan local plugin ${pluginDir}: ${error instanceof Error ? error.message : String(error)}`);
-  }
-
-  return result;
-}
-
 export async function fetchMarketplace(
   marketplace: Marketplace,
   options?: { forceRefresh?: boolean }
@@ -380,7 +318,7 @@ export async function fetchMarketplace(
     // Local marketplace: scan plugin directory for contents
     if (localBaseDir && typeof source === "string" && source.startsWith("./")) {
       const pluginDir = resolve(localBaseDir, source);
-      const contents = scanLocalPluginContents(pluginDir);
+      const contents = scanPluginContents(pluginDir);
       skills = contents.skills;
       commands = contents.commands;
       agents = contents.agents;

@@ -1,9 +1,9 @@
 /**
  * Shared path utilities for resolving local marketplace/plugin source paths.
  */
-import { existsSync, lstatSync } from "fs";
+import { existsSync, lstatSync, readdirSync } from "fs";
 import { homedir } from "os";
-import { dirname, resolve } from "path";
+import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 
 /**
@@ -45,4 +45,55 @@ export function resolveLocalPath(urlOrPath: string, isLocal = false): string | n
   }
 
   return normalized;
+}
+
+export interface PluginContents {
+  skills: string[];
+  commands: string[];
+  agents: string[];
+  hooks: string[];
+  hasMcp: boolean;
+}
+
+/**
+ * Scan a local plugin directory for skills, commands, agents, hooks, and MCP.
+ * Returns empty lists (no throw) if the directory doesn't exist.
+ */
+export function scanPluginContents(pluginDir: string): PluginContents {
+  const result: PluginContents = { skills: [], commands: [], agents: [], hooks: [], hasMcp: false };
+  if (!existsSync(pluginDir)) return result;
+
+  const tryReadDir = (subDir: string) => {
+    try {
+      const dir = join(pluginDir, subDir);
+      return lstatSync(dir).isDirectory() ? readdirSync(dir) : [];
+    } catch { return []; }
+  };
+
+  // Skills: each subdirectory containing SKILL.md
+  for (const item of tryReadDir("skills")) {
+    if (existsSync(join(pluginDir, "skills", item, "SKILL.md"))) result.skills.push(item);
+  }
+
+  // Commands: *.md files
+  for (const item of tryReadDir("commands")) {
+    if (item.endsWith(".md")) result.commands.push(item.replace(/\.md$/, ""));
+  }
+
+  // Agents: *.md files
+  for (const item of tryReadDir("agents")) {
+    if (item.endsWith(".md")) result.agents.push(item.replace(/\.md$/, ""));
+  }
+
+  // Hooks: *.md or *.json files
+  for (const item of tryReadDir("hooks")) {
+    if (item.endsWith(".md") || item.endsWith(".json")) result.hooks.push(item.replace(/\.(md|json)$/, ""));
+  }
+
+  // MCP
+  if (existsSync(join(pluginDir, "mcp.json")) || existsSync(join(pluginDir, ".mcp.json"))) {
+    result.hasMcp = true;
+  }
+
+  return result;
 }

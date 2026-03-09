@@ -37,7 +37,7 @@ import type {
   DiffInstanceRef,
 } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
-import { expandTilde } from "./path-utils.js";
+import { expandTilde, scanPluginContents } from "./path-utils.js";
 import {
   safePath,
   validateGitRef,
@@ -1170,70 +1170,8 @@ function getInstalledPluginsForClaudeInstance(
           contentDir = join(pluginDir, subDirs[subDirs.length - 1]);
         }
 
-        const skills: string[] = [];
-        const commands: string[] = [];
-        const agents: string[] = [];
-        const hooks: string[] = [];
-        let hasMcp = false;
+        const { skills, commands, agents, hooks, hasMcp } = scanPluginContents(contentDir);
         let description = "";
-
-        const skillsDir = join(contentDir, "skills");
-        try {
-          if (lstatSync(skillsDir).isDirectory()) {
-            for (const item of readdirSync(skillsDir)) {
-              const itemPath = join(skillsDir, item);
-              if (existsSync(join(itemPath, "SKILL.md"))) {
-                skills.push(item);
-              }
-            }
-          }
-        } catch {
-          // Ignore if skills directory doesn't exist
-        }
-
-        const commandsDir = join(contentDir, "commands");
-        try {
-          if (lstatSync(commandsDir).isDirectory()) {
-            for (const item of readdirSync(commandsDir)) {
-              if (item.endsWith(".md")) {
-                commands.push(item.replace(/\.md$/, ""));
-              }
-            }
-          }
-        } catch {
-          // Ignore if commands directory doesn't exist
-        }
-
-        const agentsDir = join(contentDir, "agents");
-        try {
-          if (lstatSync(agentsDir).isDirectory()) {
-            for (const item of readdirSync(agentsDir)) {
-              if (item.endsWith(".md")) {
-                agents.push(item.replace(/\.md$/, ""));
-              }
-            }
-          }
-        } catch {
-          // Ignore if agents directory doesn't exist
-        }
-
-        const hooksDir = join(contentDir, "hooks");
-        try {
-          if (lstatSync(hooksDir).isDirectory()) {
-            for (const item of readdirSync(hooksDir)) {
-              hooks.push(item.replace(/\.(md|json)$/, ""));
-            }
-          }
-        } catch {
-          // Ignore if hooks directory doesn't exist
-        }
-
-        if (
-          existsSync(join(contentDir, "mcp.json")) ||
-          existsSync(join(contentDir, ".claude-plugin", "mcp.json"))
-        ) {
-          hasMcp = true;
-        }
 
         const manifestPath = join(
           contentDir,
