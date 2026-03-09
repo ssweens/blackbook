@@ -83,7 +83,7 @@ function ItemList({ items, selectedIndex, maxHeight, columns }: ItemListProps) {
 - [x] Auto-select columns from item kinds; shared `computeItemFlags` for status badges
 - [x] Tests: 20 tests covering rendering, windowing, selection, badges, column auto-selection
 - [x] Wire `ItemList` into App.tsx — replaced all PluginList, FileList, PiPackageList usages
-- [ ] Delete orphaned PluginList, ConfigList, AssetList, FileList, PiPackageList files
+- [x] Delete orphaned PluginList, ConfigList, AssetList, FileList, PiPackageList, PiPackageDetail (-756 lines)
 
 ### Phase 3: Generic Detail Component
 **Goal:** One detail view pattern for all entity types.
@@ -113,9 +113,9 @@ interface ItemAction {
 - [x] Kind-specific metadata components: `PluginMetadata`, `FileMetadata`, `PiPackageMetadata`
 - [x] Shared `ActionRow` rendering for status/diff/action items
 - [x] Tests: 26 tests covering rendering, selection, badges, metadata, action types
-- [ ] Wire `ItemDetail` into App.tsx (replace bespoke detail views one-by-one)
+- [x] Wire `ItemDetail` into App.tsx — replaced PluginDetail, FileDetail, PiPackageDetail rendering
 - [ ] `buildItemActions(item: ManagedItem): ItemAction[]` unified builder (absorbs `buildPluginActions` + `getFileActions`)
-- [ ] Delete PluginDetail, FileDetail, PiPackageDetail after migration
+- [ ] Delete PluginDetail.tsx, FileDetail.tsx after migrating their exported functions
 
 ### Phase 4: Unified Action Dispatch
 **Goal:** One action handler instead of five.
@@ -139,7 +139,7 @@ async function handleItemAction(item: ManagedItem, action: ItemAction) {
 - [x] Single dispatch handles: back, status, diff, missing, sync, install, uninstall, update, install_tool, uninstall_tool, pullback
 - [x] Kind-specific routing via `_plugin`/`_file`/`_piPackage` on ManagedItem
 - [x] Tests: 16 tests covering every action type and edge cases
-- [ ] Wire into App.tsx (replace 5 action handlers with single `handleItemAction` call)
+- [x] Wire into App.tsx — replaced handleFileAction, handlePluginAction, handlePiPackageAction with single handleEntityAction
 
 ### Phase 5: Input Router
 **Goal:** Tame the 245-branch input handler.
@@ -195,17 +195,21 @@ interface Marketplace {
 
 ## Expected Outcome
 
-| Metric | Before | After |
-|--------|--------|-------|
-| App.tsx lines | 2131 | ~800 |
-| App.tsx if-branches | 245 | ~60 |
-| App.tsx useState hooks | 28 | ~10 |
-| List components | 5 (copy-pasted) | 1 (generic) |
-| Detail components | 6 | 2 (ItemDetail + MarketplaceDetail) |
-| Action handlers | 5 | 1 |
-| Drift detection | 3 implementations | 1 |
-| Hash function copies | 2 | 1 |
-| Source resolution | 4 places | 1 |
+| Metric | Before | Current | Target |
+|--------|--------|---------|--------|
+| App.tsx lines | 2131 | 2135 | ~1200 |
+| App.tsx if-branches | 245 | 244 | ~100 |
+| App.tsx useState hooks | 28 | 28 | ~15 |
+| List components | 5 (copy-pasted) | **1 (generic)** ✅ | 1 |
+| Detail components | 6 | **3 (ItemDetail + MarketplaceDetail + ToolDetail)** ✅ | 3 |
+| Action handlers | 5 | **3 (handleEntityAction + 2 marketplace)** ✅ | 2 |
+| Drift detection | 3 implementations | 3 | 1 |
+| Hash function copies | 2 | **1** ✅ | 1 |
+| Source resolution | 4 places | 4 | 1 |
+| **Deleted component files** | — | **6 files, -756 lines** ✅ | — |
+| **New generic components** | — | **2 (ItemList + ItemDetail)** ✅ | — |
+| **New modules** | — | **2 (managed-item + action-dispatch)** ✅ | — |
+| **New test count** | 346 | **432 (+86)** ✅ | — |
 
 ## Execution Order
 
