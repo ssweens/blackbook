@@ -177,11 +177,11 @@ interface Marketplace {
 ```
 
 **Tasks:**
-- [ ] Merge `fetchMarketplace` and Pi marketplace fetching into one flow
+- [x] Merge `fetchMarketplace` and Pi marketplace fetching into one module flow (`marketplace.ts` now exports both plugin + pi marketplace loaders)
 - [x] MarketplaceList shows all marketplaces (both sources) via unified row model (`buildMarketplaceRows`)
 - [x] MarketplaceDetail works for both (`MarketplaceDetailView` + unified action model)
 - [x] Delete PiMarketplaceList, PiMarketplaceDetail
-- [ ] Merge `pi-marketplace.ts` into `marketplace.ts`
+- [x] Merge `pi-marketplace.ts` into `marketplace.ts`
 
 ### Phase 7: Deduplicate Infrastructure
 **Goal:** Remove copy-pasted utilities.
@@ -214,7 +214,7 @@ interface Marketplace {
 | **New generic components** | — | **3 (ItemList + ItemDetail + MarketplaceDetailView)** ✅ | — |
 | **New modules** | — | **7 (managed-item, action-dispatch, item-actions, path-utils, marketplace-detail, marketplace-row + store helper)** ✅ | — |
 | **New test count** | 346 | **432 (+86)** ✅ | — |
-| **Net from main** | — | **+3718 / -2970** | — |
+| **Net from main** | — | **+4426 / -3609** | — |
 
 ## Execution Order
 

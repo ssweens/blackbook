@@ -19,7 +19,7 @@ import type {
   ManagedToolRow,
   ToolDetectionResult,
 } from "./types.js";
-import { loadAllPiMarketplaces, getAllPiPackages, loadPiSettings, isPackageInstalled, fetchNpmPackageDetails } from "./pi-marketplace.js";
+import { fetchMarketplace, loadAllPiMarketplaces, getAllPiPackages, loadPiSettings, isPackageInstalled, fetchNpmPackageDetails } from "./marketplace.js";
 import { installPiPackage, removePiPackage, updatePiPackage } from "./pi-install.js";
 import {
   parseMarketplaces,
@@ -51,7 +51,6 @@ import { globCopyModule } from "./modules/glob-copy.js";
 import { buildFileDiffTarget, buildFileMissingSummary } from "./diff.js";
 import { buildStateKey } from "./state.js";
 import type { OrchestratorStep } from "./modules/orchestrator.js";
-import { fetchMarketplace } from "./marketplace.js";
 import { getManagedToolRows } from "./tool-view.js";
 import { detectTool } from "./tool-detect.js";
 import { TOOL_REGISTRY, getToolRegistryEntry } from "./tool-registry.js";
