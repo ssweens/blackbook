@@ -178,9 +178,9 @@ interface Marketplace {
 
 **Tasks:**
 - [ ] Merge `fetchMarketplace` and Pi marketplace fetching into one flow
-- [ ] MarketplaceList shows all marketplaces (both sources)
-- [ ] MarketplaceDetail works for both
-- [ ] Delete PiMarketplaceList, PiMarketplaceDetail
+- [x] MarketplaceList shows all marketplaces (both sources) via unified row model (`buildMarketplaceRows`)
+- [x] MarketplaceDetail works for both (`MarketplaceDetailView` + unified action model)
+- [x] Delete PiMarketplaceList, PiMarketplaceDetail
 - [ ] Merge `pi-marketplace.ts` into `marketplace.ts`
 
 ### Phase 7: Deduplicate Infrastructure
@@ -197,10 +197,10 @@ interface Marketplace {
 
 | Metric | Before | Current | Target |
 |--------|--------|---------|--------|
-| App.tsx lines | 2131 | **1850 (−281)** | ~1200 |
-| App.tsx if-branches | 245 | **231 (−14)** | ~100 |
+| App.tsx lines | 2131 | **1827 (−304)** | ~1200 |
+| App.tsx if-branches | 245 | **221 (−24)** | ~100 |
 | App.tsx useState hooks | 28 | **20 (−8)** | ~15 |
-| useInput callback | 604 lines | **202 lines (−67%)** ✅ | ~200 |
+| useInput callback | 604 lines | **195 lines (−68%)** ✅ | ~200 |
 | List components | 5 (copy-pasted) | **1 (generic)** ✅ | 1 |
 | Detail components | 6 | **1 (ItemDetail)** ✅ | 1 |
 | Action handlers | 5 | **1 (handleEntityAction)** ✅ | 1 |
@@ -210,11 +210,11 @@ interface Marketplace {
 | expandTilde copies | 3 | **1 (path-utils.ts)** ✅ | 1 |
 | scanPluginContents copies | 2 | **1 (path-utils.ts)** ✅ | 1 |
 | spinner/loading boilerplate | 8+ sites | **withSpinner helper** ✅ | 1 |
-| **Deleted component files** | — | **8 files, -1406 lines** ✅ | — |
-| **New generic components** | — | **2 (ItemList + ItemDetail)** ✅ | — |
-| **New modules** | — | **5 (managed-item, action-dispatch, item-actions, path-utils + store helper)** ✅ | — |
+| **Deleted component files** | — | **11 files** ✅ | — |
+| **New generic components** | — | **3 (ItemList + ItemDetail + MarketplaceDetailView)** ✅ | — |
+| **New modules** | — | **7 (managed-item, action-dispatch, item-actions, path-utils, marketplace-detail, marketplace-row + store helper)** ✅ | — |
 | **New test count** | 346 | **432 (+86)** ✅ | — |
-| **Net from main** | — | **+3432 / -2350** | — |
+| **Net from main** | — | **+3718 / -2970** | — |
 
 ## Execution Order
 
