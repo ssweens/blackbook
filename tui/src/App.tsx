@@ -1135,9 +1135,7 @@ export function App() {
     }
 
     // Don't handle input when modal is open (modal handles its own input)
-    if (showSourceSetupWizard || showAddMarketplace || showAddPiMarketplace || editingToolId) {
-      return;
-    }
+    if (modalVisible || editingToolId) { return; }
 
     // Component manager mode
     if (componentManagerMode && detailPlugin) { handleComponentManagerInput(input, key); return; }
@@ -1153,8 +1151,6 @@ export function App() {
       exit();
       return;
     }
-
-    // isOverlayOpen defined at component scope below
 
     // Tab/Shift+Tab for section navigation in Discover/Installed tabs
     if (key.tab && (tab === "discover" || tab === "installed") && !discoverSubView && !isOverlayOpen) {
