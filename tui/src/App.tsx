@@ -1377,7 +1377,7 @@ export function App() {
     }
 
     // Sort shortcuts (s to cycle sort, r to reverse) - only when search not focused
-    if ((tab === "discover" || tab === "installed") && !detailPlugin && !detailFile && !searchFocused) {
+    if ((tab === "discover" || tab === "installed") && !isOverlayOpen && !searchFocused) {
       if (input === "s") {
         setSort((s) => {
           if (s.by === "default") return { by: "name", dir: "asc" };
@@ -1663,20 +1663,10 @@ export function App() {
           onSubmit={handleToolConfigSave}
           onCancel={() => setEditingToolId(null)}
         />
-      ) : showAddMarketplace ? (
-        <AddMarketplaceModal
-          onSubmit={handleAddMarketplace}
-          onCancel={() => setShowAddMarketplace(false)}
-        />
-      ) : showAddPiMarketplace ? (
-        <AddMarketplaceModal
-          type="pi"
-          onSubmit={(name, source) => {
-            void addPiMarketplace(name, source);
-            setShowAddPiMarketplace(false);
-          }}
-          onCancel={() => setShowAddPiMarketplace(false)}
-        />
+      ) : modalVisible === "addMarketplace" ? (
+        <AddMarketplaceModal onSubmit={handleAddMarketplace} onCancel={() => setModalVisible(null)} />
+      ) : modalVisible === "addPiMarketplace" ? (
+        <AddMarketplaceModal type="pi" onSubmit={(name, source) => { void addPiMarketplace(name, source); setModalVisible(null); }} onCancel={() => setModalVisible(null)} />
       ) : toolModalAction && activeToolForModal ? (
         <ToolActionModal
           toolName={activeToolForModal.displayName}
@@ -1910,7 +1900,7 @@ export function App() {
         ) : null
       )}
 
-      {tab === "sync" && !detailPlugin && !detailMarketplace && !detailPiPackage && !detailTool && (
+      {tab === "sync" && !isOverlayOpen && (
         <SyncPreview item={syncPreview[selectedIndex] ?? null} />
       )}
 
