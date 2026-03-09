@@ -433,8 +433,8 @@ export function loadPiSettings(): PiSettings {
     // Ignore errors
   }
 
-  const npmPackages = scanGlobalNpmForPiPackages();
-  for (const pkgName of npmPackages) {
+  const npmPackages = scanGlobalNpmForPiPackagesWithVersions();
+  for (const pkgName of npmPackages.keys()) {
     const source = `npm:${pkgName}`;
     if (!packages.includes(source)) packages.push(source);
   }
@@ -442,17 +442,43 @@ export function loadPiSettings(): PiSettings {
   return { packages };
 }
 
-function scanGlobalNpmForPiPackages(): string[] {
-  const packages: string[] = [];
-
-  let globalNodeModules: string;
+function getGlobalNodeModulesPath(): string | null {
   try {
     const result = execSync("npm", ["root", "-g"], { encoding: "utf-8", timeout: 5000 });
-    globalNodeModules = result.trim();
-    if (!existsSync(globalNodeModules)) return [];
+    const globalNodeModules = result.trim();
+    if (!existsSync(globalNodeModules)) return null;
+    return globalNodeModules;
   } catch {
-    return [];
+    return null;
   }
+}
+
+function parsePiPackageVersion(pkgPath: string): { isPiPackage: boolean; version: string | null } {
+  const pkgJsonPath = join(pkgPath, "package.json");
+  if (!existsSync(pkgJsonPath)) return { isPiPackage: false, version: null };
+
+  try {
+    const content = readFileSync(pkgJsonPath, "utf-8");
+    const pkg = JSON.parse(content);
+
+    const isPiPackage =
+      (pkg.pi?.extensions && Array.isArray(pkg.pi.extensions) && pkg.pi.extensions.length > 0) ||
+      (Array.isArray(pkg.keywords) && pkg.keywords.includes("pi-package"));
+
+    return {
+      isPiPackage,
+      version: typeof pkg.version === "string" ? pkg.version : null,
+    };
+  } catch {
+    return { isPiPackage: false, version: null };
+  }
+}
+
+function scanGlobalNpmForPiPackagesWithVersions(): Map<string, string | null> {
+  const packages = new Map<string, string | null>();
+
+  const globalNodeModules = getGlobalNodeModulesPath();
+  if (!globalNodeModules) return packages;
 
   try {
     const entries = readdirSync(globalNodeModules);
@@ -466,9 +492,11 @@ function scanGlobalNpmForPiPackages(): string[] {
         try {
           const scopedEntries = readdirSync(entryPath);
           for (const scopedPkg of scopedEntries) {
+            const name = `${entry}/${scopedPkg}`;
             const pkgPath = join(entryPath, scopedPkg);
-            if (isPiPackageDir(pkgPath)) {
-              packages.push(`${entry}/${scopedPkg}`);
+            const { isPiPackage, version } = parsePiPackageVersion(pkgPath);
+            if (isPiPackage) {
+              packages.set(name, version);
             }
           }
         } catch {
@@ -477,7 +505,8 @@ function scanGlobalNpmForPiPackages(): string[] {
         continue;
       }
 
-      if (isPiPackageDir(entryPath)) packages.push(entry);
+      const { isPiPackage, version } = parsePiPackageVersion(entryPath);
+      if (isPiPackage) packages.set(entry, version);
     }
   } catch {
     // Ignore errors
@@ -486,26 +515,8 @@ function scanGlobalNpmForPiPackages(): string[] {
   return packages;
 }
 
-function isPiPackageDir(pkgPath: string): boolean {
-  const pkgJsonPath = join(pkgPath, "package.json");
-  if (!existsSync(pkgJsonPath)) return false;
-
-  try {
-    const content = readFileSync(pkgJsonPath, "utf-8");
-    const pkg = JSON.parse(content);
-
-    if (pkg.pi?.extensions && Array.isArray(pkg.pi.extensions) && pkg.pi.extensions.length > 0) {
-      return true;
-    }
-
-    if (Array.isArray(pkg.keywords) && pkg.keywords.includes("pi-package")) {
-      return true;
-    }
-
-    return false;
-  } catch {
-    return false;
-  }
+export function getGlobalNpmPiPackageVersions(): Map<string, string | null> {
+  return scanGlobalNpmForPiPackagesWithVersions();
 }
 
 function resolvePackagePath(source: string): string {
@@ -663,18 +674,31 @@ export async function fetchNpmPackages(): Promise<PiPackage[]> {
     }
 
     const settings = loadPiSettings();
+    const installedVersions = getGlobalNpmPiPackageVersions();
 
     return allObjects.map((item): PiPackage => {
       const pkg = item.package;
       const source = `npm:${pkg.name}`;
+      const installed = isPackageInstalled(source, settings);
+      const latestVersion = pkg.version ?? "unknown";
+      const installedVersion = installedVersions.get(pkg.name) ?? undefined;
+      const hasUpdate = Boolean(
+        installed &&
+        installedVersion &&
+        latestVersion !== "unknown" &&
+        installedVersion !== latestVersion,
+      );
+
       return {
         name: pkg.name,
         description: pkg.description ?? "",
-        version: pkg.version ?? "unknown",
+        version: latestVersion,
         source,
         sourceType: "npm",
         marketplace: "npm",
-        installed: isPackageInstalled(source, settings),
+        installed,
+        installedVersion,
+        hasUpdate,
         extensions: [],
         skills: [],
         prompts: [],
@@ -911,6 +935,8 @@ export async function fetchNpmPackageDetails(packageName: string): Promise<Parti
     const piManifest = versionData?.pi;
 
     const result: Partial<PiPackage> = {};
+
+    if (latestVersion) result.version = latestVersion;
 
     const description = data.description || versionData?.description;
     if (description) result.description = description;

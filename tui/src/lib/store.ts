@@ -19,7 +19,7 @@ import type {
   ManagedToolRow,
   ToolDetectionResult,
 } from "./types.js";
-import { fetchMarketplace, loadAllPiMarketplaces, getAllPiPackages, loadPiSettings, isPackageInstalled, fetchNpmPackageDetails } from "./marketplace.js";
+import { fetchMarketplace, loadAllPiMarketplaces, getAllPiPackages, loadPiSettings, isPackageInstalled, fetchNpmPackageDetails, getGlobalNpmPiPackageVersions } from "./marketplace.js";
 import { installPiPackage, removePiPackage, updatePiPackage } from "./pi-install.js";
 import {
   parseMarketplaces,
@@ -65,6 +65,8 @@ import {
   syncPluginInstances,
   manifestPath,
 } from "./install.js";
+import { filesToManagedItems, piPackagesToManagedItems, pluginsToManagedItems } from "./managed-item.js";
+import type { ManagedItem } from "./managed-item.js";
 
 interface Actions {
   setTab: (tab: Tab) => void;
@@ -162,6 +164,18 @@ function getInstallStatus(plugin: Plugin, installedAny: boolean): InstallStatus 
 
   const incomplete = supportedEnabled.some((status) => !status.installed);
   return { installed: true, incomplete };
+}
+
+function composeManagedItems(
+  installedPlugins: Plugin[],
+  files: FileStatus[],
+  piPackages: PiPackage[],
+): ManagedItem[] {
+  return [
+    ...pluginsToManagedItems(installedPlugins),
+    ...filesToManagedItems(files),
+    ...piPackagesToManagedItems(piPackages),
+  ];
 }
 
 
@@ -330,6 +344,7 @@ export const useStore = create<Store>((set, get) => ({
   // Pi packages state
   piPackages: [],
   piMarketplaces: [],
+  managedItems: [],
   // Section navigation
   currentSection: "plugins" as DiscoverSection,
   discoverSubView: null as DiscoverSubView,
@@ -639,7 +654,12 @@ export const useStore = create<Store>((set, get) => ({
     const piEnabled = tools.some((t) => t.toolId === "pi" && t.enabled);
     const piInstalled = get().toolDetection.pi?.installed === true;
     if (!piEnabled && !piInstalled) {
-      set({ piPackages: [], piMarketplaces: [] });
+      const state = get();
+      set({
+        piPackages: [],
+        piMarketplaces: [],
+        managedItems: composeManagedItems(state.installedPlugins, state.files, []),
+      });
       return;
     }
 
@@ -650,6 +670,7 @@ export const useStore = create<Store>((set, get) => ({
       // Add installed npm packages that aren't in any marketplace
       const settings = loadPiSettings();
       const existingSources = new Set(packages.map((p) => p.source.toLowerCase()));
+      const installedVersions = getGlobalNpmPiPackageVersions();
 
       for (const source of settings.packages) {
         if (existingSources.has(source.toLowerCase())) continue;
@@ -660,14 +681,18 @@ export const useStore = create<Store>((set, get) => ({
         const details = await fetchNpmPackageDetails(pkgName);
         if (!details) continue;
 
+        const installedVersion = installedVersions.get(pkgName) ?? undefined;
+        const latestVersion = details.version ?? "0.0.0";
         const pkg: PiPackage = {
           name: details.name ?? pkgName,
           description: details.description ?? "",
-          version: details.version ?? "0.0.0",
+          version: latestVersion,
           source,
           sourceType: "npm",
           marketplace: "npm",
           installed: true,
+          installedVersion,
+          hasUpdate: Boolean(installedVersion && installedVersion !== latestVersion),
           extensions: details.extensions ?? [],
           skills: details.skills ?? [],
           prompts: details.prompts ?? [],
@@ -680,10 +705,20 @@ export const useStore = create<Store>((set, get) => ({
         packages.push(pkg);
       }
 
-      set({ piPackages: packages, piMarketplaces: marketplaces });
+      const state = get();
+      set({
+        piPackages: packages,
+        piMarketplaces: marketplaces,
+        managedItems: composeManagedItems(state.installedPlugins, state.files, packages),
+      });
     } catch (error) {
       console.error("Failed to load Pi packages:", error);
-      set({ piPackages: [], piMarketplaces: [] });
+      const state = get();
+      set({
+        piPackages: [],
+        piMarketplaces: [],
+        managedItems: composeManagedItems(state.installedPlugins, state.files, []),
+      });
     }
   },
 
@@ -819,11 +854,13 @@ export const useStore = create<Store>((set, get) => ({
         };
       });
 
+      const state = get();
       set({
         marketplaces: enrichedMarketplaces,
         installedPlugins: installedWithStatus,
         tools,
         managedTools: getManagedToolRows(),
+        managedItems: composeManagedItems(installedWithStatus, state.files, state.piPackages),
         loading: false,
       });
     } catch (e) {
@@ -868,11 +905,13 @@ export const useStore = create<Store>((set, get) => ({
         incomplete: status.incomplete,
       };
     });
+    const state = get();
     set({
       installedPlugins: installedWithStatus,
       marketplaces,
       tools: getToolInstances(),
       managedTools: getManagedToolRows(),
+      managedItems: composeManagedItems(installedWithStatus, state.files, state.piPackages),
     });
   },
 
@@ -880,13 +919,21 @@ export const useStore = create<Store>((set, get) => ({
     // Only load files when YAML config exists
     const configPath = getYamlConfigPath();
     if (!configPath.endsWith(".yaml")) {
-      set({ files: [] });
+      const state = get();
+      set({
+        files: [],
+        managedItems: composeManagedItems(state.installedPlugins, [], state.piPackages),
+      });
       return [];
     }
 
     const configResult = loadYamlConfig(configPath);
     if (configResult.errors.length > 0) {
-      set({ files: [] });
+      const state = get();
+      set({
+        files: [],
+        managedItems: composeManagedItems(state.installedPlugins, [], state.piPackages),
+      });
       return [];
     }
 
@@ -1138,7 +1185,11 @@ export const useStore = create<Store>((set, get) => ({
       }
     }
 
-    set({ files });
+    const state = get();
+    set({
+      files,
+      managedItems: composeManagedItems(state.installedPlugins, files, state.piPackages),
+    });
     return files;
   },
 

@@ -186,6 +186,7 @@ export interface AppState {
   // Pi packages state
   piPackages: PiPackage[];
   piMarketplaces: PiMarketplace[];
+  managedItems: import("./managed-item.js").ManagedItem[];
   // Section navigation
   currentSection: DiscoverSection;
   discoverSubView: DiscoverSubView;

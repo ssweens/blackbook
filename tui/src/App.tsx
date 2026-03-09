@@ -32,7 +32,8 @@ import { ComponentManager, getComponentItems } from "./components/ComponentManag
 import { SettingsPanel } from "./components/SettingsPanel.js";
 import { getPluginToolStatus, togglePluginComponent } from "./lib/plugin-status.js";
 import { syncPluginInstances, uninstallPluginFromInstance } from "./lib/install.js";
-import { computePluginDrift, resolvePluginSourcePaths, type PluginDrift } from "./lib/plugin-drift.js";
+import { resolvePluginSourcePaths, type PluginDrift } from "./lib/plugin-drift.js";
+import { computeItemDrift } from "./lib/item-drift.js";
 import { buildFileDiffTarget } from "./lib/diff.js";
 import { getToolLifecycleCommand, detectInstallMethodMismatch } from "./lib/tool-lifecycle.js";
 import { getPackageManager } from "./lib/config.js";
@@ -56,8 +57,9 @@ export function App() {
     tab,
     setTab,
     marketplaces,
-    installedPlugins,
-    files,
+    managedItems,
+    installedPlugins: legacyInstalledPlugins,
+    files: legacyFiles,
     tools,
     managedTools,
     toolDetection,
@@ -107,7 +109,7 @@ export function App() {
     closeMissingSummary,
     pullbackFileInstance,
     // Pi packages
-    piPackages,
+    piPackages: legacyPiPackages,
     piMarketplaces,
     detailPiPackage,
     setDetailPiPackage,
@@ -206,6 +208,28 @@ export function App() {
     }
     return `file:${item.file.name}`;
   };
+
+  const installedPlugins = useMemo(() => {
+    const fromManaged = managedItems
+      .filter((item): item is ManagedItem & { _plugin: Plugin } => item.kind === "plugin" && !!item._plugin)
+      .map((item) => item._plugin);
+    return fromManaged.length > 0 ? fromManaged : legacyInstalledPlugins;
+  }, [managedItems, legacyInstalledPlugins]);
+
+  const files = useMemo(() => {
+    const fromManaged = managedItems
+      .filter((item): item is ManagedItem & { _file: FileStatus } =>
+        (item.kind === "file" || item.kind === "config" || item.kind === "asset") && !!item._file)
+      .map((item) => item._file);
+    return fromManaged.length > 0 ? fromManaged : legacyFiles;
+  }, [managedItems, legacyFiles]);
+
+  const piPackages = useMemo(() => {
+    const fromManaged = managedItems
+      .filter((item): item is ManagedItem & { _piPackage: PiPackage } => item.kind === "pi-package" && !!item._piPackage)
+      .map((item) => item._piPackage);
+    return fromManaged.length > 0 ? fromManaged : legacyPiPackages;
+  }, [managedItems, legacyPiPackages]);
 
   const toFileSyncItem = (file: typeof files[number]): SyncPreviewItem => {
     const missingInstances = file.instances
@@ -394,8 +418,8 @@ export function App() {
       const map: Record<string, PluginDrift> = {};
       await Promise.all(
         installedPlugins.map(async (p) => {
-          const drift = await computePluginDrift(p);
-          if (!cancelled) map[p.name] = drift;
+          const drift = await computeItemDrift(pluginToManagedItem(p));
+          if (!cancelled && drift.kind === "plugin") map[p.name] = drift.plugin;
         })
       );
       if (!cancelled) setPluginDriftMap(map);
@@ -875,7 +899,9 @@ export function App() {
     const resolved = fromMarketplace || fromInstalled || plugin;
     setDetailPlugin(resolved);
     setDetailPluginDrift(null);
-    void computePluginDrift(resolved).then(setDetailPluginDrift);
+    void computeItemDrift(pluginToManagedItem(resolved)).then((drift) => {
+      if (drift.kind === "plugin") setDetailPluginDrift(drift.plugin);
+    });
   };
 
   const refreshDetailPiPackage = (pkg: PiPackage) => {
@@ -977,7 +1003,9 @@ export function App() {
 
   const openPluginDetail = (plugin: Plugin) => {
     setDetailPlugin(plugin); setDetailPluginDrift(null);
-    void computePluginDrift(plugin).then(setDetailPluginDrift);
+    void computeItemDrift(pluginToManagedItem(plugin)).then((drift) => {
+      if (drift.kind === "plugin") setDetailPluginDrift(drift.plugin);
+    });
     setActionIndex(0);
   };
 

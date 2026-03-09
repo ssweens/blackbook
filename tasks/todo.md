@@ -54,8 +54,8 @@ interface ItemInstanceStatus {
 - [x] Adapter functions: `pluginToManagedItem()`, `fileToManagedItem()`, `piPackageToManagedItem()`
 - [x] Batch converters: `pluginsToManagedItems()`, `filesToManagedItems()`, `piPackagesToManagedItems()`
 - [x] Tests: 24 tests covering all adapters, status mapping, line count extraction, batch conversion
-- [ ] Migrate store to use `ManagedItem[]` instead of separate `installedPlugins`, `files`, `piPackages` (deferred — blocked on Phase 2-3)
-- [ ] Single `computeItemDrift()` that handles all item kinds (deferred — absorbs plugin-drift.ts, file-copy check, directory-sync check)
+- [x] Migrate store to maintain canonical `managedItems` (`ManagedItem[]`) alongside legacy arrays for compatibility
+- [x] Add single `computeItemDrift()` entrypoint for all item kinds (`lib/item-drift.ts`) and route plugin drift through it in App
 
 ### Phase 2: Generic List Component
 **Goal:** One list component for all entity types.
@@ -114,8 +114,8 @@ interface ItemAction {
 - [x] Shared `ActionRow` rendering for status/diff/action items
 - [x] Tests: 26 tests covering rendering, selection, badges, metadata, action types
 - [x] Wire `ItemDetail` into App.tsx — replaced PluginDetail, FileDetail, PiPackageDetail rendering
-- [ ] `buildItemActions(item: ManagedItem): ItemAction[]` unified builder (absorbs `buildPluginActions` + `getFileActions`)
-- [ ] Delete PluginDetail.tsx, FileDetail.tsx after migrating their exported functions
+- [x] `buildItemActions(item: ManagedItem): ItemAction[]` unified builder (absorbs `buildPluginActions` + `getFileActions`)
+- [x] Delete PluginDetail.tsx, FileDetail.tsx after migrating their exported functions
 
 ### Phase 4: Unified Action Dispatch
 **Goal:** One action handler instead of five.
@@ -197,8 +197,8 @@ interface Marketplace {
 
 | Metric | Before | Current | Target |
 |--------|--------|---------|--------|
-| App.tsx lines | 2131 | **1769 (−362)** | ~1200 |
-| App.tsx if-branches | 245 | **199 (−46)** | ~100 |
+| App.tsx lines | 2131 | **1797 (−334)** | ~1200 |
+| App.tsx if-branches | 245 | **201 (−44)** | ~100 |
 | App.tsx useState hooks | 28 | **20 (−8)** | ~15 |
 | useInput callback | 604 lines | **102 lines (−83%)** ✅ | ~200 |
 | List components | 5 (copy-pasted) | **1 (generic)** ✅ | 1 |
@@ -212,9 +212,9 @@ interface Marketplace {
 | spinner/loading boilerplate | 8+ sites | **withSpinner helper** ✅ | 1 |
 | **Deleted component files** | — | **11 files** ✅ | — |
 | **New generic components** | — | **3 (ItemList + ItemDetail + MarketplaceDetailView)** ✅ | — |
-| **New modules** | — | **8 (managed-item, action-dispatch, item-actions, path-utils, marketplace-detail, marketplace-row, input-hooks + store helper)** ✅ | — |
-| **New test count** | 346 | **438 (+92)** ✅ | — |
-| **Net from main** | — | **+4444 / -3685** | — |
+| **New modules** | — | **9 (managed-item, action-dispatch, item-actions, path-utils, marketplace-detail, marketplace-row, input-hooks, item-drift + store helper)** ✅ | — |
+| **New test count** | 346 | **441 (+95)** ✅ | — |
+| **Net from main** | — | **+4926 / -3704** | — |
 
 ## Execution Order
 
