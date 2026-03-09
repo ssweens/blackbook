@@ -893,41 +893,23 @@ export function App() {
 
   // ── Extracted input handlers ───────────────────────────────────────────
 
+  const closeDetail = () => { setActionIndex(0); };
   const handleEscape = () => {
     if (detailPlugin) {
-      setDetailPlugin(null);
-      setDetailPluginDrift(null);
-      setActionIndex(0);
-      setComponentManagerMode(false);
-    } else if (detailFile) {
-      setDetailFile(null);
-      setActionIndex(0);
-    } else if (detailMarketplace) {
-      setDetailMarketplace(null);
-      setActionIndex(0);
-    } else if (detailPiMarketplace) {
-      setDetailPiMarketplace(null);
-      setActionIndex(0);
-    } else if (detailPiPackage) {
-      setDetailPiPackage(null);
-      setActionIndex(0);
-    } else if (detailTool) {
-      setDetailToolKey(null);
+      setDetailPlugin(null); setDetailPluginDrift(null);
+      setComponentManagerMode(false); closeDetail();
+    } else if (detailFile) { setDetailFile(null); closeDetail();
+    } else if (detailMarketplace) { setDetailMarketplace(null); closeDetail();
+    } else if (detailPiMarketplace) { setDetailPiMarketplace(null); closeDetail();
+    } else if (detailPiPackage) { setDetailPiPackage(null); closeDetail();
+    } else if (detailTool) { setDetailToolKey(null);
     } else if (discoverSubView) {
       if (tab === "marketplaces" && marketplaceBrowseContext) {
-        setDiscoverSubView(null);
-        setSubViewIndex(0);
-        setDetailMarketplace(marketplaceBrowseContext);
-        setMarketplaceBrowseContext(null);
-        setSearch("");
-      } else {
-        setDiscoverSubView(null);
-        setSubViewIndex(0);
-      }
+        setDiscoverSubView(null); setSubViewIndex(0);
+        setDetailMarketplace(marketplaceBrowseContext); setMarketplaceBrowseContext(null); setSearch("");
+      } else { setDiscoverSubView(null); setSubViewIndex(0); }
     } else if (tab === "marketplaces" && marketplaceBrowseContext) {
-      setDetailMarketplace(marketplaceBrowseContext);
-      setMarketplaceBrowseContext(null);
-      setSearch("");
+      setDetailMarketplace(marketplaceBrowseContext); setMarketplaceBrowseContext(null); setSearch("");
     }
   };
 
@@ -1256,11 +1238,9 @@ export function App() {
       if (activeDetail) {
         setActionIndex((i) => Math.min(activeDetail.actions.length - 1, i + 1));
       } else if (detailMarketplace) {
-        const actionCount = detailMarketplace.source === "claude" ? 2 : 3;
-        setActionIndex((i) => Math.min(actionCount - 1, i + 1));
+        setActionIndex((i) => Math.min((detailMarketplace.source === "claude" ? 2 : 3) - 1, i + 1));
       } else if (detailPiMarketplace) {
-        const piMktActions = getPiMarketplaceActions(detailPiMarketplace);
-        setActionIndex((i) => Math.min(piMktActions.length - 1, i + 1));
+        setActionIndex((i) => Math.min(getPiMarketplaceActions(detailPiMarketplace).length - 1, i + 1));
       } else if (detailTool) {
         return;
       } else if (discoverSubView) {
@@ -1441,7 +1421,7 @@ export function App() {
     if (!action) return;
 
     await handleItemAction(item, action, {
-      closeDetail: () => { setDetailFile(null); setDetailPlugin(null); setDetailPiPackage(null); setActionIndex(0); },
+      closeDetail: () => { setDetailFile(null); setDetailPlugin(null); setDetailPiPackage(null); closeDetail(); },
       openDiffForFile,
       openMissingSummaryForFile,
       setDiffTarget: (target) => useStore.setState({ diffTarget: target }),
