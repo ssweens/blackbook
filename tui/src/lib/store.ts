@@ -292,6 +292,21 @@ function appendToolOutput(existing: string[], chunk: string): string[] {
   return next.slice(next.length - TOOL_OUTPUT_MAX_LINES);
 }
 
+/** Run fn with a spinner notification, clear it on completion. Returns fn's result. */
+async function withSpinner<T>(
+  message: string,
+  fn: () => Promise<T>,
+  notifyFn: Store["notify"],
+  clearFn: Store["clearNotification"],
+): Promise<T> {
+  const id = notifyFn(message, "info", { spinner: true });
+  try {
+    return await fn();
+  } finally {
+    clearFn(id);
+  }
+}
+
 export const useStore = create<Store>((set, get) => ({
   tab: "installed",
   marketplaces: [],
@@ -675,65 +690,32 @@ export const useStore = create<Store>((set, get) => ({
 
   installPiPackage: async (pkg) => {
     const { notify, clearNotification } = get();
-    const loadingId = notify(`Installing ${pkg.name}...`, "info", { spinner: true });
     try {
-      const result = await installPiPackage(pkg);
-      clearNotification(loadingId);
-      if (result.success) {
-        notify(`Installed ${pkg.name}`, "success");
-        await get().loadPiPackages();
-        return true;
-      } else {
-        notify(`Failed to install ${pkg.name}: ${result.error}`, "error");
-        return false;
-      }
-    } catch (error) {
-      clearNotification(loadingId);
-      notify(`Error installing ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
-      return false;
-    }
+      const result = await withSpinner(`Installing ${pkg.name}...`, () => installPiPackage(pkg), notify, clearNotification);
+      if (result.success) { notify(`Installed ${pkg.name}`, "success"); await get().loadPiPackages(); return true; }
+      notify(`Failed to install ${pkg.name}: ${result.error}`, "error");
+    } catch (error) { notify(`Error installing ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error"); }
+    return false;
   },
 
   uninstallPiPackage: async (pkg) => {
     const { notify, clearNotification } = get();
-    const loadingId = notify(`Uninstalling ${pkg.name}...`, "info", { spinner: true });
     try {
-      const result = await removePiPackage(pkg);
-      clearNotification(loadingId);
-      if (result.success) {
-        notify(`Uninstalled ${pkg.name}`, "success");
-        await get().loadPiPackages();
-        return true;
-      } else {
-        notify(`Failed to uninstall ${pkg.name}: ${result.error}`, "error");
-        return false;
-      }
-    } catch (error) {
-      clearNotification(loadingId);
-      notify(`Error uninstalling ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
-      return false;
-    }
+      const result = await withSpinner(`Uninstalling ${pkg.name}...`, () => removePiPackage(pkg), notify, clearNotification);
+      if (result.success) { notify(`Uninstalled ${pkg.name}`, "success"); await get().loadPiPackages(); return true; }
+      notify(`Failed to uninstall ${pkg.name}: ${result.error}`, "error");
+    } catch (error) { notify(`Error uninstalling ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error"); }
+    return false;
   },
 
   updatePiPackage: async (pkg) => {
     const { notify, clearNotification } = get();
-    const loadingId = notify(`Updating ${pkg.name}...`, "info", { spinner: true });
     try {
-      const result = await updatePiPackage(pkg);
-      clearNotification(loadingId);
-      if (result.success) {
-        notify(`Updated ${pkg.name}`, "success");
-        await get().loadPiPackages();
-        return true;
-      } else {
-        notify(`Failed to update ${pkg.name}: ${result.error}`, "error");
-        return false;
-      }
-    } catch (error) {
-      clearNotification(loadingId);
-      notify(`Error updating ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
-      return false;
-    }
+      const result = await withSpinner(`Updating ${pkg.name}...`, () => updatePiPackage(pkg), notify, clearNotification);
+      if (result.success) { notify(`Updated ${pkg.name}`, "success"); await get().loadPiPackages(); return true; }
+      notify(`Failed to update ${pkg.name}: ${result.error}`, "error");
+    } catch (error) { notify(`Error updating ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error"); }
+    return false;
   },
 
   togglePiMarketplaceEnabled: async (name) => {
