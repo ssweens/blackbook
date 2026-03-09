@@ -135,10 +135,11 @@ async function handleItemAction(item: ManagedItem, action: ItemAction) {
 ```
 
 **Tasks:**
-- [ ] Extract `handleItemAction` from App.tsx
-- [ ] Merge `handleFileAction`, `handlePluginAction`, `handlePiPackageAction` into it
-- [ ] Each `case` delegates to a kind-specific function when needed (e.g., `installPlugin` vs `installPiPackage`)
-- [ ] Remove 200+ lines of branching from App.tsx
+- [x] Extract `handleItemAction` in `lib/action-dispatch.ts` with `DispatchCallbacks` interface
+- [x] Single dispatch handles: back, status, diff, missing, sync, install, uninstall, update, install_tool, uninstall_tool, pullback
+- [x] Kind-specific routing via `_plugin`/`_file`/`_piPackage` on ManagedItem
+- [x] Tests: 16 tests covering every action type and edge cases
+- [ ] Wire into App.tsx (replace 5 action handlers with single `handleItemAction` call)
 
 ### Phase 5: Input Router
 **Goal:** Tame the 245-branch input handler.
