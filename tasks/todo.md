@@ -82,8 +82,8 @@ function ItemList({ items, selectedIndex, maxHeight, columns }: ItemListProps) {
 - [x] Define column presets: `PLUGIN_COLUMNS` (name/type/marketplace) and `FILE_COLUMNS` (name/scope)
 - [x] Auto-select columns from item kinds; shared `computeItemFlags` for status badges
 - [x] Tests: 20 tests covering rendering, windowing, selection, badges, column auto-selection
-- [ ] Wire `ItemList` into App.tsx (replace bespoke lists one-by-one)
-- [ ] Delete PluginList, ConfigList, AssetList, FileList, PiPackageList after migration
+- [x] Wire `ItemList` into App.tsx — replaced all PluginList, FileList, PiPackageList usages
+- [ ] Delete orphaned PluginList, ConfigList, AssetList, FileList, PiPackageList files
 
 ### Phase 3: Generic Detail Component
 **Goal:** One detail view pattern for all entity types.
