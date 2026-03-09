@@ -108,10 +108,14 @@ interface ItemAction {
 ```
 
 **Tasks:**
-- [ ] Build `ItemDetail` with: header, metadata, instance list (with drift +/-), action list
-- [ ] Single `buildItemActions(item: ManagedItem): ItemAction[]` function
-- [ ] Delete PluginDetail, FileDetail, PiPackageDetail (keep MarketplaceDetail, ToolDetail as-is — they're different enough)
-- [ ] Update App.tsx to use single detail state: `detailItem: ManagedItem | null`
+- [x] Build `ItemDetail` with: header, metadata slot, instance list (with drift +/-), action list (`components/ItemDetail.tsx`)
+- [x] Unified `ItemAction` type replacing `PluginAction` + `FileAction`
+- [x] Kind-specific metadata components: `PluginMetadata`, `FileMetadata`, `PiPackageMetadata`
+- [x] Shared `ActionRow` rendering for status/diff/action items
+- [x] Tests: 26 tests covering rendering, selection, badges, metadata, action types
+- [ ] Wire `ItemDetail` into App.tsx (replace bespoke detail views one-by-one)
+- [ ] `buildItemActions(item: ManagedItem): ItemAction[]` unified builder (absorbs `buildPluginActions` + `getFileActions`)
+- [ ] Delete PluginDetail, FileDetail, PiPackageDetail after migration
 
 ### Phase 4: Unified Action Dispatch
 **Goal:** One action handler instead of five.
