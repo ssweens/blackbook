@@ -215,6 +215,12 @@ export async function downloadPlugin(
       marketplaceBase = dirname(marketplaceBase);
     }
 
+    // Source paths in marketplace.json are relative to repo root.
+    // If marketplace base is .claude-plugin/, step up to repo root.
+    if (basename(marketplaceBase) === ".claude-plugin") {
+      marketplaceBase = dirname(marketplaceBase);
+    }
+
     const sourceDir = resolve(marketplaceBase, source);
 
     if (!existsSync(sourceDir)) {

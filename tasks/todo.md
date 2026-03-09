@@ -232,4 +232,5 @@ Each phase is independently shippable and testable.
 - Settings manual refresh (`R`) now explicitly refreshes source repo status with remote fetch.
 - Fixed Installed-tab per-tool plugin actions after unified dispatch migration: `install_tool` / `uninstall_tool` now resolve target instance from either `action.instance` or `action.toolStatus`.
 - Installed-tab section loading placeholders now reset correctly on refresh by toggling `installedPluginsLoaded` / `piPackagesLoaded` to `false` at load start.
+- Fixed local marketplace plugin source resolution in install flow: when marketplace URL is `.claude-plugin/marketplace.json`, relative plugin `source` now resolves from repo root (not `.claude-plugin/`), restoring `Install to Pi` for playbook plugins like `eval-model`.
 
