@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo, useRef } from "react";
 import { join } from "path";
 import { existsSync } from "fs";
 import { Box, Text, useInput, useApp } from "ink";
-import { useStore } from "./lib/store.js";
+import { useStore, withSpinner } from "./lib/store.js";
 import { TabBar } from "./components/TabBar.js";
 import { SearchBox } from "./components/SearchBox.js";
 import { PluginPreview } from "./components/PluginPreview.js";
@@ -1361,16 +1361,13 @@ export function App() {
     if (!toolStatus) return;
     const mkt = marketplaces.find((m) => m.name === plugin.marketplace);
     const { notify: n, clearNotification: cn } = useStore.getState();
-    const lid = n(`Installing ${plugin.name} to ${toolStatus.name}...`, "info", { spinner: true });
-    const result = await syncPluginInstances(plugin, mkt?.url, [toolStatus]);
-    cn(lid);
-    const key = `${toolStatus.toolId}:${toolStatus.instanceId}`;
-    const count = result.syncedInstances[key] ?? 0;
-    if (count > 0) {
-      n(`✓ Installed ${plugin.name} to ${toolStatus.name} (${count})`, "success");
-    } else {
-      n(`✗ Failed to install ${plugin.name} to ${toolStatus.name}: ${result.errors.join("; ") || "No components linked"}`, "error");
-    }
+    const result = await withSpinner(`Installing ${plugin.name} to ${toolStatus.name}...`,
+      () => syncPluginInstances(plugin, mkt?.url, [toolStatus]), n, cn);
+    const count = result.syncedInstances[`${toolStatus.toolId}:${toolStatus.instanceId}`] ?? 0;
+    n(count > 0
+      ? `✓ Installed ${plugin.name} to ${toolStatus.name} (${count})`
+      : `✗ Failed to install ${plugin.name} to ${toolStatus.name}: ${result.errors.join("; ") || "No components linked"}`,
+      count > 0 ? "success" : "error");
     await useStore.getState().refreshAll();
   };
 
@@ -1378,10 +1375,10 @@ export function App() {
   const uninstallPluginFromInstanceCb = async (plugin: Plugin, toolId: string, instanceId: string) => {
     const toolStatus = getPluginToolStatus(plugin).find((s) => s.toolId === toolId && s.instanceId === instanceId);
     const { notify: n, clearNotification: cn } = useStore.getState();
-    const lid = n(`Uninstalling ${plugin.name} from ${toolStatus?.name ?? instanceId}...`, "info", { spinner: true });
-    await uninstallPluginFromInstance(plugin, toolId, instanceId);
-    cn(lid);
-    n(`✓ Uninstalled ${plugin.name} from ${toolStatus?.name ?? instanceId}`, "success");
+    const name = toolStatus?.name ?? instanceId;
+    await withSpinner(`Uninstalling ${plugin.name} from ${name}...`,
+      () => Promise.resolve(uninstallPluginFromInstance(plugin, toolId, instanceId)), n, cn);
+    n(`✓ Uninstalled ${plugin.name} from ${name}`, "success");
     await useStore.getState().refreshAll();
   };
 

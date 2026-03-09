@@ -293,7 +293,7 @@ function appendToolOutput(existing: string[], chunk: string): string[] {
 }
 
 /** Run fn with a spinner notification, clear it on completion. Returns fn's result. */
-async function withSpinner<T>(
+export async function withSpinner<T>(
   message: string,
   fn: () => Promise<T>,
   notifyFn: Store["notify"],
