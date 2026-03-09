@@ -6,7 +6,7 @@ import { useStore } from "./lib/store.js";
 import { TabBar } from "./components/TabBar.js";
 import { SearchBox } from "./components/SearchBox.js";
 import { PluginPreview } from "./components/PluginPreview.js";
-import { PluginDetail, buildPluginActions, type PluginAction } from "./components/PluginDetail.js";
+import { buildPluginActions, type PluginAction } from "./components/PluginDetail.js";
 import { MarketplaceList } from "./components/MarketplaceList.js";
 import { MarketplaceDetail } from "./components/MarketplaceDetail.js";
 import { PiMarketplaceList } from "./components/PiMarketplaceList.js";
@@ -20,7 +20,7 @@ import { ToolActionModal, type ToolModalAction } from "./components/ToolActionMo
 import { SyncList } from "./components/SyncList.js";
 import { SyncPreview } from "./components/SyncPreview.js";
 import { FilePreview } from "./components/FilePreview.js";
-import { FileDetail, getFileActions } from "./components/FileDetail.js";
+import { getFileActions } from "./components/FileDetail.js";
 import { HintBar } from "./components/HintBar.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { Notifications } from "./components/Notifications.js";
@@ -29,7 +29,7 @@ import { MissingSummaryView } from "./components/MissingSummary.js";
 import { PluginSummary } from "./components/PluginSummary.js";
 import { PiPackageSummary } from "./components/PiPackageSummary.js";
 import { PiPackagePreview } from "./components/PiPackagePreview.js";
-import { PiPackageDetail, getPiPackageActions } from "./components/PiPackageDetail.js";
+import { getPiPackageActions } from "./components/PiPackageDetail.js";
 import { ComponentManager, getComponentItems } from "./components/ComponentManager.js";
 import { SettingsPanel } from "./components/SettingsPanel.js";
 import { getPluginToolStatus, togglePluginComponent } from "./lib/plugin-status.js";
@@ -39,6 +39,7 @@ import { getToolLifecycleCommand, detectInstallMethodMismatch } from "./lib/tool
 import { getPackageManager } from "./lib/config.js";
 import { setupSourceRepository, shouldShowSourceSetupWizard } from "./lib/source-setup.js";
 import { ItemList, FILE_COLUMNS, PLUGIN_COLUMNS } from "./components/ItemList.js";
+import { ItemDetail, PluginMetadata, FileMetadata, PiPackageMetadata, type ItemAction } from "./components/ItemDetail.js";
 import { pluginToManagedItem, fileToManagedItem, piPackageToManagedItem } from "./lib/managed-item.js";
 import type { ManagedItem } from "./lib/managed-item.js";
 import type { Tab, SyncPreviewItem, Plugin, PiPackage, PiMarketplace, DiffInstanceRef, DiscoverSection, DiscoverSubView, ManagedToolRow, FileStatus, Marketplace } from "./lib/types.js";
@@ -828,6 +829,62 @@ export function App() {
   const getPluginActionCount = (plugin: typeof detailPlugin) => {
     return getPluginActions(plugin).length;
   };
+
+  // Convert existing PluginAction[] to ItemAction[] for ItemDetail
+  const toItemActions = (actions: PluginAction[]): ItemAction[] =>
+    actions.map((a) => ({
+      id: a.id,
+      label: a.label,
+      type: a.type,
+      instance: a.instance,
+      statusColor: a.statusColor,
+      statusLabel: a.statusLabel,
+    }));
+
+  // Convert FileAction[] to ItemAction[]
+  const toFileItemActions = (actions: ReturnType<typeof getFileActions>): ItemAction[] =>
+    actions.map((a, i) => ({
+      id: `${a.type}_${i}`,
+      label: a.label,
+      type: a.type,
+      instance: a.instance,
+      statusColor: a.statusColor,
+      statusLabel: a.statusLabel,
+    }));
+
+  // Convert PiPackage actions to ItemAction[]
+  const toPiPkgItemActions = (pkg: PiPackage): ItemAction[] => {
+    const actions: ItemAction[] = [];
+    if (pkg.installed) {
+      if (pkg.hasUpdate) actions.push({ id: "update", label: "Update", type: "update" });
+      actions.push({ id: "uninstall", label: "Uninstall", type: "uninstall" });
+    } else {
+      actions.push({ id: "install", label: "Install", type: "install" });
+    }
+    actions.push({ id: "back", label: "Back to list", type: "back" });
+    return actions;
+  };
+
+  // ManagedItem for currently open detail views
+  const detailPluginItem = useMemo((): ManagedItem | null => {
+    if (!detailPlugin) return null;
+    const item = pluginToManagedItem(detailPlugin);
+    const drift = detailPluginDrift ?? pluginDriftMap[detailPlugin.name];
+    if (drift && Object.values(drift).some((s) => s !== "in-sync")) {
+      return { ...item, instances: item.instances.map((inst) => ({ ...inst, status: "changed" as const })) };
+    }
+    return item;
+  }, [detailPlugin, detailPluginDrift, pluginDriftMap]);
+
+  const detailFileItem = useMemo((): ManagedItem | null => {
+    if (!detailFile) return null;
+    return fileToManagedItem(detailFile);
+  }, [detailFile]);
+
+  const detailPiPkgItem = useMemo((): ManagedItem | null => {
+    if (!detailPiPackage) return null;
+    return piPackageToManagedItem(detailPiPackage);
+  }, [detailPiPackage]);
 
   const refreshDetailPlugin = (plugin: Plugin) => {
     const state = useStore.getState();
@@ -1860,13 +1917,12 @@ export function App() {
           plugin={detailPlugin}
           selectedIndex={componentIndex}
         />
-      ) : detailPlugin ? (
-        <PluginDetail
-          plugin={detailPlugin}
+      ) : detailPlugin && detailPluginItem ? (
+        <ItemDetail
+          item={detailPluginItem}
           selectedAction={actionIndex}
-          onAction={() => {}}
-          actions={getPluginActions(detailPlugin)}
-          drift={detailPluginDrift ?? pluginDriftMap[detailPlugin.name] ?? undefined}
+          actions={toItemActions(getPluginActions(detailPlugin))}
+          metadata={<PluginMetadata item={detailPluginItem} />}
         />
       ) : detailMarketplace ? (
         <MarketplaceDetail
@@ -1878,16 +1934,19 @@ export function App() {
           marketplace={detailPiMarketplace}
           selectedIndex={actionIndex}
         />
-      ) : detailFile ? (
-        <FileDetail
-          file={detailFile}
+      ) : detailFile && detailFileItem ? (
+        <ItemDetail
+          item={detailFileItem}
           selectedAction={actionIndex}
-          actions={fileActions}
+          actions={toFileItemActions(fileActions)}
+          metadata={<FileMetadata item={detailFileItem} />}
         />
-      ) : detailPiPackage ? (
-        <PiPackageDetail
-          pkg={detailPiPackage}
-          selectedIndex={actionIndex}
+      ) : detailPiPackage && detailPiPkgItem ? (
+        <ItemDetail
+          item={detailPiPkgItem}
+          selectedAction={actionIndex}
+          actions={toPiPkgItemActions(detailPiPackage)}
+          metadata={<PiPackageMetadata item={detailPiPkgItem} />}
         />
       ) : (
         <Box flexDirection="column" height={tab === "sync" ? 19 : (tab === "discover" || tab === "installed") ? 20 : 25}>
