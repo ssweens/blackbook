@@ -174,6 +174,7 @@ function parseGithubRepoFromUrl(
 export async function downloadPlugin(
   plugin: Plugin,
   marketplaceUrl: string,
+  options?: { force?: boolean },
 ): Promise<string | null> {
   validateMarketplaceName(plugin.marketplace);
   validatePluginName(plugin.name);
@@ -181,7 +182,10 @@ export async function downloadPlugin(
   const pluginDir = safePath(pluginsDir, plugin.marketplace, plugin.name);
 
   if (existsSync(pluginDir)) {
-    return pluginDir;
+    if (!options?.force) {
+      return pluginDir;
+    }
+    rmSync(pluginDir, { recursive: true, force: true });
   }
 
   mkdirSync(pluginDir, { recursive: true });
@@ -304,6 +308,19 @@ export async function downloadPlugin(
     rmSync(pluginDir, { recursive: true, force: true });
     return null;
   }
+}
+
+function pluginSourceHasExpectedComponents(plugin: Plugin, sourcePath: string): boolean {
+  for (const skill of plugin.skills) {
+    if (!existsSync(join(sourcePath, "skills", skill, "SKILL.md"))) return false;
+  }
+  for (const cmd of plugin.commands) {
+    if (!existsSync(join(sourcePath, "commands", `${cmd}.md`))) return false;
+  }
+  for (const agent of plugin.agents) {
+    if (!existsSync(join(sourcePath, "agents", `${agent}.md`))) return false;
+  }
+  return true;
 }
 
 export interface InstallResult {
@@ -713,6 +730,10 @@ export async function enablePlugin(
 
   // Get or download plugin source
   let sourcePath = getPluginSourcePath(plugin);
+
+  if (sourcePath && marketplaceUrl && !pluginSourceHasExpectedComponents(plugin, sourcePath)) {
+    sourcePath = await downloadPlugin(plugin, marketplaceUrl, { force: true });
+  }
 
   if (!sourcePath && marketplaceUrl) {
     sourcePath = await downloadPlugin(plugin, marketplaceUrl);
@@ -1608,6 +1629,13 @@ export async function syncPluginInstances(
   // Installed-only plugins discovered from tool directories may have source paths
   // that are standalone component paths (e.g. /.../skills/my-skill).
   let sourcePath = getPluginSourcePath(plugin);
+
+  // If cached plugin source exists but doesn't match current marketplace metadata
+  // (new/renamed components), force a fresh download before syncing.
+  if (sourcePath && marketplaceUrl && !pluginSourceHasExpectedComponents(plugin, sourcePath)) {
+    sourcePath = await downloadPlugin(plugin, marketplaceUrl, { force: true });
+  }
+
   if (!sourcePath && typeof plugin.source === "string" && existsSync(plugin.source)) {
     sourcePath = plugin.source;
   }

@@ -324,6 +324,7 @@ export const useStore = create<Store>((set, get) => ({
   tab: "installed",
   marketplaces: [],
   installedPlugins: [],
+  installedPluginsLoaded: false,
   files: [],
   tools: getToolInstances(),
   managedTools: getManagedToolRows(),
@@ -343,6 +344,7 @@ export const useStore = create<Store>((set, get) => ({
   missingSummary: null,
   // Pi packages state
   piPackages: [],
+  piPackagesLoaded: false,
   piMarketplaces: [],
   managedItems: [],
   // Section navigation
@@ -657,6 +659,7 @@ export const useStore = create<Store>((set, get) => ({
       const state = get();
       set({
         piPackages: [],
+        piPackagesLoaded: true,
         piMarketplaces: [],
         managedItems: composeManagedItems(state.installedPlugins, state.files, []),
       });
@@ -708,6 +711,7 @@ export const useStore = create<Store>((set, get) => ({
       const state = get();
       set({
         piPackages: packages,
+        piPackagesLoaded: true,
         piMarketplaces: marketplaces,
         managedItems: composeManagedItems(state.installedPlugins, state.files, packages),
       });
@@ -716,6 +720,7 @@ export const useStore = create<Store>((set, get) => ({
       const state = get();
       set({
         piPackages: [],
+        piPackagesLoaded: true,
         piMarketplaces: [],
         managedItems: composeManagedItems(state.installedPlugins, state.files, []),
       });
@@ -858,6 +863,7 @@ export const useStore = create<Store>((set, get) => ({
       set({
         marketplaces: enrichedMarketplaces,
         installedPlugins: installedWithStatus,
+        installedPluginsLoaded: true,
         tools,
         managedTools: getManagedToolRows(),
         managedItems: composeManagedItems(installedWithStatus, state.files, state.piPackages),
@@ -908,6 +914,7 @@ export const useStore = create<Store>((set, get) => ({
     const state = get();
     set({
       installedPlugins: installedWithStatus,
+      installedPluginsLoaded: true,
       marketplaces,
       tools: getToolInstances(),
       managedTools: getManagedToolRows(),

@@ -844,6 +844,57 @@ describe("createSymlink and removeSymlink", () => {
 });
 
 describe("syncPluginInstances", () => {
+  it("refreshes stale cached plugin source from marketplace before syncing", async () => {
+    const pluginName = "updated-plugin";
+    const skillName = "new-skill";
+    const marketplace = "local-updated-marketplace";
+
+    const staleCacheDir = join(getPluginsCacheDir(), marketplace, pluginName);
+    mkdirSync(join(staleCacheDir, "skills", "old-skill"), { recursive: true });
+    writeFileSync(join(staleCacheDir, "skills", "old-skill", "SKILL.md"), "# Old skill");
+
+    const marketplaceDir = join(TEST_ROOT, "local-marketplace-source");
+    const pluginSourceDir = join(marketplaceDir, "plugins", pluginName);
+    mkdirSync(join(pluginSourceDir, "skills", skillName), { recursive: true });
+    writeFileSync(join(pluginSourceDir, "skills", skillName, "SKILL.md"), "# New skill");
+
+    const plugin: Plugin = {
+      name: pluginName,
+      marketplace,
+      description: "Updated plugin",
+      source: `./plugins/${pluginName}`,
+      skills: [skillName],
+      commands: [],
+      agents: [],
+      hooks: [],
+      hasMcp: false,
+      hasLsp: false,
+      homepage: "",
+      installed: true,
+      scope: "user",
+    };
+
+    const piInstance = getInstance("pi");
+    const targetDir = join(piInstance.configDir, piInstance.skillsSubdir!, skillName);
+    rmSync(targetDir, { recursive: true, force: true });
+
+    const result = await syncPluginInstances(plugin, marketplaceDir, [
+      {
+        toolId: "pi",
+        instanceId: piInstance.instanceId,
+        name: piInstance.name,
+        installed: false,
+        supported: true,
+        enabled: true,
+      },
+    ]);
+
+    expect(result.success).toBe(true);
+    expect(result.syncedInstances[`pi:${piInstance.instanceId}`]).toBeGreaterThan(0);
+    expect(existsSync(join(targetDir, "SKILL.md"))).toBe(true);
+    expect(existsSync(join(staleCacheDir, "skills", skillName, "SKILL.md"))).toBe(true);
+  });
+
   it("syncs standalone installed skill sources (no package root) to missing instances", async () => {
     const standaloneSource = join(TEST_ROOT, "standalone-skill-source", TEST_SKILL_NAME);
     mkdirSync(standaloneSource, { recursive: true });

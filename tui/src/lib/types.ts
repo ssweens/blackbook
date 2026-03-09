@@ -165,6 +165,7 @@ export interface AppState {
   tab: Tab;
   marketplaces: Marketplace[];
   installedPlugins: Plugin[];
+  installedPluginsLoaded: boolean;
   files: FileStatus[];
   tools: ToolInstance[];
   managedTools: ManagedToolRow[];
@@ -185,6 +186,7 @@ export interface AppState {
   missingSummary: MissingSummary | null;
   // Pi packages state
   piPackages: PiPackage[];
+  piPackagesLoaded: boolean;
   piMarketplaces: PiMarketplace[];
   managedItems: import("./managed-item.js").ManagedItem[];
   // Section navigation

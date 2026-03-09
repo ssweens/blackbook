@@ -59,6 +59,7 @@ export function App() {
     marketplaces,
     managedItems,
     installedPlugins: legacyInstalledPlugins,
+    installedPluginsLoaded,
     files: legacyFiles,
     tools,
     managedTools,
@@ -110,6 +111,7 @@ export function App() {
     pullbackFileInstance,
     // Pi packages
     piPackages: legacyPiPackages,
+    piPackagesLoaded,
     piMarketplaces,
     detailPiPackage,
     setDetailPiPackage,
@@ -1425,11 +1427,6 @@ export function App() {
   const showGlobalLoadingIndicator = loading || tabRefreshInProgress;
   const shouldShowDiscoverLoading =
     loading && marketplaces.length === 0 && piPackages.length === 0;
-  const shouldShowInstalledLoading =
-    loading &&
-    installedPlugins.length === 0 &&
-    piPackages.filter((pkg) => pkg.installed).length === 0 &&
-    installedFileCount === 0;
   const shouldShowMarketplacesLoading = loading && marketplaces.length === 0 && piMarketplaces.length === 0;
 
   const refreshTabLabel =
@@ -1659,32 +1656,50 @@ export function App() {
           )}
 
           {tab === "installed" && (
-            <>
-              {shouldShowInstalledLoading ? (
-                <Box marginY={1}><Text color="cyan">⠋ Loading installed plugins...</Text></Box>
-              ) : (
+            <Box flexDirection="column">
+              {managedFiles.length > 0 && (
                 <Box flexDirection="column">
-                  {managedFiles.length > 0 && (
-                    <Box flexDirection="column">
-                      <Box><Text color="gray">  Files </Text><Text color="gray" dimColor>{getRange(selectedIndex < fileCount ? selectedIndex : 0, managedFiles.length, 5)}</Text></Box>
-                      <ItemList items={managedFiles} selectedIndex={selectedIndex < fileCount ? selectedIndex : -1} maxHeight={5} columns={FILE_COLUMNS} />
-                    </Box>
-                  )}
-                  {managedPlugins.length > 0 && (
-                    <Box flexDirection="column" marginTop={managedFiles.length > 0 ? 1 : 0}>
-                      <Box><Text color="gray">  Plugins </Text><Text color="gray" dimColor>{getRange(selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : 0, managedPlugins.length, 4)}</Text></Box>
-                      <ItemList items={managedPlugins} selectedIndex={selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : -1} maxHeight={4} columns={PLUGIN_COLUMNS} />
-                    </Box>
-                  )}
-                  {managedPiPackages.length > 0 && (
-                    <Box flexDirection="column" marginTop={(managedFiles.length > 0 || managedPlugins.length > 0) ? 1 : 0}>
-                      <Box><Text color="gray">  Pi Packages </Text><Text color="gray" dimColor>{getRange(selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : 0, managedPiPackages.length, 3)}</Text></Box>
-                      <ItemList items={managedPiPackages} selectedIndex={selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : -1} maxHeight={3} columns={PLUGIN_COLUMNS} />
-                    </Box>
+                  <Box><Text color="gray">  Files </Text><Text color="gray" dimColor>{getRange(selectedIndex < fileCount ? selectedIndex : 0, managedFiles.length, 5)}</Text></Box>
+                  <ItemList items={managedFiles} selectedIndex={selectedIndex < fileCount ? selectedIndex : -1} maxHeight={5} columns={FILE_COLUMNS} />
+                </Box>
+              )}
+
+              {(managedPlugins.length > 0 || !installedPluginsLoaded) && (
+                <Box flexDirection="column" marginTop={managedFiles.length > 0 ? 1 : 0}>
+                  <Box>
+                    <Text color="gray">  Plugins </Text>
+                    <Text color="gray" dimColor>
+                      {managedPlugins.length > 0
+                        ? getRange(selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : 0, managedPlugins.length, 4)
+                        : "(loading...)"}
+                    </Text>
+                  </Box>
+                  {managedPlugins.length > 0 ? (
+                    <ItemList items={managedPlugins} selectedIndex={selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : -1} maxHeight={4} columns={PLUGIN_COLUMNS} />
+                  ) : (
+                    <Box marginLeft={2}><Text color="cyan">⠋ Loading plugins...</Text></Box>
                   )}
                 </Box>
               )}
-            </>
+
+              {(managedPiPackages.length > 0 || !piPackagesLoaded) && (
+                <Box flexDirection="column" marginTop={(managedFiles.length > 0 || managedPlugins.length > 0 || !installedPluginsLoaded) ? 1 : 0}>
+                  <Box>
+                    <Text color="gray">  Pi Packages </Text>
+                    <Text color="gray" dimColor>
+                      {managedPiPackages.length > 0
+                        ? getRange(selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : 0, managedPiPackages.length, 3)
+                        : "(loading...)"}
+                    </Text>
+                  </Box>
+                  {managedPiPackages.length > 0 ? (
+                    <ItemList items={managedPiPackages} selectedIndex={selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : -1} maxHeight={3} columns={PLUGIN_COLUMNS} />
+                  ) : (
+                    <Box marginLeft={2}><Text color="cyan">⠋ Loading pi packages...</Text></Box>
+                  )}
+                </Box>
+              )}
+            </Box>
           )}
 
           {tab === "marketplaces" && (
