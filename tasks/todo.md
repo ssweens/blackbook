@@ -224,3 +224,9 @@ Phase 6 can run after 1
 Phase 7 can run anytime
 
 Each phase is independently shippable and testable.
+
+## Review Notes (latest)
+
+- Update checks are now startup-only plus manual triggers (`R`), not tab-navigation driven.
+- Source repo status is primed at startup and cached; Settings uses cached status on first render.
+- Settings manual refresh (`R`) now explicitly refreshes source repo status with remote fetch.

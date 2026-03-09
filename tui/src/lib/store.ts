@@ -42,7 +42,7 @@ import {
 } from "./config.js";
 import { loadConfig as loadYamlConfig, getConfigPath as getYamlConfigPath } from "./config/loader.js";
 import { resolveSourcePath, expandPath as expandConfigPath } from "./config/path.js";
-import { pullSourceRepo } from "./source-setup.js";
+import { pullSourceRepo, primeSourceRepoStatus } from "./source-setup.js";
 import { getAllPlaybooks, resolveToolInstances, isSyncTarget } from "./config/playbooks.js";
 import { runCheck, runApply } from "./modules/orchestrator.js";
 import { fileCopyModule } from "./modules/file-copy.js";
@@ -1764,4 +1764,6 @@ export function initializeStore(): void {
   // No dynamic background refreshes; updates are startup + manual refresh only.
   // Check source repo for updates at launch (silently no-ops if not configured/offline)
   void pullSourceRepo();
+  // Prime source repo status cache during startup so Settings tab renders immediately.
+  void primeSourceRepoStatus();
 }

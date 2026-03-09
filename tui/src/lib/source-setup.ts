@@ -236,6 +236,8 @@ export async function pullSourceRepo(): Promise<void> {
     // Offline, not a git repo, etc. — silently continue
   });
 
+  clearSourceStatusCache();
+
   // After pull, ensure marketplace is registered if repo has one
   if (ensureSourceRepoMarketplace(config, repoPath)) {
     saveConfig(config, configPath);
@@ -266,7 +268,23 @@ export interface SourceRepoStatus {
   hasChanges: boolean;
 }
 
-export async function getSourceRepoStatus(): Promise<SourceRepoStatus | null> {
+interface GetSourceRepoStatusOptions {
+  force?: boolean;
+  fetchRemote?: boolean;
+}
+
+const SOURCE_STATUS_CACHE_TTL_MS = 60_000;
+let sourceStatusCache: { value: SourceRepoStatus | null; at: number } | null = null;
+
+function setSourceStatusCache(value: SourceRepoStatus | null): void {
+  sourceStatusCache = { value, at: Date.now() };
+}
+
+function clearSourceStatusCache(): void {
+  sourceStatusCache = null;
+}
+
+async function computeSourceRepoStatus(fetchRemote: boolean): Promise<SourceRepoStatus | null> {
   const { config } = loadConfig();
   const sourceRepo = config.settings.source_repo;
   if (!sourceRepo) return null;
@@ -277,17 +295,17 @@ export async function getSourceRepoStatus(): Promise<SourceRepoStatus | null> {
   }
 
   try {
-    // Fetch to get accurate ahead/behind (non-blocking, ignore failures)
-    await execFileAsync("git", ["fetch", "--quiet"], { cwd: repoPath, timeout: 15000 }).catch(() => {});
+    if (fetchRemote) {
+      // Optional remote fetch for accurate ahead/behind; can be slow on first run.
+      await execFileAsync("git", ["fetch", "--quiet"], { cwd: repoPath, timeout: 15000 }).catch(() => {});
+    }
 
-    // Get branch name
     const { stdout: branchOut } = await execFileAsync(
       "git", ["rev-parse", "--abbrev-ref", "HEAD"],
       { cwd: repoPath, timeout: 5000 }
     );
     const branch = branchOut.trim();
 
-    // Get ahead/behind
     let ahead = 0;
     let behind = 0;
     let hasUpstream = false;
@@ -304,7 +322,6 @@ export async function getSourceRepoStatus(): Promise<SourceRepoStatus | null> {
       // No upstream configured
     }
 
-    // Get changed files
     const { stdout: statusOut } = await execFileAsync(
       "git", ["status", "--porcelain"],
       { cwd: repoPath, timeout: 5000 }
@@ -314,10 +331,10 @@ export async function getSourceRepoStatus(): Promise<SourceRepoStatus | null> {
       .split("\n")
       .filter((line) => line.length > 2)
       .map((line) => {
-        const code = line[0] + line[1]; // XY status codes (2 chars)
-        const filePath = line.slice(3); // skip "XY " prefix
+        const code = line[0] + line[1];
+        const filePath = line.slice(3);
         let status: SourceRepoChange["status"] = "modified";
-        if (code === "??" ) status = "untracked";
+        if (code === "??") status = "untracked";
         else if (code.includes("A")) status = "added";
         else if (code.includes("D")) status = "deleted";
         else if (code.includes("R")) status = "renamed";
@@ -336,6 +353,29 @@ export async function getSourceRepoStatus(): Promise<SourceRepoStatus | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Get cached source repo status. Defaults to local-only checks (no remote fetch)
+ * so settings can render instantly after startup.
+ */
+export async function getSourceRepoStatus(options: GetSourceRepoStatusOptions = {}): Promise<SourceRepoStatus | null> {
+  const force = options.force === true;
+  const fetchRemote = options.fetchRemote === true;
+
+  if (!force && sourceStatusCache && Date.now() - sourceStatusCache.at < SOURCE_STATUS_CACHE_TTL_MS) {
+    return sourceStatusCache.value;
+  }
+
+  const status = await computeSourceRepoStatus(fetchRemote);
+  setSourceStatusCache(status);
+  return status;
+}
+
+/** Prime status cache at startup (single remote fetch cycle). */
+export async function primeSourceRepoStatus(): Promise<void> {
+  const status = await computeSourceRepoStatus(true);
+  setSourceStatusCache(status);
 }
 
 export async function getSourceRepoDiff(filePath: string): Promise<string | null> {
@@ -407,6 +447,7 @@ export async function commitAndPushSourceRepo(message: string): Promise<{ succes
     await execFileAsync("git", ["pull", "--rebase"], { cwd: repoPath, timeout: 30000 }).catch(() => {});
     await execFileAsync("git", ["push"], { cwd: repoPath, timeout: 30000 });
 
+    clearSourceStatusCache();
     return { success: true };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -426,6 +467,7 @@ export async function pullSourceRepoChanges(): Promise<{ success: boolean; error
 
   try {
     await execFileAsync("git", ["pull", "--rebase"], { cwd: repoPath, timeout: 30000 });
+    clearSourceStatusCache();
     return { success: true };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
