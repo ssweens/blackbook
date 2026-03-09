@@ -14,19 +14,8 @@ import { resolvePluginSourcePaths, type PluginDrift } from "./plugin-drift.js";
 import { buildFileDiffTarget } from "./diff.js";
 import type { ItemAction } from "../components/ItemDetail.js";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PluginAction type (kept for backward compat with App.tsx action counting)
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface PluginAction {
-  id: string;
-  label: string;
-  type: "install" | "uninstall" | "update" | "install_tool" | "uninstall_tool" | "diff" | "back";
-  toolStatus?: ToolInstallStatus;
-  instance?: DiffInstanceSummary | DiffInstanceRef;
-  statusColor?: "green" | "yellow" | "gray" | "red" | "magenta";
-  statusLabel?: string;
-}
+// PluginAction is now an alias for ItemAction — PluginAction type eliminated
+export type PluginAction = ItemAction;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FileAction type

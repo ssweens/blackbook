@@ -34,6 +34,8 @@ export interface ItemAction {
     | "pullback"
     | "back";
   instance?: DiffInstanceSummary | DiffInstanceRef;
+  /** For install_tool / uninstall_tool actions — the target tool instance. */
+  toolStatus?: { toolId: string; instanceId: string; name: string; installed?: boolean; enabled?: boolean; supported?: boolean };
   statusColor?: "green" | "yellow" | "gray" | "red" | "magenta";
   statusLabel?: string;
 }

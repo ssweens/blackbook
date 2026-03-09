@@ -6,7 +6,7 @@ import { useStore } from "./lib/store.js";
 import { TabBar } from "./components/TabBar.js";
 import { SearchBox } from "./components/SearchBox.js";
 import { PluginPreview } from "./components/PluginPreview.js";
-import { buildPluginActions, getFileActions, type PluginAction } from "./lib/item-actions.js";
+import { buildPluginActions, getFileActions, getPiPackageActions } from "./lib/item-actions.js";
 import { MarketplaceList } from "./components/MarketplaceList.js";
 import { MarketplaceDetail } from "./components/MarketplaceDetail.js";
 import { PiMarketplaceList } from "./components/PiMarketplaceList.js";
@@ -835,7 +835,7 @@ export function App() {
     return detailFile ? getFileActions(detailFile) : [];
   }, [detailFile]);
 
-  const getPluginActions = (plugin: typeof detailPlugin): PluginAction[] => {
+  const getPluginActions = (plugin: typeof detailPlugin): ItemAction[] => {
     if (!plugin) return [];
     const toolStatuses = getPluginToolStatus(plugin);
     const isIncomplete = plugin.installed && plugin.incomplete;
@@ -843,40 +843,12 @@ export function App() {
     return buildPluginActions(plugin, toolStatuses, isIncomplete, drift);
   };
 
-  // Convert existing PluginAction[] to ItemAction[] for ItemDetail
-  const toItemActions = (actions: PluginAction[]): ItemAction[] =>
-    actions.map((a) => ({
-      id: a.id,
-      label: a.label,
-      type: a.type,
-      instance: a.instance,
-      statusColor: a.statusColor,
-      statusLabel: a.statusLabel,
-    }));
-
-  // Convert FileAction[] to ItemAction[]
+  // FileAction → ItemAction (adds stable id)
   const toFileItemActions = (actions: ReturnType<typeof getFileActions>): ItemAction[] =>
-    actions.map((a, i) => ({
-      id: `${a.type}_${i}`,
-      label: a.label,
-      type: a.type,
-      instance: a.instance,
-      statusColor: a.statusColor,
-      statusLabel: a.statusLabel,
-    }));
+    actions.map((a, i) => ({ id: `${a.type}_${i}`, ...a }));
 
   // Convert PiPackage actions to ItemAction[]
-  const toPiPkgItemActions = (pkg: PiPackage): ItemAction[] => {
-    const actions: ItemAction[] = [];
-    if (pkg.installed) {
-      if (pkg.hasUpdate) actions.push({ id: "update", label: "Update", type: "update" });
-      actions.push({ id: "uninstall", label: "Uninstall", type: "uninstall" });
-    } else {
-      actions.push({ id: "install", label: "Install", type: "install" });
-    }
-    actions.push({ id: "back", label: "Back to list", type: "back" });
-    return actions;
-  };
+  const toPiPkgItemActions = getPiPackageActions;
 
   // ManagedItem for currently open detail views
   const detailPluginItem = useMemo((): ManagedItem | null => {
@@ -905,7 +877,7 @@ export function App() {
       return { item: detailFileItem, actions: toFileItemActions(fileActions), metadata: <FileMetadata item={detailFileItem} /> };
     }
     if (detailPlugin && detailPluginItem) {
-      return { item: detailPluginItem, actions: toItemActions(getPluginActions(detailPlugin)), metadata: <PluginMetadata item={detailPluginItem} /> };
+      return { item: detailPluginItem, actions: getPluginActions(detailPlugin), metadata: <PluginMetadata item={detailPluginItem} /> };
     }
     if (detailPiPackage && detailPiPkgItem) {
       return { item: detailPiPkgItem, actions: toPiPkgItemActions(detailPiPackage), metadata: <PiPackageMetadata item={detailPiPkgItem} /> };
