@@ -270,50 +270,30 @@ export function App() {
 
     let refreshed = false;
     try {
-      if (targetTab === "settings") {
-        // Settings reads config on mount — no async load needed.
-        refreshed = true;
-        return;
+      switch (targetTab) {
+        case "settings": refreshed = true; return; // reads config on mount, no async needed
+        case "discover":
+        case "marketplaces": await Promise.all([loadMarketplaces(), loadPiPackages()]); break;
+        case "installed":
+          await Promise.all([loadInstalledPlugins(), loadPiPackages()]);
+          void loadFiles(); // background — Installed stays responsive
+          break;
+        case "tools":
+          refreshManagedTools();
+          await refreshToolDetection();
+          break;
+        case "sync":
+        default:
+          // Sync: refresh only sync-relevant data to avoid expensive cross-tab reload.
+          refreshManagedTools();
+          await Promise.all([loadInstalledPlugins(), loadFiles(), refreshToolDetection()]);
+          break;
       }
-
-      if (targetTab === "discover") {
-        await Promise.all([loadMarketplaces(), loadPiPackages()]);
-        refreshed = true;
-        return;
-      }
-
-      if (targetTab === "installed") {
-        await Promise.all([loadInstalledPlugins(), loadPiPackages()]);
-        // Load file statuses in the background so Installed is responsive immediately.
-        void loadFiles();
-        refreshed = true;
-        return;
-      }
-
-      if (targetTab === "tools") {
-        refreshManagedTools();
-        await refreshToolDetection();
-        refreshed = true;
-        return;
-      }
-
-      if (targetTab === "marketplaces") {
-        await Promise.all([loadMarketplaces(), loadPiPackages()]);
-        refreshed = true;
-        return;
-      }
-
-      // Sync tab: refresh only sync-relevant data and avoid full cross-tab reload.
-      // This keeps first navigation responsive and prevents expensive refresh chains.
-      refreshManagedTools();
-      await Promise.all([loadInstalledPlugins(), loadFiles(), refreshToolDetection()]);
       refreshed = true;
     } catch (error) {
       notify(`Failed to refresh ${targetTab} tab: ${error instanceof Error ? error.message : String(error)}`, "error");
     } finally {
-      if (refreshed) {
-        lastTabRefreshRef.current[targetTab] = Date.now();
-      }
+      if (refreshed) lastTabRefreshRef.current[targetTab] = Date.now();
       tabRefreshInFlightRef.current[targetTab] = false;
       tabRefreshCounterRef.current -= 1;
       if (tabRefreshCounterRef.current <= 0) {
