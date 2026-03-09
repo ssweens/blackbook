@@ -1740,4 +1740,6 @@ export function initializeStore(): void {
   ensureConfigExists();
   const { refreshAll, notify } = useStore.getState();
   startFileWatchers(refreshAll, notify);
+  // Check source repo for updates at launch (silently no-ops if not configured/offline)
+  void pullSourceRepo();
 }
