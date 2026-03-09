@@ -6,7 +6,7 @@ import { useStore } from "./lib/store.js";
 import { TabBar } from "./components/TabBar.js";
 import { SearchBox } from "./components/SearchBox.js";
 import { PluginPreview } from "./components/PluginPreview.js";
-import { buildPluginActions, type PluginAction } from "./components/PluginDetail.js";
+import { buildPluginActions, getFileActions, type PluginAction } from "./lib/item-actions.js";
 import { MarketplaceList } from "./components/MarketplaceList.js";
 import { MarketplaceDetail } from "./components/MarketplaceDetail.js";
 import { PiMarketplaceList } from "./components/PiMarketplaceList.js";
@@ -20,7 +20,7 @@ import { ToolActionModal, type ToolModalAction } from "./components/ToolActionMo
 import { SyncList } from "./components/SyncList.js";
 import { SyncPreview } from "./components/SyncPreview.js";
 import { FilePreview } from "./components/FilePreview.js";
-import { getFileActions } from "./components/FileDetail.js";
+
 import { HintBar } from "./components/HintBar.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { Notifications } from "./components/Notifications.js";
@@ -29,7 +29,7 @@ import { MissingSummaryView } from "./components/MissingSummary.js";
 import { PluginSummary } from "./components/PluginSummary.js";
 import { PiPackageSummary } from "./components/PiPackageSummary.js";
 import { PiPackagePreview } from "./components/PiPackagePreview.js";
-// PiPackageDetail import removed — actions built via toPiPkgItemActions
+// PiPackageDetail actions built via toPiPkgItemActions in lib/item-actions.ts
 import { ComponentManager, getComponentItems } from "./components/ComponentManager.js";
 import { SettingsPanel } from "./components/SettingsPanel.js";
 import { getPluginToolStatus, togglePluginComponent } from "./lib/plugin-status.js";
