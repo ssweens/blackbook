@@ -911,6 +911,88 @@ export function App() {
     setDetailPiPackage(refreshed || pkg);
   };
 
+  // ── Extracted input handlers ───────────────────────────────────────────
+
+  const handleEscape = () => {
+    if (detailPlugin) {
+      setDetailPlugin(null);
+      setDetailPluginDrift(null);
+      setActionIndex(0);
+      setComponentManagerMode(false);
+    } else if (detailFile) {
+      setDetailFile(null);
+      setActionIndex(0);
+    } else if (detailMarketplace) {
+      setDetailMarketplace(null);
+      setActionIndex(0);
+    } else if (detailPiMarketplace) {
+      setDetailPiMarketplace(null);
+      setActionIndex(0);
+    } else if (detailPiPackage) {
+      setDetailPiPackage(null);
+      setActionIndex(0);
+    } else if (detailTool) {
+      setDetailToolKey(null);
+    } else if (discoverSubView) {
+      if (tab === "marketplaces" && marketplaceBrowseContext) {
+        setDiscoverSubView(null);
+        setSubViewIndex(0);
+        setDetailMarketplace(marketplaceBrowseContext);
+        setMarketplaceBrowseContext(null);
+        setSearch("");
+      } else {
+        setDiscoverSubView(null);
+        setSubViewIndex(0);
+      }
+    } else if (tab === "marketplaces" && marketplaceBrowseContext) {
+      setDetailMarketplace(marketplaceBrowseContext);
+      setMarketplaceBrowseContext(null);
+      setSearch("");
+    }
+  };
+
+  const handleEnterOnList = () => {
+    if (tab === "sync" && !diffTarget && !missingSummary) {
+      const item = syncPreview[selectedIndex];
+      if (item) {
+        if (item.kind === "plugin") {
+          setDetailPlugin(item.plugin);
+          setDetailPluginDrift(null);
+          void computePluginDrift(item.plugin).then(setDetailPluginDrift);
+          setActionIndex(0);
+        } else if (item.kind === "tool") {
+          const tool = managedTools.find((entry) => entry.toolId === item.toolId);
+          if (tool) {
+            setDetailToolKey(`${tool.toolId}:${tool.instanceId}`);
+          }
+        } else if (item.kind === "file") {
+          setDetailFile(item.file);
+          setActionIndex(0);
+        }
+      }
+      return;
+    }
+
+    if (selectedLibraryItem?.kind === "plugin") {
+      setDetailPlugin(selectedLibraryItem.plugin);
+      setDetailPluginDrift(null);
+      void computePluginDrift(selectedLibraryItem.plugin).then(setDetailPluginDrift);
+      setActionIndex(0);
+    } else if (selectedLibraryItem?.kind === "piPackage") {
+      setDetailPiPackage(selectedLibraryItem.piPackage);
+      setActionIndex(0);
+    } else if (selectedLibraryItem?.kind === "file") {
+      setDetailFile(selectedLibraryItem.file);
+      setActionIndex(0);
+    } else if (selectedLibraryItem?.kind === "pluginSummary") {
+      setDiscoverSubView("plugins");
+      setSubViewIndex(0);
+    } else if (selectedLibraryItem?.kind === "piPackageSummary") {
+      setDiscoverSubView("piPackages");
+      setSubViewIndex(0);
+    }
+  };
+
   useInput((input, key) => {
     if (toolModalAction) {
       if (toolModalDone) {
@@ -1057,46 +1139,9 @@ export function App() {
       return;
     }
 
-    // Escape - go back
+    // Escape - close the topmost overlay / go back
     if (key.escape) {
-      if (detailPlugin) {
-        setDetailPlugin(null);
-        setDetailPluginDrift(null);
-        setActionIndex(0);
-        setComponentManagerMode(false);
-      } else if (detailFile) {
-        setDetailFile(null);
-        setActionIndex(0);
-      } else if (detailMarketplace) {
-        setDetailMarketplace(null);
-        setActionIndex(0);
-      } else if (detailPiMarketplace) {
-        setDetailPiMarketplace(null);
-        setActionIndex(0);
-      } else if (detailPiPackage) {
-        setDetailPiPackage(null);
-        setActionIndex(0);
-      } else if (detailTool) {
-        setDetailToolKey(null);
-      } else if (discoverSubView) {
-        if (tab === "marketplaces" && marketplaceBrowseContext) {
-          // Return to marketplace detail when browsing plugins from Marketplaces flow.
-          setDiscoverSubView(null);
-          setSubViewIndex(0);
-          setDetailMarketplace(marketplaceBrowseContext);
-          setMarketplaceBrowseContext(null);
-          setSearch("");
-        } else {
-          // Close sub-view and return to Discover dashboard
-          setDiscoverSubView(null);
-          setSubViewIndex(0);
-        }
-      } else if (tab === "marketplaces" && marketplaceBrowseContext) {
-        // Safety path: if browse context remains but sub-view is closed, return to detail.
-        setDetailMarketplace(marketplaceBrowseContext);
-        setMarketplaceBrowseContext(null);
-        setSearch("");
-      }
+      handleEscape();
       return;
     }
 
@@ -1243,47 +1288,7 @@ export function App() {
         return;
       }
 
-      if (tab === "sync" && !diffTarget && !missingSummary) {
-        const item = syncPreview[selectedIndex];
-        if (item) {
-          if (item.kind === "plugin") {
-            setDetailPlugin(item.plugin);
-            setDetailPluginDrift(null);
-            void computePluginDrift(item.plugin).then(setDetailPluginDrift);
-            setActionIndex(0);
-          } else if (item.kind === "tool") {
-            const tool = managedTools.find((entry) => entry.toolId === item.toolId);
-            if (tool) {
-              setDetailToolKey(`${tool.toolId}:${tool.instanceId}`);
-            }
-          } else if (item.kind === "file") {
-            setDetailFile(item.file);
-            setActionIndex(0);
-          }
-        }
-        return;
-      }
-
-      if (selectedLibraryItem?.kind === "plugin") {
-        setDetailPlugin(selectedLibraryItem.plugin);
-        setDetailPluginDrift(null);
-        void computePluginDrift(selectedLibraryItem.plugin).then(setDetailPluginDrift);
-        setActionIndex(0);
-      } else if (selectedLibraryItem?.kind === "piPackage") {
-        setDetailPiPackage(selectedLibraryItem.piPackage);
-        setActionIndex(0);
-      } else if (selectedLibraryItem?.kind === "file") {
-        setDetailFile(selectedLibraryItem.file);
-        setActionIndex(0);
-      } else if (selectedLibraryItem?.kind === "pluginSummary") {
-        // Open plugins sub-view
-        setDiscoverSubView("plugins");
-        setSubViewIndex(0);
-      } else if (selectedLibraryItem?.kind === "piPackageSummary") {
-        // Open Pi packages sub-view
-        setDiscoverSubView("piPackages");
-        setSubViewIndex(0);
-      }
+      handleEnterOnList();
       return;
     }
 
