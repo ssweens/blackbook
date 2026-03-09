@@ -5,7 +5,6 @@ import { Box, Text, useInput, useApp } from "ink";
 import { useStore } from "./lib/store.js";
 import { TabBar } from "./components/TabBar.js";
 import { SearchBox } from "./components/SearchBox.js";
-import { PluginList } from "./components/PluginList.js";
 import { PluginPreview } from "./components/PluginPreview.js";
 import { PluginDetail, buildPluginActions, type PluginAction } from "./components/PluginDetail.js";
 import { MarketplaceList } from "./components/MarketplaceList.js";
@@ -20,7 +19,6 @@ import { ToolDetail } from "./components/ToolDetail.js";
 import { ToolActionModal, type ToolModalAction } from "./components/ToolActionModal.js";
 import { SyncList } from "./components/SyncList.js";
 import { SyncPreview } from "./components/SyncPreview.js";
-import { FileList } from "./components/FileList.js";
 import { FilePreview } from "./components/FilePreview.js";
 import { FileDetail, getFileActions } from "./components/FileDetail.js";
 import { HintBar } from "./components/HintBar.js";
@@ -30,7 +28,6 @@ import { DiffView } from "./components/DiffView.js";
 import { MissingSummaryView } from "./components/MissingSummary.js";
 import { PluginSummary } from "./components/PluginSummary.js";
 import { PiPackageSummary } from "./components/PiPackageSummary.js";
-import { PiPackageList } from "./components/PiPackageList.js";
 import { PiPackagePreview } from "./components/PiPackagePreview.js";
 import { PiPackageDetail, getPiPackageActions } from "./components/PiPackageDetail.js";
 import { ComponentManager, getComponentItems } from "./components/ComponentManager.js";
@@ -41,6 +38,9 @@ import { computePluginDrift, resolvePluginSourcePaths, type PluginDrift } from "
 import { getToolLifecycleCommand, detectInstallMethodMismatch } from "./lib/tool-lifecycle.js";
 import { getPackageManager } from "./lib/config.js";
 import { setupSourceRepository, shouldShowSourceSetupWizard } from "./lib/source-setup.js";
+import { ItemList, FILE_COLUMNS, PLUGIN_COLUMNS } from "./components/ItemList.js";
+import { pluginToManagedItem, fileToManagedItem, piPackageToManagedItem } from "./lib/managed-item.js";
+import type { ManagedItem } from "./lib/managed-item.js";
 import type { Tab, SyncPreviewItem, Plugin, PiPackage, PiMarketplace, DiffInstanceRef, DiscoverSection, DiscoverSubView, ManagedToolRow, FileStatus, Marketplace } from "./lib/types.js";
 
 const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces", "settings"];
@@ -454,6 +454,11 @@ export function App() {
     return filteredPlugins.filter((p) => p.marketplace === marketplaceBrowseContext.name);
   }, [filteredPlugins, marketplaceBrowseContext]);
 
+  const managedBrowsePlugins = useMemo(
+    () => marketplaceBrowsePlugins.map((p) => pluginToManagedItem(p)),
+    [marketplaceBrowsePlugins],
+  );
+
   const filteredPiPackages = useMemo(() => {
     const lowerSearch = search.toLowerCase();
     const base = tab === "installed" ? piPackages.filter((p) => p.installed) : piPackages;
@@ -567,6 +572,28 @@ export function App() {
   const installedFileCount = useMemo(
     () => files.filter(isInstalledFile).length,
     [files]
+  );
+
+  // ManagedItem conversions for generic ItemList
+  const managedFiles = useMemo(
+    () => filteredFiles.map((f) => fileToManagedItem(f)),
+    [filteredFiles],
+  );
+  const managedPlugins = useMemo(
+    () => filteredPlugins.map((p) => {
+      const item = pluginToManagedItem(p);
+      // Apply drift data to instance statuses
+      const drift = pluginDriftMap[p.name];
+      if (drift && Object.values(drift).some((s) => s !== "in-sync")) {
+        return { ...item, instances: item.instances.map((inst) => ({ ...inst, status: "changed" as const })) };
+      }
+      return item;
+    }),
+    [filteredPlugins, pluginDriftMap],
+  );
+  const managedPiPackages = useMemo(
+    () => filteredPiPackages.map((p) => piPackageToManagedItem(p)),
+    [filteredPiPackages],
   );
 
   const libraryNameWidth = useMemo(() => {
@@ -1904,16 +1931,14 @@ export function App() {
                 <Box flexDirection="column">
                   <Box marginBottom={1}>
                     <Text color="cyan" bold>Plugins </Text>
-                    <Text color="gray" dimColor>{getRange(subViewIndex, filteredPlugins.length, 12)}</Text>
+                    <Text color="gray" dimColor>{getRange(subViewIndex, managedPlugins.length, 12)}</Text>
                     <Text color="gray"> · Press Esc to go back</Text>
                   </Box>
-                  <PluginList
-                    plugins={filteredPlugins}
+                  <ItemList
+                    items={managedPlugins}
                     selectedIndex={subViewIndex}
                     maxHeight={12}
-                    nameColumnWidth={libraryNameWidth}
-                    marketplaceColumnWidth={marketplaceWidth}
-                    driftMap={pluginDriftMap}
+                    columns={PLUGIN_COLUMNS}
                   />
                 </Box>
               ) : discoverSubView === "piPackages" ? (
@@ -1921,15 +1946,14 @@ export function App() {
                 <Box flexDirection="column">
                   <Box marginBottom={1}>
                     <Text color="cyan" bold>Pi Packages </Text>
-                    <Text color="gray" dimColor>{getRange(subViewIndex, filteredPiPackages.length, 12)}</Text>
+                    <Text color="gray" dimColor>{getRange(subViewIndex, managedPiPackages.length, 12)}</Text>
                     <Text color="gray"> · Press Esc to go back</Text>
                   </Box>
-                  <PiPackageList
-                    packages={filteredPiPackages}
+                  <ItemList
+                    items={managedPiPackages}
                     selectedIndex={subViewIndex}
                     maxHeight={12}
-                    nameColumnWidth={libraryNameWidth}
-                    marketplaceColumnWidth={marketplaceWidth}
+                    columns={PLUGIN_COLUMNS}
                   />
                 </Box>
               ) : (
@@ -1964,49 +1988,45 @@ export function App() {
                 </Box>
               ) : (
                 <Box flexDirection="column">
-                  {filteredFiles.length > 0 && (
+                  {managedFiles.length > 0 && (
                     <Box flexDirection="column">
                       <Box>
                         <Text color="gray">  Files </Text>
-                        <Text color="gray" dimColor>{getRange(selectedIndex < fileCount ? selectedIndex : 0, filteredFiles.length, 5)}</Text>
+                        <Text color="gray" dimColor>{getRange(selectedIndex < fileCount ? selectedIndex : 0, managedFiles.length, 5)}</Text>
                       </Box>
-                      <FileList
-                        files={filteredFiles}
+                      <ItemList
+                        items={managedFiles}
                         selectedIndex={selectedIndex < fileCount ? selectedIndex : -1}
                         maxHeight={5}
-                        nameColumnWidth={libraryNameWidth}
-                        scopeColumnWidth={marketplaceWidth}
+                        columns={FILE_COLUMNS}
                       />
                     </Box>
                   )}
-                  {filteredPlugins.length > 0 && (
-                    <Box flexDirection="column" marginTop={filteredFiles.length > 0 ? 1 : 0}>
+                  {managedPlugins.length > 0 && (
+                    <Box flexDirection="column" marginTop={managedFiles.length > 0 ? 1 : 0}>
                       <Box>
                         <Text color="gray">  Plugins </Text>
-                        <Text color="gray" dimColor>{getRange(selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : 0, filteredPlugins.length, 4)}</Text>
+                        <Text color="gray" dimColor>{getRange(selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : 0, managedPlugins.length, 4)}</Text>
                       </Box>
-                      <PluginList
-                        plugins={filteredPlugins}
+                      <ItemList
+                        items={managedPlugins}
                         selectedIndex={selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : -1}
                         maxHeight={4}
-                        nameColumnWidth={libraryNameWidth}
-                        marketplaceColumnWidth={marketplaceWidth}
-                        driftMap={pluginDriftMap}
+                        columns={PLUGIN_COLUMNS}
                       />
                     </Box>
                   )}
-                  {filteredPiPackages.length > 0 && (
-                    <Box flexDirection="column" marginTop={(filteredFiles.length > 0 || filteredPlugins.length > 0) ? 1 : 0}>
+                  {managedPiPackages.length > 0 && (
+                    <Box flexDirection="column" marginTop={(managedFiles.length > 0 || managedPlugins.length > 0) ? 1 : 0}>
                       <Box>
                         <Text color="gray">  Pi Packages </Text>
-                        <Text color="gray" dimColor>{getRange(selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : 0, filteredPiPackages.length, 3)}</Text>
+                        <Text color="gray" dimColor>{getRange(selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : 0, managedPiPackages.length, 3)}</Text>
                       </Box>
-                      <PiPackageList
-                        packages={filteredPiPackages}
+                      <ItemList
+                        items={managedPiPackages}
                         selectedIndex={selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : -1}
                         maxHeight={3}
-                        nameColumnWidth={libraryNameWidth}
-                        marketplaceColumnWidth={marketplaceWidth}
+                        columns={PLUGIN_COLUMNS}
                       />
                     </Box>
                   )}
@@ -2028,12 +2048,11 @@ export function App() {
                     <Text color="gray" dimColor>{getRange(subViewIndex, marketplaceBrowsePlugins.length, 12)}</Text>
                     <Text color="gray"> · Press Esc to go back</Text>
                   </Box>
-                  <PluginList
-                    plugins={marketplaceBrowsePlugins}
+                  <ItemList
+                    items={managedBrowsePlugins}
                     selectedIndex={subViewIndex}
                     maxHeight={12}
-                    nameColumnWidth={libraryNameWidth}
-                    marketplaceColumnWidth={marketplaceWidth}
+                    columns={PLUGIN_COLUMNS}
                   />
                   <Box marginTop={1}>
                     <PluginPreview plugin={marketplaceBrowsePlugins[subViewIndex]} />
