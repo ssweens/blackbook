@@ -1752,38 +1752,16 @@ export function App() {
           {tab === "discover" && (
             <>
               {shouldShowDiscoverLoading ? (
-                <Box marginY={1}>
-                  <Text color="cyan">⠋ Loading plugins from marketplaces...</Text>
-                </Box>
+                <Box marginY={1}><Text color="cyan">⠋ Loading plugins from marketplaces...</Text></Box>
               ) : discoverSubView === "plugins" ? (
-                // Plugins sub-view - full list
                 <Box flexDirection="column">
-                  <Box marginBottom={1}>
-                    <Text color="cyan" bold>Plugins </Text>
-                    <Text color="gray" dimColor>{getRange(subViewIndex, managedPlugins.length, 12)}</Text>
-                    <Text color="gray"> · Press Esc to go back</Text>
-                  </Box>
-                  <ItemList
-                    items={managedPlugins}
-                    selectedIndex={subViewIndex}
-                    maxHeight={12}
-                    columns={PLUGIN_COLUMNS}
-                  />
+                  <Box marginBottom={1}><Text color="cyan" bold>Plugins </Text><Text color="gray" dimColor>{getRange(subViewIndex, managedPlugins.length, 12)}</Text><Text color="gray"> · Press Esc to go back</Text></Box>
+                  <ItemList items={managedPlugins} selectedIndex={subViewIndex} maxHeight={12} columns={PLUGIN_COLUMNS} />
                 </Box>
               ) : discoverSubView === "piPackages" ? (
-                // Pi Packages sub-view - full list
                 <Box flexDirection="column">
-                  <Box marginBottom={1}>
-                    <Text color="cyan" bold>Pi Packages </Text>
-                    <Text color="gray" dimColor>{getRange(subViewIndex, managedPiPackages.length, 12)}</Text>
-                    <Text color="gray"> · Press Esc to go back</Text>
-                  </Box>
-                  <ItemList
-                    items={managedPiPackages}
-                    selectedIndex={subViewIndex}
-                    maxHeight={12}
-                    columns={PLUGIN_COLUMNS}
-                  />
+                  <Box marginBottom={1}><Text color="cyan" bold>Pi Packages </Text><Text color="gray" dimColor>{getRange(subViewIndex, managedPiPackages.length, 12)}</Text><Text color="gray"> · Press Esc to go back</Text></Box>
+                  <ItemList items={managedPiPackages} selectedIndex={subViewIndex} maxHeight={12} columns={PLUGIN_COLUMNS} />
                 </Box>
               ) : (
                 // Dashboard view - inline lists for Configs/Assets, summary cards for Plugins/PiPackages
@@ -1812,51 +1790,25 @@ export function App() {
           {tab === "installed" && (
             <>
               {shouldShowInstalledLoading ? (
-                <Box marginY={1}>
-                  <Text color="cyan">⠋ Loading installed plugins...</Text>
-                </Box>
+                <Box marginY={1}><Text color="cyan">⠋ Loading installed plugins...</Text></Box>
               ) : (
                 <Box flexDirection="column">
                   {managedFiles.length > 0 && (
                     <Box flexDirection="column">
-                      <Box>
-                        <Text color="gray">  Files </Text>
-                        <Text color="gray" dimColor>{getRange(selectedIndex < fileCount ? selectedIndex : 0, managedFiles.length, 5)}</Text>
-                      </Box>
-                      <ItemList
-                        items={managedFiles}
-                        selectedIndex={selectedIndex < fileCount ? selectedIndex : -1}
-                        maxHeight={5}
-                        columns={FILE_COLUMNS}
-                      />
+                      <Box><Text color="gray">  Files </Text><Text color="gray" dimColor>{getRange(selectedIndex < fileCount ? selectedIndex : 0, managedFiles.length, 5)}</Text></Box>
+                      <ItemList items={managedFiles} selectedIndex={selectedIndex < fileCount ? selectedIndex : -1} maxHeight={5} columns={FILE_COLUMNS} />
                     </Box>
                   )}
                   {managedPlugins.length > 0 && (
                     <Box flexDirection="column" marginTop={managedFiles.length > 0 ? 1 : 0}>
-                      <Box>
-                        <Text color="gray">  Plugins </Text>
-                        <Text color="gray" dimColor>{getRange(selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : 0, managedPlugins.length, 4)}</Text>
-                      </Box>
-                      <ItemList
-                        items={managedPlugins}
-                        selectedIndex={selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : -1}
-                        maxHeight={4}
-                        columns={PLUGIN_COLUMNS}
-                      />
+                      <Box><Text color="gray">  Plugins </Text><Text color="gray" dimColor>{getRange(selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : 0, managedPlugins.length, 4)}</Text></Box>
+                      <ItemList items={managedPlugins} selectedIndex={selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : -1} maxHeight={4} columns={PLUGIN_COLUMNS} />
                     </Box>
                   )}
                   {managedPiPackages.length > 0 && (
                     <Box flexDirection="column" marginTop={(managedFiles.length > 0 || managedPlugins.length > 0) ? 1 : 0}>
-                      <Box>
-                        <Text color="gray">  Pi Packages </Text>
-                        <Text color="gray" dimColor>{getRange(selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : 0, managedPiPackages.length, 3)}</Text>
-                      </Box>
-                      <ItemList
-                        items={managedPiPackages}
-                        selectedIndex={selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : -1}
-                        maxHeight={3}
-                        columns={PLUGIN_COLUMNS}
-                      />
+                      <Box><Text color="gray">  Pi Packages </Text><Text color="gray" dimColor>{getRange(selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : 0, managedPiPackages.length, 3)}</Text></Box>
+                      <ItemList items={managedPiPackages} selectedIndex={selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : -1} maxHeight={3} columns={PLUGIN_COLUMNS} />
                     </Box>
                   )}
                 </Box>
