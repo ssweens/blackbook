@@ -224,9 +224,13 @@ async function handleInstallToolAction(
   action: ItemAction,
   callbacks: DispatchCallbacks,
 ): Promise<boolean> {
-  if (!item._plugin || !action.instance) return false;
-  const inst = action.instance as DiffInstanceRef;
-  await callbacks.installPluginToInstance(item._plugin, inst.toolId, inst.instanceId);
+  if (!item._plugin) return false;
+
+  const toolId = action.instance?.toolId ?? action.toolStatus?.toolId;
+  const instanceId = action.instance?.instanceId ?? action.toolStatus?.instanceId;
+  if (!toolId || !instanceId) return false;
+
+  await callbacks.installPluginToInstance(item._plugin, toolId, instanceId);
   callbacks.refreshDetailPlugin(item._plugin);
   return true;
 }
@@ -236,9 +240,13 @@ async function handleUninstallToolAction(
   action: ItemAction,
   callbacks: DispatchCallbacks,
 ): Promise<boolean> {
-  if (!item._plugin || !action.instance) return false;
-  const inst = action.instance as DiffInstanceRef;
-  await callbacks.uninstallPluginFromInstance(item._plugin, inst.toolId, inst.instanceId);
+  if (!item._plugin) return false;
+
+  const toolId = action.instance?.toolId ?? action.toolStatus?.toolId;
+  const instanceId = action.instance?.instanceId ?? action.toolStatus?.instanceId;
+  if (!toolId || !instanceId) return false;
+
+  await callbacks.uninstallPluginFromInstance(item._plugin, toolId, instanceId);
   callbacks.refreshDetailPlugin(item._plugin);
   return true;
 }

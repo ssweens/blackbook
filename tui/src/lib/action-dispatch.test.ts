@@ -241,12 +241,40 @@ describe("handleItemAction", () => {
     expect(callbacks.installPluginToInstance).toHaveBeenCalledWith(plugin, "claude-code", "main");
   });
 
+  it("install_tool uses toolStatus when instance is not provided", async () => {
+    const plugin = createPlugin();
+    const item = createItem({ _plugin: plugin });
+    const action: ItemAction = {
+      id: "it2",
+      label: "Install to Claude",
+      type: "install_tool",
+      toolStatus: { toolId: "claude-code", instanceId: "main", name: "Claude" },
+    };
+    const result = await handleItemAction(item, action, callbacks);
+    expect(result).toBe(true);
+    expect(callbacks.installPluginToInstance).toHaveBeenCalledWith(plugin, "claude-code", "main");
+  });
+
   // ── uninstall_tool ───────────────────────────────────────────────────
   it("uninstall_tool calls uninstallPluginFromInstance", async () => {
     const plugin = createPlugin();
     const item = createItem({ _plugin: plugin });
     const action: ItemAction = { id: "ut", label: "Uninstall from Claude", type: "uninstall_tool", instance };
     await handleItemAction(item, action, callbacks);
+    expect(callbacks.uninstallPluginFromInstance).toHaveBeenCalledWith(plugin, "claude-code", "main");
+  });
+
+  it("uninstall_tool uses toolStatus when instance is not provided", async () => {
+    const plugin = createPlugin();
+    const item = createItem({ _plugin: plugin });
+    const action: ItemAction = {
+      id: "ut2",
+      label: "Uninstall from Claude",
+      type: "uninstall_tool",
+      toolStatus: { toolId: "claude-code", instanceId: "main", name: "Claude" },
+    };
+    const result = await handleItemAction(item, action, callbacks);
+    expect(result).toBe(true);
     expect(callbacks.uninstallPluginFromInstance).toHaveBeenCalledWith(plugin, "claude-code", "main");
   });
 

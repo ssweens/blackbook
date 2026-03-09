@@ -230,3 +230,6 @@ Each phase is independently shippable and testable.
 - Update checks are now startup-only plus manual triggers (`R`), not tab-navigation driven.
 - Source repo status is primed at startup and cached; Settings uses cached status on first render.
 - Settings manual refresh (`R`) now explicitly refreshes source repo status with remote fetch.
+- Fixed Installed-tab per-tool plugin actions after unified dispatch migration: `install_tool` / `uninstall_tool` now resolve target instance from either `action.instance` or `action.toolStatus`.
+- Installed-tab section loading placeholders now reset correctly on refresh by toggling `installedPluginsLoaded` / `piPackagesLoaded` to `false` at load start.
+

@@ -651,6 +651,8 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   loadPiPackages: async () => {
+    set({ piPackagesLoaded: false });
+
     // Load Pi packages only when Pi is enabled in config or detected as installed.
     const tools = get().tools;
     const piEnabled = tools.some((t) => t.toolId === "pi" && t.enabled);
@@ -875,6 +877,8 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   loadInstalledPlugins: async () => {
+    set({ installedPluginsLoaded: false });
+
     const { plugins: installed } = getAllInstalledPlugins();
     const marketplaces = get().marketplaces.map((m) => ({
       ...m,

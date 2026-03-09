@@ -140,12 +140,25 @@ export function buildPluginActions(
     // Per-tool install/uninstall
     for (const status of toolStatuses) {
       if (!status.enabled || !status.supported) continue;
+      const inst = allInstances.find(
+        (t) => t.toolId === status.toolId && t.instanceId === status.instanceId,
+      );
+      const instance = inst
+        ? {
+            toolId: inst.toolId,
+            instanceId: inst.instanceId,
+            instanceName: inst.name,
+            configDir: inst.configDir,
+          }
+        : undefined;
+
       if (status.installed) {
         actions.push({
           id: `uninstall_${status.toolId}:${status.instanceId}`,
           label: `Uninstall from ${status.name}`,
           type: "uninstall_tool",
           toolStatus: status,
+          instance,
         });
       } else {
         actions.push({
@@ -153,6 +166,7 @@ export function buildPluginActions(
           label: `Install to ${status.name}`,
           type: "install_tool",
           toolStatus: status,
+          instance,
         });
       }
     }
@@ -161,13 +175,25 @@ export function buildPluginActions(
   } else {
     actions.push({ id: "install", label: "Install to all tools", type: "install" });
 
+    const allInstances = getToolInstances();
     for (const status of toolStatuses) {
       if (!status.enabled || !status.supported) continue;
+      const inst = allInstances.find(
+        (t) => t.toolId === status.toolId && t.instanceId === status.instanceId,
+      );
       actions.push({
         id: `install_${status.toolId}:${status.instanceId}`,
         label: `Install to ${status.name}`,
         type: "install_tool",
         toolStatus: status,
+        instance: inst
+          ? {
+              toolId: inst.toolId,
+              instanceId: inst.instanceId,
+              instanceName: inst.name,
+              configDir: inst.configDir,
+            }
+          : undefined,
       });
     }
 
