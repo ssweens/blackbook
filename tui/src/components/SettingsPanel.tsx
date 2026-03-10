@@ -204,9 +204,9 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
 
   const menuItems = buildMenuItems(repoStatus);
 
-  const refreshRepoStatus = useCallback(async (options?: { force?: boolean; fetchRemote?: boolean }) => {
+  const refreshRepoStatus = useCallback(async () => {
     setRepoLoading(true);
-    const status = await getSourceRepoStatus(options);
+    const status = await getSourceRepoStatus();
     setRepoStatus(status);
     setRepoLoading(false);
   }, []);
@@ -214,8 +214,7 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
   useEffect(() => {
     const { config } = loadConfig();
     setSettings(config.settings);
-    // Use cached startup status (fast), avoid remote fetch on tab navigation.
-    refreshRepoStatus({ fetchRemote: false });
+    refreshRepoStatus();
   }, [refreshRepoStatus]);
 
   useEffect(() => {
@@ -327,7 +326,7 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
           if (result.success) {
             setActionMessage("✔ Committed and pushed");
             setDiffContent({});
-            refreshRepoStatus({ force: true, fetchRemote: false });
+            refreshRepoStatus();
           } else {
             setActionMessage(`✗ ${result.error}`);
           }
@@ -367,14 +366,6 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
     }
     if (key.downArrow) {
       setSelectedIndex((i) => Math.min(menuItems.length - 1, i + 1));
-      return;
-    }
-
-    if (input === "R") {
-      setActionMessage("Refreshing...");
-      refreshRepoStatus({ force: true, fetchRemote: true }).then(() => {
-        setActionMessage("✔ Refreshed");
-      });
       return;
     }
 
@@ -422,7 +413,7 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
           pullSourceRepoChanges().then((result) => {
             if (result.success) {
               setActionMessage("✔ Pulled latest");
-              refreshRepoStatus({ force: true, fetchRemote: false });
+              refreshRepoStatus();
             } else {
               setActionMessage(`✗ ${result.error}`);
             }

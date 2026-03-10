@@ -14,11 +14,11 @@ import { existsSync, lstatSync, readFileSync } from "fs";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { basename, dirname, join, resolve } from "path";
+import { homedir } from "os";
 import type { Plugin } from "./types.js";
 import { loadManifest } from "./manifest.js";
 import { instanceKey } from "./plugin-helpers.js";
 import { getToolInstances, parseMarketplaces } from "./config.js";
-import { expandTilde } from "./path-utils.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -120,7 +120,10 @@ function resolvePluginSource(
     }
 
     // Resolve the marketplace file path.
-    let normalizedUrl = expandTilde(mpUrl);
+    let normalizedUrl = mpUrl;
+    if (normalizedUrl.startsWith("~")) {
+      normalizedUrl = resolve(homedir(), normalizedUrl.slice(1));
+    }
 
     // Determine the marketplace JSON file path.
     let marketplaceFile: string;

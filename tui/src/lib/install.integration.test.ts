@@ -16,7 +16,6 @@ import {
   enablePlugin,
   disablePlugin,
   uninstallPlugin,
-  updatePlugin,
   getAllInstalledPlugins,
   getInstalledPluginsForInstance,
   loadManifest,
@@ -351,77 +350,6 @@ describe("enablePlugin", () => {
 
     expect(result.success).toBe(false);
     expect(result.errors).toContain(`Plugin source not found for ${TEST_PLUGIN_NAME}`);
-  });
-});
-
-describe("updatePlugin", () => {
-  beforeEach(() => {
-    cleanupAllTestArtifacts();
-  });
-
-  afterEach(() => {
-    cleanupAllTestArtifacts();
-  });
-
-  it("updates only instances where plugin is already installed", async () => {
-    const pluginName = "update-installed-only-plugin";
-    const skillName = "update-installed-only-skill";
-    const marketplace = "playbook";
-
-    const repoRoot = join(TEST_ROOT, "playbook-update-repo");
-    const marketplaceDir = join(repoRoot, ".claude-plugin");
-    const marketplaceJsonPath = join(marketplaceDir, "marketplace.json");
-    const pluginSourceDir = join(repoRoot, "plugins", pluginName);
-
-    mkdirSync(marketplaceDir, { recursive: true });
-    writeFileSync(marketplaceJsonPath, JSON.stringify({ name: marketplace, plugins: [] }));
-
-    mkdirSync(join(pluginSourceDir, "skills", skillName), { recursive: true });
-    writeFileSync(join(pluginSourceDir, "skills", skillName, "SKILL.md"), "# Updated Skill");
-
-    const pi = getInstance("pi");
-    const piSkillDir = join(pi.configDir, pi.skillsSubdir!, skillName);
-    mkdirSync(piSkillDir, { recursive: true });
-    writeFileSync(join(piSkillDir, "SKILL.md"), "# Old Skill");
-
-    const opencode = getInstance("opencode");
-    const amp = getInstance("amp-code");
-    const codex = getInstance("openai-codex");
-    const opencodeSkillDir = join(opencode.configDir, opencode.skillsSubdir!, skillName);
-    const ampSkillDir = join(amp.configDir, amp.skillsSubdir!, skillName);
-    const codexSkillDir = join(codex.configDir, codex.skillsSubdir!, skillName);
-    rmSync(opencodeSkillDir, { recursive: true, force: true });
-    rmSync(ampSkillDir, { recursive: true, force: true });
-    rmSync(codexSkillDir, { recursive: true, force: true });
-
-    const plugin: Plugin = {
-      name: pluginName,
-      marketplace,
-      description: "Update only installed instances",
-      source: `./plugins/${pluginName}`,
-      skills: [skillName],
-      commands: [],
-      agents: [],
-      hooks: [],
-      hasMcp: false,
-      hasLsp: false,
-      homepage: "",
-      installed: true,
-      scope: "user",
-    };
-
-    const result = await updatePlugin(plugin, marketplaceJsonPath);
-
-    expect(result.success).toBe(true);
-    expect(result.linkedInstances[`pi:${pi.instanceId}`]).toBeGreaterThan(0);
-    expect(result.linkedInstances[`opencode:${opencode.instanceId}`]).toBeUndefined();
-    expect(result.linkedInstances[`amp-code:${amp.instanceId}`]).toBeUndefined();
-    expect(result.linkedInstances[`openai-codex:${codex.instanceId}`]).toBeUndefined();
-
-    expect(readFileSync(join(piSkillDir, "SKILL.md"), "utf-8")).toContain("Updated Skill");
-    expect(existsSync(opencodeSkillDir)).toBe(false);
-    expect(existsSync(ampSkillDir)).toBe(false);
-    expect(existsSync(codexSkillDir)).toBe(false);
   });
 });
 
@@ -916,109 +844,6 @@ describe("createSymlink and removeSymlink", () => {
 });
 
 describe("syncPluginInstances", () => {
-  it("refreshes stale cached plugin source from marketplace before syncing", async () => {
-    const pluginName = "updated-plugin";
-    const skillName = "new-skill";
-    const marketplace = "local-updated-marketplace";
-
-    const staleCacheDir = join(getPluginsCacheDir(), marketplace, pluginName);
-    mkdirSync(join(staleCacheDir, "skills", "old-skill"), { recursive: true });
-    writeFileSync(join(staleCacheDir, "skills", "old-skill", "SKILL.md"), "# Old skill");
-
-    const marketplaceDir = join(TEST_ROOT, "local-marketplace-source");
-    const pluginSourceDir = join(marketplaceDir, "plugins", pluginName);
-    mkdirSync(join(pluginSourceDir, "skills", skillName), { recursive: true });
-    writeFileSync(join(pluginSourceDir, "skills", skillName, "SKILL.md"), "# New skill");
-
-    const plugin: Plugin = {
-      name: pluginName,
-      marketplace,
-      description: "Updated plugin",
-      source: `./plugins/${pluginName}`,
-      skills: [skillName],
-      commands: [],
-      agents: [],
-      hooks: [],
-      hasMcp: false,
-      hasLsp: false,
-      homepage: "",
-      installed: true,
-      scope: "user",
-    };
-
-    const piInstance = getInstance("pi");
-    const targetDir = join(piInstance.configDir, piInstance.skillsSubdir!, skillName);
-    rmSync(targetDir, { recursive: true, force: true });
-
-    const result = await syncPluginInstances(plugin, marketplaceDir, [
-      {
-        toolId: "pi",
-        instanceId: piInstance.instanceId,
-        name: piInstance.name,
-        installed: false,
-        supported: true,
-        enabled: true,
-      },
-    ]);
-
-    expect(result.success).toBe(true);
-    expect(result.syncedInstances[`pi:${piInstance.instanceId}`]).toBeGreaterThan(0);
-    expect(existsSync(join(targetDir, "SKILL.md"))).toBe(true);
-    expect(existsSync(join(staleCacheDir, "skills", skillName, "SKILL.md"))).toBe(true);
-  });
-
-  it("resolves local marketplace plugin sources relative to repo root when URL points to .claude-plugin/marketplace.json", async () => {
-    const pluginName = "eval-model";
-    const skillName = "eval-model";
-    const marketplace = "playbook";
-
-    const repoRoot = join(TEST_ROOT, "playbook-repo");
-    const marketplaceDir = join(repoRoot, ".claude-plugin");
-    const marketplaceJsonPath = join(marketplaceDir, "marketplace.json");
-    const pluginSourceDir = join(repoRoot, "plugins", pluginName);
-
-    mkdirSync(marketplaceDir, { recursive: true });
-    writeFileSync(marketplaceJsonPath, JSON.stringify({ name: marketplace, plugins: [] }));
-
-    mkdirSync(join(pluginSourceDir, "skills", skillName), { recursive: true });
-    writeFileSync(join(pluginSourceDir, "skills", skillName, "SKILL.md"), "# Eval Model");
-
-    const plugin: Plugin = {
-      name: pluginName,
-      marketplace,
-      description: "Eval model skill",
-      source: `./plugins/${pluginName}`,
-      skills: [skillName],
-      commands: [],
-      agents: [],
-      hooks: [],
-      hasMcp: false,
-      hasLsp: false,
-      homepage: "",
-      installed: true,
-      scope: "user",
-    };
-
-    const piInstance = getInstance("pi");
-    const targetDir = join(piInstance.configDir, piInstance.skillsSubdir!, skillName);
-    rmSync(targetDir, { recursive: true, force: true });
-
-    const result = await syncPluginInstances(plugin, marketplaceJsonPath, [
-      {
-        toolId: "pi",
-        instanceId: piInstance.instanceId,
-        name: piInstance.name,
-        installed: false,
-        supported: true,
-        enabled: true,
-      },
-    ]);
-
-    expect(result.success).toBe(true);
-    expect(result.syncedInstances[`pi:${piInstance.instanceId}`]).toBeGreaterThan(0);
-    expect(existsSync(join(targetDir, "SKILL.md"))).toBe(true);
-  });
-
   it("syncs standalone installed skill sources (no package root) to missing instances", async () => {
     const standaloneSource = join(TEST_ROOT, "standalone-skill-source", TEST_SKILL_NAME);
     mkdirSync(standaloneSource, { recursive: true });
