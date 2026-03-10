@@ -213,7 +213,7 @@ interface Marketplace {
 | **Deleted component files** | — | **11 files** ✅ | — |
 | **New generic components** | — | **3 (ItemList + ItemDetail + MarketplaceDetailView)** ✅ | — |
 | **New modules** | — | **9 (managed-item, action-dispatch, item-actions, path-utils, marketplace-detail, marketplace-row, input-hooks, item-drift + store helper)** ✅ | — |
-| **New test count** | 346 | **441 (+95)** ✅ | — |
+| **New test count** | 346 | **447 (+101)** ✅ | — |
 | **Net from main** | — | **+5097 / -3715** | — |
 
 ## Execution Order
