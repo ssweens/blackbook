@@ -778,16 +778,10 @@ describe("App E2E — Plugin Detail", () => {
 describe("App E2E — File Detail (component rendering)", () => {
   it("shows per-instance status for synced file", async () => {
     const file = createFileStatus();
-    const { getFileActions } = await import("./lib/item-actions.js");
-    const { fileToManagedItem } = await import("./lib/managed-item.js");
-    const { ItemDetail, FileMetadata } = await import("./components/ItemDetail.js");
-    const item = fileToManagedItem(file);
-    const actions = getFileActions(file).map((a: any, i: number) => ({ id: `${a.type}_${i}`, ...a }));
+    const { FileDetail, getFileActions } = await import("./components/FileDetail.js");
+    const actions = getFileActions(file);
     const { lastFrame } = render(
-      React.createElement(ItemDetail, {
-        item, selectedAction: 0, actions,
-        metadata: React.createElement(FileMetadata, { item }),
-      } as any)
+      React.createElement(FileDetail, { file, selectedAction: 0, actions } as any)
     );
     const frame = lastFrame()!;
     expect(frame).toContain("AGENTS.md");
@@ -796,16 +790,10 @@ describe("App E2E — File Detail (component rendering)", () => {
 
   it("drifted file shows changed status", async () => {
     const file = createDriftedFileStatus();
-    const { getFileActions } = await import("./lib/item-actions.js");
-    const { fileToManagedItem } = await import("./lib/managed-item.js");
-    const { ItemDetail, FileMetadata } = await import("./components/ItemDetail.js");
-    const item = fileToManagedItem(file);
-    const actions = getFileActions(file).map((a: any, i: number) => ({ id: `${a.type}_${i}`, ...a }));
+    const { FileDetail, getFileActions } = await import("./components/FileDetail.js");
+    const actions = getFileActions(file);
     const { lastFrame } = render(
-      React.createElement(ItemDetail, {
-        item, selectedAction: 0, actions,
-        metadata: React.createElement(FileMetadata, { item }),
-      } as any)
+      React.createElement(FileDetail, { file, selectedAction: 0, actions } as any)
     );
     const frame = lastFrame()!;
     expect(frame).toContain("Source changed");

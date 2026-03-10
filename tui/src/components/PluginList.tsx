@@ -1,0 +1,116 @@
+import React, { useMemo } from "react";
+import { Box, Text } from "ink";
+import type { Plugin } from "../lib/types.js";
+import type { PluginDrift } from "../lib/plugin-drift.js";
+
+interface PluginListProps {
+  plugins: Plugin[];
+  selectedIndex: number;
+  nameColumnWidth?: number;
+  marketplaceColumnWidth?: number;
+  maxHeight?: number;
+  driftMap?: Record<string, PluginDrift>;
+}
+
+export function PluginList({
+  plugins,
+  selectedIndex,
+  nameColumnWidth,
+  marketplaceColumnWidth,
+  maxHeight = 12,
+  driftMap,
+}: PluginListProps) {
+  const hasSelection = selectedIndex >= 0;
+  const effectiveIndex = hasSelection ? selectedIndex : 0;
+  // Calculate max lengths for column alignment
+  const { maxNameLen, maxMarketplaceLen } = useMemo(() => {
+    if (nameColumnWidth && marketplaceColumnWidth) {
+      return { maxNameLen: nameColumnWidth, maxMarketplaceLen: marketplaceColumnWidth };
+    }
+    return {
+      maxNameLen: Math.min(30, Math.max(...plugins.map(p => p.name.length), 10)),
+      maxMarketplaceLen: Math.max(...plugins.map(p => p.marketplace.length), 10),
+    };
+  }, [plugins, nameColumnWidth, marketplaceColumnWidth]);
+
+  const { visiblePlugins, startIndex } = useMemo(() => {
+    if (plugins.length <= maxHeight) {
+      return {
+        visiblePlugins: plugins,
+        startIndex: 0,
+      };
+    }
+
+    const maxStart = Math.max(0, plugins.length - maxHeight);
+    const start = Math.min(
+      Math.max(0, effectiveIndex - (maxHeight - 1)),
+      maxStart
+    );
+
+    return {
+      visiblePlugins: plugins.slice(start, start + maxHeight),
+      startIndex: start,
+    };
+  }, [plugins, effectiveIndex, maxHeight]);
+
+  if (plugins.length === 0) {
+    return (
+      <Box>
+        <Text color="gray">No plugins found</Text>
+      </Box>
+    );
+  }
+
+  return (
+    <Box flexDirection="column">
+      {visiblePlugins.map((plugin, visibleIdx) => {
+        const actualIndex = startIndex + visibleIdx;
+        const isSelected = hasSelection && actualIndex === selectedIndex;
+        const indicator = isSelected ? "❯" : " ";
+
+        const typeLabel = plugin.hasMcp ? "MCP" : "Plugin";
+        const statusIcon = plugin.installed ? "✔" : " ";
+        const statusColor = plugin.installed ? "green" : "gray";
+        const showIncomplete = Boolean(plugin.installed && plugin.incomplete);
+        const pluginDrift = driftMap?.[plugin.name];
+        const showChanged = Boolean(plugin.installed && pluginDrift && Object.values(pluginDrift).some((s) => s !== "in-sync"));
+        const statusLabel = plugin.installed ? "installed" : "";
+        const statusWidth = 9;
+
+        const paddedName = plugin.name.padEnd(maxNameLen);
+
+        return (
+          <Box key={`${plugin.marketplace}:${plugin.name}`} flexDirection="column">
+            <Box>
+              <Text color={isSelected ? "cyan" : "white"}>{indicator} </Text>
+              <Text bold={isSelected} color="white">
+                {paddedName}
+              </Text>
+              <Text color="gray"> </Text>
+              <Text color="blue">{typeLabel.padEnd(6)}</Text>
+              <Text color="gray"> · </Text>
+              <Text color="gray">{plugin.marketplace.padEnd(maxMarketplaceLen)}</Text>
+              <Text color="gray"> </Text>
+              <Text color={statusColor}>{statusIcon}</Text>
+              <Text color={statusColor}>
+                {" " + statusLabel.padEnd(statusWidth)}
+              </Text>
+              {showIncomplete && (
+                <>
+                  <Text color="gray"> · </Text>
+                  <Text color="yellow">incomplete</Text>
+                </>
+              )}
+              {showChanged && (
+                <>
+                  <Text color="gray"> · </Text>
+                  <Text color="yellow">changed</Text>
+                </>
+              )}
+            </Box>
+          </Box>
+        );
+      })}
+    </Box>
+  );
+}
