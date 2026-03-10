@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useRef } from "react";
-import { join } from "path";
-import { existsSync } from "fs";
+import { join, dirname } from "path";
+import { existsSync, lstatSync, rmSync, cpSync, copyFileSync, mkdirSync } from "fs";
 import { Box, Text, useInput, useApp } from "ink";
 import { useStore, withSpinner } from "./lib/store.js";
 import { TabBar } from "./components/TabBar.js";
@@ -1350,6 +1350,74 @@ export function App() {
     await useStore.getState().refreshAll();
   };
 
+  const pullbackPluginInstanceCb = async (plugin: Plugin, instance: DiffInstanceRef) => {
+    const { notify: n, clearNotification: cn } = useStore.getState();
+    const sourcePaths = resolvePluginSourcePaths(plugin);
+    if (!sourcePaths) {
+      n(`✗ Cannot pull ${plugin.name}: source repo path not found`, "error");
+      return false;
+    }
+
+    const tool = tools.find((t) => t.toolId === instance.toolId && t.instanceId === instance.instanceId);
+    if (!tool) {
+      n(`✗ Unknown tool instance: ${instance.toolId}:${instance.instanceId}`, "error");
+      return false;
+    }
+
+    const pluginDrift = detailPluginDrift ?? pluginDriftMap[plugin.name];
+    if (!pluginDrift) {
+      n(`✗ No drift info available for ${plugin.name}`, "error");
+      return false;
+    }
+
+    let copied = 0;
+
+    await withSpinner(`Pulling ${plugin.name} from ${tool.name}...`, async () => {
+      for (const [driftKey, status] of Object.entries(pluginDrift)) {
+        if (status === "in-sync") continue;
+
+        const [kind, name] = driftKey.split(":");
+        if (kind !== "skill" && kind !== "command" && kind !== "agent") continue;
+
+        const subdir = kind === "skill" ? tool.skillsSubdir : kind === "command" ? tool.commandsSubdir : tool.agentsSubdir;
+        if (!subdir) continue;
+
+        const suffix = kind === "skill" ? name : `${name}.md`;
+        const sourcePath = join(sourcePaths.pluginDir, `${kind}s`, suffix);
+        const targetPath = join(tool.configDir, subdir, suffix);
+
+        if (!existsSync(targetPath)) continue;
+
+        let hasDiff = false;
+        try {
+          const dt = buildFileDiffTarget(`${plugin.name}/${name}`, suffix, sourcePath, targetPath, instance);
+          hasDiff = dt.files.length > 0;
+        } catch {
+          hasDiff = false;
+        }
+        if (!hasDiff) continue;
+
+        if (kind === "skill") {
+          rmSync(sourcePath, { recursive: true, force: true });
+          cpSync(targetPath, sourcePath, { recursive: true });
+        } else {
+          mkdirSync(dirname(sourcePath), { recursive: true });
+          copyFileSync(targetPath, sourcePath);
+        }
+        copied += 1;
+      }
+    }, n, cn);
+
+    if (copied > 0) {
+      n(`✓ Pulled ${plugin.name} from ${tool.name} (${copied})`, "success");
+    } else {
+      n(`⚠ No changed components to pull from ${tool.name}`, "warning");
+    }
+
+    await useStore.getState().refreshAll();
+    return copied > 0;
+  };
+
   // Unified action handler for file, plugin, and pi-package detail views
   const handleEntityAction = async (index: number) => {
     if (!activeDetail) return;
@@ -1370,6 +1438,7 @@ export function App() {
       refreshDetailPlugin,
       syncFiles: syncTools,
       pullbackFileInstance,
+      pullbackPluginInstance: pullbackPluginInstanceCb,
       installPiPackage: doInstallPiPkg,
       uninstallPiPackage: doUninstallPiPkg,
       updatePiPackage: doUpdatePiPkg,

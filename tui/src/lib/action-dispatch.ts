@@ -36,9 +36,10 @@ export interface DispatchCallbacks {
   uninstallPluginFromInstance: (plugin: Plugin, toolId: string, instanceId: string) => Promise<void>;
   refreshDetailPlugin: (plugin: Plugin) => void;
 
-  // File actions
+  // File / plugin pullback actions
   syncFiles: (items: SyncPreviewItem[]) => Promise<void>;
   pullbackFileInstance: (file: FileStatus, instance: DiffInstanceRef) => Promise<boolean>;
+  pullbackPluginInstance: (plugin: Plugin, instance: DiffInstanceRef) => Promise<boolean>;
 
   // Pi package actions
   installPiPackage: (pkg: PiPackage) => Promise<boolean>;
@@ -256,7 +257,19 @@ async function handlePullbackAction(
   action: ItemAction,
   callbacks: DispatchCallbacks,
 ): Promise<boolean> {
-  if (!item._file || !action.instance) return false;
-  await callbacks.pullbackFileInstance(item._file, action.instance as DiffInstanceRef);
-  return true;
+  if (!action.instance) return false;
+  const instance = action.instance as DiffInstanceRef;
+
+  if (item._file) {
+    await callbacks.pullbackFileInstance(item._file, instance);
+    return true;
+  }
+
+  if (item._plugin) {
+    await callbacks.pullbackPluginInstance(item._plugin, instance);
+    callbacks.refreshDetailPlugin(item._plugin);
+    return true;
+  }
+
+  return false;
 }

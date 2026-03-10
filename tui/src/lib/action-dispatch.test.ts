@@ -93,6 +93,7 @@ function createCallbacks(): DispatchCallbacks {
     refreshDetailPlugin: vi.fn(),
     syncFiles: vi.fn().mockResolvedValue(undefined),
     pullbackFileInstance: vi.fn().mockResolvedValue(true),
+    pullbackPluginInstance: vi.fn().mockResolvedValue(true),
     installPiPackage: vi.fn().mockResolvedValue(true),
     uninstallPiPackage: vi.fn().mockResolvedValue(true),
     updatePiPackage: vi.fn().mockResolvedValue(true),
@@ -286,6 +287,16 @@ describe("handleItemAction", () => {
     const result = await handleItemAction(item, action, callbacks);
     expect(result).toBe(true);
     expect(callbacks.pullbackFileInstance).toHaveBeenCalledWith(file, instance);
+  });
+
+  it("pullback on plugin calls pullbackPluginInstance", async () => {
+    const plugin = createPlugin();
+    const item = createItem({ _plugin: plugin });
+    const action: ItemAction = { id: "pp", label: "Pull from Claude", type: "pullback", instance };
+    const result = await handleItemAction(item, action, callbacks);
+    expect(result).toBe(true);
+    expect(callbacks.pullbackPluginInstance).toHaveBeenCalledWith(plugin, instance);
+    expect(callbacks.refreshDetailPlugin).toHaveBeenCalledWith(plugin);
   });
 
   it("pullback without instance is a no-op", async () => {

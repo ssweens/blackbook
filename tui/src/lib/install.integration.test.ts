@@ -16,6 +16,7 @@ import {
   enablePlugin,
   disablePlugin,
   uninstallPlugin,
+  updatePlugin,
   getAllInstalledPlugins,
   getInstalledPluginsForInstance,
   loadManifest,
@@ -350,6 +351,77 @@ describe("enablePlugin", () => {
 
     expect(result.success).toBe(false);
     expect(result.errors).toContain(`Plugin source not found for ${TEST_PLUGIN_NAME}`);
+  });
+});
+
+describe("updatePlugin", () => {
+  beforeEach(() => {
+    cleanupAllTestArtifacts();
+  });
+
+  afterEach(() => {
+    cleanupAllTestArtifacts();
+  });
+
+  it("updates only instances where plugin is already installed", async () => {
+    const pluginName = "update-installed-only-plugin";
+    const skillName = "update-installed-only-skill";
+    const marketplace = "playbook";
+
+    const repoRoot = join(TEST_ROOT, "playbook-update-repo");
+    const marketplaceDir = join(repoRoot, ".claude-plugin");
+    const marketplaceJsonPath = join(marketplaceDir, "marketplace.json");
+    const pluginSourceDir = join(repoRoot, "plugins", pluginName);
+
+    mkdirSync(marketplaceDir, { recursive: true });
+    writeFileSync(marketplaceJsonPath, JSON.stringify({ name: marketplace, plugins: [] }));
+
+    mkdirSync(join(pluginSourceDir, "skills", skillName), { recursive: true });
+    writeFileSync(join(pluginSourceDir, "skills", skillName, "SKILL.md"), "# Updated Skill");
+
+    const pi = getInstance("pi");
+    const piSkillDir = join(pi.configDir, pi.skillsSubdir!, skillName);
+    mkdirSync(piSkillDir, { recursive: true });
+    writeFileSync(join(piSkillDir, "SKILL.md"), "# Old Skill");
+
+    const opencode = getInstance("opencode");
+    const amp = getInstance("amp-code");
+    const codex = getInstance("openai-codex");
+    const opencodeSkillDir = join(opencode.configDir, opencode.skillsSubdir!, skillName);
+    const ampSkillDir = join(amp.configDir, amp.skillsSubdir!, skillName);
+    const codexSkillDir = join(codex.configDir, codex.skillsSubdir!, skillName);
+    rmSync(opencodeSkillDir, { recursive: true, force: true });
+    rmSync(ampSkillDir, { recursive: true, force: true });
+    rmSync(codexSkillDir, { recursive: true, force: true });
+
+    const plugin: Plugin = {
+      name: pluginName,
+      marketplace,
+      description: "Update only installed instances",
+      source: `./plugins/${pluginName}`,
+      skills: [skillName],
+      commands: [],
+      agents: [],
+      hooks: [],
+      hasMcp: false,
+      hasLsp: false,
+      homepage: "",
+      installed: true,
+      scope: "user",
+    };
+
+    const result = await updatePlugin(plugin, marketplaceJsonPath);
+
+    expect(result.success).toBe(true);
+    expect(result.linkedInstances[`pi:${pi.instanceId}`]).toBeGreaterThan(0);
+    expect(result.linkedInstances[`opencode:${opencode.instanceId}`]).toBeUndefined();
+    expect(result.linkedInstances[`amp-code:${amp.instanceId}`]).toBeUndefined();
+    expect(result.linkedInstances[`openai-codex:${codex.instanceId}`]).toBeUndefined();
+
+    expect(readFileSync(join(piSkillDir, "SKILL.md"), "utf-8")).toContain("Updated Skill");
+    expect(existsSync(opencodeSkillDir)).toBe(false);
+    expect(existsSync(ampSkillDir)).toBe(false);
+    expect(existsSync(codexSkillDir)).toBe(false);
   });
 });
 

@@ -233,4 +233,6 @@ Each phase is independently shippable and testable.
 - Fixed Installed-tab per-tool plugin actions after unified dispatch migration: `install_tool` / `uninstall_tool` now resolve target instance from either `action.instance` or `action.toolStatus`.
 - Installed-tab section loading placeholders now reset correctly on refresh by toggling `installedPluginsLoaded` / `piPackagesLoaded` to `false` at load start.
 - Fixed local marketplace plugin source resolution in install flow: when marketplace URL is `.claude-plugin/marketplace.json`, relative plugin `source` now resolves from repo root (not `.claude-plugin/`), restoring `Install to Pi` for playbook plugins like `eval-model`.
+- Fixed update semantics: `updatePlugin` now updates only instances where the plugin is already installed (no implicit install to other enabled tools).
+- Added plugin pullback actions in Installed detail for drifted instances (e.g. `Pull to source from Pi`) and wired dispatch/callback flow to copy changed plugin components from tool instance back into source repo.
 

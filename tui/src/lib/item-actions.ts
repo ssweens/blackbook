@@ -44,6 +44,7 @@ export function buildPluginActions(
   if (plugin.installed) {
     const sourcePaths = resolvePluginSourcePaths(plugin);
     const allInstances = getToolInstances();
+    const changedInstances: DiffInstanceRef[] = [];
 
     for (const status of toolStatuses) {
       if (!status.enabled || !status.supported) continue;
@@ -94,6 +95,7 @@ export function buildPluginActions(
 
       if (hasDrift) {
         const summary: DiffInstanceSummary = { ...instance, totalAdded, totalRemoved };
+        changedInstances.push(instance);
         actions.push({
           id: `status_${status.toolId}:${status.instanceId}`,
           label: status.name,
@@ -166,6 +168,17 @@ export function buildPluginActions(
           label: `Install to ${status.name}`,
           type: "install_tool",
           toolStatus: status,
+          instance,
+        });
+      }
+    }
+
+    if (sourcePaths && changedInstances.length > 0) {
+      for (const instance of changedInstances) {
+        actions.push({
+          id: `pullback_${instance.toolId}:${instance.instanceId}`,
+          label: `Pull to source from ${instance.instanceName}`,
+          type: "pullback",
           instance,
         });
       }

@@ -809,8 +809,15 @@ export async function updatePlugin(
   marketplaceUrl: string,
 ): Promise<EnableResult> {
   validatePluginMetadata(plugin);
-  const instances = getToolInstances();
-  const enabledInstances = getEnabledToolInstances();
+  const instances = getToolInstances().filter((instance) => instance.kind === "tool");
+  const installedStatusKeys = new Set(
+    getPluginToolStatus(plugin)
+      .filter((status) => status.enabled && status.installed)
+      .map((status) => `${status.toolId}:${status.instanceId}`),
+  );
+  const targetInstances = instances.filter((instance) =>
+    installedStatusKeys.has(instanceKey(instance)),
+  );
   const skippedInstances = instances
     .filter((instance) => !instance.enabled)
     .map(instanceKey);
@@ -821,13 +828,13 @@ export async function updatePlugin(
     skippedInstances,
   };
 
-  if (enabledInstances.length === 0) {
-    result.errors.push("No tools enabled in config.");
+  if (targetInstances.length === 0) {
+    result.errors.push(`Plugin ${plugin.name} is not installed in any enabled tool instance.`);
     return result;
   }
 
-  // Uninstall from all enabled instances first
-  for (const instance of enabledInstances) {
+  // Uninstall from currently-installed instances first
+  for (const instance of targetInstances) {
     uninstallPluginItemsFromInstance(plugin.name, instance);
   }
 
@@ -843,11 +850,11 @@ export async function updatePlugin(
     logError(`Failed to remove plugin dir for ${plugin.name}`, error);
   }
 
-  // Download fresh copy and install to all enabled instances
+  // Download fresh copy and install only to instances where plugin is already installed
   const sourcePath = await downloadPlugin(plugin, marketplaceUrl);
 
   if (sourcePath) {
-    for (const instance of enabledInstances) {
+    for (const instance of targetInstances) {
       try {
         const { count, errors } = installPluginItemsToInstance(
           plugin.name,
