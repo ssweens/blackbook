@@ -236,4 +236,5 @@ Each phase is independently shippable and testable.
 - Fixed update semantics: `updatePlugin` now updates only instances where the plugin is already installed (no implicit install to other enabled tools).
 - Added plugin pullback actions in Installed detail for drifted instances (e.g. `Pull to source from Pi`) and wired dispatch/callback flow to copy changed plugin components from tool instance back into source repo.
 - Extended pullback UX consistency: `p` shortcut now works for plugin detail (not just file detail), and Diff overlay now wires `p` pullback callback for file/plugin contexts.
+- Sync-tab consistency pass: `d` on plugin sync rows now opens plugin detail (instead of dead-end warning), and hints now say `d diff/detail` with detail hint including `p pullback (if available)`.
 

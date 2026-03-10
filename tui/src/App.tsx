@@ -1150,7 +1150,12 @@ export function App() {
     }
     if (input === "d") {
       const item = syncPreview[selectedIndex];
-      if (item) openDiffFromSyncItem(item);
+      if (!item) return true;
+      if (item.kind === "plugin") {
+        openPluginDetail(item.plugin);
+      } else {
+        openDiffFromSyncItem(item);
+      }
       return true;
     }
     return false;

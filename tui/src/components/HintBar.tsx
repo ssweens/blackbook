@@ -13,13 +13,13 @@ const HINTS: Record<Tab, string> = {
   installed: "/ search · Space plugin toggle · Enter details · s sort · r reverse · R refresh · q quit",
   marketplaces: "Enter select · u update · r remove · R refresh · q quit",
   tools: "Enter detail · i install · u update · d uninstall · e edit config · Space toggle · R refresh · q quit",
-  sync: "y to sync missing/changed items (press twice) · Enter details · d diff/missing · R refresh · q quit",
+  sync: "y to sync missing/changed items (press twice) · Enter details · d diff/detail · R refresh · q quit",
   settings: "↑/↓ select · Enter edit · Esc cancel · R refresh · q quit",
 };
 
 export function HintBar({ tab, hasDetail, toolsHint }: HintBarProps) {
   const hint = hasDetail
-    ? "ctrl+p to navigate · Enter to select · Esc to back"
+    ? "ctrl+p to navigate · Enter to select · p pullback (if available) · Esc to back"
     : tab === "tools" && toolsHint
       ? toolsHint
       : HINTS[tab];
