@@ -1,13 +1,17 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, readdirSync } from "fs";
+import { execFile, execFileSync as execSync } from "child_process";
+import { promisify } from "util";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, readdirSync, realpathSync, lstatSync } from "fs";
 import { join, dirname, basename, resolve } from "path";
-import { createHash } from "crypto";
 import { homedir } from "os";
+import { createHash } from "crypto";
 import { fileURLToPath } from "url";
-import { getCacheDir } from "./config.js";
+import { getCacheDir, getPiMarketplaces, getDisabledPiMarketplaces } from "./config.js";
 import { getGitHubToken, isGitHubHost } from "./github.js";
-import type { Marketplace, Plugin } from "./types.js";
+import { expandTilde, scanPluginContents } from "./path-utils.js";
+import type { Marketplace, Plugin, PiPackage, PiMarketplace, PiSettings, PiPackageSourceType } from "./types.js";
 
 export const MARKETPLACE_CACHE_TTL_SECONDS = 600;
+const execFileAsync = promisify(execFile);
 
 function getCachePath(key: string): string {
   const hash = createHash("md5").update(key).digest("hex");
@@ -78,34 +82,18 @@ interface GitHubTreeResponse {
 function resolveLocalMarketplacePath(url: string, isLocal: boolean): string | null {
   if (!url) return null;
   if (url.startsWith("file://")) {
-    try {
-      return fileURLToPath(url);
-    } catch {
-      return null;
-    }
+    try { return fileURLToPath(url); } catch { return null; }
   }
 
-  const looksLocal =
-    isLocal ||
-    url.startsWith("/") ||
-    url.startsWith("~") ||
-    url.startsWith("./") ||
-    url.startsWith("../");
+  const looksLocal = isLocal || url.startsWith("/") || url.startsWith("~") ||
+    url.startsWith("./") || url.startsWith("../");
 
   if (!looksLocal && url.includes("://")) return null;
 
-  let normalized = url;
-  if (normalized.startsWith("~")) {
-    normalized = resolve(homedir(), normalized.slice(1));
-  } else if (!normalized.startsWith("/")) {
-    normalized = resolve(process.cwd(), normalized);
-  }
+  let normalized = expandTilde(url);
+  if (!normalized.startsWith("/")) normalized = resolve(process.cwd(), normalized);
 
-  if (looksLocal || existsSync(normalized)) {
-    return normalized;
-  }
-
-  return null;
+  return (looksLocal || existsSync(normalized)) ? normalized : null;
 }
 
 async function fetchGitHubTree(repo: string, branch: string, path: string): Promise<GitHubTreeItem[]> {
@@ -233,68 +221,6 @@ async function fetchPluginContents(
   }
 }
 
-/**
- * Scan a local plugin directory for skills, commands, agents, hooks, and MCP.
- */
-function scanLocalPluginContents(pluginDir: string): {
-  skills: string[];
-  commands: string[];
-  agents: string[];
-  hooks: string[];
-  hasMcp: boolean;
-} {
-  const result = { skills: [] as string[], commands: [] as string[], agents: [] as string[], hooks: [] as string[], hasMcp: false };
-
-  if (!existsSync(pluginDir)) return result;
-
-  try {
-    const skillsDir = join(pluginDir, "skills");
-    if (existsSync(skillsDir)) {
-      for (const item of readdirSync(skillsDir)) {
-        const itemPath = join(skillsDir, item);
-        if (statSync(itemPath).isDirectory() && existsSync(join(itemPath, "SKILL.md"))) {
-          result.skills.push(item);
-        }
-      }
-    }
-
-    const commandsDir = join(pluginDir, "commands");
-    if (existsSync(commandsDir)) {
-      for (const item of readdirSync(commandsDir)) {
-        if (item.endsWith(".md")) {
-          result.commands.push(item.replace(/\.md$/, ""));
-        }
-      }
-    }
-
-    const agentsDir = join(pluginDir, "agents");
-    if (existsSync(agentsDir)) {
-      for (const item of readdirSync(agentsDir)) {
-        if (item.endsWith(".md")) {
-          result.agents.push(item.replace(/\.md$/, ""));
-        }
-      }
-    }
-
-    const hooksDir = join(pluginDir, "hooks");
-    if (existsSync(hooksDir)) {
-      for (const item of readdirSync(hooksDir)) {
-        if (item.endsWith(".md") || item.endsWith(".json")) {
-          result.hooks.push(item.replace(/\.(md|json)$/, ""));
-        }
-      }
-    }
-
-    if (existsSync(join(pluginDir, "mcp.json")) || existsSync(join(pluginDir, ".mcp.json"))) {
-      result.hasMcp = true;
-    }
-  } catch (error) {
-    console.error(`Failed to scan local plugin ${pluginDir}: ${error instanceof Error ? error.message : String(error)}`);
-  }
-
-  return result;
-}
-
 export async function fetchMarketplace(
   marketplace: Marketplace,
   options?: { forceRefresh?: boolean }
@@ -396,7 +322,7 @@ export async function fetchMarketplace(
     // Local marketplace: scan plugin directory for contents
     if (localBaseDir && typeof source === "string" && source.startsWith("./")) {
       const pluginDir = resolve(localBaseDir, source);
-      const contents = scanLocalPluginContents(pluginDir);
+      const contents = scanPluginContents(pluginDir);
       skills = contents.skills;
       commands = contents.commands;
       agents = contents.agents;
@@ -479,4 +405,580 @@ export async function fetchAllMarketplaces(
   );
 
   return results;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pi Package Marketplace support (merged from pi-marketplace.ts)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PI_SETTINGS_PATH = join(homedir(), ".pi", "agent", "settings.json");
+
+export function loadPiSettings(): PiSettings {
+  const packages: string[] = [];
+
+  try {
+    if (existsSync(PI_SETTINGS_PATH)) {
+      const content = readFileSync(PI_SETTINGS_PATH, "utf-8");
+      const settings = JSON.parse(content);
+      if (Array.isArray(settings.packages)) {
+        for (const entry of settings.packages) {
+          if (typeof entry === "string") packages.push(entry);
+          else if (entry && typeof entry === "object" && typeof entry.source === "string") {
+            packages.push(entry.source);
+          }
+        }
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+
+  const npmPackages = scanGlobalNpmForPiPackagesWithVersions();
+  for (const pkgName of npmPackages.keys()) {
+    const source = `npm:${pkgName}`;
+    if (!packages.includes(source)) packages.push(source);
+  }
+
+  return { packages };
+}
+
+function getGlobalNodeModulesPath(): string | null {
+  try {
+    const result = execSync("npm", ["root", "-g"], { encoding: "utf-8", timeout: 5000 });
+    const globalNodeModules = result.trim();
+    if (!existsSync(globalNodeModules)) return null;
+    return globalNodeModules;
+  } catch {
+    return null;
+  }
+}
+
+function parsePiPackageVersion(pkgPath: string): { isPiPackage: boolean; version: string | null } {
+  const pkgJsonPath = join(pkgPath, "package.json");
+  if (!existsSync(pkgJsonPath)) return { isPiPackage: false, version: null };
+
+  try {
+    const content = readFileSync(pkgJsonPath, "utf-8");
+    const pkg = JSON.parse(content);
+
+    const isPiPackage =
+      (pkg.pi?.extensions && Array.isArray(pkg.pi.extensions) && pkg.pi.extensions.length > 0) ||
+      (Array.isArray(pkg.keywords) && pkg.keywords.includes("pi-package"));
+
+    return {
+      isPiPackage,
+      version: typeof pkg.version === "string" ? pkg.version : null,
+    };
+  } catch {
+    return { isPiPackage: false, version: null };
+  }
+}
+
+function scanGlobalNpmForPiPackagesWithVersions(): Map<string, string | null> {
+  const packages = new Map<string, string | null>();
+
+  const globalNodeModules = getGlobalNodeModulesPath();
+  if (!globalNodeModules) return packages;
+
+  try {
+    const entries = readdirSync(globalNodeModules);
+    for (const entry of entries) {
+      if (entry.startsWith(".")) continue;
+      if (entry === "node_modules") continue;
+
+      const entryPath = join(globalNodeModules, entry);
+
+      if (entry.startsWith("@")) {
+        try {
+          const scopedEntries = readdirSync(entryPath);
+          for (const scopedPkg of scopedEntries) {
+            const name = `${entry}/${scopedPkg}`;
+            const pkgPath = join(entryPath, scopedPkg);
+            const { isPiPackage, version } = parsePiPackageVersion(pkgPath);
+            if (isPiPackage) {
+              packages.set(name, version);
+            }
+          }
+        } catch {
+          // Ignore errors reading scoped dir
+        }
+        continue;
+      }
+
+      const { isPiPackage, version } = parsePiPackageVersion(entryPath);
+      if (isPiPackage) packages.set(entry, version);
+    }
+  } catch {
+    // Ignore errors
+  }
+
+  return packages;
+}
+
+export function getGlobalNpmPiPackageVersions(): Map<string, string | null> {
+  return scanGlobalNpmForPiPackagesWithVersions();
+}
+
+function resolvePackagePath(source: string): string {
+  if (source.startsWith("npm:") || source.startsWith("git:") || source.startsWith("https://")) {
+    return source;
+  }
+
+  if (source.startsWith("/")) {
+    try {
+      return realpathSync(source);
+    } catch {
+      return source;
+    }
+  }
+
+  const piAgentDir = dirname(PI_SETTINGS_PATH);
+  const resolved = resolve(piAgentDir, source);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+export function isPackageInstalled(source: string, settings: PiSettings): boolean {
+  const normalizedSource = resolvePackagePath(source).toLowerCase();
+  return settings.packages.some((pkg) => resolvePackagePath(pkg).toLowerCase() === normalizedSource);
+}
+
+export function getSourceType(source: string): PiPackageSourceType {
+  const trimmed = source.trim();
+  if (trimmed.startsWith("npm:")) return "npm";
+  if (
+    trimmed.startsWith("git:") ||
+    trimmed.startsWith("git@") ||
+    trimmed.startsWith("https://github.com") ||
+    trimmed.endsWith(".git")
+  ) {
+    return "git";
+  }
+  return "local";
+}
+
+function normalizeGitSource(source: string): string {
+  const trimmed = source.trim();
+
+  if (trimmed.startsWith("git:")) {
+    const raw = trimmed.slice(4);
+    if (raw.startsWith("github.com/")) {
+      return `https://${raw.replace(/\.git$/, "")}.git`;
+    }
+    return raw;
+  }
+
+  if (/^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+$/.test(trimmed)) {
+    return `https://github.com/${trimmed}.git`;
+  }
+
+  if (trimmed.startsWith("https://github.com/")) {
+    return `${trimmed.replace(/\.git$/, "")}.git`;
+  }
+
+  return trimmed;
+}
+
+function getGitMarketplaceCachePath(source: string): string {
+  const cacheRoot = join(getCacheDir(), "pi_marketplaces");
+  const hash = createHash("md5").update(source).digest("hex");
+  return join(cacheRoot, hash);
+}
+
+async function ensureGitMarketplaceCached(source: string): Promise<string | null> {
+  const normalizedSource = normalizeGitSource(source);
+  const cachePath = getGitMarketplaceCachePath(normalizedSource);
+  mkdirSync(dirname(cachePath), { recursive: true });
+
+  try {
+    if (!existsSync(join(cachePath, ".git"))) {
+      await execFileAsync("git", ["clone", "--depth", "1", normalizedSource, cachePath], { timeout: 60000 });
+      return cachePath;
+    }
+
+    try {
+      await execFileAsync("git", ["-C", cachePath, "pull", "--ff-only"], { timeout: 30000 });
+    } catch {
+      // Keep stale cache when pull fails.
+    }
+
+    return cachePath;
+  } catch (error) {
+    console.error(`Failed to cache Pi git marketplace ${source}:`, error);
+    return null;
+  }
+}
+
+interface NpmRegistryResult {
+  objects: Array<{
+    package: {
+      name: string;
+      description?: string;
+      version?: string;
+      keywords?: string[];
+      links?: {
+        homepage?: string;
+        repository?: string;
+        npm?: string;
+      };
+      publisher?: {
+        username?: string;
+      };
+      license?: string;
+    };
+    downloads?: {
+      weekly?: number;
+      monthly?: number;
+    };
+    score?: {
+      detail?: {
+        popularity?: number;
+      };
+    };
+  }>;
+  total: number;
+}
+
+export async function fetchNpmPackages(): Promise<PiPackage[]> {
+  try {
+    const PAGE_SIZE = 250;
+    const allObjects: NpmRegistryResult["objects"] = [];
+
+    const firstResponse = await fetch(
+      `https://registry.npmjs.org/-/v1/search?text=keywords:pi-package&size=${PAGE_SIZE}`,
+      { signal: AbortSignal.timeout(30000) }
+    );
+
+    if (!firstResponse.ok) {
+      throw new Error(`HTTP ${firstResponse.status}: ${firstResponse.statusText}`);
+    }
+
+    const firstData: NpmRegistryResult = await firstResponse.json();
+    allObjects.push(...firstData.objects);
+
+    const total = firstData.total;
+    const remaining = Math.ceil((total - PAGE_SIZE) / PAGE_SIZE);
+    for (let page = 1; page <= remaining; page++) {
+      const from = page * PAGE_SIZE;
+      const response = await fetch(
+        `https://registry.npmjs.org/-/v1/search?text=keywords:pi-package&size=${PAGE_SIZE}&from=${from}`,
+        { signal: AbortSignal.timeout(30000) }
+      );
+      if (!response.ok) break;
+      const data: NpmRegistryResult = await response.json();
+      if (data.objects.length === 0) break;
+      allObjects.push(...data.objects);
+    }
+
+    const settings = loadPiSettings();
+    const installedVersions = getGlobalNpmPiPackageVersions();
+
+    return allObjects.map((item): PiPackage => {
+      const pkg = item.package;
+      const source = `npm:${pkg.name}`;
+      const installed = isPackageInstalled(source, settings);
+      const latestVersion = pkg.version ?? "unknown";
+      const installedVersion = installedVersions.get(pkg.name) ?? undefined;
+      const hasUpdate = Boolean(
+        installed &&
+        installedVersion &&
+        latestVersion !== "unknown" &&
+        installedVersion !== latestVersion,
+      );
+
+      return {
+        name: pkg.name,
+        description: pkg.description ?? "",
+        version: latestVersion,
+        source,
+        sourceType: "npm",
+        marketplace: "npm",
+        installed,
+        installedVersion,
+        hasUpdate,
+        extensions: [],
+        skills: [],
+        prompts: [],
+        themes: [],
+        homepage: pkg.links?.homepage ?? pkg.links?.npm,
+        repository: pkg.links?.repository,
+        author: pkg.publisher?.username,
+        license: pkg.license,
+        weeklyDownloads: item.downloads?.weekly,
+        monthlyDownloads: item.downloads?.monthly,
+        popularity: item.score?.detail?.popularity,
+      };
+    });
+  } catch (error) {
+    console.error("Failed to fetch npm packages:", error);
+    return [];
+  }
+}
+
+interface PiManifest {
+  extensions?: string[];
+  skills?: string[];
+  prompts?: string[];
+  themes?: string[];
+}
+
+interface PackageJson {
+  name?: string;
+  description?: string;
+  version?: string;
+  keywords?: string[];
+  homepage?: string;
+  repository?: string | { url?: string };
+  author?: string | { name?: string };
+  license?: string;
+  pi?: PiManifest;
+}
+
+function isPiPackage(pkg: PackageJson): boolean {
+  if (pkg.pi) return true;
+  if (pkg.keywords?.includes("pi-package")) return true;
+  return false;
+}
+
+function scanConventionDirs(pkgDir: string): PiManifest {
+  const manifest: PiManifest = {
+    extensions: [],
+    skills: [],
+    prompts: [],
+    themes: [],
+  };
+
+  const checkDir = (subdir: string, key: keyof PiManifest) => {
+    const dir = join(pkgDir, subdir);
+    if (existsSync(dir) && statSync(dir).isDirectory()) {
+      manifest[key] = readdirSync(dir);
+    }
+  };
+
+  checkDir("extensions", "extensions");
+  checkDir("skills", "skills");
+  checkDir("prompts", "prompts");
+  checkDir("themes", "themes");
+
+  return manifest;
+}
+
+export function scanLocalMarketplace(marketplaceName: string, dirPath: string): PiPackage[] {
+  const packages: PiPackage[] = [];
+  const settings = loadPiSettings();
+
+  const expandedPath = expandTilde(dirPath);
+  const resolvedPath = resolve(expandedPath);
+
+  if (!existsSync(resolvedPath)) {
+    return packages;
+  }
+
+  try {
+    const entries = readdirSync(resolvedPath, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+
+      const pkgDir = join(resolvedPath, entry.name);
+      const pkgJsonPath = join(pkgDir, "package.json");
+
+      if (!existsSync(pkgJsonPath)) continue;
+
+      try {
+        const content = readFileSync(pkgJsonPath, "utf-8");
+        const pkg: PackageJson = JSON.parse(content);
+
+        if (!isPiPackage(pkg)) continue;
+
+        const manifest = pkg.pi ?? scanConventionDirs(pkgDir);
+        const source = pkgDir;
+
+        packages.push({
+          name: pkg.name ?? entry.name,
+          description: pkg.description ?? "",
+          version: pkg.version ?? "0.0.0",
+          source,
+          sourceType: "local",
+          marketplace: marketplaceName,
+          installed: isPackageInstalled(source, settings),
+          extensions: manifest.extensions ?? [],
+          skills: manifest.skills ?? [],
+          prompts: manifest.prompts ?? [],
+          themes: manifest.themes ?? [],
+          homepage: pkg.homepage,
+          repository: typeof pkg.repository === "string"
+            ? pkg.repository
+            : pkg.repository?.url,
+          author: typeof pkg.author === "string"
+            ? pkg.author
+            : pkg.author?.name,
+          license: pkg.license,
+        });
+      } catch {
+        // Skip invalid package.json
+      }
+    }
+  } catch {
+    // Directory read error
+  }
+
+  return packages;
+}
+
+export async function loadAllPiMarketplaces(): Promise<PiMarketplace[]> {
+  const marketplaces: PiMarketplace[] = [];
+  const disabledList = getDisabledPiMarketplaces();
+  const isDisabled = (name: string) => disabledList.includes(name);
+
+  const npmEnabled = !isDisabled("npm");
+  const npmPackages = npmEnabled ? await fetchNpmPackages() : [];
+  marketplaces.push({
+    name: "npm",
+    source: "https://www.npmjs.com",
+    sourceType: "npm",
+    packages: npmPackages,
+    enabled: npmEnabled,
+    builtIn: true,
+  });
+
+  const configured = getPiMarketplaces();
+  for (const [name, source] of Object.entries(configured)) {
+    const sourceType = getSourceType(source);
+    const enabled = !isDisabled(name);
+
+    if (sourceType === "local") {
+      const packages = enabled ? scanLocalMarketplace(name, source) : [];
+      marketplaces.push({
+        name,
+        source,
+        sourceType,
+        packages,
+        enabled,
+        builtIn: false,
+      });
+      continue;
+    }
+
+    if (sourceType === "git") {
+      const cachePath = enabled ? await ensureGitMarketplaceCached(source) : null;
+      const scanned = enabled && cachePath ? scanLocalMarketplace(name, cachePath) : [];
+      const packages = scanned.map((pkg) => ({
+        ...pkg,
+        sourceType: "git" as const,
+      }));
+
+      marketplaces.push({
+        name,
+        source,
+        sourceType,
+        packages,
+        enabled,
+        builtIn: false,
+      });
+    }
+  }
+
+  return marketplaces;
+}
+
+export function getAllPiPackages(marketplaces: PiMarketplace[]): PiPackage[] {
+  const allPackages: PiPackage[] = [];
+  for (const marketplace of marketplaces) {
+    allPackages.push(...marketplace.packages);
+  }
+  return allPackages;
+}
+
+interface NpmPackageDetail {
+  name: string;
+  description?: string;
+  "dist-tags"?: {
+    latest?: string;
+  };
+  versions?: Record<string, {
+    description?: string;
+    keywords?: string[];
+    homepage?: string;
+    repository?: string | { url?: string };
+    author?: string | { name?: string };
+    license?: string;
+    pi?: {
+      extensions?: string[];
+      skills?: string[];
+      prompts?: string[];
+      themes?: string[];
+    };
+  }>;
+  readme?: string;
+}
+
+export async function fetchNpmPackageDetails(packageName: string): Promise<Partial<PiPackage> | null> {
+  try {
+    const name = packageName.startsWith("npm:") ? packageName.slice(4) : packageName;
+
+    const response = await fetch(
+      `https://registry.npmjs.org/${encodeURIComponent(name)}`,
+      { signal: AbortSignal.timeout(10000) }
+    );
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data: NpmPackageDetail = await response.json();
+    const latestVersion = data["dist-tags"]?.latest;
+    const versionData = latestVersion ? data.versions?.[latestVersion] : undefined;
+    const piManifest = versionData?.pi;
+
+    const result: Partial<PiPackage> = {};
+
+    if (latestVersion) result.version = latestVersion;
+
+    const description = data.description || versionData?.description;
+    if (description) result.description = description;
+
+    if (versionData?.homepage) result.homepage = versionData.homepage;
+
+    const repository = typeof versionData?.repository === "string"
+      ? versionData.repository
+      : versionData?.repository?.url;
+    if (repository) result.repository = repository;
+
+    const author = typeof versionData?.author === "string"
+      ? versionData.author
+      : versionData?.author?.name;
+    if (author) result.author = author;
+
+    if (versionData?.license) result.license = versionData.license;
+
+    result.extensions = piManifest?.extensions ?? [];
+    result.skills = piManifest?.skills ?? [];
+    result.prompts = piManifest?.prompts ?? [];
+    result.themes = piManifest?.themes ?? [];
+
+    return result;
+  } catch (error) {
+    console.error(`Failed to fetch details for ${packageName}:`, error);
+    return null;
+  }
+}
+
+export interface PiPackageStats {
+  total: number;
+  installed: number;
+  notInstalled: number;
+  hasUpdate: number;
+}
+
+export function getPiPackageStats(packages: PiPackage[]): PiPackageStats {
+  return {
+    total: packages.length,
+    installed: packages.filter((p) => p.installed).length,
+    notInstalled: packages.filter((p) => !p.installed).length,
+    hasUpdate: packages.filter((p) => p.hasUpdate).length,
+  };
 }

@@ -204,9 +204,9 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
 
   const menuItems = buildMenuItems(repoStatus);
 
-  const refreshRepoStatus = useCallback(async () => {
+  const refreshRepoStatus = useCallback(async (options?: { force?: boolean; fetchRemote?: boolean }) => {
     setRepoLoading(true);
-    const status = await getSourceRepoStatus();
+    const status = await getSourceRepoStatus(options);
     setRepoStatus(status);
     setRepoLoading(false);
   }, []);
@@ -214,7 +214,8 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
   useEffect(() => {
     const { config } = loadConfig();
     setSettings(config.settings);
-    refreshRepoStatus();
+    // Use cached startup status (fast), avoid remote fetch on tab navigation.
+    refreshRepoStatus({ fetchRemote: false });
   }, [refreshRepoStatus]);
 
   useEffect(() => {
@@ -326,7 +327,7 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
           if (result.success) {
             setActionMessage("✔ Committed and pushed");
             setDiffContent({});
-            refreshRepoStatus();
+            refreshRepoStatus({ force: true, fetchRemote: false });
           } else {
             setActionMessage(`✗ ${result.error}`);
           }
@@ -366,6 +367,14 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
     }
     if (key.downArrow) {
       setSelectedIndex((i) => Math.min(menuItems.length - 1, i + 1));
+      return;
+    }
+
+    if (input === "R") {
+      setActionMessage("Refreshing...");
+      refreshRepoStatus({ force: true, fetchRemote: true }).then(() => {
+        setActionMessage("✔ Refreshed");
+      });
       return;
     }
 
@@ -413,7 +422,7 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
           pullSourceRepoChanges().then((result) => {
             if (result.success) {
               setActionMessage("✔ Pulled latest");
-              refreshRepoStatus();
+              refreshRepoStatus({ force: true, fetchRemote: false });
             } else {
               setActionMessage(`✗ ${result.error}`);
             }

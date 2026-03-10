@@ -14,11 +14,11 @@ import {
 } from "fs";
 import { promisify } from "util";
 import { execFile, execFileSync } from "child_process";
-import { createHash } from "crypto";
+import { hashBuffer, hashFile, hashPath, hashString, hashDirectory } from "./modules/hash.js";
 
 const execFileAsync = promisify(execFile);
 import { join, dirname, resolve, basename } from "path";
-import { tmpdir, homedir } from "os";
+import { tmpdir } from "os";
 import {
   expandPath,
   getCacheDir,
@@ -37,6 +37,7 @@ import type {
   DiffInstanceRef,
 } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
+import { expandTilde, scanPluginContents } from "./path-utils.js";
 import {
   safePath,
   validateGitRef,
@@ -104,70 +105,7 @@ function extractPluginInfoFromSource(
   return null;
 }
 
-function hashBuffer(buffer: Buffer): string {
-  return createHash("sha256").update(buffer).digest("hex");
-}
-
-function hashFile(path: string): string {
-  const data = readFileSync(path);
-  return hashBuffer(data);
-}
-
-function hashPath(path: string): { hash: string; isDirectory: boolean } {
-  const stat = lstatSync(path);
-  if (stat.isSymbolicLink()) {
-    const resolved = realpathSync(path);
-    return hashPath(resolved);
-  }
-  if (stat.isDirectory()) {
-    return { hash: hashDirectory(path), isDirectory: true };
-  }
-  return { hash: hashFile(path), isDirectory: false };
-}
-
-function hashString(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function hashDirectory(path: string): string {
-  const entries: string[] = [];
-  const walk = (dir: string, prefix: string) => {
-    const children = readdirSync(dir);
-    children.sort();
-    for (const child of children) {
-      const fullPath = join(dir, child);
-      const relPath = prefix ? `${prefix}/${child}` : child;
-      const stat = lstatSync(fullPath);
-      if (stat.isSymbolicLink()) {
-        const resolved = realpathSync(fullPath);
-        const resolvedStat = lstatSync(resolved);
-        if (resolvedStat.isDirectory()) {
-          walk(resolved, relPath);
-        } else if (resolvedStat.isFile()) {
-          entries.push(relPath);
-        }
-      } else if (stat.isDirectory()) {
-        walk(fullPath, relPath);
-      } else if (stat.isFile()) {
-        entries.push(relPath);
-      }
-    }
-  };
-
-  walk(path, "");
-  entries.sort();
-
-  const hasher = createHash("sha256");
-  for (const entry of entries) {
-    const filePath = join(path, entry);
-    const fileHash = hashFile(filePath);
-    hasher.update(entry);
-    hasher.update("\0");
-    hasher.update(fileHash);
-    hasher.update("\0");
-  }
-  return hasher.digest("hex");
-}
+// Hash functions imported from modules/hash.ts (single source of truth)
 
 function isConfigOnlyInstance(instance: ToolInstance): boolean {
   return (
@@ -236,6 +174,7 @@ function parseGithubRepoFromUrl(
 export async function downloadPlugin(
   plugin: Plugin,
   marketplaceUrl: string,
+  options?: { force?: boolean },
 ): Promise<string | null> {
   validateMarketplaceName(plugin.marketplace);
   validatePluginName(plugin.name);
@@ -243,7 +182,10 @@ export async function downloadPlugin(
   const pluginDir = safePath(pluginsDir, plugin.marketplace, plugin.name);
 
   if (existsSync(pluginDir)) {
-    return pluginDir;
+    if (!options?.force) {
+      return pluginDir;
+    }
+    rmSync(pluginDir, { recursive: true, force: true });
   }
 
   mkdirSync(pluginDir, { recursive: true });
@@ -264,14 +206,18 @@ export async function downloadPlugin(
   ) {
     // Resolve marketplace base directory
     let marketplaceBase = marketplaceUrl;
-    if (marketplaceBase.startsWith("~")) {
-      marketplaceBase = join(homedir(), marketplaceBase.slice(1));
-    }
+    marketplaceBase = expandTilde(marketplaceBase);
     if (!marketplaceBase.startsWith("/")) {
       marketplaceBase = resolve(process.cwd(), marketplaceBase);
     }
     // If marketplace points to a file, use its directory
     if (existsSync(marketplaceBase) && lstatSync(marketplaceBase).isFile()) {
+      marketplaceBase = dirname(marketplaceBase);
+    }
+
+    // Source paths in marketplace.json are relative to repo root.
+    // If marketplace base is .claude-plugin/, step up to repo root.
+    if (basename(marketplaceBase) === ".claude-plugin") {
       marketplaceBase = dirname(marketplaceBase);
     }
 
@@ -368,6 +314,19 @@ export async function downloadPlugin(
     rmSync(pluginDir, { recursive: true, force: true });
     return null;
   }
+}
+
+function pluginSourceHasExpectedComponents(plugin: Plugin, sourcePath: string): boolean {
+  for (const skill of plugin.skills) {
+    if (!existsSync(join(sourcePath, "skills", skill, "SKILL.md"))) return false;
+  }
+  for (const cmd of plugin.commands) {
+    if (!existsSync(join(sourcePath, "commands", `${cmd}.md`))) return false;
+  }
+  for (const agent of plugin.agents) {
+    if (!existsSync(join(sourcePath, "agents", `${agent}.md`))) return false;
+  }
+  return true;
 }
 
 export interface InstallResult {
@@ -778,6 +737,10 @@ export async function enablePlugin(
   // Get or download plugin source
   let sourcePath = getPluginSourcePath(plugin);
 
+  if (sourcePath && marketplaceUrl && !pluginSourceHasExpectedComponents(plugin, sourcePath)) {
+    sourcePath = await downloadPlugin(plugin, marketplaceUrl, { force: true });
+  }
+
   if (!sourcePath && marketplaceUrl) {
     sourcePath = await downloadPlugin(plugin, marketplaceUrl);
   }
@@ -846,8 +809,15 @@ export async function updatePlugin(
   marketplaceUrl: string,
 ): Promise<EnableResult> {
   validatePluginMetadata(plugin);
-  const instances = getToolInstances();
-  const enabledInstances = getEnabledToolInstances();
+  const instances = getToolInstances().filter((instance) => instance.kind === "tool");
+  const installedStatusKeys = new Set(
+    getPluginToolStatus(plugin)
+      .filter((status) => status.enabled && status.installed)
+      .map((status) => `${status.toolId}:${status.instanceId}`),
+  );
+  const targetInstances = instances.filter((instance) =>
+    installedStatusKeys.has(instanceKey(instance)),
+  );
   const skippedInstances = instances
     .filter((instance) => !instance.enabled)
     .map(instanceKey);
@@ -858,13 +828,13 @@ export async function updatePlugin(
     skippedInstances,
   };
 
-  if (enabledInstances.length === 0) {
-    result.errors.push("No tools enabled in config.");
+  if (targetInstances.length === 0) {
+    result.errors.push(`Plugin ${plugin.name} is not installed in any enabled tool instance.`);
     return result;
   }
 
-  // Uninstall from all enabled instances first
-  for (const instance of enabledInstances) {
+  // Uninstall from currently-installed instances first
+  for (const instance of targetInstances) {
     uninstallPluginItemsFromInstance(plugin.name, instance);
   }
 
@@ -880,11 +850,11 @@ export async function updatePlugin(
     logError(`Failed to remove plugin dir for ${plugin.name}`, error);
   }
 
-  // Download fresh copy and install to all enabled instances
+  // Download fresh copy and install only to instances where plugin is already installed
   const sourcePath = await downloadPlugin(plugin, marketplaceUrl);
 
   if (sourcePath) {
-    for (const instance of enabledInstances) {
+    for (const instance of targetInstances) {
       try {
         const { count, errors } = installPluginItemsToInstance(
           plugin.name,
@@ -1234,70 +1204,8 @@ function getInstalledPluginsForClaudeInstance(
           contentDir = join(pluginDir, subDirs[subDirs.length - 1]);
         }
 
-        const skills: string[] = [];
-        const commands: string[] = [];
-        const agents: string[] = [];
-        const hooks: string[] = [];
-        let hasMcp = false;
+        const { skills, commands, agents, hooks, hasMcp } = scanPluginContents(contentDir);
         let description = "";
-
-        const skillsDir = join(contentDir, "skills");
-        try {
-          if (lstatSync(skillsDir).isDirectory()) {
-            for (const item of readdirSync(skillsDir)) {
-              const itemPath = join(skillsDir, item);
-              if (existsSync(join(itemPath, "SKILL.md"))) {
-                skills.push(item);
-              }
-            }
-          }
-        } catch {
-          // Ignore if skills directory doesn't exist
-        }
-
-        const commandsDir = join(contentDir, "commands");
-        try {
-          if (lstatSync(commandsDir).isDirectory()) {
-            for (const item of readdirSync(commandsDir)) {
-              if (item.endsWith(".md")) {
-                commands.push(item.replace(/\.md$/, ""));
-              }
-            }
-          }
-        } catch {
-          // Ignore if commands directory doesn't exist
-        }
-
-        const agentsDir = join(contentDir, "agents");
-        try {
-          if (lstatSync(agentsDir).isDirectory()) {
-            for (const item of readdirSync(agentsDir)) {
-              if (item.endsWith(".md")) {
-                agents.push(item.replace(/\.md$/, ""));
-              }
-            }
-          }
-        } catch {
-          // Ignore if agents directory doesn't exist
-        }
-
-        const hooksDir = join(contentDir, "hooks");
-        try {
-          if (lstatSync(hooksDir).isDirectory()) {
-            for (const item of readdirSync(hooksDir)) {
-              hooks.push(item.replace(/\.(md|json)$/, ""));
-            }
-          }
-        } catch {
-          // Ignore if hooks directory doesn't exist
-        }
-
-        if (
-          existsSync(join(contentDir, "mcp.json")) ||
-          existsSync(join(contentDir, ".claude-plugin", "mcp.json"))
-        ) {
-          hasMcp = true;
-        }
 
         const manifestPath = join(
           contentDir,
@@ -1734,6 +1642,13 @@ export async function syncPluginInstances(
   // Installed-only plugins discovered from tool directories may have source paths
   // that are standalone component paths (e.g. /.../skills/my-skill).
   let sourcePath = getPluginSourcePath(plugin);
+
+  // If cached plugin source exists but doesn't match current marketplace metadata
+  // (new/renamed components), force a fresh download before syncing.
+  if (sourcePath && marketplaceUrl && !pluginSourceHasExpectedComponents(plugin, sourcePath)) {
+    sourcePath = await downloadPlugin(plugin, marketplaceUrl, { force: true });
+  }
+
   if (!sourcePath && typeof plugin.source === "string" && existsSync(plugin.source)) {
     sourcePath = plugin.source;
   }

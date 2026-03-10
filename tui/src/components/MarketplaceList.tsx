@@ -1,11 +1,10 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
-import type { Marketplace } from "../lib/types.js";
+import type { MarketplaceRow } from "../lib/marketplace-row.js";
 
 interface MarketplaceListProps {
-  marketplaces: Marketplace[];
+  rows: MarketplaceRow[];
   selectedIndex: number;
-  showAddOption?: boolean;
   maxHeight?: number;
 }
 
@@ -18,99 +17,129 @@ function formatDate(date?: Date): string {
   });
 }
 
-export function MarketplaceList({
-  marketplaces,
-  selectedIndex,
-  showAddOption = true,
-  maxHeight = 12,
-}: MarketplaceListProps) {
-  const offset = showAddOption ? 1 : 0;
-
-  const maxNameLen = useMemo(() => {
-    return Math.min(30, Math.max(...marketplaces.map(m => m.name.length), 10));
-  }, [marketplaces]);
-
-  const totalItems = marketplaces.length + offset;
-  const { visibleMarketplaces, startIndex, hasMore, hasPrev } = useMemo(() => {
-    if (totalItems <= maxHeight) {
-      return {
-        visibleMarketplaces: marketplaces,
-        startIndex: 0,
-        hasMore: false,
-        hasPrev: false,
-      };
+export function MarketplaceList({ rows, selectedIndex, maxHeight = 22 }: MarketplaceListProps) {
+  const { visibleRows, startIndex, hasMore, hasPrev } = useMemo(() => {
+    if (rows.length <= maxHeight) {
+      return { visibleRows: rows, startIndex: 0, hasMore: false, hasPrev: false };
     }
 
-    const adjustedIndex = selectedIndex - offset;
-    const maxStart = Math.max(0, marketplaces.length - maxHeight);
-    const start = Math.min(
-      Math.max(0, adjustedIndex - (maxHeight - 1)),
-      maxStart
-    );
+    const maxStart = Math.max(0, rows.length - maxHeight);
+    const start = Math.min(Math.max(0, selectedIndex - (maxHeight - 1)), maxStart);
 
     return {
-      visibleMarketplaces: marketplaces.slice(start, start + maxHeight),
+      visibleRows: rows.slice(start, start + maxHeight),
       startIndex: start,
-      hasMore: start + maxHeight < marketplaces.length,
+      hasMore: start + maxHeight < rows.length,
       hasPrev: start > 0,
     };
-  }, [marketplaces, selectedIndex, maxHeight, totalItems, offset]);
+  }, [rows, selectedIndex, maxHeight]);
+
+  const pluginNameWidth = useMemo(() => {
+    const names = rows.filter((r) => r.kind === "plugin").map((r) => r.marketplace.name.length);
+    return Math.min(30, Math.max(...names, 10));
+  }, [rows]);
+
+  const piNameWidth = useMemo(() => {
+    const names = rows.filter((r) => r.kind === "pi").map((r) => r.marketplace.name.length);
+    return Math.min(30, Math.max(...names, 10));
+  }, [rows]);
 
   return (
     <Box flexDirection="column">
-      <Box marginBottom={1}>
-        <Text bold>Plugin Marketplaces</Text>
-      </Box>
-
-      {showAddOption && (
-        <Box>
-          <Text color={selectedIndex === 0 ? "cyan" : "gray"}>
-            {selectedIndex === 0 ? "❯ " : "  "}
-          </Text>
-          <Text color="green">+ Add Plugin Marketplace</Text>
-        </Box>
-      )}
-
       {hasPrev && (
         <Box>
           <Text color="gray">  ↑ {startIndex} more above</Text>
         </Box>
       )}
 
-      {visibleMarketplaces.map((m, visibleIdx) => {
-        const actualIndex = startIndex + visibleIdx + offset;
-        const isSelected = selectedIndex === actualIndex;
-        const hasNew = m.installedCount > 0;
-        const isReadOnly = m.source === "claude";
-        const paddedName = m.name.padEnd(maxNameLen);
-        const statusIcon = m.enabled ? "●" : "○";
-        const statusColor = m.enabled ? "green" : "gray";
+      {visibleRows.map((row, i) => {
+        const absoluteIndex = startIndex + i;
+        const isSelected = selectedIndex === absoluteIndex;
+
+        if (row.kind === "add-plugin") {
+          return (
+            <Box key="add-plugin" flexDirection="column" marginBottom={1}>
+              <Box marginBottom={1}>
+                <Text bold>Plugin Marketplaces</Text>
+              </Box>
+              <Box>
+                <Text color={isSelected ? "cyan" : "gray"}>{isSelected ? "❯ " : "  "}</Text>
+                <Text color="green">+ Add Plugin Marketplace</Text>
+              </Box>
+            </Box>
+          );
+        }
+
+        if (row.kind === "add-pi") {
+          return (
+            <Box key="add-pi" flexDirection="column" marginTop={1} marginBottom={1}>
+              <Box marginBottom={1}>
+                <Text bold>Pi Package Marketplaces</Text>
+              </Box>
+              <Box>
+                <Text color={isSelected ? "cyan" : "gray"}>{isSelected ? "❯ " : "  "}</Text>
+                <Text color="green">+ Add Pi Marketplace</Text>
+              </Box>
+            </Box>
+          );
+        }
+
+        if (row.kind === "plugin") {
+          const m = row.marketplace;
+          const hasInstalled = m.installedCount > 0;
+          const isReadOnly = m.source === "claude";
+          const paddedName = m.name.padEnd(pluginNameWidth);
+          const statusIcon = m.enabled ? "●" : "○";
+          const statusColor = m.enabled ? "green" : "gray";
+
+          return (
+            <Box key={`plugin:${m.name}`} flexDirection="column">
+              <Box>
+                <Text color={isSelected ? "cyan" : "gray"}>{isSelected ? "❯ " : "  "}</Text>
+                <Text color={statusColor}>{statusIcon} </Text>
+                {hasInstalled && <Text color="yellow">* </Text>}
+                <Text bold={isSelected} color={m.enabled ? "white" : "gray"}>{paddedName}</Text>
+                {hasInstalled && <Text color="yellow"> *</Text>}
+                {isReadOnly && <Text color="magenta"> (Claude)</Text>}
+                {!m.enabled && <Text color="gray"> (disabled)</Text>}
+              </Box>
+
+              <Box marginLeft={4}><Text color="gray">{m.url}</Text></Box>
+              <Box marginLeft={4} marginBottom={1}>
+                <Text color="gray">
+                  {m.plugins.length} plugins
+                  {m.installedCount > 0 && ` • ${m.installedCount} installed`}
+                  {m.updatedAt && ` • Updated ${formatDate(m.updatedAt)}`}
+                </Text>
+              </Box>
+            </Box>
+          );
+        }
+
+        const pm = row.marketplace;
+        const hasInstalled = pm.packages.some((p) => p.installed);
+        const installedCount = pm.packages.filter((p) => p.installed).length;
+        const paddedName = pm.name.padEnd(piNameWidth);
+        const statusIcon = pm.enabled ? "●" : "○";
+        const statusColor = pm.enabled ? "green" : "gray";
 
         return (
-          <Box key={m.name} flexDirection="column" marginTop={visibleIdx === 0 && showAddOption && !hasPrev ? 1 : 0}>
+          <Box key={`pi:${pm.name}`} flexDirection="column">
             <Box>
-              <Text color={isSelected ? "cyan" : "gray"}>
-                {isSelected ? "❯ " : "  "}
-              </Text>
+              <Text color={isSelected ? "cyan" : "gray"}>{isSelected ? "❯ " : "  "}</Text>
               <Text color={statusColor}>{statusIcon} </Text>
-              {hasNew && <Text color="yellow">* </Text>}
-              <Text bold={isSelected} color={m.enabled ? "white" : "gray"}>
-                {paddedName}
-              </Text>
-              {hasNew && <Text color="yellow"> *</Text>}
-              {isReadOnly && <Text color="magenta"> (Claude)</Text>}
-              {!m.enabled && <Text color="gray"> (disabled)</Text>}
+              {hasInstalled && <Text color="yellow">* </Text>}
+              <Text bold={isSelected} color={pm.enabled ? "white" : "gray"}>{paddedName}</Text>
+              {hasInstalled && <Text color="yellow"> *</Text>}
+              {pm.builtIn && <Text color="magenta"> (built-in)</Text>}
+              {!pm.enabled && <Text color="gray"> (disabled)</Text>}
             </Box>
 
-            <Box marginLeft={4}>
-              <Text color="gray">{m.url}</Text>
-            </Box>
-
-            <Box marginLeft={4}>
+            <Box marginLeft={4}><Text color="gray">{pm.source}</Text></Box>
+            <Box marginLeft={4} marginBottom={1}>
               <Text color="gray">
-                {m.plugins.length} plugins
-                {m.installedCount > 0 && ` • ${m.installedCount} installed`}
-                {m.updatedAt && ` • Updated ${formatDate(m.updatedAt)}`}
+                {pm.packages.length} available
+                {installedCount > 0 && ` • ${installedCount} installed`}
               </Text>
             </Box>
           </Box>
@@ -119,7 +148,7 @@ export function MarketplaceList({
 
       {hasMore && (
         <Box>
-          <Text color="gray">  ↓ {marketplaces.length - startIndex - maxHeight} more below</Text>
+          <Text color="gray">  ↓ {rows.length - startIndex - maxHeight} more below</Text>
         </Box>
       )}
     </Box>
