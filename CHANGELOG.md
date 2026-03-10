@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-03-10
+
+### Added
+- Unified item architecture (`ManagedItem`) with shared `ItemList`, `ItemDetail`, and centralized action dispatch.
+- Unified marketplace presentation for plugin and Pi marketplace rows/details.
+- Plugin pullback actions for drifted instances (`Pull to source from <instance>`) with aligned `p` shortcuts in detail and diff views.
+- Installed tab loading placeholders for all sections (Files, Plugins, Pi Packages).
+
+### Changed
+- Refresh model is now startup scan + manual refresh (`R`) only (removed navigation-triggered and watcher-driven auto-refresh behavior).
+- Source repo status is prewarmed/cached for faster Settings rendering.
+- Sync-tab plugin drilldown via `d` now opens plugin detail to match other detail-first workflows.
+
+### Fixed
+- "Install to Pi" for local source-repo marketplaces now resolves plugin sources relative to repo root when marketplace is under `.claude-plugin/`.
+- Per-tool plugin install/uninstall actions correctly target intended instances in unified dispatch.
+- Plugin update behavior now only updates instances where plugin is already installed.
+- Drift display consistency fixes: suppress noisy `Changed +0 -0` and only mark changed when per-instance diffs exist.
+
 ## [0.17.2] - 2026-03-02
 
 ### Added
@@ -452,7 +471,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Symlink handling for plugin assets
 
-[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.17.2...HEAD
+[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/ssweens/blackbook/compare/v0.17.2...v0.18.0
 [0.17.2]: https://github.com/ssweens/blackbook/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/ssweens/blackbook/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/ssweens/blackbook/compare/v0.16.1...v0.17.0
