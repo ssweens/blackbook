@@ -238,4 +238,5 @@ Each phase is independently shippable and testable.
 - Extended pullback UX consistency: `p` shortcut now works for plugin detail (not just file detail), and Diff overlay now wires `p` pullback callback for file/plugin contexts.
 - Sync-tab consistency pass: `d` on plugin sync rows now opens plugin detail (instead of dead-end warning), and hints now say `d diff/detail` with detail hint including `p pullback (if available)`.
 - Centralized zero-diff rendering behavior in shared `ItemDetail` action row: diff counts are shown only when non-zero, preventing noisy `Changed +0 -0` across plugin/file detail views.
+- Installed tab now has per-section loading placeholder consistency for Files too (`filesLoaded`), matching Plugins/Pi Packages behavior and avoiding awkward late file population.
 

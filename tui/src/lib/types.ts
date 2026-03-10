@@ -167,6 +167,7 @@ export interface AppState {
   installedPlugins: Plugin[];
   installedPluginsLoaded: boolean;
   files: FileStatus[];
+  filesLoaded: boolean;
   tools: ToolInstance[];
   managedTools: ManagedToolRow[];
   toolDetection: Record<string, ToolDetectionResult>;

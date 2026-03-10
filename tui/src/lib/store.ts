@@ -326,6 +326,7 @@ export const useStore = create<Store>((set, get) => ({
   installedPlugins: [],
   installedPluginsLoaded: false,
   files: [],
+  filesLoaded: false,
   tools: getToolInstances(),
   managedTools: getManagedToolRows(),
   toolDetection: {},
@@ -927,12 +928,15 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   loadFiles: async () => {
+    set({ filesLoaded: false });
+
     // Only load files when YAML config exists
     const configPath = getYamlConfigPath();
     if (!configPath.endsWith(".yaml")) {
       const state = get();
       set({
         files: [],
+        filesLoaded: true,
         managedItems: composeManagedItems(state.installedPlugins, [], state.piPackages),
       });
       return [];
@@ -943,6 +947,7 @@ export const useStore = create<Store>((set, get) => ({
       const state = get();
       set({
         files: [],
+        filesLoaded: true,
         managedItems: composeManagedItems(state.installedPlugins, [], state.piPackages),
       });
       return [];
@@ -1199,6 +1204,7 @@ export const useStore = create<Store>((set, get) => ({
     const state = get();
     set({
       files,
+      filesLoaded: true,
       managedItems: composeManagedItems(state.installedPlugins, files, state.piPackages),
     });
     return files;

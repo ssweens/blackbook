@@ -61,6 +61,7 @@ export function App() {
     installedPlugins: legacyInstalledPlugins,
     installedPluginsLoaded,
     files: legacyFiles,
+    filesLoaded,
     tools,
     managedTools,
     toolDetection,
@@ -1754,15 +1755,26 @@ export function App() {
 
           {tab === "installed" && (
             <Box flexDirection="column">
-              {managedFiles.length > 0 && (
+              {(managedFiles.length > 0 || !filesLoaded) && (
                 <Box flexDirection="column">
-                  <Box><Text color="gray">  Files </Text><Text color="gray" dimColor>{getRange(selectedIndex < fileCount ? selectedIndex : 0, managedFiles.length, 5)}</Text></Box>
-                  <ItemList items={managedFiles} selectedIndex={selectedIndex < fileCount ? selectedIndex : -1} maxHeight={5} columns={FILE_COLUMNS} />
+                  <Box>
+                    <Text color="gray">  Files </Text>
+                    <Text color="gray" dimColor>
+                      {managedFiles.length > 0
+                        ? getRange(selectedIndex < fileCount ? selectedIndex : 0, managedFiles.length, 5)
+                        : "(loading...)"}
+                    </Text>
+                  </Box>
+                  {managedFiles.length > 0 ? (
+                    <ItemList items={managedFiles} selectedIndex={selectedIndex < fileCount ? selectedIndex : -1} maxHeight={5} columns={FILE_COLUMNS} />
+                  ) : (
+                    <Box marginLeft={2}><Text color="cyan">⠋ Loading files...</Text></Box>
+                  )}
                 </Box>
               )}
 
               {(managedPlugins.length > 0 || !installedPluginsLoaded) && (
-                <Box flexDirection="column" marginTop={managedFiles.length > 0 ? 1 : 0}>
+                <Box flexDirection="column" marginTop={(managedFiles.length > 0 || !filesLoaded) ? 1 : 0}>
                   <Box>
                     <Text color="gray">  Plugins </Text>
                     <Text color="gray" dimColor>
@@ -1780,7 +1792,7 @@ export function App() {
               )}
 
               {(managedPiPackages.length > 0 || !piPackagesLoaded) && (
-                <Box flexDirection="column" marginTop={(managedFiles.length > 0 || managedPlugins.length > 0 || !installedPluginsLoaded) ? 1 : 0}>
+                <Box flexDirection="column" marginTop={(managedFiles.length > 0 || !filesLoaded || managedPlugins.length > 0 || !installedPluginsLoaded) ? 1 : 0}>
                   <Box>
                     <Text color="gray">  Pi Packages </Text>
                     <Text color="gray" dimColor>
