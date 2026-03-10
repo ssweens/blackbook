@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { writeFileSync, rmSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { getSourceType, scanLocalMarketplace } from "./pi-marketplace.js";
+import { getSourceType, scanLocalMarketplace } from "./marketplace.js";
 
 describe("getSourceType", () => {
   it("detects npm sources", () => {

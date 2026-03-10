@@ -1,17 +1,14 @@
 import React, { useEffect, useState, useMemo, useRef } from "react";
-import { join } from "path";
-import { existsSync } from "fs";
+import { join, dirname } from "path";
+import { existsSync, lstatSync, rmSync, cpSync, copyFileSync, mkdirSync } from "fs";
 import { Box, Text, useInput, useApp } from "ink";
-import { useStore } from "./lib/store.js";
+import { useStore, withSpinner } from "./lib/store.js";
 import { TabBar } from "./components/TabBar.js";
 import { SearchBox } from "./components/SearchBox.js";
-import { PluginList } from "./components/PluginList.js";
 import { PluginPreview } from "./components/PluginPreview.js";
-import { PluginDetail, buildPluginActions, type PluginAction } from "./components/PluginDetail.js";
+import { buildItemActions, getPiPackageActions } from "./lib/item-actions.js";
 import { MarketplaceList } from "./components/MarketplaceList.js";
-import { MarketplaceDetail } from "./components/MarketplaceDetail.js";
-import { PiMarketplaceList } from "./components/PiMarketplaceList.js";
-import { PiMarketplaceDetail, getPiMarketplaceActions } from "./components/PiMarketplaceDetail.js";
+import { MarketplaceDetailView } from "./components/MarketplaceDetailView.js";
 import { AddMarketplaceModal } from "./components/AddMarketplaceModal.js";
 import { SourceSetupWizard } from "./components/SourceSetupWizard.js";
 import { EditToolModal } from "./components/EditToolModal.js";
@@ -20,9 +17,8 @@ import { ToolDetail } from "./components/ToolDetail.js";
 import { ToolActionModal, type ToolModalAction } from "./components/ToolActionModal.js";
 import { SyncList } from "./components/SyncList.js";
 import { SyncPreview } from "./components/SyncPreview.js";
-import { FileList } from "./components/FileList.js";
 import { FilePreview } from "./components/FilePreview.js";
-import { FileDetail, getFileActions } from "./components/FileDetail.js";
+
 import { HintBar } from "./components/HintBar.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { Notifications } from "./components/Notifications.js";
@@ -30,17 +26,26 @@ import { DiffView } from "./components/DiffView.js";
 import { MissingSummaryView } from "./components/MissingSummary.js";
 import { PluginSummary } from "./components/PluginSummary.js";
 import { PiPackageSummary } from "./components/PiPackageSummary.js";
-import { PiPackageList } from "./components/PiPackageList.js";
 import { PiPackagePreview } from "./components/PiPackagePreview.js";
-import { PiPackageDetail, getPiPackageActions } from "./components/PiPackageDetail.js";
+// PiPackageDetail actions built via toPiPkgItemActions in lib/item-actions.ts
 import { ComponentManager, getComponentItems } from "./components/ComponentManager.js";
 import { SettingsPanel } from "./components/SettingsPanel.js";
 import { getPluginToolStatus, togglePluginComponent } from "./lib/plugin-status.js";
 import { syncPluginInstances, uninstallPluginFromInstance } from "./lib/install.js";
-import { computePluginDrift, resolvePluginSourcePaths, type PluginDrift } from "./lib/plugin-drift.js";
+import { resolvePluginSourcePaths, type PluginDrift } from "./lib/plugin-drift.js";
+import { computeItemDrift } from "./lib/item-drift.js";
+import { buildFileDiffTarget } from "./lib/diff.js";
 import { getToolLifecycleCommand, detectInstallMethodMismatch } from "./lib/tool-lifecycle.js";
 import { getPackageManager } from "./lib/config.js";
 import { setupSourceRepository, shouldShowSourceSetupWizard } from "./lib/source-setup.js";
+import { ItemList, FILE_COLUMNS, PLUGIN_COLUMNS } from "./components/ItemList.js";
+import { ItemDetail, PluginMetadata, FileMetadata, PiPackageMetadata, type ItemAction } from "./components/ItemDetail.js";
+import { pluginToManagedItem, fileToManagedItem, piPackageToManagedItem } from "./lib/managed-item.js";
+import type { ManagedItem } from "./lib/managed-item.js";
+import { getMarketplaceDetailActions, type MarketplaceDetailContext } from "./lib/marketplace-detail.js";
+import { buildMarketplaceRows, type MarketplaceRow } from "./lib/marketplace-row.js";
+import { useDetailInput, useDiffInput, useListInput } from "./lib/input-hooks.js";
+import { handleItemAction } from "./lib/action-dispatch.js";
 import type { Tab, SyncPreviewItem, Plugin, PiPackage, PiMarketplace, DiffInstanceRef, DiscoverSection, DiscoverSubView, ManagedToolRow, FileStatus, Marketplace } from "./lib/types.js";
 
 const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces", "settings"];
@@ -52,8 +57,11 @@ export function App() {
     tab,
     setTab,
     marketplaces,
-    installedPlugins,
-    files,
+    managedItems,
+    installedPlugins: legacyInstalledPlugins,
+    installedPluginsLoaded,
+    files: legacyFiles,
+    filesLoaded,
     tools,
     managedTools,
     toolDetection,
@@ -103,7 +111,8 @@ export function App() {
     closeMissingSummary,
     pullbackFileInstance,
     // Pi packages
-    piPackages,
+    piPackages: legacyPiPackages,
+    piPackagesLoaded,
     piMarketplaces,
     detailPiPackage,
     setDetailPiPackage,
@@ -124,27 +133,44 @@ export function App() {
 
   const [actionIndex, setActionIndex] = useState(0);
   const [componentManagerMode, setComponentManagerMode] = useState(false);
+  const [componentIndex, setComponentIndex] = useState(0);
   const [detailPluginDrift, setDetailPluginDrift] = useState<PluginDrift | null>(null);
   const [pluginDriftMap, setPluginDriftMap] = useState<Record<string, PluginDrift>>({});
-  const [componentIndex, setComponentIndex] = useState(0);
-  const [showAddMarketplace, setShowAddMarketplace] = useState(false);
-  const [showSourceSetupWizard, setShowSourceSetupWizard] = useState(false);
-  const [showAddPiMarketplace, setShowAddPiMarketplace] = useState(false);
-  const [detailPiMarketplace, setDetailPiMarketplace] = useState<PiMarketplace | null>(null);
-  const [editingToolId, setEditingToolId] = useState<string | null>(null);
-  const [detailToolKey, setDetailToolKey] = useState<string | null>(null);
   const [detailFile, setDetailFile] = useState<FileStatus | null>(null);
-  const [toolModalAction, setToolModalAction] = useState<ToolModalAction | null>(null);
-  const [toolModalWarning, setToolModalWarning] = useState<string | null>(null);
-  const [toolModalMigrate, setToolModalMigrate] = useState(false);
-  const [toolModalRunning, setToolModalRunning] = useState(false);
-  const [toolModalDone, setToolModalDone] = useState(false);
-  const [toolModalSuccess, setToolModalSuccess] = useState(false);
+  const [detailPiMarketplace, setDetailPiMarketplace] = useState<PiMarketplace | null>(null);
+  const [detailToolKey, setDetailToolKey] = useState<string | null>(null);
+  const [editingToolId, setEditingToolId] = useState<string | null>(null);
+  const [modalVisible, setModalVisible] = useState<"addMarketplace" | "addPiMarketplace" | "sourceSetupWizard" | null>(null);
+  const showAddMarketplace = modalVisible === "addMarketplace";
+  const showAddPiMarketplace = modalVisible === "addPiMarketplace";
+  const showSourceSetupWizard = modalVisible === "sourceSetupWizard";
+  const setShowAddMarketplace = (v: boolean) => setModalVisible(v ? "addMarketplace" : null);
+  const setShowAddPiMarketplace = (v: boolean) => setModalVisible(v ? "addPiMarketplace" : null);
+  const setShowSourceSetupWizard = (v: boolean) => setModalVisible(v ? "sourceSetupWizard" : null);
+  const [toolModal, setToolModal] = useState<{
+    action: ToolModalAction | null; warning: string | null; migrate: boolean;
+    running: boolean; done: boolean; success: boolean;
+  }>({ action: null, warning: null, migrate: false, running: false, done: false, success: false });
+  // Destructure for backward compat within this component
+  const { action: toolModalAction, warning: toolModalWarning, migrate: toolModalMigrate,
+    running: toolModalRunning, done: toolModalDone, success: toolModalSuccess } = toolModal;
+  const setToolModalAction = (v: ToolModalAction | null) => setToolModal((s) => ({ ...s, action: v }));
+  const setToolModalWarning = (v: string | null) => setToolModal((s) => ({ ...s, warning: v }));
+  const setToolModalMigrate = (v: boolean | ((b: boolean) => boolean)) =>
+    setToolModal((s) => ({ ...s, migrate: typeof v === "function" ? v(s.migrate) : v }));
+  const setToolModalRunning = (v: boolean) => setToolModal((s) => ({ ...s, running: v }));
+  const setToolModalDone = (v: boolean) => setToolModal((s) => ({ ...s, done: v }));
+  const setToolModalSuccess = (v: boolean) => setToolModal((s) => ({ ...s, success: v }));
+  const resetToolModal = () => setToolModal({ action: null, warning: null, migrate: false, running: false, done: false, success: false });
   const [syncPreview, setSyncPreview] = useState<SyncPreviewItem[]>([]);
   const [syncSelection, setSyncSelection] = useState<Set<string>>(new Set());
   const [syncArmed, setSyncArmed] = useState(false);
-  const [sortBy, setSortBy] = useState<"default" | "name" | "installed" | "popularity">("default");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [sort, setSort] = useState<{ by: "default" | "name" | "installed" | "popularity"; dir: "asc" | "desc" }>({ by: "default", dir: "asc" });
+  const sortBy = sort.by; const sortDir = sort.dir;
+  const setSortBy = (v: typeof sortBy | ((p: typeof sortBy) => typeof sortBy)) =>
+    setSort((s) => ({ ...s, by: typeof v === "function" ? v(s.by) : v }));
+  const setSortDir = (v: typeof sortDir | ((p: typeof sortDir) => typeof sortDir)) =>
+    setSort((s) => ({ ...s, dir: typeof v === "function" ? v(s.dir) : v }));
   const [searchFocused, setSearchFocused] = useState(false);
   const [subViewIndex, setSubViewIndex] = useState(0);
   const [marketplaceBrowseContext, setMarketplaceBrowseContext] = useState<Marketplace | null>(null);
@@ -186,6 +212,28 @@ export function App() {
     return `file:${item.file.name}`;
   };
 
+  const installedPlugins = useMemo(() => {
+    const fromManaged = managedItems
+      .filter((item): item is ManagedItem & { _plugin: Plugin } => item.kind === "plugin" && !!item._plugin)
+      .map((item) => item._plugin);
+    return fromManaged.length > 0 ? fromManaged : legacyInstalledPlugins;
+  }, [managedItems, legacyInstalledPlugins]);
+
+  const files = useMemo(() => {
+    const fromManaged = managedItems
+      .filter((item): item is ManagedItem & { _file: FileStatus } =>
+        (item.kind === "file" || item.kind === "config" || item.kind === "asset") && !!item._file)
+      .map((item) => item._file);
+    return fromManaged.length > 0 ? fromManaged : legacyFiles;
+  }, [managedItems, legacyFiles]);
+
+  const piPackages = useMemo(() => {
+    const fromManaged = managedItems
+      .filter((item): item is ManagedItem & { _piPackage: PiPackage } => item.kind === "pi-package" && !!item._piPackage)
+      .map((item) => item._piPackage);
+    return fromManaged.length > 0 ? fromManaged : legacyPiPackages;
+  }, [managedItems, legacyPiPackages]);
+
   const toFileSyncItem = (file: typeof files[number]): SyncPreviewItem => {
     const missingInstances = file.instances
       .filter((i) => i.status === "missing")
@@ -200,6 +248,9 @@ export function App() {
     () => tools.filter((tool) => tool.enabled).map((tool) => tool.name),
     [tools]
   );
+
+  const isBrewManagedTool = (binaryPath: string | null | undefined): boolean =>
+    Boolean(binaryPath && (binaryPath.startsWith("/opt/homebrew/") || binaryPath.startsWith("/usr/local/")));
 
   const showPiFeatures = useMemo(() => {
     const piEnabled = tools.some((tool) => tool.toolId === "pi" && tool.enabled);
@@ -252,50 +303,32 @@ export function App() {
 
     let refreshed = false;
     try {
-      if (targetTab === "settings") {
-        // Settings reads config on mount — no async load needed.
-        refreshed = true;
-        return;
+      switch (targetTab) {
+        case "settings":
+          await refreshAll();
+          break;
+        case "discover":
+        case "marketplaces": await Promise.all([loadMarketplaces(), loadPiPackages()]); break;
+        case "installed":
+          await Promise.all([loadInstalledPlugins(), loadPiPackages()]);
+          void loadFiles(); // background — Installed stays responsive
+          break;
+        case "tools":
+          refreshManagedTools();
+          await refreshToolDetection();
+          break;
+        case "sync":
+        default:
+          // Sync: refresh only sync-relevant data to avoid expensive cross-tab reload.
+          refreshManagedTools();
+          await Promise.all([loadInstalledPlugins(), loadFiles(), refreshToolDetection()]);
+          break;
       }
-
-      if (targetTab === "discover") {
-        await Promise.all([loadMarketplaces(), loadPiPackages()]);
-        refreshed = true;
-        return;
-      }
-
-      if (targetTab === "installed") {
-        await Promise.all([loadInstalledPlugins(), loadPiPackages()]);
-        // Load file statuses in the background so Installed is responsive immediately.
-        void loadFiles();
-        refreshed = true;
-        return;
-      }
-
-      if (targetTab === "tools") {
-        refreshManagedTools();
-        await refreshToolDetection();
-        refreshed = true;
-        return;
-      }
-
-      if (targetTab === "marketplaces") {
-        await Promise.all([loadMarketplaces(), loadPiPackages()]);
-        refreshed = true;
-        return;
-      }
-
-      // Sync tab: refresh only sync-relevant data and avoid full cross-tab reload.
-      // This keeps first navigation responsive and prevents expensive refresh chains.
-      refreshManagedTools();
-      await Promise.all([loadInstalledPlugins(), loadFiles(), refreshToolDetection()]);
       refreshed = true;
     } catch (error) {
       notify(`Failed to refresh ${targetTab} tab: ${error instanceof Error ? error.message : String(error)}`, "error");
     } finally {
-      if (refreshed) {
-        lastTabRefreshRef.current[targetTab] = Date.now();
-      }
+      if (refreshed) lastTabRefreshRef.current[targetTab] = Date.now();
       tabRefreshInFlightRef.current[targetTab] = false;
       tabRefreshCounterRef.current -= 1;
       if (tabRefreshCounterRef.current <= 0) {
@@ -306,20 +339,13 @@ export function App() {
   };
 
   useEffect(() => {
-    void refreshTabData(tab);
-  }, [tab]);
-
-  useEffect(() => {
     setShowSourceSetupWizard(shouldShowSourceSetupWizard());
   }, []);
 
+  // Single startup scan for all item/update state; no navigation-triggered refreshes.
   useEffect(() => {
-    void refreshToolDetection();
-  }, [refreshToolDetection]);
-
-  useEffect(() => {
-    void loadPiPackages();
-  }, [loadPiPackages, showPiFeatures]);
+    void refreshAll();
+  }, [refreshAll]);
 
   useEffect(() => {
     if (tab !== "sync") return;
@@ -390,8 +416,8 @@ export function App() {
       const map: Record<string, PluginDrift> = {};
       await Promise.all(
         installedPlugins.map(async (p) => {
-          const drift = await computePluginDrift(p);
-          if (!cancelled) map[p.name] = drift;
+          const drift = await computeItemDrift(pluginToManagedItem(p));
+          if (!cancelled && drift.kind === "plugin") map[p.name] = drift.plugin;
         })
       );
       if (!cancelled) setPluginDriftMap(map);
@@ -453,6 +479,11 @@ export function App() {
     if (!marketplaceBrowseContext) return filteredPlugins;
     return filteredPlugins.filter((p) => p.marketplace === marketplaceBrowseContext.name);
   }, [filteredPlugins, marketplaceBrowseContext]);
+
+  const managedBrowsePlugins = useMemo(
+    () => marketplaceBrowsePlugins.map((p) => pluginToManagedItem(p)),
+    [marketplaceBrowsePlugins],
+  );
 
   const filteredPiPackages = useMemo(() => {
     const lowerSearch = search.toLowerCase();
@@ -569,6 +600,28 @@ export function App() {
     [files]
   );
 
+  // ManagedItem conversions for generic ItemList
+  const managedFiles = useMemo(
+    () => filteredFiles.map((f) => fileToManagedItem(f)),
+    [filteredFiles],
+  );
+  const managedPlugins = useMemo(
+    () => filteredPlugins.map((p) => {
+      const item = pluginToManagedItem(p);
+      // Apply drift data to instance statuses
+      const drift = pluginDriftMap[p.name];
+      if (drift && Object.values(drift).some((s) => s !== "in-sync")) {
+        return { ...item, instances: item.instances.map((inst) => ({ ...inst, status: "changed" as const })) };
+      }
+      return item;
+    }),
+    [filteredPlugins, pluginDriftMap],
+  );
+  const managedPiPackages = useMemo(
+    () => filteredPiPackages.map((p) => piPackageToManagedItem(p)),
+    [filteredPiPackages],
+  );
+
   const libraryNameWidth = useMemo(() => {
     const pluginWidth = Math.min(30, maxLength(filteredPlugins.map((p) => p.name.length), 10));
     const fileWidth = Math.min(30, maxLength(filteredFiles.map((f) => f.name.length), 10));
@@ -624,17 +677,19 @@ export function App() {
     return sections.find((s) => selectedIndex >= s.start && selectedIndex <= s.end);
   }, [sections, selectedIndex]);
 
-  // Pi section starts after plugin section: 0=AddPlugin, 1..N=plugins, N+1=AddPi, N+2..M=piMarketplaces
-  const piSectionOffset = marketplaces.length + 1;
+  const marketplaceRows = useMemo(
+    () => buildMarketplaceRows(marketplaces, piMarketplaces, showPiFeatures),
+    [marketplaces, piMarketplaces, showPiFeatures],
+  );
+
+  const selectedMarketplaceRow = useMemo(() => {
+    if (tab !== "marketplaces") return null;
+    return marketplaceRows[selectedIndex] ?? null;
+  }, [tab, marketplaceRows, selectedIndex]);
 
   const maxIndex = useMemo(() => {
     if (tab === "marketplaces") {
-      if (!showPiFeatures) {
-        // Plugin section only: Add(0) + marketplaces(N)
-        return marketplaces.length;
-      }
-      // Plugin: Add(0) + marketplaces(N) + Pi: Add(1) + piMarketplaces(M)
-      return marketplaces.length + 1 + piMarketplaces.length;
+      return Math.max(0, marketplaceRows.length - 1);
     }
     if (tab === "tools") {
       return Math.max(0, managedTools.length - 1);
@@ -643,7 +698,7 @@ export function App() {
       return Math.max(0, syncPreview.length - 1);
     }
     return Math.max(0, libraryCount - 1);
-  }, [tab, marketplaces, piMarketplaces, managedTools, syncPreview, libraryCount, showPiFeatures]);
+  }, [tab, marketplaceRows, managedTools, syncPreview, libraryCount]);
 
   useEffect(() => {
     if (selectedIndex > maxIndex) {
@@ -702,13 +757,8 @@ export function App() {
       return `(Checking tool statuses... ${pendingToolDetectionCount} remaining · R refresh)`;
     }
 
-    const supportsMigration = (detection: typeof toolDetection[string] | undefined) => {
-      const path = detection?.binaryPath;
-      if (!path || !detection?.installed) return false;
-      const detectedMethod =
-        path.startsWith("/opt/homebrew/") || path.startsWith("/usr/local/") ? "brew" : "unknown";
-      return detectedMethod === "brew";
-    };
+    const supportsMigration = (detection: typeof toolDetection[string] | undefined) =>
+      detection?.installed === true && isBrewManagedTool(detection.binaryPath);
 
     if (detailTool) {
       const detection = toolDetection[detailTool.toolId];
@@ -786,21 +836,55 @@ export function App() {
     ]
   );
 
-  const fileActions = useMemo(() => {
-    return detailFile ? getFileActions(detailFile) : [];
+  const toPiPkgItemActions = getPiPackageActions; // kept for down-arrow handler
+
+  // ManagedItem for currently open detail views
+  const detailPluginItem = useMemo((): ManagedItem | null => {
+    if (!detailPlugin) return null;
+    const item = pluginToManagedItem(detailPlugin);
+    const drift = detailPluginDrift ?? pluginDriftMap[detailPlugin.name];
+    if (drift && Object.values(drift).some((s) => s !== "in-sync")) {
+      return { ...item, instances: item.instances.map((inst) => ({ ...inst, status: "changed" as const })) };
+    }
+    return item;
+  }, [detailPlugin, detailPluginDrift, pluginDriftMap]);
+
+  const detailFileItem = useMemo((): ManagedItem | null => {
+    if (!detailFile) return null;
+    return fileToManagedItem(detailFile);
   }, [detailFile]);
 
-  const getPluginActions = (plugin: typeof detailPlugin): PluginAction[] => {
-    if (!plugin) return [];
-    const toolStatuses = getPluginToolStatus(plugin);
-    const isIncomplete = plugin.installed && plugin.incomplete;
-    const drift = detailPluginDrift ?? pluginDriftMap[plugin.name];
-    return buildPluginActions(plugin, toolStatuses, isIncomplete, drift);
-  };
+  const detailPiPkgItem = useMemo((): ManagedItem | null => {
+    if (!detailPiPackage) return null;
+    return piPackageToManagedItem(detailPiPackage);
+  }, [detailPiPackage]);
 
-  const getPluginActionCount = (plugin: typeof detailPlugin) => {
-    return getPluginActions(plugin).length;
-  };
+  /** Active detail context — the currently-open entity + its actions + metadata node. */
+  const activeDetail = useMemo((): { item: ManagedItem; actions: ItemAction[]; metadata: React.ReactNode } | null => {
+    const drift = detailPlugin ? (detailPluginDrift ?? pluginDriftMap[detailPlugin.name]) : undefined;
+    if (detailFile && detailFileItem) {
+      return { item: detailFileItem, actions: buildItemActions(detailFileItem), metadata: <FileMetadata item={detailFileItem} /> };
+    }
+    if (detailPlugin && detailPluginItem) {
+      return { item: detailPluginItem, actions: buildItemActions(detailPluginItem, drift), metadata: <PluginMetadata item={detailPluginItem} /> };
+    }
+    if (detailPiPackage && detailPiPkgItem) {
+      return { item: detailPiPkgItem, actions: buildItemActions(detailPiPkgItem), metadata: <PiPackageMetadata item={detailPiPkgItem} /> };
+    }
+    return null;
+  }, [detailFile, detailFileItem, detailPlugin, detailPluginItem, detailPluginDrift, pluginDriftMap, detailPiPackage, detailPiPkgItem]);
+
+  const activeMarketplaceDetail = useMemo((): { detail: MarketplaceDetailContext; actions: ReturnType<typeof getMarketplaceDetailActions> } | null => {
+    if (detailMarketplace) {
+      const detail: MarketplaceDetailContext = { kind: "plugin", marketplace: detailMarketplace };
+      return { detail, actions: getMarketplaceDetailActions(detail) };
+    }
+    if (detailPiMarketplace) {
+      const detail: MarketplaceDetailContext = { kind: "pi", marketplace: detailPiMarketplace };
+      return { detail, actions: getMarketplaceDetailActions(detail) };
+    }
+    return null;
+  }, [detailMarketplace, detailPiMarketplace]);
 
   const refreshDetailPlugin = (plugin: Plugin) => {
     const state = useStore.getState();
@@ -813,7 +897,9 @@ export function App() {
     const resolved = fromMarketplace || fromInstalled || plugin;
     setDetailPlugin(resolved);
     setDetailPluginDrift(null);
-    void computePluginDrift(resolved).then(setDetailPluginDrift);
+    void computeItemDrift(pluginToManagedItem(resolved)).then((drift) => {
+      if (drift.kind === "plugin") setDetailPluginDrift(drift.plugin);
+    });
   };
 
   const refreshDetailPiPackage = (pkg: PiPackage) => {
@@ -827,52 +913,293 @@ export function App() {
     setDetailPiPackage(refreshed || pkg);
   };
 
-  useInput((input, key) => {
-    if (toolModalAction) {
-      if (toolModalDone) {
-        if (!toolModalSuccess && (input === "m" || input === "M") && toolModalWarning) {
-          setToolModalMigrate((current) => !current);
-          return;
-        }
+  // ── Extracted input handlers ───────────────────────────────────────────
 
-        if (!toolModalSuccess && key.return && activeToolForModal) {
-          setToolModalDone(false);
-          void runToolAction(activeToolForModal, toolModalAction, toolModalMigrate);
-          return;
-        }
+  const closeDetail = () => { setActionIndex(0); };
+  const handleEscape = () => {
+    if (detailPlugin) {
+      setDetailPlugin(null); setDetailPluginDrift(null);
+      setComponentManagerMode(false); closeDetail();
+    } else if (detailFile) { setDetailFile(null); closeDetail();
+    } else if (activeMarketplaceDetail) { setDetailMarketplace(null); setDetailPiMarketplace(null); closeDetail();
+    } else if (detailPiPackage) { setDetailPiPackage(null); closeDetail();
+    } else if (detailTool) { setDetailToolKey(null);
+    } else if (discoverSubView) {
+      if (tab === "marketplaces" && marketplaceBrowseContext) {
+        setDiscoverSubView(null); setSubViewIndex(0);
+        setDetailMarketplace(marketplaceBrowseContext); setMarketplaceBrowseContext(null); setSearch("");
+      } else { setDiscoverSubView(null); setSubViewIndex(0); }
+    } else if (tab === "marketplaces" && marketplaceBrowseContext) {
+      setDetailMarketplace(marketplaceBrowseContext); setMarketplaceBrowseContext(null); setSearch("");
+    }
+  };
 
-        setToolModalAction(null);
-        setToolModalWarning(null);
-        setToolModalMigrate(false);
-        setToolModalDone(false);
-        setToolModalSuccess(false);
-        return;
-      }
-
-      if (toolModalRunning) {
-        if (key.escape) {
-          cancelToolAction();
-        }
-        return;
-      }
-
-      if (key.escape) {
-        setToolModalAction(null);
-        setToolModalWarning(null);
-        setToolModalMigrate(false);
-        return;
-      }
-
-      if ((input === "m" || input === "M") && toolModalWarning) {
-        setToolModalMigrate((current) => !current);
-        return;
-      }
-
-      if (key.return && activeToolForModal) {
-        void runToolAction(activeToolForModal, toolModalAction, toolModalMigrate);
+  const handleEnterOnList = () => {
+    // Marketplaces tab
+    if (tab === "marketplaces") {
+      if (!selectedMarketplaceRow) return;
+      switch (selectedMarketplaceRow.kind) {
+        case "add-plugin":
+          setShowAddMarketplace(true);
+          break;
+        case "plugin":
+          setDetailMarketplace(selectedMarketplaceRow.marketplace);
+          setActionIndex(0);
+          break;
+        case "add-pi":
+          setShowAddPiMarketplace(true);
+          break;
+        case "pi":
+          setDetailPiMarketplace(selectedMarketplaceRow.marketplace);
+          setActionIndex(0);
+          break;
       }
       return;
     }
+
+    // Tools tab
+    if (tab === "tools") {
+      const tool = managedTools[selectedIndex];
+      if (tool) setDetailToolKey(`${tool.toolId}:${tool.instanceId}`);
+      return;
+    }
+
+    // Sync tab
+    if (tab === "sync" && !diffTarget && !missingSummary) {
+      const item = syncPreview[selectedIndex];
+      if (item) {
+        if (item.kind === "plugin") {
+          openPluginDetail(item.plugin);
+        } else if (item.kind === "tool") {
+          const tool = managedTools.find((entry) => entry.toolId === item.toolId);
+          if (tool) setDetailToolKey(`${tool.toolId}:${tool.instanceId}`);
+        } else if (item.kind === "file") {
+          setDetailFile(item.file);
+          setActionIndex(0);
+        }
+      }
+      return;
+    }
+
+    // Installed / Discover tabs — open item detail
+    if (selectedLibraryItem?.kind === "plugin") {
+      openPluginDetail(selectedLibraryItem.plugin);
+    } else if (selectedLibraryItem?.kind === "piPackage") {
+      setDetailPiPackage(selectedLibraryItem.piPackage);
+      setActionIndex(0);
+    } else if (selectedLibraryItem?.kind === "file") {
+      setDetailFile(selectedLibraryItem.file);
+      setActionIndex(0);
+    } else if (selectedLibraryItem?.kind === "pluginSummary") {
+      setDiscoverSubView("plugins");
+      setSubViewIndex(0);
+    } else if (selectedLibraryItem?.kind === "piPackageSummary") {
+      setDiscoverSubView("piPackages");
+      setSubViewIndex(0);
+    }
+  };
+
+  const openPluginDetail = (plugin: Plugin) => {
+    setDetailPlugin(plugin); setDetailPluginDrift(null);
+    void computeItemDrift(pluginToManagedItem(plugin)).then((drift) => {
+      if (drift.kind === "plugin") setDetailPluginDrift(drift.plugin);
+    });
+    setActionIndex(0);
+  };
+
+  const toggleInstall = (plugin: Plugin) => plugin.installed ? doUninstall(plugin) : doInstall(plugin);
+  const toggleInstallPiPkg = (pkg: PiPackage) => pkg.installed ? doUninstallPiPkg(pkg) : doInstallPiPkg(pkg);
+
+  const handleSpaceToggle = () => {
+    if (tab === "sync") {
+      const item = syncPreview[selectedIndex];
+      if (!item) return;
+      const k = getSyncItemKey(item);
+      setSyncSelection((current) => {
+        const next = new Set(current);
+        if (next.has(k)) next.delete(k); else next.add(k);
+        return next;
+      });
+      setSyncArmed(false);
+      return;
+    }
+
+    if (tab === "tools") {
+      const tool = managedTools[selectedIndex];
+      if (tool) void toggleToolEnabled(tool.toolId, tool.instanceId);
+      return;
+    }
+
+    if (tab === "marketplaces") {
+      if (selectedMarketplaceRow?.kind === "plugin") {
+        void toggleMarketplaceEnabled(selectedMarketplaceRow.marketplace.name);
+        return;
+      }
+      if (selectedMarketplaceRow?.kind === "pi") {
+        void togglePiMarketplaceEnabled(selectedMarketplaceRow.marketplace.name);
+        return;
+      }
+    }
+
+    // Sub-views: toggle install/uninstall
+    if (discoverSubView === "plugins") {
+      const plugin = filteredPlugins[subViewIndex];
+      if (plugin) toggleInstall(plugin);
+      return;
+    }
+    if (discoverSubView === "piPackages") {
+      const pkg = filteredPiPackages[subViewIndex];
+      if (pkg) toggleInstallPiPkg(pkg);
+      return;
+    }
+
+    // Library items
+    if (selectedLibraryItem?.kind === "plugin") toggleInstall(selectedLibraryItem.plugin);
+    else if (selectedLibraryItem?.kind === "piPackage") toggleInstallPiPkg(selectedLibraryItem.piPackage);
+  };
+
+  /** True when any detail/diff/missing overlay is open — blocks global navigation. */
+  const isOverlayOpen = !!(activeDetail || activeMarketplaceDetail || detailTool || diffTarget || missingSummary);
+
+  const handleToolModalInput = (input: string, key: Parameters<Parameters<typeof useInput>[0]>[1]) => {
+    if (toolModalDone) {
+      if (!toolModalSuccess && (input === "m" || input === "M") && toolModalWarning) {
+        setToolModalMigrate((c) => !c);
+        return;
+      }
+      if (!toolModalSuccess && key.return && activeToolForModal) {
+        setToolModalDone(false);
+        void runToolAction(activeToolForModal, toolModalAction!, toolModalMigrate);
+        return;
+      }
+      resetToolModal();
+      return;
+    }
+    if (toolModalRunning) { if (key.escape) cancelToolAction(); return; }
+    if (key.escape) { setToolModal((s) => ({ ...s, action: null, warning: null, migrate: false })); return; }
+    if ((input === "m" || input === "M") && toolModalWarning) { setToolModalMigrate((c) => !c); return; }
+    if (key.return && activeToolForModal) void runToolAction(activeToolForModal, toolModalAction!, toolModalMigrate);
+  };
+
+  const handleComponentManagerInput = (input: string, key: Parameters<Parameters<typeof useInput>[0]>[1]) => {
+    if (!detailPlugin) return;
+    if (key.escape) { setComponentManagerMode(false); return; }
+    const items = getComponentItems(detailPlugin);
+    if (items.length === 0) { setComponentManagerMode(false); return; }
+    if (key.upArrow) { setComponentIndex((i) => Math.max(0, i - 1)); return; }
+    if (key.downArrow) { setComponentIndex((i) => Math.min(items.length - 1, i + 1)); return; }
+    if (key.return || input === " ") {
+      const item = items[componentIndex];
+      if (item) { togglePluginComponent(detailPlugin, item.kind, item.name, !item.enabled); refreshDetailPlugin(detailPlugin); }
+    }
+  };
+
+  /** Returns true if the shortcut was handled. */
+  const handleToolShortcut = (input: string): boolean => {
+    const tool = detailTool || managedTools[selectedIndex];
+    const detection = tool ? toolDetection[tool.toolId] : null;
+    const openModal = (action: "install" | "update" | "uninstall", migrate = false) =>
+      setToolModal({ action, warning: null, migrate, running: false, done: false, success: false });
+
+    if (input === "i" && tool && (!detection || !detection.installed)) { openModal("install"); return true; }
+    if (input === "u" && tool && detection?.installed && detection.hasUpdate) { openModal("update"); return true; }
+    if (input === "d" && tool && detection?.installed) { openModal("uninstall"); return true; }
+    if (input === "m" && tool && detection?.installed) {
+      const path = detection.binaryPath ?? "";
+      if (isBrewManagedTool(path)) openModal("update", true);
+      return true;
+    }
+    if (input === "e" && tool) { setEditingToolId(`${tool.toolId}:${tool.instanceId}`); return true; }
+    if (input === " " && tool) { void toggleToolEnabled(tool.toolId, tool.instanceId); return true; }
+    return false;
+  };
+
+  const handleMarketplaceShortcut = (input: string): boolean => {
+    if (!selectedMarketplaceRow) return false;
+    if (input === "u") {
+      if (selectedMarketplaceRow.kind === "plugin") {
+        void updateMarketplace(selectedMarketplaceRow.marketplace.name);
+      }
+      return true;
+    }
+    if (input === "r") {
+      if (selectedMarketplaceRow.kind === "plugin" && selectedMarketplaceRow.marketplace.source !== "claude") {
+        removeMarketplace(selectedMarketplaceRow.marketplace.name);
+      } else if (selectedMarketplaceRow.kind === "pi" && !selectedMarketplaceRow.marketplace.builtIn) {
+        void removePiMarketplace(selectedMarketplaceRow.marketplace.name);
+      }
+      return true;
+    }
+    return false;
+  };
+
+  const handleSyncShortcut = (input: string): boolean => {
+    if (input === "y") {
+      if (syncArmed) {
+        const items = syncPreview.filter((item) => syncSelection.has(getSyncItemKey(item)));
+        if (items.length === 0) {
+          notify("Select at least one item to sync.", "warning");
+          setSyncArmed(false);
+          return true;
+        }
+        void syncTools(items);
+        setSyncArmed(false);
+      } else {
+        setSyncArmed(true);
+      }
+      return true;
+    }
+    if (input === "d") {
+      const item = syncPreview[selectedIndex];
+      if (!item) return true;
+      if (item.kind === "plugin") {
+        openPluginDetail(item.plugin);
+      } else {
+        openDiffFromSyncItem(item);
+      }
+      return true;
+    }
+    return false;
+  };
+
+  const handleDiffInput = useDiffInput(diffTarget, missingSummary);
+  const handleDetailInput = useDetailInput({
+    activeDetail,
+    activeMarketplaceDetail,
+    detailToolOpen: !!detailTool,
+    detailFile,
+    detailPlugin,
+    actionIndex,
+    diffTarget,
+    missingSummary,
+    setActionIndex,
+    onEntityAction: (index) => { void handleEntityAction(index); },
+    onMarketplaceAction: (index) => handleMarketplaceDetailAction(index),
+    onPullbackFile: (file, instance) => { void pullbackFileInstance(file, instance); },
+    onPullbackPlugin: (plugin, instance) => { void pullbackPluginInstanceCb(plugin, instance); },
+  });
+  const handleListInput = useListInput({
+    discoverSubView,
+    tab,
+    subViewIndex,
+    maxIndex,
+    selectedIndex,
+    filteredPlugins,
+    marketplaceBrowsePlugins,
+    filteredPiPackages,
+    isOverlayOpen,
+    setSubViewIndex,
+    setSelectedIndex,
+    setDetailPiPackage: (pkg) => { void setDetailPiPackage(pkg); },
+    setActionIndex,
+    setSyncArmed,
+    onOpenPluginDetail: openPluginDetail,
+    onEnterList: handleEnterOnList,
+    onSpaceToggle: handleSpaceToggle,
+  });
+
+  useInput((input, key) => {
+    if (toolModalAction) { handleToolModalInput(input, key); return; }
 
     // Sticky notifications (warnings/errors) are acknowledged with any key.
     const stickyNotifications = notifications.filter(
@@ -884,42 +1211,10 @@ export function App() {
     }
 
     // Don't handle input when modal is open (modal handles its own input)
-    if (showSourceSetupWizard || showAddMarketplace || showAddPiMarketplace || editingToolId) {
-      return;
-    }
+    if (modalVisible || editingToolId) { return; }
 
-    // Component manager mode input handling
-    if (componentManagerMode && detailPlugin) {
-      if (key.escape) {
-        setComponentManagerMode(false);
-        return;
-      }
-
-      const items = getComponentItems(detailPlugin);
-      if (items.length === 0) {
-        setComponentManagerMode(false);
-        return;
-      }
-
-      if (key.upArrow) {
-        setComponentIndex((i) => Math.max(0, i - 1));
-        return;
-      }
-      if (key.downArrow) {
-        setComponentIndex((i) => Math.min(items.length - 1, i + 1));
-        return;
-      }
-      if (key.return || input === " ") {
-        const item = items[componentIndex];
-        if (item) {
-          togglePluginComponent(detailPlugin, item.kind, item.name, !item.enabled);
-          // Force re-render by refreshing the detail plugin
-          refreshDetailPlugin(detailPlugin);
-        }
-        return;
-      }
-      return;
-    }
+    // Component manager mode
+    if (componentManagerMode && detailPlugin) { handleComponentManagerInput(input, key); return; }
 
     // Manual refresh of current tab
     if (input === "R") {
@@ -934,38 +1229,26 @@ export function App() {
     }
 
     // Tab/Shift+Tab for section navigation in Discover/Installed tabs
-    if (key.tab && (tab === "discover" || tab === "installed") && !discoverSubView) {
-      if (!detailPlugin && !detailFile && !detailMarketplace && !detailPiMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary) {
-        if (sections.length > 0) {
-          const currentIdx = sections.findIndex((s) => selectedIndex >= s.start && selectedIndex <= s.end);
-          if (key.shift) {
-            // Shift+Tab: go to previous section
-            const prevIdx = currentIdx <= 0 ? sections.length - 1 : currentIdx - 1;
-            setSelectedIndex(sections[prevIdx].start);
-          } else {
-            // Tab: go to next section
-            const nextIdx = currentIdx >= sections.length - 1 ? 0 : currentIdx + 1;
-            setSelectedIndex(sections[nextIdx].start);
-          }
-          return;
+    if (key.tab && (tab === "discover" || tab === "installed") && !discoverSubView && !isOverlayOpen) {
+      if (sections.length > 0) {
+        const currentIdx = sections.findIndex((s) => selectedIndex >= s.start && selectedIndex <= s.end);
+        if (key.shift) {
+          const prevIdx = currentIdx <= 0 ? sections.length - 1 : currentIdx - 1;
+          setSelectedIndex(sections[prevIdx].start);
+        } else {
+          const nextIdx = currentIdx >= sections.length - 1 ? 0 : currentIdx + 1;
+          setSelectedIndex(sections[nextIdx].start);
         }
+        return;
       }
     }
 
     // Left/Right arrows for main tab navigation (blocked when overlays are open)
-    if (key.rightArrow) {
-      if (!detailPlugin && !detailFile && !detailMarketplace && !detailPiMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary) {
-        const idx = TABS.indexOf(tab);
-        setTab(TABS[(idx + 1) % TABS.length]);
-        return;
-      }
+    if (key.rightArrow && !isOverlayOpen) {
+      const idx = TABS.indexOf(tab); setTab(TABS[(idx + 1) % TABS.length]); return;
     }
-    if (key.leftArrow) {
-      if (!detailPlugin && !detailFile && !detailMarketplace && !detailPiMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary) {
-        const idx = TABS.indexOf(tab);
-        setTab(TABS[(idx - 1 + TABS.length) % TABS.length]);
-        return;
-      }
+    if (key.leftArrow && !isOverlayOpen) {
+      const idx = TABS.indexOf(tab); setTab(TABS[(idx - 1 + TABS.length) % TABS.length]); return;
     }
 
     // Settings tab: SettingsPanel handles its own input (up/down/enter/esc)
@@ -973,686 +1256,243 @@ export function App() {
       return;
     }
 
-    // Escape - go back
+    // Escape - close the topmost overlay / go back
     if (key.escape) {
-      if (detailPlugin) {
-        setDetailPlugin(null);
-        setDetailPluginDrift(null);
-        setActionIndex(0);
-        setComponentManagerMode(false);
-      } else if (detailFile) {
-        setDetailFile(null);
-        setActionIndex(0);
-      } else if (detailMarketplace) {
-        setDetailMarketplace(null);
-        setActionIndex(0);
-      } else if (detailPiMarketplace) {
-        setDetailPiMarketplace(null);
-        setActionIndex(0);
-      } else if (detailPiPackage) {
-        setDetailPiPackage(null);
-        setActionIndex(0);
-      } else if (detailTool) {
-        setDetailToolKey(null);
-      } else if (discoverSubView) {
-        if (tab === "marketplaces" && marketplaceBrowseContext) {
-          // Return to marketplace detail when browsing plugins from Marketplaces flow.
-          setDiscoverSubView(null);
-          setSubViewIndex(0);
-          setDetailMarketplace(marketplaceBrowseContext);
-          setMarketplaceBrowseContext(null);
-          setSearch("");
-        } else {
-          // Close sub-view and return to Discover dashboard
-          setDiscoverSubView(null);
-          setSubViewIndex(0);
-        }
-      } else if (tab === "marketplaces" && marketplaceBrowseContext) {
-        // Safety path: if browse context remains but sub-view is closed, return to detail.
-        setDetailMarketplace(marketplaceBrowseContext);
-        setMarketplaceBrowseContext(null);
-        setSearch("");
-      }
+      handleEscape();
       return;
     }
 
-    // Up/Down navigation
-    if (key.upArrow) {
-      if (diffTarget || missingSummary) {
-        // DiffView and MissingSummaryView handle their own navigation
-        return;
-      }
-      if (detailPlugin || detailFile || detailMarketplace || detailPiMarketplace || detailPiPackage) {
-        setActionIndex((i) => Math.max(0, i - 1));
-      } else if (detailTool) {
-        return;
-      } else if (discoverSubView) {
-        // Navigate within sub-view
-        setSubViewIndex((i) => Math.max(0, i - 1));
-      } else {
-        setSelectedIndex(Math.max(0, selectedIndex - 1));
-        if (tab === "sync") {
-          setSyncArmed(false);
-        }
-      }
-      return;
-    }
-    if (key.downArrow) {
-      if (diffTarget || missingSummary) {
-        // DiffView and MissingSummaryView handle their own navigation
-        return;
-      }
-      if (detailFile) {
-        setActionIndex((i) => Math.min(fileActions.length - 1, i + 1));
-      } else if (detailPlugin) {
-        const actionCount = getPluginActionCount(detailPlugin);
-        setActionIndex((i) => Math.min(actionCount - 1, i + 1));
-      } else if (detailPiPackage) {
-        const actions = getPiPackageActions(detailPiPackage);
-        setActionIndex((i) => Math.min(actions.length - 1, i + 1));
-      } else if (detailMarketplace) {
-        const actionCount = detailMarketplace.source === "claude" ? 2 : 3;
-        setActionIndex((i) => Math.min(actionCount - 1, i + 1));
-      } else if (detailPiMarketplace) {
-        const piMktActions = getPiMarketplaceActions(detailPiMarketplace);
-        setActionIndex((i) => Math.min(piMktActions.length - 1, i + 1));
-      } else if (detailTool) {
-        return;
-      } else if (discoverSubView) {
-        // Navigate within sub-view
-        const pluginList = tab === "marketplaces" ? marketplaceBrowsePlugins : filteredPlugins;
-        const maxSubViewIndex = discoverSubView === "plugins" ? pluginList.length - 1 : filteredPiPackages.length - 1;
-        setSubViewIndex((i) => Math.min(maxSubViewIndex, i + 1));
-      } else {
-        setSelectedIndex(Math.min(maxIndex, selectedIndex + 1));
-        if (tab === "sync") {
-          setSyncArmed(false);
-        }
-      }
-      return;
-    }
+    if (handleDiffInput(input, key)) return;
+    if (handleDetailInput(input, key)) return;
+    if (handleListInput(input, key)) return;
 
-    // p - pull to source from drifted instance
-    if (input === "p" && detailFile && !diffTarget && !missingSummary) {
-      const pullAction = fileActions.find((a) => a.type === "pullback");
-      if (pullAction?.instance) {
-        void pullbackFileInstance(detailFile, pullAction.instance as DiffInstanceRef);
-      }
-      return;
-    }
-
-    // Enter - select
-    if (key.return) {
-      if (detailFile) {
-        handleFileAction(actionIndex);
-        return;
-      }
-
-      if (detailPlugin) {
-        handlePluginAction(actionIndex);
-        return;
-      }
-
-      if (detailPiPackage) {
-        handlePiPackageAction(actionIndex);
-        return;
-      }
-
-      if (detailMarketplace) {
-        handleMarketplaceAction(actionIndex);
-        return;
-      }
-
-      if (detailPiMarketplace) {
-        handlePiMarketplaceAction(actionIndex);
-        return;
-      }
-
-      if (detailTool) {
-        return;
-      }
-
-      // Handle sub-view selection (Enter on item in sub-view opens detail)
-      if (discoverSubView) {
-        if (discoverSubView === "plugins") {
-          const list = tab === "marketplaces" ? marketplaceBrowsePlugins : filteredPlugins;
-          const plugin = list[subViewIndex];
-          if (plugin) {
-            setDetailPlugin(plugin);
-            setDetailPluginDrift(null);
-            void computePluginDrift(plugin).then(setDetailPluginDrift);
-            setActionIndex(0);
-          }
-        } else if (discoverSubView === "piPackages") {
-          const pkg = filteredPiPackages[subViewIndex];
-          if (pkg) {
-            setDetailPiPackage(pkg);
-            setActionIndex(0);
-          }
-        }
-        return;
-      }
-
-      if (tab === "marketplaces") {
-        if (selectedIndex === 0) {
-          setShowAddMarketplace(true);
-          return;
-        }
-        if (selectedIndex <= marketplaces.length) {
-          const m = marketplaces[selectedIndex - 1];
-          if (m) {
-            setDetailMarketplace(m);
-            setActionIndex(0);
-          }
-          return;
-        }
-        if (!showPiFeatures) {
-          return;
-        }
-        if (selectedIndex === piSectionOffset) {
-          setShowAddPiMarketplace(true);
-          return;
-        }
-        const piIdx = selectedIndex - piSectionOffset - 1;
-        const pm = piMarketplaces[piIdx];
-        if (pm) {
-          setDetailPiMarketplace(pm);
-          setActionIndex(0);
-        }
-        return;
-      }
-
-      if (tab === "tools") {
-        const tool = managedTools[selectedIndex];
-        if (tool) {
-          setDetailToolKey(`${tool.toolId}:${tool.instanceId}`);
-        }
-        return;
-      }
-
-      if (tab === "sync" && !diffTarget && !missingSummary) {
-        const item = syncPreview[selectedIndex];
-        if (item) {
-          if (item.kind === "plugin") {
-            setDetailPlugin(item.plugin);
-            setDetailPluginDrift(null);
-            void computePluginDrift(item.plugin).then(setDetailPluginDrift);
-            setActionIndex(0);
-          } else if (item.kind === "tool") {
-            const tool = managedTools.find((entry) => entry.toolId === item.toolId);
-            if (tool) {
-              setDetailToolKey(`${tool.toolId}:${tool.instanceId}`);
-            }
-          } else if (item.kind === "file") {
-            setDetailFile(item.file);
-            setActionIndex(0);
-          }
-        }
-        return;
-      }
-
-      if (selectedLibraryItem?.kind === "plugin") {
-        setDetailPlugin(selectedLibraryItem.plugin);
-        setDetailPluginDrift(null);
-        void computePluginDrift(selectedLibraryItem.plugin).then(setDetailPluginDrift);
-        setActionIndex(0);
-      } else if (selectedLibraryItem?.kind === "piPackage") {
-        setDetailPiPackage(selectedLibraryItem.piPackage);
-        setActionIndex(0);
-      } else if (selectedLibraryItem?.kind === "file") {
-        setDetailFile(selectedLibraryItem.file);
-        setActionIndex(0);
-      } else if (selectedLibraryItem?.kind === "pluginSummary") {
-        // Open plugins sub-view
-        setDiscoverSubView("plugins");
-        setSubViewIndex(0);
-      } else if (selectedLibraryItem?.kind === "piPackageSummary") {
-        // Open Pi packages sub-view
-        setDiscoverSubView("piPackages");
-        setSubViewIndex(0);
-      }
-      return;
-    }
-
-    // Space - toggle install/uninstall
-    if (input === " " && !detailPlugin && !detailFile && !detailMarketplace && !detailPiMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary) {
-      if (tab === "sync") {
-        const item = syncPreview[selectedIndex];
-        if (!item) return;
-        const key = getSyncItemKey(item);
-        setSyncSelection((current) => {
-          const next = new Set(current);
-          if (next.has(key)) {
-            next.delete(key);
-          } else {
-            next.add(key);
-          }
-          return next;
-        });
-        setSyncArmed(false);
-        return;
-      }
-
-      if (tab === "tools") {
-        const tool = managedTools[selectedIndex];
-        if (tool) {
-          void toggleToolEnabled(tool.toolId, tool.instanceId);
-        }
-        return;
-      }
-
-      // Handle Space for marketplaces (toggle enabled)
-      if (tab === "marketplaces") {
-        if (selectedIndex >= 1 && selectedIndex <= marketplaces.length) {
-          const m = marketplaces[selectedIndex - 1];
-          if (m) {
-            void toggleMarketplaceEnabled(m.name);
-          }
-          return;
-        }
-        if (showPiFeatures && selectedIndex > piSectionOffset) {
-          const piIdx = selectedIndex - piSectionOffset - 1;
-          const pm = piMarketplaces[piIdx];
-          if (pm) {
-            void togglePiMarketplaceEnabled(pm.name);
-          }
-          return;
-        }
-      }
-
-      // Handle Space in sub-views
-      if (discoverSubView === "plugins") {
-        const plugin = filteredPlugins[subViewIndex];
-        if (plugin) {
-          if (plugin.installed) {
-            doUninstall(plugin);
-          } else {
-            doInstall(plugin);
-          }
-        }
-        return;
-      }
-
-      if (discoverSubView === "piPackages") {
-        const pkg = filteredPiPackages[subViewIndex];
-        if (pkg) {
-          if (pkg.installed) {
-            doUninstallPiPkg(pkg);
-          } else {
-            doInstallPiPkg(pkg);
-          }
-        }
-        return;
-      }
-
-      if (selectedLibraryItem?.kind === "plugin") {
-        const plugin = selectedLibraryItem.plugin;
-        if (plugin.installed) {
-          doUninstall(plugin);
-        } else {
-          doInstall(plugin);
-        }
-      } else if (selectedLibraryItem?.kind === "piPackage") {
-        const pkg = selectedLibraryItem.piPackage;
-        if (pkg.installed) {
-          doUninstallPiPkg(pkg);
-        } else {
-          doInstallPiPkg(pkg);
-        }
-      }
-      return;
-    }
-
-    // Shortcuts
+    // Tab-specific shortcuts
     if (tab === "tools" || detailTool) {
-      const tool = detailTool || managedTools[selectedIndex];
-      const detection = tool ? toolDetection[tool.toolId] : null;
-
-      if (input === "i" && tool && (!detection || !detection.installed)) {
-        setToolModalAction("install");
-        setToolModalWarning(null);
-        setToolModalMigrate(false);
-        setToolModalDone(false);
-        setToolModalSuccess(false);
-        return;
-      }
-
-      if (input === "u" && tool && detection?.installed && detection.hasUpdate) {
-        setToolModalAction("update");
-        setToolModalWarning(null);
-        setToolModalMigrate(false);
-        setToolModalDone(false);
-        setToolModalSuccess(false);
-        return;
-      }
-
-      if (input === "d" && tool && detection?.installed) {
-        setToolModalAction("uninstall");
-        setToolModalWarning(null);
-        setToolModalMigrate(false);
-        setToolModalDone(false);
-        setToolModalSuccess(false);
-        return;
-      }
-
-      if (input === "m" && tool && detection?.installed) {
-        const path = detection.binaryPath || "";
-        const detectedMethod =
-          path.startsWith("/opt/homebrew/") || path.startsWith("/usr/local/") ? "brew" : "unknown";
-        const canMigrate = detectedMethod === "brew";
-        if (canMigrate) {
-          setToolModalAction("update");
-          setToolModalWarning(null);
-          setToolModalMigrate(true);
-          setToolModalDone(false);
-          setToolModalSuccess(false);
-        }
-        return;
-      }
-
-      if (input === "e" && tool) {
-        setEditingToolId(`${tool.toolId}:${tool.instanceId}`);
-        return;
-      }
-
-      if (input === " " && tool) {
-        void toggleToolEnabled(tool.toolId, tool.instanceId);
-        return;
-      }
+      if (handleToolShortcut(input)) return;
     }
-
-    if (input === "u" && tab === "marketplaces" && !detailMarketplace && !detailPiMarketplace) {
-      if (selectedIndex >= 1 && selectedIndex <= marketplaces.length) {
-        const m = marketplaces[selectedIndex - 1];
-        if (m) updateMarketplace(m.name);
-      }
-      return;
+    if (tab === "marketplaces" && !activeMarketplaceDetail) {
+      if (handleMarketplaceShortcut(input)) return;
     }
-
-    if (input === "r" && tab === "marketplaces" && !detailMarketplace && !detailPiMarketplace) {
-      if (selectedIndex >= 1 && selectedIndex <= marketplaces.length) {
-        const m = marketplaces[selectedIndex - 1];
-        if (m && m.source !== "claude") removeMarketplace(m.name);
-      } else if (showPiFeatures && selectedIndex > piSectionOffset) {
-        const piIdx = selectedIndex - piSectionOffset - 1;
-        const pm = piMarketplaces[piIdx];
-        if (pm && !pm.builtIn) {
-          void removePiMarketplace(pm.name);
-        }
-      }
-      return;
+    if (tab === "sync" && !activeDetail && !activeMarketplaceDetail && !diffTarget && !missingSummary) {
+      if (handleSyncShortcut(input)) return;
     }
-
-    if (input === "y" && tab === "sync" && !detailPlugin && !detailMarketplace && !diffTarget && !missingSummary) {
-      if (syncArmed) {
-        const items = syncPreview.filter((item) => syncSelection.has(getSyncItemKey(item)));
-        if (items.length === 0) {
-          notify("Select at least one item to sync.", "warning");
-          setSyncArmed(false);
-          return;
-        }
-        void syncTools(items);
-        setSyncArmed(false);
-        return;
-      }
-      setSyncArmed(true);
-      return;
-    }
-
-    // Open diff/missing summary for sync items
-    if (input === "d" && tab === "sync" && !detailPlugin && !detailMarketplace && !diffTarget && !missingSummary) {
-      const item = syncPreview[selectedIndex];
-      if (item) {
-        openDiffFromSyncItem(item);
-      }
-      return;
-    }
-
-    // Open diff/missing summary for installed managed file entries
-    if (input === "d" && tab === "installed" && !detailPlugin && !detailFile && !detailMarketplace && !detailPiMarketplace && !detailPiPackage && !detailTool && !diffTarget && !missingSummary && !discoverSubView) {
-      if (selectedLibraryItem?.kind === "file") {
+    if (tab === "installed" && !activeDetail && !activeMarketplaceDetail && !detailTool && !diffTarget && !missingSummary && !discoverSubView) {
+      if (input === "d" && selectedLibraryItem?.kind === "file") {
         openDiffFromSyncItem(toFileSyncItem(selectedLibraryItem.file));
         return;
       }
     }
 
     // Sort shortcuts (s to cycle sort, r to reverse) - only when search not focused
-    if ((tab === "discover" || tab === "installed") && !detailPlugin && !detailFile && !searchFocused) {
+    if ((tab === "discover" || tab === "installed") && !isOverlayOpen && !searchFocused) {
       if (input === "s") {
-        setSortBy((prev) => {
-          if (prev === "default") {
-            setSortDir("asc");
-            return "name";
-          }
-          if (prev === "name") return "installed";
-          if (prev === "installed") {
-            // Default to descending for popularity (most popular first)
-            setSortDir("desc");
-            return "popularity";
-          }
-          // Back to default
-          setSortDir("asc");
-          return "default";
+        setSort((s) => {
+          if (s.by === "default") return { by: "name", dir: "asc" };
+          if (s.by === "name") return { by: "installed", dir: s.dir };
+          if (s.by === "installed") return { by: "popularity", dir: "desc" };
+          return { by: "default", dir: "asc" };
         });
         return;
       }
       if (input === "r") {
-        setSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
+        setSort((s) => ({ ...s, dir: s.dir === "asc" ? "desc" : "asc" }));
         return;
       }
     }
   });
 
-  const handleFileAction = async (index: number) => {
-    if (!detailFile) return;
-    const action = fileActions[index];
-    if (!action) return;
+  // Build plugin diff target for unified action dispatch
+  const buildPluginDiffTargetCb = async (plugin: Plugin, toolId: string, instanceId: string) => {
+    const sourcePaths = resolvePluginSourcePaths(plugin);
+    if (!sourcePaths) return null;
+    const pluginDrift = detailPluginDrift ?? pluginDriftMap[plugin.name];
+    if (!pluginDrift) return null;
+    const inst = tools.find((t) => t.toolId === toolId && t.instanceId === instanceId);
+    if (!inst) return null;
 
-    switch (action.type) {
-      case "diff":
-        if (action.instance) {
-          openDiffForFile(detailFile, action.instance as DiffInstanceRef);
-        }
-        break;
-      case "missing":
-        if (action.instance) {
-          openMissingSummaryForFile(detailFile, action.instance as DiffInstanceRef);
-        }
-        break;
-      case "sync":
-        await syncTools([toFileSyncItem(detailFile)]);
-        break;
-      case "pullback":
-        if (action.instance) {
-          await pullbackFileInstance(detailFile, action.instance as DiffInstanceRef);
-        }
-        break;
-      case "back":
-        setDetailFile(null);
-        setActionIndex(0);
-        break;
-      case "status":
-        break;
+    const allFiles: import("./lib/types.js").DiffFileSummary[] = [];
+    const instance: DiffInstanceRef = {
+      toolId: inst.toolId, instanceId: inst.instanceId,
+      instanceName: inst.name, configDir: inst.configDir,
+    };
+    for (const [key, status] of Object.entries(pluginDrift)) {
+      if (status === "in-sync") continue;
+      const [kind, name] = key.split(":");
+      const subdir = kind === "skill" ? inst.skillsSubdir : kind === "command" ? inst.commandsSubdir : inst.agentsSubdir;
+      if (!subdir) continue;
+      const srcSuffix = kind === "skill" ? name : `${name}.md`;
+      try {
+        const dt = buildFileDiffTarget(`${kind}s/${name}`, srcSuffix,
+          join(sourcePaths.pluginDir, `${kind}s`, srcSuffix),
+          join(inst.configDir, subdir, srcSuffix), instance);
+        allFiles.push(...dt.files);
+      } catch { /* skip */ }
     }
+    return { kind: "file" as const, title: `${plugin.name} — ${inst.name}`, instance, files: allFiles };
   };
 
-  const handlePluginAction = async (index: number) => {
-    if (!detailPlugin) return;
-    const actions = getPluginActions(detailPlugin);
-    const action = actions[index];
-    if (!action) return;
+  // Install plugin to specific tool instance (for unified dispatch)
+  const installPluginToInstanceCb = async (plugin: Plugin, toolId: string, instanceId: string) => {
+    const toolStatus = getPluginToolStatus(plugin).find((s) => s.toolId === toolId && s.instanceId === instanceId);
+    if (!toolStatus) return;
+    const mkt = marketplaces.find((m) => m.name === plugin.marketplace);
+    const { notify: n, clearNotification: cn } = useStore.getState();
+    const result = await withSpinner(`Installing ${plugin.name} to ${toolStatus.name}...`,
+      () => syncPluginInstances(plugin, mkt?.url, [toolStatus]), n, cn);
+    const count = result.syncedInstances[`${toolStatus.toolId}:${toolStatus.instanceId}`] ?? 0;
+    n(count > 0
+      ? `✓ Installed ${plugin.name} to ${toolStatus.name} (${count})`
+      : `✗ Failed to install ${plugin.name} to ${toolStatus.name}: ${result.errors.join("; ") || "No components linked"}`,
+      count > 0 ? "success" : "error");
+    await useStore.getState().refreshAll();
+  };
 
-    switch (action.type) {
-      case "diff": {
-        if (!action.toolStatus || !action.instance) break;
-        const sourcePaths = resolvePluginSourcePaths(detailPlugin);
-        if (!sourcePaths) break;
+  // Uninstall plugin from specific tool instance (for unified dispatch)
+  const uninstallPluginFromInstanceCb = async (plugin: Plugin, toolId: string, instanceId: string) => {
+    const toolStatus = getPluginToolStatus(plugin).find((s) => s.toolId === toolId && s.instanceId === instanceId);
+    const { notify: n, clearNotification: cn } = useStore.getState();
+    const name = toolStatus?.name ?? instanceId;
+    await withSpinner(`Uninstalling ${plugin.name} from ${name}...`,
+      () => Promise.resolve(uninstallPluginFromInstance(plugin, toolId, instanceId)), n, cn);
+    n(`✓ Uninstalled ${plugin.name} from ${name}`, "success");
+    await useStore.getState().refreshAll();
+  };
 
-        const pluginDrift = detailPluginDrift ?? pluginDriftMap[detailPlugin.name];
-        if (!pluginDrift) break;
+  const pullbackPluginInstanceCb = async (plugin: Plugin, instance: DiffInstanceRef) => {
+    const { notify: n, clearNotification: cn } = useStore.getState();
+    const sourcePaths = resolvePluginSourcePaths(plugin);
+    if (!sourcePaths) {
+      n(`✗ Cannot pull ${plugin.name}: source repo path not found`, "error");
+      return false;
+    }
 
-        const inst = tools.find((t) => t.toolId === action.toolStatus!.toolId && t.instanceId === action.toolStatus!.instanceId);
-        if (!inst) break;
+    const tool = tools.find((t) => t.toolId === instance.toolId && t.instanceId === instance.instanceId);
+    if (!tool) {
+      n(`✗ Unknown tool instance: ${instance.toolId}:${instance.instanceId}`, "error");
+      return false;
+    }
 
-        // Combine all drifted components into one DiffTarget
-        const { buildFileDiffTarget } = await import("./lib/diff.js");
-        const allFiles: import("./lib/types.js").DiffFileSummary[] = [];
-        const instance: import("./lib/types.js").DiffInstanceRef = {
-          toolId: inst.toolId,
-          instanceId: inst.instanceId,
-          instanceName: inst.name,
-          configDir: inst.configDir,
-        };
+    const pluginDrift = detailPluginDrift ?? pluginDriftMap[plugin.name];
+    if (!pluginDrift) {
+      n(`✗ No drift info available for ${plugin.name}`, "error");
+      return false;
+    }
 
-        for (const [key, status] of Object.entries(pluginDrift)) {
-          if (status === "in-sync") continue;
-          const [kind, name] = key.split(":");
-          const subdir = kind === "skill" ? inst.skillsSubdir : kind === "command" ? inst.commandsSubdir : inst.agentsSubdir;
-          if (!subdir) continue;
+    let copied = 0;
 
-          const srcSuffix = kind === "skill" ? name : `${name}.md`;
-          const srcPath = join(sourcePaths.pluginDir, `${kind}s`, srcSuffix);
-          const destPath = join(inst.configDir, subdir, srcSuffix);
+    await withSpinner(`Pulling ${plugin.name} from ${tool.name}...`, async () => {
+      for (const [driftKey, status] of Object.entries(pluginDrift)) {
+        if (status === "in-sync") continue;
 
-          try {
-            const dt = buildFileDiffTarget(`${kind}s/${name}`, srcSuffix, srcPath, destPath, instance);
-            allFiles.push(...dt.files);
-          } catch { /* skip */ }
+        const [kind, name] = driftKey.split(":");
+        if (kind !== "skill" && kind !== "command" && kind !== "agent") continue;
+
+        const subdir = kind === "skill" ? tool.skillsSubdir : kind === "command" ? tool.commandsSubdir : tool.agentsSubdir;
+        if (!subdir) continue;
+
+        const suffix = kind === "skill" ? name : `${name}.md`;
+        const sourcePath = join(sourcePaths.pluginDir, `${kind}s`, suffix);
+        const targetPath = join(tool.configDir, subdir, suffix);
+
+        if (!existsSync(targetPath)) continue;
+
+        let hasDiff = false;
+        try {
+          const dt = buildFileDiffTarget(`${plugin.name}/${name}`, suffix, sourcePath, targetPath, instance);
+          hasDiff = dt.files.length > 0;
+        } catch {
+          hasDiff = false;
         }
+        if (!hasDiff) continue;
 
-        useStore.setState({
-          diffTarget: {
-            kind: "file",
-            title: `${detailPlugin.name} — ${inst.name}`,
-            instance,
-            files: allFiles,
-          },
-        });
-        break;
-      }
-      case "uninstall":
-        await doUninstall(detailPlugin);
-        refreshDetailPlugin(detailPlugin);
-        break;
-      case "update":
-        await doUpdate(detailPlugin);
-        refreshDetailPlugin(detailPlugin);
-        break;
-      case "install":
-        await doInstall(detailPlugin);
-        refreshDetailPlugin(detailPlugin);
-        break;
-      case "install_tool": {
-        if (!action.toolStatus) break;
-        const marketplace = marketplaces.find((m) => m.name === detailPlugin.marketplace);
-        const { notify, clearNotification } = useStore.getState();
-        const loadingId = notify(`Installing ${detailPlugin.name} to ${action.toolStatus.name}...`, "info", { spinner: true });
-        const result = await syncPluginInstances(detailPlugin, marketplace?.url, [action.toolStatus]);
-        clearNotification(loadingId);
-
-        const targetKey = `${action.toolStatus.toolId}:${action.toolStatus.instanceId}`;
-        const linkedCount = result.syncedInstances[targetKey] ?? 0;
-        if (linkedCount > 0) {
-          notify(`✓ Installed ${detailPlugin.name} to ${action.toolStatus.name} (${linkedCount})`, "success");
+        if (kind === "skill") {
+          rmSync(sourcePath, { recursive: true, force: true });
+          cpSync(targetPath, sourcePath, { recursive: true });
         } else {
-          const detail = result.errors.length > 0
-            ? result.errors.join("; ")
-            : `No components were linked for ${action.toolStatus.name}`;
-          notify(`✗ Failed to install ${detailPlugin.name} to ${action.toolStatus.name}: ${detail}`, "error");
+          mkdirSync(dirname(sourcePath), { recursive: true });
+          copyFileSync(targetPath, sourcePath);
         }
+        copied += 1;
+      }
+    }, n, cn);
 
-        await useStore.getState().refreshAll();
-        refreshDetailPlugin(detailPlugin);
-        break;
-      }
-      case "uninstall_tool": {
-        if (!action.toolStatus) break;
-        const { notify, clearNotification } = useStore.getState();
-        const loadingId = notify(`Uninstalling ${detailPlugin.name} from ${action.toolStatus.name}...`, "info", { spinner: true });
-        await uninstallPluginFromInstance(detailPlugin, action.toolStatus.toolId, action.toolStatus.instanceId);
-        clearNotification(loadingId);
-        notify(`✓ Uninstalled ${detailPlugin.name} from ${action.toolStatus.name}`, "success");
-        await useStore.getState().refreshAll();
-        refreshDetailPlugin(detailPlugin);
-        break;
-      }
-      case "back":
-        setDetailPlugin(null);
-        setActionIndex(0);
-        break;
+    if (copied > 0) {
+      n(`✓ Pulled ${plugin.name} from ${tool.name} (${copied})`, "success");
+    } else {
+      n(`⚠ No changed components to pull from ${tool.name}`, "warning");
     }
+
+    await useStore.getState().refreshAll();
+    return copied > 0;
   };
 
-  const handlePiPackageAction = async (index: number) => {
-    if (!detailPiPackage) return;
-    const actions = getPiPackageActions(detailPiPackage);
+  // Unified action handler for file, plugin, and pi-package detail views
+  const handleEntityAction = async (index: number) => {
+    if (!activeDetail) return;
+    const { item, actions } = activeDetail;
+    const action = actions[index];
+    if (!action) return;
+
+    await handleItemAction(item, action, {
+      closeDetail: () => { setDetailFile(null); setDetailPlugin(null); setDetailPiPackage(null); closeDetail(); },
+      openDiffForFile,
+      openMissingSummaryForFile,
+      setDiffTarget: (target) => useStore.setState({ diffTarget: target }),
+      installPlugin: doInstall,
+      uninstallPlugin: doUninstall,
+      updatePlugin: doUpdate,
+      installPluginToInstance: installPluginToInstanceCb,
+      uninstallPluginFromInstance: uninstallPluginFromInstanceCb,
+      refreshDetailPlugin,
+      syncFiles: syncTools,
+      pullbackFileInstance,
+      pullbackPluginInstance: pullbackPluginInstanceCb,
+      installPiPackage: doInstallPiPkg,
+      uninstallPiPackage: doUninstallPiPkg,
+      updatePiPackage: doUpdatePiPkg,
+      refreshDetailPiPackage,
+      buildPluginDiffTarget: buildPluginDiffTargetCb,
+    });
+  };
+
+  const handleMarketplaceDetailAction = (index: number) => {
+    if (!activeMarketplaceDetail) return;
+    const { detail, actions } = activeMarketplaceDetail;
     const action = actions[index];
     if (!action) return;
 
     switch (action.type) {
-      case "install":
-        await doInstallPiPkg(detailPiPackage);
-        refreshDetailPiPackage(detailPiPackage);
-        break;
-      case "uninstall":
-        await doUninstallPiPkg(detailPiPackage);
-        refreshDetailPiPackage(detailPiPackage);
+      case "browse":
+        if (detail.kind === "plugin") {
+          setMarketplaceBrowseContext(detail.marketplace);
+          setDiscoverSubView("plugins");
+          setSubViewIndex(0);
+          setSearch(detail.marketplace.name);
+        } else {
+          setDiscoverSubView("piPackages");
+          setSubViewIndex(0);
+          setTab("discover");
+        }
+        setDetailMarketplace(null);
+        setDetailPiMarketplace(null);
         break;
       case "update":
-        await doUpdatePiPkg(detailPiPackage);
-        refreshDetailPiPackage(detailPiPackage);
-        break;
-      case "back":
-        setDetailPiPackage(null);
-        setActionIndex(0);
-        break;
-    }
-  };
-
-  const handlePiMarketplaceAction = (index: number) => {
-    if (!detailPiMarketplace) return;
-    const actions = getPiMarketplaceActions(detailPiMarketplace);
-    const action = actions[index];
-    if (!action) return;
-
-    switch (action) {
-      case "browse":
-        setDiscoverSubView("piPackages");
-        setSubViewIndex(0);
-        setTab("discover");
-        setDetailPiMarketplace(null);
+        if (detail.kind === "plugin") {
+          void updateMarketplace(detail.marketplace.name);
+        }
         break;
       case "remove":
-        void removePiMarketplace(detailPiMarketplace.name);
-        setDetailPiMarketplace(null);
+        if (detail.kind === "plugin") {
+          removeMarketplace(detail.marketplace.name);
+          setDetailMarketplace(null);
+        } else {
+          void removePiMarketplace(detail.marketplace.name);
+          setDetailPiMarketplace(null);
+        }
         break;
       case "back":
         setDetailPiMarketplace(null);
         setActionIndex(0);
-        break;
-    }
-  };
-
-  const handleMarketplaceAction = (index: number) => {
-    if (!detailMarketplace) return;
-    const isReadOnly = detailMarketplace.source === "claude";
-
-    switch (index) {
-      case 0: // Browse plugins (stay in Marketplaces flow)
-        setMarketplaceBrowseContext(detailMarketplace);
-        setDiscoverSubView("plugins");
-        setSubViewIndex(0);
-        setSearch(detailMarketplace.name);
-        setDetailMarketplace(null);
-        break;
-      case 1: // Update
-        void updateMarketplace(detailMarketplace.name);
-        break;
-      case 2: // Remove (only for non-Claude marketplaces)
-        if (!isReadOnly) {
-          removeMarketplace(detailMarketplace.name);
-          setDetailMarketplace(null);
-        }
         break;
     }
   };
@@ -1664,11 +1504,6 @@ export function App() {
   const showGlobalLoadingIndicator = loading || tabRefreshInProgress;
   const shouldShowDiscoverLoading =
     loading && marketplaces.length === 0 && piPackages.length === 0;
-  const shouldShowInstalledLoading =
-    loading &&
-    installedPlugins.length === 0 &&
-    piPackages.filter((pkg) => pkg.installed).length === 0 &&
-    installedFileCount === 0;
   const shouldShowMarketplacesLoading = loading && marketplaces.length === 0 && piMarketplaces.length === 0;
 
   const refreshTabLabel =
@@ -1704,19 +1539,12 @@ export function App() {
   };
 
   const runToolAction = async (tool: ManagedToolRow, action: ToolModalAction, migrate = false) => {
-    setToolModalRunning(true);
-    setToolModalDone(false);
-
+    setToolModal((s) => ({ ...s, running: true, done: false }));
     const success =
-      action === "install"
-        ? await installToolAction(tool.toolId, { migrate })
-        : action === "update"
-          ? await updateToolAction(tool.toolId, { migrate })
-          : await uninstallToolAction(tool.toolId);
-
-    setToolModalRunning(false);
-    setToolModalDone(true);
-    setToolModalSuccess(success);
+      action === "install" ? await installToolAction(tool.toolId, { migrate })
+      : action === "update" ? await updateToolAction(tool.toolId, { migrate })
+      : await uninstallToolAction(tool.toolId);
+    setToolModal((s) => ({ ...s, running: false, done: true, success }));
     await refreshAll();
   };
 
@@ -1759,6 +1587,26 @@ export function App() {
     // No-op for now - asset/config removed
   };
 
+  const handleDiffPullBack = () => {
+    if (!diffTarget) return;
+    const instance = diffTarget.instance;
+
+    const fallbackFile = files.find((f) => f.name === diffTarget.title) || null;
+    const pullFile = detailFile || fallbackFile;
+
+    if (pullFile) {
+      void pullbackFileInstance(pullFile, instance);
+      return;
+    }
+
+    if (detailPlugin) {
+      void pullbackPluginInstanceCb(detailPlugin, instance);
+      return;
+    }
+
+    notify("Pullback is only available from file or plugin details.", "warning");
+  };
+
   return (
     <Box flexDirection="column" padding={1}>
       <TabBar activeTab={tab} onTabChange={setTab} />
@@ -1781,6 +1629,7 @@ export function App() {
         <DiffView
           target={diffTarget}
           onClose={closeDiff}
+          onPullBack={handleDiffPullBack}
         />
       ) : missingSummary ? (
         <MissingSummaryView
@@ -1795,20 +1644,10 @@ export function App() {
           onSubmit={handleToolConfigSave}
           onCancel={() => setEditingToolId(null)}
         />
-      ) : showAddMarketplace ? (
-        <AddMarketplaceModal
-          onSubmit={handleAddMarketplace}
-          onCancel={() => setShowAddMarketplace(false)}
-        />
-      ) : showAddPiMarketplace ? (
-        <AddMarketplaceModal
-          type="pi"
-          onSubmit={(name, source) => {
-            void addPiMarketplace(name, source);
-            setShowAddPiMarketplace(false);
-          }}
-          onCancel={() => setShowAddPiMarketplace(false)}
-        />
+      ) : modalVisible === "addMarketplace" ? (
+        <AddMarketplaceModal onSubmit={handleAddMarketplace} onCancel={() => setModalVisible(null)} />
+      ) : modalVisible === "addPiMarketplace" ? (
+        <AddMarketplaceModal type="pi" onSubmit={(name, source) => { void addPiMarketplace(name, source); setModalVisible(null); }} onCancel={() => setModalVisible(null)} />
       ) : toolModalAction && activeToolForModal ? (
         <ToolActionModal
           toolName={activeToolForModal.displayName}
@@ -1833,37 +1672,20 @@ export function App() {
           plugin={detailPlugin}
           selectedIndex={componentIndex}
         />
-      ) : detailPlugin ? (
-        <PluginDetail
-          plugin={detailPlugin}
+      ) : activeDetail && !componentManagerMode ? (
+        <ItemDetail
+          item={activeDetail.item}
           selectedAction={actionIndex}
-          onAction={() => {}}
-          actions={getPluginActions(detailPlugin)}
-          drift={detailPluginDrift ?? pluginDriftMap[detailPlugin.name] ?? undefined}
+          actions={activeDetail.actions}
+          metadata={activeDetail.metadata}
         />
-      ) : detailMarketplace ? (
-        <MarketplaceDetail
-          marketplace={detailMarketplace}
-          selectedIndex={actionIndex}
-        />
-      ) : detailPiMarketplace ? (
-        <PiMarketplaceDetail
-          marketplace={detailPiMarketplace}
-          selectedIndex={actionIndex}
-        />
-      ) : detailFile ? (
-        <FileDetail
-          file={detailFile}
-          selectedAction={actionIndex}
-          actions={fileActions}
-        />
-      ) : detailPiPackage ? (
-        <PiPackageDetail
-          pkg={detailPiPackage}
+      ) : activeMarketplaceDetail ? (
+        <MarketplaceDetailView
+          detail={activeMarketplaceDetail.detail}
           selectedIndex={actionIndex}
         />
       ) : (
-        <Box flexDirection="column" height={tab === "sync" ? 19 : (tab === "discover" || tab === "installed") ? 20 : 25}>
+        <Box flexDirection="column" height={(({ sync: 19, discover: 20, installed: 20 } as Record<string, number>)[tab] ?? 25)}>
           {(tab === "installed" || (tab === "discover" && discoverSubView)) && (
             <Box flexDirection="row" justifyContent="space-between">
               <Box flexGrow={1}>
@@ -1896,41 +1718,16 @@ export function App() {
           {tab === "discover" && (
             <>
               {shouldShowDiscoverLoading ? (
-                <Box marginY={1}>
-                  <Text color="cyan">⠋ Loading plugins from marketplaces...</Text>
-                </Box>
+                <Box marginY={1}><Text color="cyan">⠋ Loading plugins from marketplaces...</Text></Box>
               ) : discoverSubView === "plugins" ? (
-                // Plugins sub-view - full list
                 <Box flexDirection="column">
-                  <Box marginBottom={1}>
-                    <Text color="cyan" bold>Plugins </Text>
-                    <Text color="gray" dimColor>{getRange(subViewIndex, filteredPlugins.length, 12)}</Text>
-                    <Text color="gray"> · Press Esc to go back</Text>
-                  </Box>
-                  <PluginList
-                    plugins={filteredPlugins}
-                    selectedIndex={subViewIndex}
-                    maxHeight={12}
-                    nameColumnWidth={libraryNameWidth}
-                    marketplaceColumnWidth={marketplaceWidth}
-                    driftMap={pluginDriftMap}
-                  />
+                  <Box marginBottom={1}><Text color="cyan" bold>Plugins </Text><Text color="gray" dimColor>{getRange(subViewIndex, managedPlugins.length, 12)}</Text><Text color="gray"> · Press Esc to go back</Text></Box>
+                  <ItemList items={managedPlugins} selectedIndex={subViewIndex} maxHeight={12} columns={PLUGIN_COLUMNS} />
                 </Box>
               ) : discoverSubView === "piPackages" ? (
-                // Pi Packages sub-view - full list
                 <Box flexDirection="column">
-                  <Box marginBottom={1}>
-                    <Text color="cyan" bold>Pi Packages </Text>
-                    <Text color="gray" dimColor>{getRange(subViewIndex, filteredPiPackages.length, 12)}</Text>
-                    <Text color="gray"> · Press Esc to go back</Text>
-                  </Box>
-                  <PiPackageList
-                    packages={filteredPiPackages}
-                    selectedIndex={subViewIndex}
-                    maxHeight={12}
-                    nameColumnWidth={libraryNameWidth}
-                    marketplaceColumnWidth={marketplaceWidth}
-                  />
+                  <Box marginBottom={1}><Text color="cyan" bold>Pi Packages </Text><Text color="gray" dimColor>{getRange(subViewIndex, managedPiPackages.length, 12)}</Text><Text color="gray"> · Press Esc to go back</Text></Box>
+                  <ItemList items={managedPiPackages} selectedIndex={subViewIndex} maxHeight={12} columns={PLUGIN_COLUMNS} />
                 </Box>
               ) : (
                 // Dashboard view - inline lists for Configs/Assets, summary cards for Plugins/PiPackages
@@ -1957,62 +1754,61 @@ export function App() {
           )}
 
           {tab === "installed" && (
-            <>
-              {shouldShowInstalledLoading ? (
-                <Box marginY={1}>
-                  <Text color="cyan">⠋ Loading installed plugins...</Text>
-                </Box>
-              ) : (
+            <Box flexDirection="column">
+              {(managedFiles.length > 0 || !filesLoaded) && (
                 <Box flexDirection="column">
-                  {filteredFiles.length > 0 && (
-                    <Box flexDirection="column">
-                      <Box>
-                        <Text color="gray">  Files </Text>
-                        <Text color="gray" dimColor>{getRange(selectedIndex < fileCount ? selectedIndex : 0, filteredFiles.length, 5)}</Text>
-                      </Box>
-                      <FileList
-                        files={filteredFiles}
-                        selectedIndex={selectedIndex < fileCount ? selectedIndex : -1}
-                        maxHeight={5}
-                        nameColumnWidth={libraryNameWidth}
-                        scopeColumnWidth={marketplaceWidth}
-                      />
-                    </Box>
-                  )}
-                  {filteredPlugins.length > 0 && (
-                    <Box flexDirection="column" marginTop={filteredFiles.length > 0 ? 1 : 0}>
-                      <Box>
-                        <Text color="gray">  Plugins </Text>
-                        <Text color="gray" dimColor>{getRange(selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : 0, filteredPlugins.length, 4)}</Text>
-                      </Box>
-                      <PluginList
-                        plugins={filteredPlugins}
-                        selectedIndex={selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : -1}
-                        maxHeight={4}
-                        nameColumnWidth={libraryNameWidth}
-                        marketplaceColumnWidth={marketplaceWidth}
-                        driftMap={pluginDriftMap}
-                      />
-                    </Box>
-                  )}
-                  {filteredPiPackages.length > 0 && (
-                    <Box flexDirection="column" marginTop={(filteredFiles.length > 0 || filteredPlugins.length > 0) ? 1 : 0}>
-                      <Box>
-                        <Text color="gray">  Pi Packages </Text>
-                        <Text color="gray" dimColor>{getRange(selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : 0, filteredPiPackages.length, 3)}</Text>
-                      </Box>
-                      <PiPackageList
-                        packages={filteredPiPackages}
-                        selectedIndex={selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : -1}
-                        maxHeight={3}
-                        nameColumnWidth={libraryNameWidth}
-                        marketplaceColumnWidth={marketplaceWidth}
-                      />
-                    </Box>
+                  <Box>
+                    <Text color="gray">  Files </Text>
+                    <Text color="gray" dimColor>
+                      {managedFiles.length > 0
+                        ? getRange(selectedIndex < fileCount ? selectedIndex : 0, managedFiles.length, 5)
+                        : "(loading...)"}
+                    </Text>
+                  </Box>
+                  {managedFiles.length > 0 ? (
+                    <ItemList items={managedFiles} selectedIndex={selectedIndex < fileCount ? selectedIndex : -1} maxHeight={5} columns={FILE_COLUMNS} />
+                  ) : (
+                    <Box marginLeft={2}><Text color="cyan">⠋ Loading files...</Text></Box>
                   )}
                 </Box>
               )}
-            </>
+
+              {(managedPlugins.length > 0 || !installedPluginsLoaded) && (
+                <Box flexDirection="column" marginTop={(managedFiles.length > 0 || !filesLoaded) ? 1 : 0}>
+                  <Box>
+                    <Text color="gray">  Plugins </Text>
+                    <Text color="gray" dimColor>
+                      {managedPlugins.length > 0
+                        ? getRange(selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : 0, managedPlugins.length, 4)
+                        : "(loading...)"}
+                    </Text>
+                  </Box>
+                  {managedPlugins.length > 0 ? (
+                    <ItemList items={managedPlugins} selectedIndex={selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : -1} maxHeight={4} columns={PLUGIN_COLUMNS} />
+                  ) : (
+                    <Box marginLeft={2}><Text color="cyan">⠋ Loading plugins...</Text></Box>
+                  )}
+                </Box>
+              )}
+
+              {(managedPiPackages.length > 0 || !piPackagesLoaded) && (
+                <Box flexDirection="column" marginTop={(managedFiles.length > 0 || !filesLoaded || managedPlugins.length > 0 || !installedPluginsLoaded) ? 1 : 0}>
+                  <Box>
+                    <Text color="gray">  Pi Packages </Text>
+                    <Text color="gray" dimColor>
+                      {managedPiPackages.length > 0
+                        ? getRange(selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : 0, managedPiPackages.length, 3)
+                        : "(loading...)"}
+                    </Text>
+                  </Box>
+                  {managedPiPackages.length > 0 ? (
+                    <ItemList items={managedPiPackages} selectedIndex={selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : -1} maxHeight={3} columns={PLUGIN_COLUMNS} />
+                  ) : (
+                    <Box marginLeft={2}><Text color="cyan">⠋ Loading pi packages...</Text></Box>
+                  )}
+                </Box>
+              )}
+            </Box>
           )}
 
           {tab === "marketplaces" && (
@@ -2028,12 +1824,11 @@ export function App() {
                     <Text color="gray" dimColor>{getRange(subViewIndex, marketplaceBrowsePlugins.length, 12)}</Text>
                     <Text color="gray"> · Press Esc to go back</Text>
                   </Box>
-                  <PluginList
-                    plugins={marketplaceBrowsePlugins}
+                  <ItemList
+                    items={managedBrowsePlugins}
                     selectedIndex={subViewIndex}
                     maxHeight={12}
-                    nameColumnWidth={libraryNameWidth}
-                    marketplaceColumnWidth={marketplaceWidth}
+                    columns={PLUGIN_COLUMNS}
                   />
                   <Box marginTop={1}>
                     <PluginPreview plugin={marketplaceBrowsePlugins[subViewIndex]} />
@@ -2042,19 +1837,9 @@ export function App() {
               ) : (
                 <Box flexDirection="column">
                   <MarketplaceList
-                    marketplaces={marketplaces}
-                    selectedIndex={selectedIndex <= marketplaces.length ? selectedIndex : -1}
+                    rows={marketplaceRows}
+                    selectedIndex={selectedIndex}
                   />
-
-                  {showPiFeatures && (
-                    <Box marginTop={1}>
-                      <PiMarketplaceList
-                        marketplaces={piMarketplaces}
-                        selectedIndex={selectedIndex}
-                        indexOffset={piSectionOffset}
-                      />
-                    </Box>
-                  )}
                 </Box>
               )}
             </>
@@ -2096,7 +1881,7 @@ export function App() {
         </Box>
       )}
 
-      {(tab === "discover" || tab === "installed") && !detailPlugin && !detailFile && !detailMarketplace && !detailPiPackage && !detailTool && (
+      {(tab === "discover" || tab === "installed") && !isOverlayOpen && (
         discoverSubView === "plugins" ? (
           <PluginPreview plugin={filteredPlugins[subViewIndex] ?? null} />
         ) : discoverSubView === "piPackages" ? (
@@ -2110,14 +1895,14 @@ export function App() {
         ) : null
       )}
 
-      {tab === "sync" && !detailPlugin && !detailMarketplace && !detailPiPackage && !detailTool && (
+      {tab === "sync" && !isOverlayOpen && (
         <SyncPreview item={syncPreview[selectedIndex] ?? null} />
       )}
 
       <Notifications notifications={notifications} onClear={clearNotification} />
       <HintBar
         tab={tab}
-        hasDetail={Boolean(detailPlugin || detailFile || detailMarketplace || detailPiMarketplace || detailPiPackage || detailTool)}
+        hasDetail={isOverlayOpen}
         toolsHint={toolsHint}
       />
       <StatusBar

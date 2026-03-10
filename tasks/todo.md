@@ -50,10 +50,12 @@ interface ItemInstanceStatus {
 ```
 
 **Tasks:**
-- [ ] Define `ManagedItem` and `ItemInstanceStatus` in types.ts
-- [ ] Adapter functions: `pluginToManagedItem()`, `fileToManagedItem()`, `piPackageToManagedItem()`
-- [ ] Migrate store to use `ManagedItem[]` instead of separate `installedPlugins`, `files`, `piPackages`
-- [ ] Single `computeItemDrift()` that handles all item kinds (absorbs plugin-drift.ts, file-copy check, directory-sync check)
+- [x] Define `ManagedItem` and `ItemInstanceStatus` in `lib/managed-item.ts`
+- [x] Adapter functions: `pluginToManagedItem()`, `fileToManagedItem()`, `piPackageToManagedItem()`
+- [x] Batch converters: `pluginsToManagedItems()`, `filesToManagedItems()`, `piPackagesToManagedItems()`
+- [x] Tests: 24 tests covering all adapters, status mapping, line count extraction, batch conversion
+- [x] Migrate store to maintain canonical `managedItems` (`ManagedItem[]`) alongside legacy arrays for compatibility
+- [x] Add single `computeItemDrift()` entrypoint for all item kinds (`lib/item-drift.ts`) and route plugin drift through it in App
 
 ### Phase 2: Generic List Component
 **Goal:** One list component for all entity types.
@@ -76,10 +78,12 @@ function ItemList({ items, selectedIndex, maxHeight, columns }: ItemListProps) {
 ```
 
 **Tasks:**
-- [ ] Build `ItemList` with configurable columns and windowing
-- [ ] Define column presets per tab (Installed shows marketplace col, Sync shows drift col, etc.)
-- [ ] Delete PluginList, ConfigList, AssetList, FileList, PiPackageList
-- [ ] Update all list usages in App.tsx
+- [x] Build `ItemList` with configurable columns and windowing (`components/ItemList.tsx`)
+- [x] Define column presets: `PLUGIN_COLUMNS` (name/type/marketplace) and `FILE_COLUMNS` (name/scope)
+- [x] Auto-select columns from item kinds; shared `computeItemFlags` for status badges
+- [x] Tests: 20 tests covering rendering, windowing, selection, badges, column auto-selection
+- [x] Wire `ItemList` into App.tsx — replaced all PluginList, FileList, PiPackageList usages
+- [x] Delete orphaned PluginList, ConfigList, AssetList, FileList, PiPackageList, PiPackageDetail (-756 lines)
 
 ### Phase 3: Generic Detail Component
 **Goal:** One detail view pattern for all entity types.
@@ -104,10 +108,14 @@ interface ItemAction {
 ```
 
 **Tasks:**
-- [ ] Build `ItemDetail` with: header, metadata, instance list (with drift +/-), action list
-- [ ] Single `buildItemActions(item: ManagedItem): ItemAction[]` function
-- [ ] Delete PluginDetail, FileDetail, PiPackageDetail (keep MarketplaceDetail, ToolDetail as-is — they're different enough)
-- [ ] Update App.tsx to use single detail state: `detailItem: ManagedItem | null`
+- [x] Build `ItemDetail` with: header, metadata slot, instance list (with drift +/-), action list (`components/ItemDetail.tsx`)
+- [x] Unified `ItemAction` type replacing `PluginAction` + `FileAction`
+- [x] Kind-specific metadata components: `PluginMetadata`, `FileMetadata`, `PiPackageMetadata`
+- [x] Shared `ActionRow` rendering for status/diff/action items
+- [x] Tests: 26 tests covering rendering, selection, badges, metadata, action types
+- [x] Wire `ItemDetail` into App.tsx — replaced PluginDetail, FileDetail, PiPackageDetail rendering
+- [x] `buildItemActions(item: ManagedItem): ItemAction[]` unified builder (absorbs `buildPluginActions` + `getFileActions`)
+- [x] Delete PluginDetail.tsx, FileDetail.tsx after migrating their exported functions
 
 ### Phase 4: Unified Action Dispatch
 **Goal:** One action handler instead of five.
@@ -127,10 +135,11 @@ async function handleItemAction(item: ManagedItem, action: ItemAction) {
 ```
 
 **Tasks:**
-- [ ] Extract `handleItemAction` from App.tsx
-- [ ] Merge `handleFileAction`, `handlePluginAction`, `handlePiPackageAction` into it
-- [ ] Each `case` delegates to a kind-specific function when needed (e.g., `installPlugin` vs `installPiPackage`)
-- [ ] Remove 200+ lines of branching from App.tsx
+- [x] Extract `handleItemAction` in `lib/action-dispatch.ts` with `DispatchCallbacks` interface
+- [x] Single dispatch handles: back, status, diff, missing, sync, install, uninstall, update, install_tool, uninstall_tool, pullback
+- [x] Kind-specific routing via `_plugin`/`_file`/`_piPackage` on ManagedItem
+- [x] Tests: 16 tests covering every action type and edge cases
+- [x] Wire into App.tsx — replaced handleFileAction, handlePluginAction, handlePiPackageAction with single handleEntityAction
 
 ### Phase 5: Input Router
 **Goal:** Tame the 245-branch input handler.
@@ -146,11 +155,11 @@ const inputRouter = useInputRouter({
 ```
 
 **Tasks:**
-- [ ] Extract input handling into composable hooks per view state
-- [ ] `useListInput(items, onSelect, onBack)` — shared by all list views
-- [ ] `useDetailInput(actions, onAction, onBack)` — shared by all detail views
-- [ ] `useDiffInput()` — diff view keys
-- [ ] App.tsx becomes: render current view, attach current view's input hook
+- [x] Extract input handling into composable hooks per view state (`input-hooks.ts`)
+- [x] `useListInput(items, onSelect, onBack)` — shared list/sub-view input behavior
+- [x] `useDetailInput(actions, onAction, onBack)` — shared detail/action input behavior
+- [x] `useDiffInput()` — diff/missing overlay key handling
+- [x] App.tsx now composes view input hooks (`handleDiffInput` → `handleDetailInput` → `handleListInput`)
 
 ### Phase 6: Unified Marketplace
 **Goal:** One marketplace system, not two.
@@ -168,35 +177,44 @@ interface Marketplace {
 ```
 
 **Tasks:**
-- [ ] Merge `fetchMarketplace` and Pi marketplace fetching into one flow
-- [ ] MarketplaceList shows all marketplaces (both sources)
-- [ ] MarketplaceDetail works for both
-- [ ] Delete PiMarketplaceList, PiMarketplaceDetail
-- [ ] Merge `pi-marketplace.ts` into `marketplace.ts`
+- [x] Merge `fetchMarketplace` and Pi marketplace fetching into one module flow (`marketplace.ts` now exports both plugin + pi marketplace loaders)
+- [x] MarketplaceList shows all marketplaces (both sources) via unified row model (`buildMarketplaceRows`)
+- [x] MarketplaceDetail works for both (`MarketplaceDetailView` + unified action model)
+- [x] Delete PiMarketplaceList, PiMarketplaceDetail
+- [x] Merge `pi-marketplace.ts` into `marketplace.ts`
 
 ### Phase 7: Deduplicate Infrastructure
 **Goal:** Remove copy-pasted utilities.
 
 **Tasks:**
-- [ ] Delete hash functions from install.ts, use modules/hash.ts everywhere
-- [ ] Consolidate source path resolution (marketplace.ts `resolveLocalMarketplacePath`, plugin-drift.ts `resolvePluginSource`, install.ts marketplace base resolution) into one `resolveMarketplaceSourceDir(marketplace)` function
-- [ ] Single `scanPluginContents(dir)` used by both marketplace.ts and install.ts
+- [x] Delete hash functions from install.ts, import from modules/hash.ts (removed ~60 lines of duplication)
+- [x] Consolidate `expandTilde` — extracted to `path-utils.ts`, applied to marketplace.ts, plugin-drift.ts, install.ts (3 sites → 1)
+- [x] Single `scanPluginContents(dir)` in path-utils.ts used by marketplace.ts and install.ts (removed ~115 lines of duplication)
 
 ---
 
 ## Expected Outcome
 
-| Metric | Before | After |
-|--------|--------|-------|
-| App.tsx lines | 2131 | ~800 |
-| App.tsx if-branches | 245 | ~60 |
-| App.tsx useState hooks | 28 | ~10 |
-| List components | 5 (copy-pasted) | 1 (generic) |
-| Detail components | 6 | 2 (ItemDetail + MarketplaceDetail) |
-| Action handlers | 5 | 1 |
-| Drift detection | 3 implementations | 1 |
-| Hash function copies | 2 | 1 |
-| Source resolution | 4 places | 1 |
+| Metric | Before | Current | Target |
+|--------|--------|---------|--------|
+| App.tsx lines | 2131 | **1792 (−339)** | ~1200 |
+| App.tsx if-branches | 245 | **201 (−44)** | ~100 |
+| App.tsx useState hooks | 28 | **20 (−8)** | ~15 |
+| useInput callback | 604 lines | **102 lines (−83%)** ✅ | ~200 |
+| List components | 5 (copy-pasted) | **1 (generic)** ✅ | 1 |
+| Detail components | 6 | **1 (ItemDetail)** ✅ | 1 |
+| Action handlers | 5 | **1 (handleEntityAction)** ✅ | 1 |
+| Action builders | 3 (one per type) | **1 (buildItemActions)** ✅ | 1 |
+| Drift detection | 3 implementations | 3 | 1 |
+| Hash function copies | 2 | **1** ✅ | 1 |
+| expandTilde copies | 3 | **1 (path-utils.ts)** ✅ | 1 |
+| scanPluginContents copies | 2 | **1 (path-utils.ts)** ✅ | 1 |
+| spinner/loading boilerplate | 8+ sites | **withSpinner helper** ✅ | 1 |
+| **Deleted component files** | — | **11 files** ✅ | — |
+| **New generic components** | — | **3 (ItemList + ItemDetail + MarketplaceDetailView)** ✅ | — |
+| **New modules** | — | **9 (managed-item, action-dispatch, item-actions, path-utils, marketplace-detail, marketplace-row, input-hooks, item-drift + store helper)** ✅ | — |
+| **New test count** | 346 | **447 (+101)** ✅ | — |
+| **Net from main** | — | **+5097 / -3715** | — |
 
 ## Execution Order
 
@@ -206,3 +224,19 @@ Phase 6 can run after 1
 Phase 7 can run anytime
 
 Each phase is independently shippable and testable.
+
+## Review Notes (latest)
+
+- Update checks are now startup-only plus manual triggers (`R`), not tab-navigation driven.
+- Source repo status is primed at startup and cached; Settings uses cached status on first render.
+- Settings manual refresh (`R`) now explicitly refreshes source repo status with remote fetch.
+- Fixed Installed-tab per-tool plugin actions after unified dispatch migration: `install_tool` / `uninstall_tool` now resolve target instance from either `action.instance` or `action.toolStatus`.
+- Installed-tab section loading placeholders now reset correctly on refresh by toggling `installedPluginsLoaded` / `piPackagesLoaded` to `false` at load start.
+- Fixed local marketplace plugin source resolution in install flow: when marketplace URL is `.claude-plugin/marketplace.json`, relative plugin `source` now resolves from repo root (not `.claude-plugin/`), restoring `Install to Pi` for playbook plugins like `eval-model`.
+- Fixed update semantics: `updatePlugin` now updates only instances where the plugin is already installed (no implicit install to other enabled tools).
+- Added plugin pullback actions in Installed detail for drifted instances (e.g. `Pull to source from Pi`) and wired dispatch/callback flow to copy changed plugin components from tool instance back into source repo.
+- Extended pullback UX consistency: `p` shortcut now works for plugin detail (not just file detail), and Diff overlay now wires `p` pullback callback for file/plugin contexts.
+- Sync-tab consistency pass: `d` on plugin sync rows now opens plugin detail (instead of dead-end warning), and hints now say `d diff/detail` with detail hint including `p pullback (if available)`.
+- Centralized zero-diff rendering behavior in shared `ItemDetail` action row: diff counts are shown only when non-zero, preventing noisy `Changed +0 -0` across plugin/file detail views.
+- Installed tab now has per-section loading placeholder consistency for Files too (`filesLoaded`), matching Plugins/Pi Packages behavior and avoiding awkward late file population.
+
