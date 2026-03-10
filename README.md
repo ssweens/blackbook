@@ -42,7 +42,7 @@ Everything is a plugin. Plugins can include skills, commands, agents, hooks, MCP
 | OpenAI Codex | `~/.codex` | ✓ | — | — | ✓ |
 | OpenCode | `~/.config/opencode` | ✓ | ✓ | ✓ | ✓ |
 | Amp Code | `~/.config/amp` | ✓ | ✓ | ✓ | ✓ |
-| Pi | `~/.pi` | ✓ | ✓* | — | ✓ |
+| Pi | `~/.pi/agent` | ✓ | ✓* | — | ✓ |
 
 \* Pi uses `agent/skills/` for skills and `agent/prompts/` for prompt templates (`/name` syntax)
 
@@ -103,7 +103,7 @@ Blackbook opens on the **Sync** tab by default.
 - **Tools**: `Enter` open detail, `i` install, `u` update, `d` uninstall, `Space` toggle enabled, `e` edit config dir, `R` refresh detection
 - **Sync**: `y` sync selected items (missing plus `source-changed` / `target-changed` / `both-changed` files/plugins and tool updates; press twice to confirm), `R` refresh sync inputs
 
-Blackbook also refreshes data when entering tabs (Discover, Installed, Marketplaces, Tools), throttled with a 30-second TTL per tab to avoid constant refetching/flicker while navigating. A loading indicator is shown across tabs (including Sync) while refresh is in progress.
+Blackbook performs one startup scan, then refreshes only when requested manually with `R` on each tab. A loading indicator is shown across tabs (including Sync) while refresh is in progress.
 
 ## Configuration
 
@@ -124,7 +124,6 @@ settings:
   source_repo: ~/src/playbook
   package_manager: pnpm     # npm | pnpm | bun
   backup_retention: 3       # Number of backups to keep per file (1-100)
-  default_pullback: false   # Enable pullback for new file entries
 
 tools:
   claude-code:
@@ -141,7 +140,6 @@ files:
   - name: CLAUDE.md
     source: CLAUDE.md         # Relative to source_repo
     target: CLAUDE.md
-    pullback: true            # Enable three-way state tracking
     overrides:
       "opencode:default": AGENTS.md
   - name: Settings
@@ -179,12 +177,11 @@ The `files:` list manages all synced files in a single unified list:
 |---------|-------------|
 | `tools` omitted | Syncs to all enabled, syncable tool instances |
 | `tools: [claude-code]` | Syncs only to claude-code instances |
-| `pullback: true` | Enables three-way state tracking for reverse sync |
 | `overrides` | Per-instance target path overrides |
 
 #### Three-Way State
 
-Files with `pullback: true` use deterministic hash-based drift detection instead of timestamps:
+Managed files use deterministic hash-based drift detection instead of timestamps:
 
 | Drift | Meaning | Action |
 |-------|---------|--------|

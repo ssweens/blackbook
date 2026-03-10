@@ -240,3 +240,10 @@ Each phase is independently shippable and testable.
 - Centralized zero-diff rendering behavior in shared `ItemDetail` action row: diff counts are shown only when non-zero, preventing noisy `Changed +0 -0` across plugin/file detail views.
 - Installed tab now has per-section loading placeholder consistency for Files too (`filesLoaded`), matching Plugins/Pi Packages behavior and avoiding awkward late file population.
 
+## Release Prep (v0.18.0)
+- [x] Bump `tui/package.json` version to `0.18.0`
+- [x] Add `0.18.0` release notes section in `CHANGELOG.md` and update compare links
+- [x] Align key docs (`README.md`, `docs/TEST_COVERAGE.md`) with current behavior/metrics
+- [x] Run quality gates (`pnpm typecheck`, `pnpm test`, `pnpm build`)
+- [x] Commit and push release-prep changes
+
