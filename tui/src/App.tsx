@@ -1162,13 +1162,15 @@ export function App() {
     activeMarketplaceDetail,
     detailToolOpen: !!detailTool,
     detailFile,
+    detailPlugin,
     actionIndex,
     diffTarget,
     missingSummary,
     setActionIndex,
     onEntityAction: (index) => { void handleEntityAction(index); },
     onMarketplaceAction: (index) => handleMarketplaceDetailAction(index),
-    onPullback: (file, instance) => { void pullbackFileInstance(file, instance); },
+    onPullbackFile: (file, instance) => { void pullbackFileInstance(file, instance); },
+    onPullbackPlugin: (plugin, instance) => { void pullbackPluginInstanceCb(plugin, instance); },
   });
   const handleListInput = useListInput({
     discoverSubView,
@@ -1579,6 +1581,26 @@ export function App() {
     // No-op for now - asset/config removed
   };
 
+  const handleDiffPullBack = () => {
+    if (!diffTarget) return;
+    const instance = diffTarget.instance;
+
+    const fallbackFile = files.find((f) => f.name === diffTarget.title) || null;
+    const pullFile = detailFile || fallbackFile;
+
+    if (pullFile) {
+      void pullbackFileInstance(pullFile, instance);
+      return;
+    }
+
+    if (detailPlugin) {
+      void pullbackPluginInstanceCb(detailPlugin, instance);
+      return;
+    }
+
+    notify("Pullback is only available from file or plugin details.", "warning");
+  };
+
   return (
     <Box flexDirection="column" padding={1}>
       <TabBar activeTab={tab} onTabChange={setTab} />
@@ -1601,6 +1623,7 @@ export function App() {
         <DiffView
           target={diffTarget}
           onClose={closeDiff}
+          onPullBack={handleDiffPullBack}
         />
       ) : missingSummary ? (
         <MissingSummaryView

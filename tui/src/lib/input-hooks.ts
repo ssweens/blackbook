@@ -21,13 +21,15 @@ interface UseDetailInputParams {
   activeMarketplaceDetail: { actions: MarketplaceDetailAction[] } | null;
   detailToolOpen: boolean;
   detailFile: FileStatus | null;
+  detailPlugin: Plugin | null;
   actionIndex: number;
   diffTarget: DiffTarget | null;
   missingSummary: MissingSummary | null;
   setActionIndex: (value: number | ((prev: number) => number)) => void;
   onEntityAction: (index: number) => void;
   onMarketplaceAction: (index: number) => void;
-  onPullback: (file: FileStatus, instance: DiffInstanceRef) => void;
+  onPullbackFile: (file: FileStatus, instance: DiffInstanceRef) => void;
+  onPullbackPlugin: (plugin: Plugin, instance: DiffInstanceRef) => void;
 }
 
 export function useDetailInput({
@@ -35,13 +37,15 @@ export function useDetailInput({
   activeMarketplaceDetail,
   detailToolOpen,
   detailFile,
+  detailPlugin,
   actionIndex,
   diffTarget,
   missingSummary,
   setActionIndex,
   onEntityAction,
   onMarketplaceAction,
-  onPullback,
+  onPullbackFile,
+  onPullbackPlugin,
 }: UseDetailInputParams) {
   return useCallback((input: string, key: InputKey): boolean => {
     if (key.upArrow) {
@@ -66,10 +70,15 @@ export function useDetailInput({
       return false;
     }
 
-    if (input === "p" && detailFile && !diffTarget && !missingSummary && activeDetail) {
+    if (input === "p" && !diffTarget && !missingSummary && activeDetail) {
       const pullAction = activeDetail.actions.find((a) => a.type === "pullback");
       if (pullAction?.instance) {
-        onPullback(detailFile, pullAction.instance as DiffInstanceRef);
+        const instance = pullAction.instance as DiffInstanceRef;
+        if (detailFile) {
+          onPullbackFile(detailFile, instance);
+        } else if (detailPlugin) {
+          onPullbackPlugin(detailPlugin, instance);
+        }
       }
       return true;
     }
@@ -97,8 +106,10 @@ export function useDetailInput({
     missingSummary,
     onEntityAction,
     onMarketplaceAction,
-    onPullback,
+    onPullbackFile,
+    onPullbackPlugin,
     setActionIndex,
+    detailPlugin,
   ]);
 }
 
