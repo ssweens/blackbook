@@ -84,9 +84,11 @@ export function buildPluginActions(
             const dt = buildFileDiffTarget(
               `${plugin.name}/${name}`, srcSuffix, srcPath, destPath, instance,
             );
-            totalAdded += dt.files.reduce((sum, f) => sum + f.linesAdded, 0);
-            totalRemoved += dt.files.reduce((sum, f) => sum + f.linesRemoved, 0);
-            hasDrift = true;
+            if (dt.files.length > 0) {
+              totalAdded += dt.files.reduce((sum, f) => sum + f.linesAdded, 0);
+              totalRemoved += dt.files.reduce((sum, f) => sum + f.linesRemoved, 0);
+              hasDrift = true;
+            }
           } catch {
             // Ignore errors
           }

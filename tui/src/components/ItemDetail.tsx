@@ -134,10 +134,12 @@ function ActionRow({ action, isSelected }: ActionRowProps) {
           <Text color={isSelected ? "white" : "gray"}>{action.label}:</Text>
           <Text color={action.statusColor || "gray"}> {action.statusLabel}</Text>
           {action.type === "diff" && action.instance && "totalAdded" in action.instance && (
-            <>
-              <Text color="green"> +{(action.instance as DiffInstanceSummary).totalAdded}</Text>
-              <Text color="red"> -{(action.instance as DiffInstanceSummary).totalRemoved}</Text>
-            </>
+            ((action.instance as DiffInstanceSummary).totalAdded > 0 || (action.instance as DiffInstanceSummary).totalRemoved > 0) ? (
+              <>
+                <Text color="green"> +{(action.instance as DiffInstanceSummary).totalAdded}</Text>
+                <Text color="red"> -{(action.instance as DiffInstanceSummary).totalRemoved}</Text>
+              </>
+            ) : null
           )}
           {action.type === "missing" && <Text color="yellow"> (click to view)</Text>}
         </Box>
