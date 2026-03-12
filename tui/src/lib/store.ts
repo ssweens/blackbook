@@ -42,7 +42,7 @@ import {
 } from "./config.js";
 import { loadConfig as loadYamlConfig, getConfigPath as getYamlConfigPath } from "./config/loader.js";
 import { resolveSourcePath, expandPath as expandConfigPath } from "./config/path.js";
-import { pullSourceRepo, primeSourceRepoStatus } from "./source-setup.js";
+import { pullSourceRepo, primeSourceRepoStatus, clearSourceStatusCache } from "./source-setup.js";
 import { getAllPlaybooks, resolveToolInstances, isSyncTarget } from "./config/playbooks.js";
 import { runCheck, runApply } from "./modules/orchestrator.js";
 import { fileCopyModule } from "./modules/file-copy.js";
@@ -1211,6 +1211,7 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   refreshAll: async () => {
+    clearSourceStatusCache();
     await get().loadMarketplaces();
     await get().refreshToolDetection();
     await get().loadPiPackages();

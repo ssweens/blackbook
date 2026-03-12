@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.1] - 2026-03-11
+
+### Fixed
+- Source repo status now refreshes immediately after pullback — `refreshAll()` clears the git status cache so Settings reflects repo changes without waiting for the 60-second TTL or restarting the app.
+
 ## [0.18.0] - 2026-03-10
 
 ### Added

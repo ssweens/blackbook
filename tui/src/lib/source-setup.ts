@@ -280,7 +280,7 @@ function setSourceStatusCache(value: SourceRepoStatus | null): void {
   sourceStatusCache = { value, at: Date.now() };
 }
 
-function clearSourceStatusCache(): void {
+export function clearSourceStatusCache(): void {
   sourceStatusCache = null;
 }
 
