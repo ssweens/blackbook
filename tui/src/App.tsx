@@ -53,11 +53,13 @@ import { buildMarketplaceRows, type MarketplaceRow } from "./lib/marketplace-row
 import { useDetailInput, useDiffInput, useListInput } from "./lib/input-hooks.js";
 import { handleItemAction } from "./lib/action-dispatch.js";
 import type { Tab, SyncPreviewItem, Plugin, PiPackage, PiMarketplace, DiffInstanceRef, DiscoverSection, DiscoverSubView, ManagedToolRow, FileStatus, Marketplace } from "./lib/types.js";
+import { countAppRender } from "./lib/perf.js";
 
 const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces", "settings"];
 const TAB_REFRESH_TTL_MS = 30000;
 
 export function App() {
+  countAppRender();
   const { exit } = useApp();
 
   // ── Navigation ──

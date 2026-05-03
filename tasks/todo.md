@@ -14,7 +14,7 @@
 - [x] U6: React.memo on lists — Wrap list components to skip unnecessary re-renders
 
 ## Phase 4 — Validation
-- [ ] U8: Perf profiling — Measure before/after improvements
+- [x] U8: Perf profiling — Lightweight measurement utility with counters for renders, store updates, fs calls, and function invocations
 
 ## Quality Gates
 - [ ] All tests pass: `cd tui && pnpm test`

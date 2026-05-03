@@ -9,6 +9,7 @@ import { getToolInstances, getEnabledToolInstances, setPluginComponentEnabled } 
 import { safePath, validatePluginMetadata, logError } from "./validation.js";
 import { loadManifest, saveManifest } from "./manifest.js";
 import { getPluginSourcePath, instanceKey, createSymlink, isSymlink } from "./plugin-helpers.js";
+import { countGetPluginToolStatus } from "./perf.js";
 
 export interface ToolInstallStatus {
   toolId: string;
@@ -137,6 +138,7 @@ function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
 }
 
 export function getPluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
+  countGetPluginToolStatus();
   const key = cacheKey(plugin);
   const cached = statusCache.get(key);
   if (cached) return cached;

@@ -67,6 +67,7 @@ import {
 } from "./install.js";
 import { invalidatePluginToolStatusCache } from "./plugin-status.js";
 import type { PluginDrift } from "./plugin-drift.js";
+import { countStoreUpdate } from "./perf.js";
 import { filesToManagedItems, piPackagesToManagedItems, pluginsToManagedItems } from "./managed-item.js";
 import type { ManagedItem } from "./managed-item.js";
 
@@ -328,7 +329,12 @@ export async function withSpinner<T>(
   }
 }
 
-export const useStore = create<Store>((set, get) => ({
+export const useStore = create<Store>((rawSet, get) => {
+  const set: typeof rawSet = (arg) => {
+    countStoreUpdate();
+    return rawSet(arg as any);
+  };
+  return {
   tab: "installed",
   marketplaces: [],
   installedPlugins: [],
@@ -1878,7 +1884,8 @@ export const useStore = create<Store>((set, get) => ({
       return false;
     }
   },
-}));
+  };
+});
 
 let watchersStarted = false;
 let refreshTimer: NodeJS.Timeout | null = null;

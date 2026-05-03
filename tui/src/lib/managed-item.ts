@@ -22,6 +22,7 @@ import type {
 import type { ToolInstallStatus } from "./plugin-status.js";
 import { getPluginToolStatus } from "./plugin-status.js";
 import { getToolInstances } from "./config.js";
+import { countPluginToManagedItem } from "./perf.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Core Types
@@ -84,6 +85,10 @@ export interface ManagedItem {
   sourceType?: "npm" | "git" | "local";
   installedVersion?: string;
   hasUpdate?: boolean;
+  installedVia?: import("./types.js").PackageManager;
+  installedViaManagers?: import("./types.js").PackageManager[];
+  managerMismatch?: boolean;
+  preferredManager?: import("./types.js").PackageManager;
   extensions?: string[];
   prompts?: string[];
   themes?: string[];
@@ -113,6 +118,7 @@ export function pluginToManagedItem(
   plugin: Plugin,
   toolStatuses?: ToolInstallStatus[],
 ): ManagedItem {
+  countPluginToManagedItem();
   const statuses = toolStatuses ?? getPluginToolStatus(plugin);
   const allTools = getToolInstances();
 
@@ -286,6 +292,10 @@ export function piPackageToManagedItem(pkg: PiPackage): ManagedItem {
     sourceType: pkg.sourceType,
     installedVersion: pkg.installedVersion,
     hasUpdate: pkg.hasUpdate,
+    installedVia: pkg.installedVia,
+    installedViaManagers: pkg.installedViaManagers,
+    managerMismatch: pkg.managerMismatch,
+    preferredManager: pkg.preferredManager,
     extensions: pkg.extensions,
     skills: pkg.skills,
     prompts: pkg.prompts,
