@@ -357,11 +357,19 @@ export function App() {
     setShowSourceSetupWizard(shouldShowSourceSetupWizard());
   }, []);
 
-  // Lazy tab loading: only fetch data for the currently-visible tab.
+  // One-time startup load: fetch all data in background so tab switching
+  // is instant (no data loading on tab change — just UI state change).
   useEffect(() => {
-    void refreshTabData(tab);
+    void (async () => {
+      // Phase 1: load core data (fast — plugins + marketplaces)
+      await Promise.all([loadMarketplaces(), loadInstalledPlugins(), loadPiPackages()]);
+      // Phase 2: tool detection + files (slower, don't block UI)
+      refreshManagedTools();
+      void refreshToolDetection();
+      void loadFiles();
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab]);
+  }, []);
 
   useEffect(() => {
     if (!detailFile) return;
