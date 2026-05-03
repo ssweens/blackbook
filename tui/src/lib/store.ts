@@ -918,12 +918,6 @@ export const useStore = create<Store>((rawSet, get) => {
 
   loadMarketplaces: async () => {
     invalidatePluginToolStatusCache();
-    set((state) => ({
-      loading:
-        state.marketplaces.length === 0 &&
-        state.installedPlugins.length === 0,
-      error: null,
-    }));
 
     try {
       const marketplaces = parseMarketplaces();
@@ -1008,10 +1002,9 @@ export const useStore = create<Store>((rawSet, get) => {
         tools,
         managedTools: getManagedToolRows(),
         managedItems: composeManagedItems(installedWithStatus, state.files, state.piPackages),
-        loading: false,
       });
     } catch (e) {
-      set({ loading: false, error: String(e) });
+      set({ error: String(e) });
     }
   },
 

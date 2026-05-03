@@ -357,17 +357,17 @@ export function App() {
     setShowSourceSetupWizard(shouldShowSourceSetupWizard());
   }, []);
 
-  // One-time startup load: fetch all data in background so tab switching
-  // is instant (no data loading on tab change — just UI state change).
+  // One-time startup load: fire ALL data fetches in background.
+  // NEVER await — the UI renders immediately with whatever data is in the
+  // store (empty on first run, cached on subsequent runs). Each load function
+  // calls set() when it completes, triggering a re-render with fresh data.
   useEffect(() => {
-    void (async () => {
-      // Phase 1: load core data (fast — plugins + marketplaces)
-      await Promise.all([loadMarketplaces(), loadInstalledPlugins(), loadPiPackages()]);
-      // Phase 2: tool detection + files (slower, don't block UI)
-      refreshManagedTools();
-      void refreshToolDetection();
-      void loadFiles();
-    })();
+    void loadMarketplaces();
+    void loadInstalledPlugins();
+    void loadPiPackages();
+    refreshManagedTools();
+    void refreshToolDetection();
+    void loadFiles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

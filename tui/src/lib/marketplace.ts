@@ -718,8 +718,7 @@ async function ensureGitMarketplaceCached(source: string): Promise<string | null
     }
 
     return cachePath;
-  } catch (error) {
-    console.error(`Failed to cache Pi git marketplace ${source}:`, error);
+  } catch {
     return null;
   }
 }
@@ -828,8 +827,7 @@ export async function fetchNpmPackages(): Promise<PiPackage[]> {
         popularity: item.score?.detail?.popularity,
       };
     });
-  } catch (error) {
-    console.error("Failed to fetch npm packages:", error);
+  } catch {
     return [];
   }
 }
@@ -1077,8 +1075,7 @@ export async function fetchNpmPackageDetails(packageName: string): Promise<Parti
     result.themes = piManifest?.themes ?? [];
 
     return result;
-  } catch (error) {
-    console.error(`Failed to fetch details for ${packageName}:`, error);
+  } catch {
     return null;
   }
 }
