@@ -333,9 +333,10 @@ export function App() {
           break;
         case "sync":
         default:
-          // Sync: refresh only sync-relevant data to avoid expensive cross-tab reload.
+          // Sync: load plugins/tools first (fast), then files in background (slow).
           refreshManagedTools();
-          await Promise.all([loadInstalledPlugins(), loadFiles(), refreshToolDetection()]);
+          await Promise.all([loadInstalledPlugins(), refreshToolDetection()]);
+          void loadFiles(); // background — files are slow, don't block UI
           break;
       }
       refreshed = true;

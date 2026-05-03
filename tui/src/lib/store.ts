@@ -1,5 +1,16 @@
 import { create } from "zustand";
 import { existsSync, lstatSync, statSync, watch } from "fs";
+
+/**
+ * Yield to the event loop so Ink can process keyboard input between
+ * synchronous filesystem checks. Without this, tight loops of fs.existsSync
+ * and fs.readFileSync block the event loop for hundreds of milliseconds,
+ * making the TUI feel frozen.
+ */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 import type {
   Tab,
   Marketplace,
@@ -1100,6 +1111,7 @@ export const useStore = create<Store>((rawSet, get) => {
 
     const files: FileStatus[] = [];
     const coveredTargets = new Set<string>(); // "toolId:instanceId:targetRelPath"
+    let checkCounter = 0;
 
     // Load files from config — ALL are files, always shown.
     // tools: field just scopes which tool instances the file targets.
@@ -1147,6 +1159,9 @@ export const useStore = create<Store>((rawSet, get) => {
 
           const result = await runCheck(steps);
           const stepResult = result.steps[0];
+
+          checkCounter++;
+          if (checkCounter % 5 === 0) await yieldToEventLoop();
 
           fileStatus.instances.push({
             toolId,
@@ -1225,6 +1240,9 @@ export const useStore = create<Store>((rawSet, get) => {
 
             const result = await runCheck(steps);
             const stepResult = result.steps[0];
+
+            checkCounter++;
+            if (checkCounter % 5 === 0) await yieldToEventLoop();
 
             fileStatus.instances.push({
               toolId,
@@ -1308,6 +1326,9 @@ export const useStore = create<Store>((rawSet, get) => {
 
             const result = await runCheck(steps);
             const stepResult = result.steps[0];
+
+            checkCounter++;
+            if (checkCounter % 5 === 0) await yieldToEventLoop();
 
             fileStatus.instances.push({
               toolId,
