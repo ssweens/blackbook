@@ -361,87 +361,63 @@ export async function fetchMarketplace(
     }
   }
 
-  // Fetch all plugin contents in parallel
-  const pluginPromises = (data?.plugins || []).map(async (p) => {
-    let skills: string[] = [];
-    let commands: string[] = [];
-    let agents: string[] = [];
-    let hooks: string[] = [];
-    let hasMcp = false;
-
+  // Build plugins from marketplace.json — NEVER probe GitHub for contents.
+  // The marketplace.json must include skills/commands/agents/hooks metadata.
+  // Probing each plugin's GitHub repo at runtime causes 100+ API calls and
+  // immediately hits rate limits (HTTP 403/429).
+  const plugins: Plugin[] = (data?.plugins || []).map((p) => {
     const source = p.source || "";
 
-    // Local marketplace: scan plugin directory for contents
+    // Only scan local directories; remote marketplaces must declare contents.
+    let hasMcp = false;
     if (localBaseDir && typeof source === "string" && source.startsWith("./")) {
       const pluginDir = resolve(localBaseDir, source);
       const contents = scanPluginContents(pluginDir);
-      skills = contents.skills;
-      commands = contents.commands;
-      agents = contents.agents;
-      hooks = contents.hooks;
-      hasMcp = contents.hasMcp;
-    } else if (repoInfo && typeof source === "string" && source.startsWith("./")) {
-      const [repo, branch] = repoInfo;
-      const contents = await fetchPluginContents(repo, branch, source);
-      skills = contents.skills;
-      commands = contents.commands;
-      agents = contents.agents;
-      hooks = contents.hooks;
-      hasMcp = contents.hasMcp;
-    } else if (typeof source === "object" && source.source === "github" && source.repo) {
-      const contents = await fetchPluginContents(
-        source.repo,
-        source.ref || "main",
-        ""
-      );
-      skills = contents.skills;
-      commands = contents.commands;
-      agents = contents.agents;
-      hooks = contents.hooks;
-      hasMcp = contents.hasMcp;
-    } else if (typeof source === "object" && source.source === "url" && source.url) {
-      const urlRepoInfo = parseGithubRepoFromUrl(source.url);
-      if (urlRepoInfo) {
-        const [repo, branch] = urlRepoInfo;
-        const contents = await fetchPluginContents(repo, branch, "");
-        skills = contents.skills;
-        commands = contents.commands;
-        agents = contents.agents;
-        hooks = contents.hooks;
-        hasMcp = contents.hasMcp;
-      }
+      return {
+        name: p.name || "",
+        description: p.description || "",
+        source,
+        skills: contents.skills,
+        commands: contents.commands,
+        agents: contents.agents,
+        hooks: contents.hooks,
+        hasMcp: contents.hasMcp,
+        hasLsp: Object.keys(p.lspServers ?? {}).length > 0,
+        lspServers: p.lspServers,
+        mcpServers: p.mcpServers,
+        scope: "user" as const,
+        marketplace: marketplace.name,
+        installed: false,
+        homepage: p.homepage || "",
+      };
     }
 
     let homepage = p.homepage || "";
     if (!homepage && typeof source === "object") {
-      if (source.source === "url" && source.url) {
-        homepage = source.url;
-      } else if (source.source === "github" && source.repo) {
-        homepage = `https://github.com/${source.repo}`;
-      }
+      if (source.source === "url" && source.url) homepage = source.url;
+      else if (source.source === "github" && source.repo) homepage = `https://github.com/${source.repo}`;
     }
-
-    const hasLspFromManifest = p.lspServers && Object.keys(p.lspServers).length > 0;
-    const hasMcpFromManifest = p.mcpServers && Object.keys(p.mcpServers).length > 0;
 
     return {
       name: p.name || "",
-      marketplace: marketplace.name,
       description: p.description || "",
       source,
-      skills,
-      commands,
-      agents,
-      hooks,
-      hasMcp: hasMcp || Boolean(hasMcpFromManifest),
-      hasLsp: Boolean(hasLspFromManifest),
-      homepage,
-      installed: false,
+      skills: (p as any).skills ?? [],
+      commands: (p as any).commands ?? [],
+      agents: (p as any).agents ?? [],
+      hooks: (p as any).hooks ?? [],
+      hasMcp: Object.keys(p.mcpServers ?? {}).length > 0,
+      hasLsp: Object.keys(p.lspServers ?? {}).length > 0,
+      lspServers: p.lspServers,
+      mcpServers: p.mcpServers,
       scope: "user" as const,
+      marketplace: marketplace.name,
+      installed: false,
+      homepage,
     };
   });
 
-  return Promise.all(pluginPromises);
+  return plugins;
 }
 
 export async function fetchAllMarketplaces(

@@ -96,7 +96,7 @@ describe("marketplace", () => {
       }
     });
 
-    it("parses plugins with local source paths", async () => {
+    it("parses plugins with skills/commands/agents declared in marketplace.json", async () => {
       const mockMarketplace = createMockMarketplace("test-org-1");
       const mockMarketplaceJson = {
         plugins: [
@@ -104,29 +104,18 @@ describe("marketplace", () => {
             name: "test-plugin",
             description: "A test plugin",
             source: "./plugins/test-plugin",
+            skills: ["my-skill"],
+            commands: ["my-command"],
+            agents: ["my-agent"],
+            hooks: ["my-hook"],
           },
         ],
-      };
-
-      const mockTreeResponse = {
-        payload: {
-          tree: {
-            items: [
-              { name: "skills/my-skill", path: "plugins/test-plugin/skills/my-skill", contentType: "directory" },
-              { name: "commands/my-command.md", path: "plugins/test-plugin/commands/my-command.md", contentType: "file" },
-              { name: ".mcp.json", path: "plugins/test-plugin/.mcp.json", contentType: "file" },
-            ],
-          },
-        },
       };
 
       vi.spyOn(global, "fetch").mockImplementation(async (url) => {
         const urlStr = url.toString();
         if (urlStr.includes("marketplace.json")) {
           return { ok: true, json: async () => mockMarketplaceJson } as Response;
-        }
-        if (urlStr.includes("/tree/")) {
-          return { ok: true, json: async () => mockTreeResponse } as Response;
         }
         return { ok: false } as Response;
       });
@@ -137,7 +126,8 @@ describe("marketplace", () => {
       expect(plugins[0].name).toBe("test-plugin");
       expect(plugins[0].skills).toContain("my-skill");
       expect(plugins[0].commands).toContain("my-command");
-      expect(plugins[0].hasMcp).toBe(true);
+      expect(plugins[0].agents).toContain("my-agent");
+      expect(plugins[0].hooks).toContain("my-hook");
     });
 
     it("parses plugins with github source object", async () => {
@@ -148,28 +138,16 @@ describe("marketplace", () => {
             name: "github-plugin",
             description: "A GitHub-sourced plugin",
             source: { source: "github", repo: "owner/repo", ref: "main" },
+            skills: ["gh-skill"],
+            commands: ["gh-cmd"],
           },
         ],
-      };
-
-      const mockTreeResponse = {
-        payload: {
-          tree: {
-            items: [
-              { name: "agents/my-agent.md", path: "agents/my-agent.md", contentType: "file" },
-              { name: "hooks/my-hook.json", path: "hooks/my-hook.json", contentType: "file" },
-            ],
-          },
-        },
       };
 
       vi.spyOn(global, "fetch").mockImplementation(async (url) => {
         const urlStr = url.toString();
         if (urlStr.includes("marketplace.json")) {
           return { ok: true, json: async () => mockMarketplaceJson } as Response;
-        }
-        if (urlStr.includes("/tree/")) {
-          return { ok: true, json: async () => mockTreeResponse } as Response;
         }
         return { ok: false } as Response;
       });
@@ -178,8 +156,8 @@ describe("marketplace", () => {
 
       expect(plugins).toHaveLength(1);
       expect(plugins[0].name).toBe("github-plugin");
-      expect(plugins[0].agents).toContain("my-agent");
-      expect(plugins[0].hooks).toContain("my-hook");
+      expect(plugins[0].skills).toContain("gh-skill");
+      expect(plugins[0].commands).toContain("gh-cmd");
     });
 
     it("parses plugins with url source object (external repos)", async () => {
@@ -191,28 +169,15 @@ describe("marketplace", () => {
             description: "An external plugin",
             source: { source: "url", url: "https://github.com/external-org/external-repo.git" },
             homepage: "https://github.com/external-org/external-repo",
+            skills: ["external-skill"],
           },
         ],
-      };
-
-      const mockTreeResponse = {
-        payload: {
-          tree: {
-            items: [
-              { name: ".mcp.json", path: ".mcp.json", contentType: "file" },
-              { name: "skills/external-skill", path: "skills/external-skill", contentType: "directory" },
-            ],
-          },
-        },
       };
 
       vi.spyOn(global, "fetch").mockImplementation(async (url) => {
         const urlStr = url.toString();
         if (urlStr.includes("marketplace.json")) {
           return { ok: true, json: async () => mockMarketplaceJson } as Response;
-        }
-        if (urlStr.includes("/tree/")) {
-          return { ok: true, json: async () => mockTreeResponse } as Response;
         }
         return { ok: false } as Response;
       });
@@ -222,7 +187,6 @@ describe("marketplace", () => {
       expect(plugins).toHaveLength(1);
       expect(plugins[0].name).toBe("external-plugin");
       expect(plugins[0].skills).toContain("external-skill");
-      expect(plugins[0].hasMcp).toBe(true);
       expect(plugins[0].homepage).toBe("https://github.com/external-org/external-repo");
     });
 
@@ -249,8 +213,8 @@ describe("marketplace", () => {
         if (urlStr.includes("marketplace.json")) {
           return { ok: true, json: async () => mockMarketplaceJson } as Response;
         }
-        if (urlStr.includes("/tree/")) {
-          return { ok: true, json: async () => ({ payload: { tree: { items: [] } } }) } as Response;
+        if (urlStr.includes("/contents/")) {
+          return { ok: true, json: async () => [] } as Response;
         }
         return { ok: false } as Response;
       });
@@ -284,8 +248,8 @@ describe("marketplace", () => {
         if (urlStr.includes("marketplace.json")) {
           return { ok: true, json: async () => mockMarketplaceJson } as Response;
         }
-        if (urlStr.includes("/tree/")) {
-          return { ok: true, json: async () => ({ payload: { tree: { items: [] } } }) } as Response;
+        if (urlStr.includes("/contents/")) {
+          return { ok: true, json: async () => [] } as Response;
         }
         return { ok: false } as Response;
       });
@@ -296,35 +260,23 @@ describe("marketplace", () => {
       expect(plugins[0].hasMcp).toBe(true);
     });
 
-    it("detects .mcp.json file in plugin directory", async () => {
+    it("detects mcp from mcpServers in marketplace manifest", async () => {
       const mockMarketplace = createMockMarketplace("test-org-6");
       const mockMarketplaceJson = {
         plugins: [
           {
-            name: "mcp-file-plugin",
-            description: "Plugin with .mcp.json file",
+            name: "mcp-manifest-plugin",
+            description: "Plugin with MCP in manifest",
             source: "./plugins/mcp-file-plugin",
+            mcpServers: { myserver: { command: "npx", args: ["server"] } },
           },
         ],
-      };
-
-      const mockTreeResponse = {
-        payload: {
-          tree: {
-            items: [
-              { name: ".mcp.json", path: "plugins/mcp-file-plugin/.mcp.json", contentType: "file" },
-            ],
-          },
-        },
       };
 
       vi.spyOn(global, "fetch").mockImplementation(async (url) => {
         const urlStr = url.toString();
         if (urlStr.includes("marketplace.json")) {
           return { ok: true, json: async () => mockMarketplaceJson } as Response;
-        }
-        if (urlStr.includes("/tree/")) {
-          return { ok: true, json: async () => mockTreeResponse } as Response;
         }
         return { ok: false } as Response;
       });
@@ -335,26 +287,16 @@ describe("marketplace", () => {
       expect(plugins[0].hasMcp).toBe(true);
     });
 
-    it("detects mcp.json file (without dot prefix)", async () => {
+    it("uses empty arrays when plugin contents not declared in manifest", async () => {
       const mockMarketplace = createMockMarketplace("test-org-7");
       const mockMarketplaceJson = {
         plugins: [
           {
-            name: "mcp-nodot-plugin",
-            description: "Plugin with mcp.json file",
-            source: "./plugins/mcp-nodot-plugin",
+            name: "minimal-plugin",
+            description: "Plugin with no contents declared",
+            source: "./plugins/minimal",
           },
         ],
-      };
-
-      const mockTreeResponse = {
-        payload: {
-          tree: {
-            items: [
-              { name: "mcp.json", path: "plugins/mcp-nodot-plugin/mcp.json", contentType: "file" },
-            ],
-          },
-        },
       };
 
       vi.spyOn(global, "fetch").mockImplementation(async (url) => {
@@ -362,56 +304,17 @@ describe("marketplace", () => {
         if (urlStr.includes("marketplace.json")) {
           return { ok: true, json: async () => mockMarketplaceJson } as Response;
         }
-        if (urlStr.includes("/tree/")) {
-          return { ok: true, json: async () => mockTreeResponse } as Response;
-        }
         return { ok: false } as Response;
       });
 
       const plugins = await fetchMarketplace(mockMarketplace);
 
       expect(plugins).toHaveLength(1);
-      expect(plugins[0].hasMcp).toBe(true);
-    });
-
-    it("extracts skills from nested directory paths", async () => {
-      const mockMarketplace = createMockMarketplace("test-org-8");
-      const mockMarketplaceJson = {
-        plugins: [
-          {
-            name: "nested-skills-plugin",
-            description: "Plugin with nested skill paths",
-            source: "./plugins/nested-skills",
-          },
-        ],
-      };
-
-      const mockTreeResponse = {
-        payload: {
-          tree: {
-            items: [
-              { name: "skills/skill-one", path: "plugins/nested-skills/skills/skill-one", contentType: "directory" },
-              { name: "skills/skill-two", path: "plugins/nested-skills/skills/skill-two", contentType: "directory" },
-            ],
-          },
-        },
-      };
-
-      vi.spyOn(global, "fetch").mockImplementation(async (url) => {
-        const urlStr = url.toString();
-        if (urlStr.includes("marketplace.json")) {
-          return { ok: true, json: async () => mockMarketplaceJson } as Response;
-        }
-        if (urlStr.includes("/tree/")) {
-          return { ok: true, json: async () => mockTreeResponse } as Response;
-        }
-        return { ok: false } as Response;
-      });
-
-      const plugins = await fetchMarketplace(mockMarketplace);
-
-      expect(plugins).toHaveLength(1);
-      expect(plugins[0].skills).toEqual(["skill-one", "skill-two"]);
+      expect(plugins[0].skills).toEqual([]);
+      expect(plugins[0].commands).toEqual([]);
+      expect(plugins[0].agents).toEqual([]);
+      expect(plugins[0].hooks).toEqual([]);
+      expect(plugins[0].hasMcp).toBe(false);
     });
 
     it("returns empty array when fetch fails", async () => {
