@@ -9,10 +9,16 @@ import type { ToolAdapter } from "./types.js";
 
 const REGISTRY = new Map<ToolId, ToolAdapter>();
 
+/**
+ * Register an adapter. Idempotent for same-instance re-registration; throws if
+ * a *different* adapter is already registered for the same toolId (which would
+ * indicate a programmer error).
+ */
 export function registerAdapter(adapter: ToolAdapter): void {
   const id = adapter.defaults.toolId;
-  if (REGISTRY.has(id)) {
-    throw new Error(`Adapter already registered for toolId="${id}"`);
+  const existing = REGISTRY.get(id);
+  if (existing && existing !== adapter) {
+    throw new Error(`A different adapter is already registered for toolId="${id}"`);
   }
   REGISTRY.set(id, adapter);
 }
