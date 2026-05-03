@@ -12,7 +12,7 @@ interface ToolsListProps {
   maxHeight?: number;
 }
 
-export function ToolsList({
+export const ToolsList = React.memo(function ToolsList({
   tools,
   selectedIndex,
   detection,
@@ -141,4 +141,4 @@ export function ToolsList({
       )}
     </Box>
   );
-}
+});

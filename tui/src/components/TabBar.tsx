@@ -1,11 +1,7 @@
 import React from "react";
 import { Box, Text } from "ink";
+import { useStore } from "../lib/store.js";
 import type { Tab } from "../lib/types.js";
-
-interface TabBarProps {
-  activeTab: Tab;
-  onTabChange: (tab: Tab) => void;
-}
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "sync", label: "Sync" },
@@ -16,7 +12,9 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "settings", label: "Settings" },
 ];
 
-export function TabBar({ activeTab }: TabBarProps) {
+export function TabBar() {
+  const activeTab = useStore((s) => s.tab);
+
   return (
     <Box marginBottom={1}>
       <Text bold color="cyan">Library</Text>

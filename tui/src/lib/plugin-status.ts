@@ -23,7 +23,26 @@ function isConfigOnlyInstance(instance: ToolInstance): boolean {
   return !instance.skillsSubdir && !instance.commandsSubdir && !instance.agentsSubdir;
 }
 
-export function getPluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
+// ── Status Cache ────────────────────────────────────────────────────────────
+// getPluginToolStatus() probes the filesystem for every skill/command/agent
+// of every plugin. This is called O(plugins × tools × components) times per
+// render. We cache results and invalidate when the store mutates plugin or
+// tool state.
+
+const statusCache = new Map<string, ToolInstallStatus[]>();
+let statusCacheGeneration = 0;
+
+/** Invalidate the plugin tool status cache. Call after any plugin/tool mutation. */
+export function invalidatePluginToolStatusCache(): void {
+  statusCache.clear();
+  statusCacheGeneration++;
+}
+
+function cacheKey(plugin: Plugin): string {
+  return `${plugin.name}:${statusCacheGeneration}`;
+}
+
+function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
   const statuses: ToolInstallStatus[] = [];
   try {
     validatePluginMetadata(plugin);
@@ -115,6 +134,16 @@ export function getPluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
   }
 
   return statuses;
+}
+
+export function getPluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
+  const key = cacheKey(plugin);
+  const cached = statusCache.get(key);
+  if (cached) return cached;
+
+  const result = computePluginToolStatus(plugin);
+  statusCache.set(key, result);
+  return result;
 }
 
 export function togglePluginComponent(

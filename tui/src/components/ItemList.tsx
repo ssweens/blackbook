@@ -159,7 +159,7 @@ export interface ItemListProps {
   emptyMessage?: string;
 }
 
-export function ItemList({
+export const ItemList = React.memo(function ItemList({
   items,
   selectedIndex,
   maxHeight = 12,
@@ -218,7 +218,7 @@ export function ItemList({
       })}
     </Box>
   );
-}
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Row Rendering

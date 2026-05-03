@@ -53,83 +53,105 @@ const TAB_REFRESH_TTL_MS = 30000;
 
 export function App() {
   const { exit } = useApp();
-  const {
-    tab,
-    setTab,
-    marketplaces,
-    managedItems,
-    installedPlugins: legacyInstalledPlugins,
-    installedPluginsLoaded,
-    files: legacyFiles,
-    filesLoaded,
-    tools,
-    managedTools,
-    toolDetection,
-    toolDetectionPending,
-    toolActionInProgress,
-    toolActionOutput,
-    search,
-    setSearch,
-    selectedIndex,
-    setSelectedIndex,
-    loading,
-    error,
-    detailPlugin,
-    detailMarketplace,
-    setDetailPlugin,
-    setDetailMarketplace,
-    loadMarketplaces,
-    loadInstalledPlugins,
-    loadFiles,
-    refreshManagedTools,
-    refreshToolDetection,
-    installPlugin: doInstall,
-    uninstallPlugin: doUninstall,
-    updatePlugin: doUpdate,
-    updateMarketplace,
-    toggleMarketplaceEnabled,
-    removeMarketplace,
-    addMarketplace,
-    toggleToolEnabled,
-    updateToolConfigDir,
-    installToolAction,
-    updateToolAction,
-    uninstallToolAction,
-    cancelToolAction,
-    getSyncPreview,
-    syncTools,
-    notify,
-    notifications,
-    clearNotification,
-    // Diff view
-    diffTarget,
-    missingSummary,
-    openDiffForFile,
-    openMissingSummaryForFile,
-    openDiffFromSyncItem,
-    closeDiff,
-    closeMissingSummary,
-    pullbackFileInstance,
-    // Pi packages
-    piPackages: legacyPiPackages,
-    piPackagesLoaded,
-    piMarketplaces,
-    detailPiPackage,
-    setDetailPiPackage,
-    loadPiPackages,
-    refreshAll,
-    installPiPackage: doInstallPiPkg,
-    uninstallPiPackage: doUninstallPiPkg,
-    updatePiPackage: doUpdatePiPkg,
-    togglePiMarketplaceEnabled,
-    addPiMarketplace,
-    removePiMarketplace,
-    // Section navigation
-    currentSection,
-    setCurrentSection,
-    discoverSubView,
-    setDiscoverSubView,
-  } = useStore();
+
+  // ── Navigation ──
+  const tab = useStore((s) => s.tab);
+  const setTab = useStore((s) => s.setTab);
+
+  // ── Search / Selection ──
+  const search = useStore((s) => s.search);
+  const setSearch = useStore((s) => s.setSearch);
+  const selectedIndex = useStore((s) => s.selectedIndex);
+  const setSelectedIndex = useStore((s) => s.setSelectedIndex);
+
+  // ── Loading / Error ──
+  const loading = useStore((s) => s.loading);
+  const error = useStore((s) => s.error);
+
+  // ── Data: Marketplaces & Plugins ──
+  const marketplaces = useStore((s) => s.marketplaces);
+  const installedPlugins = useStore((s) => s.installedPlugins);
+  const installedPluginsLoaded = useStore((s) => s.installedPluginsLoaded);
+
+  // ── Data: Files ──
+  const files = useStore((s) => s.files);
+  const filesLoaded = useStore((s) => s.filesLoaded);
+
+  // ── Data: Tools ──
+  const tools = useStore((s) => s.tools);
+  const managedTools = useStore((s) => s.managedTools);
+  const toolDetection = useStore((s) => s.toolDetection);
+  const toolDetectionPending = useStore((s) => s.toolDetectionPending);
+  const toolActionInProgress = useStore((s) => s.toolActionInProgress);
+  const toolActionOutput = useStore((s) => s.toolActionOutput);
+
+  // ── Data: Pi Packages ──
+  const piPackages = useStore((s) => s.piPackages);
+  const piPackagesLoaded = useStore((s) => s.piPackagesLoaded);
+  const piMarketplaces = useStore((s) => s.piMarketplaces);
+
+  // ── Data: Managed Items (legacy bridge) ──
+  const managedItems = useStore((s) => s.managedItems);
+
+  // ── Detail State ──
+  const detailPlugin = useStore((s) => s.detailPlugin);
+  const setDetailPlugin = useStore((s) => s.setDetailPlugin);
+  const detailMarketplace = useStore((s) => s.detailMarketplace);
+  const setDetailMarketplace = useStore((s) => s.setDetailMarketplace);
+  const detailPiPackage = useStore((s) => s.detailPiPackage);
+  const setDetailPiPackage = useStore((s) => s.setDetailPiPackage);
+
+  // ── Diff View ──
+  const diffTarget = useStore((s) => s.diffTarget);
+  const missingSummary = useStore((s) => s.missingSummary);
+  const openDiffForFile = useStore((s) => s.openDiffForFile);
+  const openMissingSummaryForFile = useStore((s) => s.openMissingSummaryForFile);
+  const openDiffFromSyncItem = useStore((s) => s.openDiffFromSyncItem);
+  const closeDiff = useStore((s) => s.closeDiff);
+  const closeMissingSummary = useStore((s) => s.closeMissingSummary);
+  const pullbackFileInstance = useStore((s) => s.pullbackFileInstance);
+
+  // ── Section Navigation ──
+  const currentSection = useStore((s) => s.currentSection);
+  const setCurrentSection = useStore((s) => s.setCurrentSection);
+  const discoverSubView = useStore((s) => s.discoverSubView);
+  const setDiscoverSubView = useStore((s) => s.setDiscoverSubView);
+
+  // ── Notifications (used in input handler) ──
+  const notifications = useStore((s) => s.notifications);
+
+  // ── Actions (stable references — selectors here for explicitness) ──
+  const loadMarketplaces = useStore((s) => s.loadMarketplaces);
+  const loadInstalledPlugins = useStore((s) => s.loadInstalledPlugins);
+  const loadFiles = useStore((s) => s.loadFiles);
+  const refreshManagedTools = useStore((s) => s.refreshManagedTools);
+  const refreshToolDetection = useStore((s) => s.refreshToolDetection);
+  const doInstall = useStore((s) => s.installPlugin);
+  const doUninstall = useStore((s) => s.uninstallPlugin);
+  const doUpdate = useStore((s) => s.updatePlugin);
+  const updateMarketplace = useStore((s) => s.updateMarketplace);
+  const toggleMarketplaceEnabled = useStore((s) => s.toggleMarketplaceEnabled);
+  const removeMarketplace = useStore((s) => s.removeMarketplace);
+  const addMarketplace = useStore((s) => s.addMarketplace);
+  const toggleToolEnabled = useStore((s) => s.toggleToolEnabled);
+  const updateToolConfigDir = useStore((s) => s.updateToolConfigDir);
+  const installToolAction = useStore((s) => s.installToolAction);
+  const updateToolAction = useStore((s) => s.updateToolAction);
+  const uninstallToolAction = useStore((s) => s.uninstallToolAction);
+  const cancelToolAction = useStore((s) => s.cancelToolAction);
+  const getSyncPreview = useStore((s) => s.getSyncPreview);
+  const syncTools = useStore((s) => s.syncTools);
+  const notify = useStore((s) => s.notify);
+  const clearNotification = useStore((s) => s.clearNotification);
+  const loadPiPackages = useStore((s) => s.loadPiPackages);
+  const refreshAll = useStore((s) => s.refreshAll);
+  const doInstallPiPkg = useStore((s) => s.installPiPackage);
+  const doUninstallPiPkg = useStore((s) => s.uninstallPiPackage);
+  const doUpdatePiPkg = useStore((s) => s.updatePiPackage);
+  const doRepairPiPkg = useStore((s) => s.repairPiPackage);
+  const togglePiMarketplaceEnabled = useStore((s) => s.togglePiMarketplaceEnabled);
+  const addPiMarketplace = useStore((s) => s.addPiMarketplace);
+  const removePiMarketplace = useStore((s) => s.removePiMarketplace);
 
   const [actionIndex, setActionIndex] = useState(0);
   const [componentManagerMode, setComponentManagerMode] = useState(false);
@@ -212,29 +234,29 @@ export function App() {
     return `file:${item.file.name}`;
   };
 
-  const installedPlugins = useMemo(() => {
+  const effectiveInstalledPlugins = useMemo(() => {
     const fromManaged = managedItems
       .filter((item): item is ManagedItem & { _plugin: Plugin } => item.kind === "plugin" && !!item._plugin)
       .map((item) => item._plugin);
-    return fromManaged.length > 0 ? fromManaged : legacyInstalledPlugins;
-  }, [managedItems, legacyInstalledPlugins]);
+    return fromManaged.length > 0 ? fromManaged : installedPlugins;
+  }, [managedItems, installedPlugins]);
 
-  const files = useMemo(() => {
+  const effectiveFiles = useMemo(() => {
     const fromManaged = managedItems
       .filter((item): item is ManagedItem & { _file: FileStatus } =>
         (item.kind === "file" || item.kind === "config" || item.kind === "asset") && !!item._file)
       .map((item) => item._file);
-    return fromManaged.length > 0 ? fromManaged : legacyFiles;
-  }, [managedItems, legacyFiles]);
+    return fromManaged.length > 0 ? fromManaged : files;
+  }, [managedItems, files]);
 
-  const piPackages = useMemo(() => {
+  const effectivePiPackages = useMemo(() => {
     const fromManaged = managedItems
       .filter((item): item is ManagedItem & { _piPackage: PiPackage } => item.kind === "pi-package" && !!item._piPackage)
       .map((item) => item._piPackage);
-    return fromManaged.length > 0 ? fromManaged : legacyPiPackages;
-  }, [managedItems, legacyPiPackages]);
+    return fromManaged.length > 0 ? fromManaged : piPackages;
+  }, [managedItems, piPackages]);
 
-  const toFileSyncItem = (file: typeof files[number]): SyncPreviewItem => {
+  const toFileSyncItem = (file: typeof effectiveFiles[number]): SyncPreviewItem => {
     const missingInstances = file.instances
       .filter((i) => i.status === "missing")
       .map((i) => i.instanceName);
@@ -398,11 +420,11 @@ export function App() {
     }
     // Only react to input data changes — NOT syncPreview/syncArmed (written here).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, marketplaces, installedPlugins, managedTools, toolDetection]);
+  }, [tab, marketplaces, effectiveInstalledPlugins, managedTools, toolDetection]);
 
   useEffect(() => {
     if (!detailFile) return;
-    const refreshed = files.find((f) => f.name === detailFile.name);
+    const refreshed = effectiveFiles.find((f) => f.name === detailFile.name);
     if (refreshed && refreshed !== detailFile) {
       setDetailFile(refreshed);
     }
@@ -410,12 +432,12 @@ export function App() {
 
   // Compute drift for all installed plugins (for list badges + detail view)
   useEffect(() => {
-    if (installedPlugins.length === 0) return;
+    if (effectiveInstalledPlugins.length === 0) return;
     let cancelled = false;
     void (async () => {
       const map: Record<string, PluginDrift> = {};
       await Promise.all(
-        installedPlugins.map(async (p) => {
+        effectiveInstalledPlugins.map(async (p) => {
           const drift = await computeItemDrift(pluginToManagedItem(p));
           if (!cancelled && drift.kind === "plugin") map[p.name] = drift.plugin;
         })
@@ -423,7 +445,7 @@ export function App() {
       if (!cancelled) setPluginDriftMap(map);
     })();
     return () => { cancelled = true; };
-  }, [installedPlugins]);
+  }, [effectiveInstalledPlugins]);
 
   useEffect(() => {
     if (!syncArmed) return;
@@ -448,7 +470,7 @@ export function App() {
 
   const filteredPlugins = useMemo(() => {
     const lowerSearch = search.toLowerCase();
-    const base = tab === "installed" ? installedPlugins : allPlugins;
+    const base = tab === "installed" ? effectiveInstalledPlugins : allPlugins;
     let filtered = base;
     if (search) {
       filtered = base.filter(
@@ -473,7 +495,7 @@ export function App() {
     });
     
     return sorted;
-  }, [tab, allPlugins, installedPlugins, search, sortBy, sortDir]);
+  }, [tab, allPlugins, effectiveInstalledPlugins, search, sortBy, sortDir]);
 
   const marketplaceBrowsePlugins = useMemo(() => {
     if (!marketplaceBrowseContext) return filteredPlugins;
@@ -487,7 +509,7 @@ export function App() {
 
   const filteredPiPackages = useMemo(() => {
     const lowerSearch = search.toLowerCase();
-    const base = tab === "installed" ? piPackages.filter((p) => p.installed) : piPackages;
+    const base = tab === "installed" ? effectivePiPackages.filter((p) => p.installed) : effectivePiPackages;
     let filtered = base;
     if (search) {
       filtered = base.filter(
@@ -544,7 +566,7 @@ export function App() {
     });
 
     return sorted;
-  }, [tab, piPackages, search, sortBy, sortDir]);
+  }, [tab, effectivePiPackages, search, sortBy, sortDir]);
 
   const maxLength = (values: number[], fallback: number) => {
     if (values.length === 0) return fallback;
@@ -575,8 +597,8 @@ export function App() {
 
     const filtered =
       q.length === 0
-        ? files
-        : files.filter((file) => {
+        ? effectiveFiles
+        : effectiveFiles.filter((file) => {
             const toolScope = file.tools?.join(", ") ?? "";
             return (
               file.name.toLowerCase().includes(q) ||
@@ -592,12 +614,12 @@ export function App() {
     });
 
     return sorted;
-  }, [tab, files, search, sortBy, sortDir]);
+  }, [tab, effectiveFiles, search, sortBy, sortDir]);
 
-  const fileTotalCount = files.length;
+  const fileTotalCount = effectiveFiles.length;
   const installedFileCount = useMemo(
-    () => files.filter(isInstalledFile).length,
-    [files]
+    () => effectiveFiles.filter(isInstalledFile).length,
+    [effectiveFiles]
   );
 
   // ManagedItem conversions for generic ItemList
@@ -1344,7 +1366,7 @@ export function App() {
       ? `✓ Installed ${plugin.name} to ${toolStatus.name} (${count})`
       : `✗ Failed to install ${plugin.name} to ${toolStatus.name}: ${result.errors.join("; ") || "No components linked"}`,
       count > 0 ? "success" : "error");
-    await useStore.getState().refreshAll();
+    await useStore.getState().refreshAll({ silent: true });
   };
 
   // Uninstall plugin from specific tool instance (for unified dispatch)
@@ -1355,7 +1377,7 @@ export function App() {
     await withSpinner(`Uninstalling ${plugin.name} from ${name}...`,
       () => Promise.resolve(uninstallPluginFromInstance(plugin, toolId, instanceId)), n, cn);
     n(`✓ Uninstalled ${plugin.name} from ${name}`, "success");
-    await useStore.getState().refreshAll();
+    await useStore.getState().refreshAll({ silent: true });
   };
 
   const pullbackPluginInstanceCb = async (plugin: Plugin, instance: DiffInstanceRef) => {
@@ -1422,7 +1444,7 @@ export function App() {
       n(`⚠ No changed components to pull from ${tool.name}`, "warning");
     }
 
-    await useStore.getState().refreshAll();
+    await useStore.getState().refreshAll({ silent: true });
     return copied > 0;
   };
 
@@ -1450,6 +1472,7 @@ export function App() {
       installPiPackage: doInstallPiPkg,
       uninstallPiPackage: doUninstallPiPkg,
       updatePiPackage: doUpdatePiPkg,
+      repairPiPackage: doRepairPiPkg,
       refreshDetailPiPackage,
       buildPluginDiffTarget: buildPluginDiffTargetCb,
     });
@@ -1545,7 +1568,7 @@ export function App() {
       : action === "update" ? await updateToolAction(tool.toolId, { migrate })
       : await uninstallToolAction(tool.toolId);
     setToolModal((s) => ({ ...s, running: false, done: true, success }));
-    await refreshAll();
+    await refreshAll({ silent: true });
   };
 
   const handleSourceWizardComplete = async (source: string) => {
@@ -1554,7 +1577,7 @@ export function App() {
       const result = await setupSourceRepository(source);
       clearNotification(loadingId);
       setShowSourceSetupWizard(false);
-      await refreshAll();
+      await refreshAll({ silent: true });
 
       if (result.importedConfig) {
         notify(
@@ -1609,7 +1632,7 @@ export function App() {
 
   return (
     <Box flexDirection="column" padding={1}>
-      <TabBar activeTab={tab} onTabChange={setTab} />
+      <TabBar />
 
       <Box marginBottom={1}>
         {showGlobalLoadingIndicator ? (
@@ -1899,18 +1922,13 @@ export function App() {
         <SyncPreview item={syncPreview[selectedIndex] ?? null} />
       )}
 
-      <Notifications notifications={notifications} onClear={clearNotification} />
+      <Notifications />
       <HintBar
         tab={tab}
         hasDetail={isOverlayOpen}
         toolsHint={toolsHint}
       />
-      <StatusBar
-        loading={loading}
-        message={statusMessage}
-        error={error}
-        enabledTools={enabledToolNames}
-      />
+      <StatusBar />
     </Box>
   );
 }

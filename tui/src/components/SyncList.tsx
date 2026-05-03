@@ -10,7 +10,7 @@ interface SyncListProps {
   maxHeight?: number;
 }
 
-export function SyncList({
+export const SyncList = React.memo(function SyncList({
   items,
   selectedIndex,
   selectedKeys,
@@ -106,4 +106,4 @@ export function SyncList({
       )}
     </Box>
   );
-}
+});

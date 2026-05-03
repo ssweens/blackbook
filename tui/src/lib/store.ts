@@ -19,8 +19,8 @@ import type {
   ManagedToolRow,
   ToolDetectionResult,
 } from "./types.js";
-import { fetchMarketplace, loadAllPiMarketplaces, getAllPiPackages, loadPiSettings, isPackageInstalled, fetchNpmPackageDetails, getGlobalNpmPiPackageVersions } from "./marketplace.js";
-import { installPiPackage, removePiPackage, updatePiPackage } from "./pi-install.js";
+import { fetchMarketplace, loadAllPiMarketplaces, getAllPiPackages, loadPiSettings, isPackageInstalled, fetchNpmPackageDetails, getGlobalPiPackageInstallInfo } from "./marketplace.js";
+import { installPiPackage, removePiPackage, updatePiPackage, repairPiPackageManager } from "./pi-install.js";
 import {
   parseMarketplaces,
   addMarketplace as addMarketplaceToConfig,
@@ -65,6 +65,7 @@ import {
   syncPluginInstances,
   manifestPath,
 } from "./install.js";
+import { invalidatePluginToolStatusCache } from "./plugin-status.js";
 import { filesToManagedItems, piPackagesToManagedItems, pluginsToManagedItems } from "./managed-item.js";
 import type { ManagedItem } from "./managed-item.js";
 
@@ -73,8 +74,8 @@ interface Actions {
   setSearch: (search: string) => void;
   setSelectedIndex: (index: number) => void;
   loadMarketplaces: () => Promise<void>;
-  loadInstalledPlugins: () => Promise<void>;
-  loadFiles: () => Promise<FileStatus[]>;
+  loadInstalledPlugins: (options?: { silent?: boolean }) => Promise<void>;
+  loadFiles: (options?: { silent?: boolean }) => Promise<FileStatus[]>;
   loadTools: () => void;
   refreshManagedTools: () => void;
   refreshToolDetection: () => Promise<void>;
@@ -82,7 +83,7 @@ interface Actions {
   updateToolAction: (toolId: string, options?: { migrate?: boolean }) => Promise<boolean>;
   uninstallToolAction: (toolId: string) => Promise<boolean>;
   cancelToolAction: () => void;
-  refreshAll: () => Promise<void>;
+  refreshAll: (options?: { silent?: boolean }) => Promise<void>;
   installPlugin: (plugin: Plugin) => Promise<boolean>;
   uninstallPlugin: (plugin: Plugin) => Promise<boolean>;
   updatePlugin: (plugin: Plugin) => Promise<boolean>;
@@ -99,10 +100,11 @@ interface Actions {
   notify: (message: string, type?: Notification["type"], options?: { spinner?: boolean }) => string;
   clearNotification: (id: string) => void;
   // Pi package actions
-  loadPiPackages: () => Promise<void>;
+  loadPiPackages: (options?: { silent?: boolean }) => Promise<void>;
   installPiPackage: (pkg: PiPackage) => Promise<boolean>;
   uninstallPiPackage: (pkg: PiPackage) => Promise<boolean>;
   updatePiPackage: (pkg: PiPackage) => Promise<boolean>;
+  repairPiPackage: (pkg: PiPackage) => Promise<boolean>;
   setDetailPiPackage: (pkg: PiPackage | null) => Promise<void>;
   togglePiMarketplaceEnabled: (name: string) => Promise<void>;
   addPiMarketplace: (name: string, source: string) => Promise<void>;
@@ -424,42 +426,34 @@ export const useStore = create<Store>((set, get) => ({
 
     set({ toolDetectionPending: initialPending });
 
+    const nextDetection: Record<string, ToolDetectionResult> = {};
+    const nextPending: Record<string, boolean> = {};
+
     await Promise.all(
       entries.map(async (entry) => {
         try {
           const result = await detectTool(entry, packageManager);
-          set((state) => ({
-            toolDetection: {
-              ...state.toolDetection,
-              [entry.toolId]: result,
-            },
-            toolDetectionPending: {
-              ...state.toolDetectionPending,
-              [entry.toolId]: false,
-            },
-          }));
+          nextDetection[entry.toolId] = result;
+          nextPending[entry.toolId] = false;
         } catch (error) {
-          set((state) => ({
-            toolDetection: {
-              ...state.toolDetection,
-              [entry.toolId]: {
-                toolId: entry.toolId,
-                installed: false,
-                binaryPath: null,
-                installedVersion: null,
-                latestVersion: null,
-                hasUpdate: false,
-                error: error instanceof Error ? error.message : String(error),
-              },
-            },
-            toolDetectionPending: {
-              ...state.toolDetectionPending,
-              [entry.toolId]: false,
-            },
-          }));
+          nextDetection[entry.toolId] = {
+            toolId: entry.toolId,
+            installed: false,
+            binaryPath: null,
+            installedVersion: null,
+            latestVersion: null,
+            hasUpdate: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+          nextPending[entry.toolId] = false;
         }
       })
     );
+
+    set((state) => ({
+      toolDetection: { ...state.toolDetection, ...nextDetection },
+      toolDetectionPending: { ...state.toolDetectionPending, ...nextPending },
+    }));
   },
 
   installToolAction: async (toolId, options) => {
@@ -651,8 +645,9 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
-  loadPiPackages: async () => {
-    set({ piPackagesLoaded: false });
+  loadPiPackages: async (options) => {
+    const silent = options?.silent === true;
+    if (!silent) set({ piPackagesLoaded: false });
 
     // Load Pi packages only when Pi is enabled in config or detected as installed.
     const tools = get().tools;
@@ -671,12 +666,13 @@ export const useStore = create<Store>((set, get) => ({
 
     try {
       const marketplaces = await loadAllPiMarketplaces();
-      let packages = getAllPiPackages(marketplaces);
+      const preferredManager = getPackageManager();
+      let packages: PiPackage[] = getAllPiPackages(marketplaces).map((pkg) => ({ ...pkg, preferredManager }));
 
       // Add installed npm packages that aren't in any marketplace
       const settings = loadPiSettings();
       const existingSources = new Set(packages.map((p) => p.source.toLowerCase()));
-      const installedVersions = getGlobalNpmPiPackageVersions();
+      const installInfo = getGlobalPiPackageInstallInfo();
 
       for (const source of settings.packages) {
         if (existingSources.has(source.toLowerCase())) continue;
@@ -687,7 +683,8 @@ export const useStore = create<Store>((set, get) => ({
         const details = await fetchNpmPackageDetails(pkgName);
         if (!details) continue;
 
-        const installedVersion = installedVersions.get(pkgName) ?? undefined;
+        const detected = installInfo.get(pkgName);
+        const installedVersion = detected?.version ?? undefined;
         const latestVersion = details.version ?? "0.0.0";
         const pkg: PiPackage = {
           name: details.name ?? pkgName,
@@ -699,6 +696,10 @@ export const useStore = create<Store>((set, get) => ({
           installed: true,
           installedVersion,
           hasUpdate: Boolean(installedVersion && installedVersion !== latestVersion),
+          installedVia: detected?.via,
+          installedViaManagers: detected?.viaManagers,
+          managerMismatch: Boolean(detected?.managerMismatch),
+          preferredManager,
           extensions: details.extensions ?? [],
           skills: details.skills ?? [],
           prompts: details.prompts ?? [],
@@ -734,7 +735,7 @@ export const useStore = create<Store>((set, get) => ({
     const { notify, clearNotification } = get();
     try {
       const result = await withSpinner(`Installing ${pkg.name}...`, () => installPiPackage(pkg), notify, clearNotification);
-      if (result.success) { notify(`Installed ${pkg.name}`, "success"); await get().loadPiPackages(); return true; }
+      if (result.success) { notify(`Installed ${pkg.name}`, "success"); await get().loadPiPackages({ silent: true }); return true; }
       notify(`Failed to install ${pkg.name}: ${result.error}`, "error");
     } catch (error) { notify(`Error installing ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error"); }
     return false;
@@ -744,7 +745,7 @@ export const useStore = create<Store>((set, get) => ({
     const { notify, clearNotification } = get();
     try {
       const result = await withSpinner(`Uninstalling ${pkg.name}...`, () => removePiPackage(pkg), notify, clearNotification);
-      if (result.success) { notify(`Uninstalled ${pkg.name}`, "success"); await get().loadPiPackages(); return true; }
+      if (result.success) { notify(`Uninstalled ${pkg.name}`, "success"); await get().loadPiPackages({ silent: true }); return true; }
       notify(`Failed to uninstall ${pkg.name}: ${result.error}`, "error");
     } catch (error) { notify(`Error uninstalling ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error"); }
     return false;
@@ -753,11 +754,93 @@ export const useStore = create<Store>((set, get) => ({
   updatePiPackage: async (pkg) => {
     const { notify, clearNotification } = get();
     try {
+      const beforeInstalledVersion = pkg.installedVersion;
       const result = await withSpinner(`Updating ${pkg.name}...`, () => updatePiPackage(pkg), notify, clearNotification);
-      if (result.success) { notify(`Updated ${pkg.name}`, "success"); await get().loadPiPackages(); return true; }
-      notify(`Failed to update ${pkg.name}: ${result.error}`, "error");
+      if (!result.success) {
+        notify(`Failed to update ${pkg.name}: ${result.error}`, "error");
+        return false;
+      }
+
+      await get().loadPiPackages({ silent: true });
+
+      const refreshed = get().piPackages.find((p) =>
+        p.source === pkg.source ||
+        (p.name === pkg.name && p.marketplace === pkg.marketplace)
+      );
+
+      if (!refreshed) {
+        notify(`Update command completed for ${pkg.name}, but refreshed package status could not be found.`, "warning");
+        return false;
+      }
+
+      // For npm packages, verify effective update after refresh instead of trusting exit code.
+      if (refreshed.sourceType === "npm") {
+        const versionChanged = Boolean(beforeInstalledVersion && refreshed.installedVersion && refreshed.installedVersion !== beforeInstalledVersion);
+        const updateCleared = refreshed.hasUpdate === false;
+        if (!versionChanged && !updateCleared) {
+          notify(
+            `Update command completed for ${pkg.name}, but it still appears out of date (installed ${refreshed.installedVersion || "unknown"}, latest ${refreshed.version || "unknown"}).`,
+            "warning"
+          );
+          return false;
+        }
+      }
+
+      const from = beforeInstalledVersion || "unknown";
+      const to = refreshed.installedVersion || refreshed.version || "unknown";
+      notify(`Updated ${pkg.name} (${from} → ${to})`, "success");
+      return true;
     } catch (error) { notify(`Error updating ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error"); }
     return false;
+  },
+
+  repairPiPackage: async (pkg) => {
+    const { notify, clearNotification } = get();
+    const preferred = getPackageManager();
+    const from = pkg.installedVia;
+
+    if (pkg.sourceType !== "npm") {
+      notify(`Repair is only supported for npm packages (${pkg.name})`, "warning");
+      return false;
+    }
+    if (!from) {
+      notify(`Couldn't determine current install manager for ${pkg.name}`, "warning");
+      return false;
+    }
+
+    try {
+      const result = await withSpinner(
+        `Repairing ${pkg.name} (${from} → ${preferred})...`,
+        () => repairPiPackageManager(pkg, { from, to: preferred }),
+        notify,
+        clearNotification,
+      );
+      if (!result.success) {
+        notify(`Failed to repair ${pkg.name}: ${result.error}`, "error");
+        return false;
+      }
+
+      await get().loadPiPackages({ silent: true });
+      const refreshed = get().piPackages.find((p) =>
+        p.source === pkg.source ||
+        (p.name === pkg.name && p.marketplace === pkg.marketplace)
+      );
+      if (!refreshed) {
+        notify(`Repaired ${pkg.name}, but refreshed package status could not be found.`, "warning");
+        return false;
+      }
+
+      if (refreshed.managerMismatch) {
+        notify(`Repair completed for ${pkg.name}, but install manager mismatch remains.`, "warning");
+        return false;
+      }
+
+      notify(`Repaired ${pkg.name} (${from} → ${preferred})`, "success");
+      return true;
+    } catch (error) {
+      notify(`Error repairing ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
+      return false;
+    }
   },
 
   togglePiMarketplaceEnabled: async (name) => {
@@ -791,6 +874,7 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   loadMarketplaces: async () => {
+    invalidatePluginToolStatusCache();
     set((state) => ({
       loading:
         state.marketplaces.length === 0 &&
@@ -800,9 +884,9 @@ export const useStore = create<Store>((set, get) => ({
 
     try {
       const marketplaces = parseMarketplaces();
-      const { plugins: installedPlugins } = getAllInstalledPlugins();
       const tools = getToolInstances();
 
+      // STEP 1: Fetch all marketplaces FIRST (get plugin metadata with skill names)
       const enrichedMarketplaces: Marketplace[] = await Promise.all(
         marketplaces.map(async (m) => {
           // Skip fetching plugins for disabled marketplaces
@@ -816,28 +900,39 @@ export const useStore = create<Store>((set, get) => ({
           }
           
           const plugins = await fetchMarketplace(m);
-          const installedCount = plugins.filter((p) =>
-            installedPlugins.some((ip) => ip.name === p.name)
-          ).length;
 
           return {
             ...m,
             plugins: plugins.map((p) => ({
               ...p,
-              ...getInstallStatus(p, installedPlugins.some((ip) => ip.name === p.name)),
+              installed: false, // Will be updated after scanning
             })),
             availableCount: plugins.length,
-            installedCount,
+            installedCount: 0, // Will be updated after scanning
             updatedAt: new Date(),
           };
         })
       );
 
-      // Replace scanned plugin with marketplace plugin entirely when available
-      // Scanned plugins only tell us "something is installed" - for all metadata
-      // (marketplace, description), use marketplace plugin.
-      // But use scanned skills/commands/agents to show what's actually installed on disk.
+      // STEP 2: Extract all marketplace plugins for skill matching
       const allMarketplacePlugins = enrichedMarketplaces.flatMap((m) => m.plugins);
+
+      // STEP 3: Scan installed skills, passing marketplace data for grouping
+      const { plugins: installedPlugins } = getAllInstalledPlugins(allMarketplacePlugins);
+
+      // STEP 4: Update marketplace installed counts and status
+      const updatedMarketplaces = enrichedMarketplaces.map((m) => ({
+        ...m,
+        plugins: m.plugins.map((p) => ({
+          ...p,
+          ...getInstallStatus(p, installedPlugins.some((ip) => ip.name === p.name)),
+        })),
+        installedCount: m.plugins.filter((p) =>
+          installedPlugins.some((ip) => ip.name === p.name)
+        ).length,
+      }));
+
+      // STEP 5: Merge marketplace metadata with scanned plugins
       const installedWithStatus = installedPlugins.map((scannedPlugin) => {
         const marketplacePlugin = allMarketplacePlugins.find((mp) => mp.name === scannedPlugin.name);
         if (marketplacePlugin) {
@@ -864,7 +959,7 @@ export const useStore = create<Store>((set, get) => ({
 
       const state = get();
       set({
-        marketplaces: enrichedMarketplaces,
+        marketplaces: updatedMarketplaces,
         installedPlugins: installedWithStatus,
         installedPluginsLoaded: true,
         tools,
@@ -877,8 +972,10 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
-  loadInstalledPlugins: async () => {
-    set({ installedPluginsLoaded: false });
+  loadInstalledPlugins: async (options) => {
+    invalidatePluginToolStatusCache();
+    const silent = options?.silent === true;
+    if (!silent) set({ installedPluginsLoaded: false });
 
     const { plugins: installed } = getAllInstalledPlugins();
     const marketplaces = get().marketplaces.map((m) => ({
@@ -927,12 +1024,13 @@ export const useStore = create<Store>((set, get) => ({
     });
   },
 
-  loadFiles: async () => {
-    set({ filesLoaded: false });
+  loadFiles: async (options) => {
+    const silent = options?.silent === true;
+    if (!silent) set({ filesLoaded: false });
 
     // Only load files when YAML config exists
     const configPath = getYamlConfigPath();
-    if (!configPath.endsWith(".yaml")) {
+    if (!configPath || !configPath.endsWith(".yaml")) {
       const state = get();
       set({
         files: [],
@@ -1210,16 +1308,19 @@ export const useStore = create<Store>((set, get) => ({
     return files;
   },
 
-  refreshAll: async () => {
+  refreshAll: async (options) => {
+    invalidatePluginToolStatusCache();
+    const silent = options?.silent === true;
     clearSourceStatusCache();
     await get().loadMarketplaces();
     await get().refreshToolDetection();
-    await get().loadPiPackages();
-    await get().loadFiles();
+    await get().loadPiPackages({ silent });
+    await get().loadFiles({ silent });
     get().refreshManagedTools();
   },
 
   installPlugin: async (plugin) => {
+    invalidatePluginToolStatusCache();
     const { notify, clearNotification } = get();
     const marketplace = get().marketplaces.find((m) => m.name === plugin.marketplace);
     if (!marketplace) { notify(`Marketplace not found for ${plugin.name}`, "error"); return false; }
@@ -1227,7 +1328,7 @@ export const useStore = create<Store>((set, get) => ({
       () => installPlugin(plugin, marketplace.url), notify, clearNotification);
     
     if (result.success) {
-      await get().refreshAll();
+      await get().refreshAll({ silent: true });
       
       const parts: string[] = [];
       const toolList = get().tools;
@@ -1256,16 +1357,18 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   uninstallPlugin: async (plugin) => {
+    invalidatePluginToolStatusCache();
     const { notify, clearNotification } = get();
     const enabledInstances = getEnabledToolInstances();
     if (enabledInstances.length === 0) { notify("No tools enabled in config.", "error"); return false; }
     const success = await withSpinner(`Uninstalling ${plugin.name}...`, () => uninstallPlugin(plugin), notify, clearNotification);
-    await get().refreshAll();
+    await get().refreshAll({ silent: true });
     notify(success ? `✓ Uninstalled ${plugin.name}` : `✓ Removed ${plugin.name} from other tools`, "success");
     return success;
   },
 
   updatePlugin: async (plugin) => {
+    invalidatePluginToolStatusCache();
     const { notify } = get();
     const marketplace = get().marketplaces.find(
       (m) => m.name === plugin.marketplace
@@ -1279,7 +1382,7 @@ export const useStore = create<Store>((set, get) => ({
     const result = await updatePlugin(plugin, marketplace.url);
     
     if (result.success) {
-      await get().refreshAll();
+      await get().refreshAll({ silent: true });
       
       const parts: string[] = [];
       const toolList = get().tools;
@@ -1308,6 +1411,7 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   toggleToolEnabled: async (toolId, instanceId) => {
+    invalidatePluginToolStatusCache();
     const { notify } = get();
     const configuredFromState = get().tools.find((t) => t.toolId === toolId && t.instanceId === instanceId);
     const configuredTool = configuredFromState || (getToolInstances() || []).find((t) => t.toolId === toolId && t.instanceId === instanceId);
@@ -1327,11 +1431,12 @@ export const useStore = create<Store>((set, get) => ({
       configDir: currentConfigDir,
       enabled: !currentEnabled,
     });
-    await get().refreshAll();
+    await get().refreshAll({ silent: true });
     notify(`${displayName} ${currentEnabled ? "disabled" : "enabled"}`, "success");
   },
 
   updateToolConfigDir: async (toolId, instanceId, configDir) => {
+    invalidatePluginToolStatusCache();
     const { notify } = get();
     const trimmed = configDir.trim();
     if (!trimmed) {
@@ -1348,7 +1453,7 @@ export const useStore = create<Store>((set, get) => ({
       configDir: trimmed,
       enabled: configuredTool?.enabled ?? managedTool?.enabled,
     });
-    await get().refreshAll();
+    await get().refreshAll({ silent: true });
     notify(`Updated ${(configuredTool?.name || managedTool?.displayName) ?? `${toolId}:${instanceId}`} config_dir`, "success");
   },
 
@@ -1373,6 +1478,7 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   syncTools: async (items) => {
+    invalidatePluginToolStatusCache();
     const { notify } = get();
     if (items.length === 0) {
       notify("All enabled instances are in sync.", "success");
@@ -1403,9 +1509,17 @@ export const useStore = create<Store>((set, get) => ({
           continue;
         }
 
-        // Only forward-sync instances (skip conflicts and pullback targets)
+        // Only forward-sync instances (skip conflicts and pullback targets unless forceBothChanged)
+        const forceBothChanged = item.forceBothChanged ?? false;
         const steps: OrchestratorStep[] = item.file.instances
-          .filter((i) => (i.status === "missing" || i.status === "drifted") && i.driftKind !== "both-changed" && i.driftKind !== "target-changed")
+          .filter((i) => {
+            if (i.status !== "missing" && i.status !== "drifted") return false;
+            // Allow both-changed instances when forceBothChanged is true
+            if (i.driftKind === "both-changed" && forceBothChanged) return true;
+            // Skip both-changed and target-changed by default (conflicts and pullback targets)
+            if (i.driftKind === "both-changed" || i.driftKind === "target-changed") return false;
+            return true;
+          })
           .map((i) => {
             const sourcePath = i.sourcePath;
             const targetPath = i.targetPath;
@@ -1441,8 +1555,16 @@ export const useStore = create<Store>((set, get) => ({
       notify(`⚠ Sync completed with errors: ${errors.slice(0, 3).join("; ")}`, "error");
     }
 
-    // Refresh state in the background — don't block the success notification
-    void get().refreshAll();
+    // Refresh only what's needed - files for file syncs, plugins for plugin syncs
+    // Don't do a full refreshAll which is slow
+    const hadFiles = items.some((item) => item.kind === "file");
+    const hadPlugins = items.some((item) => item.kind === "plugin");
+    if (hadFiles) {
+      void get().loadFiles({ silent: true });
+    }
+    if (hadPlugins) {
+      void get().loadInstalledPlugins({ silent: true });
+    }
   },
 
   addMarketplace: (name, url) => {
@@ -1717,16 +1839,16 @@ export const useStore = create<Store>((set, get) => ({
       if (hadError) {
         const msg = result.steps.find((s) => s.apply?.error)?.apply?.error;
         notify(`Pull failed: ${msg || "unknown error"}`, "error");
-        void get().refreshAll();
+        void get().refreshAll({ silent: true });
         return false;
       }
 
       notify(`✓ Pulled ${file.name} from ${picked.instanceName}`, "success");
-      void get().refreshAll();
+      void get().refreshAll({ silent: true });
       return true;
     } catch (error) {
       notify(`Pull failed: ${error instanceof Error ? error.message : String(error)}`, "error");
-      void get().refreshAll();
+      void get().refreshAll({ silent: true });
       return false;
     }
   },

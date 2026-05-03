@@ -28,6 +28,7 @@ import {
   getPluginToolStatus,
   syncPluginInstances,
 } from "./install.js";
+import { invalidatePluginToolStatusCache } from "./plugin-status.js";
 import { getCacheDir, getToolInstances, updateToolInstanceConfig, TOOL_IDS } from "./config.js";
 import type { Plugin, ToolInstance } from "./types.js";
 
@@ -494,6 +495,7 @@ describe("backup and rollback behavior", () => {
 
 describe("plugin completeness across instances", () => {
   beforeEach(() => {
+    invalidatePluginToolStatusCache();
     cleanupAllTestArtifacts();
   });
 

@@ -17,7 +17,7 @@ function formatDate(date?: Date): string {
   });
 }
 
-export function MarketplaceList({ rows, selectedIndex, maxHeight = 22 }: MarketplaceListProps) {
+export const MarketplaceList = React.memo(function MarketplaceList({ rows, selectedIndex, maxHeight = 22 }: MarketplaceListProps) {
   const { visibleRows, startIndex, hasMore, hasPrev } = useMemo(() => {
     if (rows.length <= maxHeight) {
       return { visibleRows: rows, startIndex: 0, hasMore: false, hasPrev: false };
@@ -153,4 +153,4 @@ export function MarketplaceList({ rows, selectedIndex, maxHeight = 22 }: Marketp
       )}
     </Box>
   );
-}
+});

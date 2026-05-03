@@ -1,34 +1,32 @@
 import React, { useEffect } from "react";
 import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
-import type { Notification } from "../lib/types.js";
+import { useStore } from "../lib/store.js";
 
-interface NotificationsProps {
-  notifications: Notification[];
-  onClear: (id: string) => void;
-}
-
-const COLORS: Record<Notification["type"], string> = {
+const COLORS: Record<import("../lib/types.js").Notification["type"], string> = {
   info: "cyan",
   success: "green",
   warning: "yellow",
   error: "red",
 };
 
-const STICKY_TYPES: Set<Notification["type"]> = new Set(["error", "warning"]);
+const STICKY_TYPES: Set<import("../lib/types.js").Notification["type"]> = new Set(["error", "warning"]);
 
-export function Notifications({ notifications, onClear }: NotificationsProps) {
+export function Notifications() {
+  const notifications = useStore((s) => s.notifications);
+  const clearNotification = useStore((s) => s.clearNotification);
+
   useEffect(() => {
     const timers = notifications
       .filter((n) => !STICKY_TYPES.has(n.type) && !n.spinner)
       .map((n) => {
         const age = Date.now() - n.timestamp;
         const remaining = Math.max(0, 4000 - age);
-        return setTimeout(() => onClear(n.id), remaining);
+        return setTimeout(() => clearNotification(n.id), remaining);
       });
 
     return () => timers.forEach(clearTimeout);
-  }, [notifications, onClear]);
+  }, [notifications, clearNotification]);
 
   if (notifications.length === 0) return null;
 
