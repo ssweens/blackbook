@@ -64,12 +64,18 @@
 - [x] Produce `docs/architecture/migration-plan.md`
 - [ ] User review
 
-### Phase 4 — Engine Rebuild (pending)
-- [ ] Playbook model loader/writer (`tui/src/lib/playbook/`)
-- [ ] Per-tool adapters with uniform contract (`tui/src/lib/adapters/<tool>/`)
-- [ ] Bidirectional sync engine (`tui/src/lib/sync/`)
-- [ ] Confirmation-gated mutation paths
-- [ ] Adapter conformance test suite
+### Phase 4 — Engine Rebuild (complete on this branch, pending review)
+- [x] 4.1 Playbook model: schema, loader, writer, validator (`tui/src/lib/playbook/`)
+- [x] 4.2 Adapter contract + shared utilities (`tui/src/lib/adapters/`)
+- [x] 4.3 Pi adapter (code-package paradigm + pi-mcp-adapter)
+- [x] 4.4a Claude adapter (artifact-bundle + native MCP + AGENTS.md/CLAUDE.md)
+- [x] 4.4b Codex/OpenCode/Amp adapters + cross-adapter conformance suite
+- [x] 4.5 Sync engine (`tui/src/lib/sync/`)
+- [x] 4.6 `blackbook init` cold-start (`tui/src/lib/migration/`)
+- [x] Confirmation-gated mutation paths (hard-locked)
+- [x] Adapter conformance test suite (all 5 adapters pass identical baseline)
+- [ ] Bundle install/update/uninstall wiring (engine TODO; throws today)
+- [ ] CLI commands (`blackbook init`, `blackbook apply` plumbing) — Phase 5
 
 ### Phase 5 — UI Rebuild (pending)
 - [ ] 4-tab structure: Dashboard, Playbook, Sources, Settings
