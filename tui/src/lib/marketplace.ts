@@ -5,10 +5,10 @@ import { join, dirname, basename, resolve } from "path";
 import { homedir } from "os";
 import { createHash } from "crypto";
 import { fileURLToPath } from "url";
-import { getCacheDir, getPiMarketplaces, getDisabledPiMarketplaces } from "./config.js";
+import { getCacheDir, getPiMarketplaces, getDisabledPiMarketplaces, getPackageManager } from "./config.js";
 import { getGitHubToken, isGitHubHost } from "./github.js";
 import { expandTilde, scanPluginContents } from "./path-utils.js";
-import type { Marketplace, Plugin, PiPackage, PiMarketplace, PiSettings, PiPackageSourceType } from "./types.js";
+import type { Marketplace, Plugin, PiPackage, PiMarketplace, PiSettings, PiPackageSourceType, PackageManager } from "./types.js";
 
 export const MARKETPLACE_CACHE_TTL_SECONDS = 600;
 const execFileAsync = promisify(execFile);
@@ -59,7 +59,7 @@ function parseGithubRepoFromUrl(url: string): [string, string] | null {
   );
   if (rawMatch) return [rawMatch[1], rawMatch[2]];
 
-  const gitMatch = url.match(/github\.com\/([^/]+\/[^/.]+)(?:\.git)?/);
+  const gitMatch = url.match(/github\.com\/([^/]+\/[^/]+?)(?:\.git)?$/);
   if (gitMatch) return [gitMatch[1], "main"];
 
   return null;
@@ -71,12 +71,92 @@ interface GitHubTreeItem {
   contentType: "file" | "directory";
 }
 
-interface GitHubTreeResponse {
-  payload?: {
-    tree?: {
-      items?: GitHubTreeItem[];
+interface GitHubContentsItem {
+  name: string;
+  path: string;
+  type: "file" | "dir" | "symlink" | "submodule";
+}
+
+// ── GitHub API Throttle ────────────────────────────────────────────────────
+// GitHub's API rate-limits unauthenticated requests to 60/hour and
+// authenticated to 5000/hour.  Without throttling, a marketplace with
+// many GitHub-hosted plugins fires off dozens of concurrent requests
+// and immediately hits HTTP 429.
+
+const GITHUB_CONCURRENCY = 3;
+let activeGitHubRequests = 0;
+const ghQueue: Array<() => void> = [];
+
+function enqueueGitHubRequest<T>(fn: () => Promise<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const run = async () => {
+      activeGitHubRequests++;
+      try {
+        const result = await fn();
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      } finally {
+        activeGitHubRequests--;
+        const next = ghQueue.shift();
+        if (next) next();
+      }
     };
-  };
+    if (activeGitHubRequests < GITHUB_CONCURRENCY) {
+      void run();
+    } else {
+      ghQueue.push(run);
+    }
+  });
+}
+
+async function fetchGitHubTree(repo: string, branch: string, path: string): Promise<GitHubTreeItem[]> {
+  return enqueueGitHubRequest(() => _fetchGitHubTree(repo, branch, path));
+}
+
+async function _fetchGitHubTree(repo: string, branch: string, path: string, attempt = 1): Promise<GitHubTreeItem[]> {
+  const cleanPath = path.replace(/^\.\//, "").replace(/\/$/, "");
+  const apiUrl = `https://api.github.com/repos/${repo}/contents/${cleanPath}?ref=${branch}`;
+  const cacheKey = `gh-tree:${apiUrl}`;
+
+  const cached = cacheGet(cacheKey) as GitHubTreeItem[] | null;
+  if (cached) return cached;
+
+  try {
+    const headers: Record<string, string> = { Accept: "application/vnd.github+json" };
+    const token = getGitHubToken();
+    if (token) headers.Authorization = `token ${token}`;
+
+    const res = await fetch(apiUrl, { headers });
+    if (res.status === 429) {
+      const retryAfter = res.headers.get("Retry-After");
+      const delayMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : Math.min(2000 * attempt, 10000);
+      if (attempt <= 3) {
+        await new Promise((r) => setTimeout(r, delayMs));
+        return _fetchGitHubTree(repo, branch, path, attempt + 1);
+      }
+      return [];
+    }
+    if (!res.ok) {
+      if (res.status !== 404) {
+        console.error(`Failed to fetch GitHub contents ${apiUrl}: HTTP ${res.status}`);
+      }
+      return [];
+    }
+    const data: GitHubContentsItem[] = await res.json();
+    if (!Array.isArray(data)) return [];
+
+    const items: GitHubTreeItem[] = data.map((item) => ({
+      name: item.name,
+      path: item.path,
+      contentType: item.type === "dir" ? "directory" : "file",
+    }));
+
+    cacheSet(cacheKey, items);
+    return items;
+  } catch (error) {
+    return [];
+  }
 }
 
 function resolveLocalMarketplacePath(url: string, isLocal: boolean): string | null {
@@ -94,34 +174,6 @@ function resolveLocalMarketplacePath(url: string, isLocal: boolean): string | nu
   if (!normalized.startsWith("/")) normalized = resolve(process.cwd(), normalized);
 
   return (looksLocal || existsSync(normalized)) ? normalized : null;
-}
-
-async function fetchGitHubTree(repo: string, branch: string, path: string): Promise<GitHubTreeItem[]> {
-  const url = `https://github.com/${repo}/tree/${branch}/${path}`;
-  const cacheKey = `gh-tree:${url}`;
-  
-  const cached = cacheGet(cacheKey) as GitHubTreeItem[] | null;
-  if (cached) return cached;
-
-  try {
-    const headers: Record<string, string> = { Accept: "application/json" };
-    const token = getGitHubToken();
-    if (token && isGitHubHost(url)) {
-      headers.Authorization = `token ${token}`;
-    }
-    const res = await fetch(url, { headers });
-    if (!res.ok) {
-      console.error(`Failed to fetch GitHub tree ${url}: HTTP ${res.status}`);
-      return [];
-    }
-    const data: GitHubTreeResponse = await res.json();
-    const items = data.payload?.tree?.items || [];
-    cacheSet(cacheKey, items);
-    return items;
-  } catch (error) {
-    console.error(`Failed to fetch GitHub tree ${url}: ${error instanceof Error ? error.message : String(error)}`);
-    return [];
-  }
 }
 
 async function fetchPluginContents(
@@ -433,8 +485,8 @@ export function loadPiSettings(): PiSettings {
     // Ignore errors
   }
 
-  const npmPackages = scanGlobalNpmForPiPackagesWithVersions();
-  for (const pkgName of npmPackages.keys()) {
+  const pmPackages = getGlobalPiPackageVersions();
+  for (const pkgName of pmPackages.keys()) {
     const source = `npm:${pkgName}`;
     if (!packages.includes(source)) packages.push(source);
   }
@@ -442,8 +494,21 @@ export function loadPiSettings(): PiSettings {
   return { packages };
 }
 
-function getGlobalNodeModulesPath(): string | null {
+function getGlobalNodeModulesPath(manager: PackageManager): string | null {
   try {
+    if (manager === "bun") {
+      const bunPath = join(homedir(), ".bun", "install", "global", "node_modules");
+      if (!existsSync(bunPath)) return null;
+      return bunPath;
+    }
+
+    if (manager === "pnpm") {
+      const result = execSync("pnpm", ["root", "-g"], { encoding: "utf-8", timeout: 5000 });
+      const globalNodeModules = result.trim();
+      if (!existsSync(globalNodeModules)) return null;
+      return globalNodeModules;
+    }
+
     const result = execSync("npm", ["root", "-g"], { encoding: "utf-8", timeout: 5000 });
     const globalNodeModules = result.trim();
     if (!existsSync(globalNodeModules)) return null;
@@ -474,10 +539,10 @@ function parsePiPackageVersion(pkgPath: string): { isPiPackage: boolean; version
   }
 }
 
-function scanGlobalNpmForPiPackagesWithVersions(): Map<string, string | null> {
+function scanGlobalPmForPiPackagesWithVersions(manager: PackageManager): Map<string, string | null> {
   const packages = new Map<string, string | null>();
 
-  const globalNodeModules = getGlobalNodeModulesPath();
+  const globalNodeModules = getGlobalNodeModulesPath(manager);
   if (!globalNodeModules) return packages;
 
   try {
@@ -515,8 +580,55 @@ function scanGlobalNpmForPiPackagesWithVersions(): Map<string, string | null> {
   return packages;
 }
 
-export function getGlobalNpmPiPackageVersions(): Map<string, string | null> {
-  return scanGlobalNpmForPiPackagesWithVersions();
+export interface PiPackageInstallInfo {
+  version: string | null;
+  via: PackageManager;
+  viaManagers: PackageManager[];
+  managerMismatch: boolean;
+}
+
+export function getGlobalPiPackageInstallInfo(preferredManager: PackageManager = getPackageManager()): Map<string, PiPackageInstallInfo> {
+  const order: PackageManager[] = [preferredManager, "npm", "pnpm", "bun"].filter(
+    (m, i, arr): m is PackageManager => arr.indexOf(m as PackageManager) === i,
+  ) as PackageManager[];
+
+  const byManager = new Map<PackageManager, Map<string, string | null>>();
+  for (const manager of order) {
+    byManager.set(manager, scanGlobalPmForPiPackagesWithVersions(manager));
+  }
+
+  const allNames = new Set<string>();
+  for (const found of byManager.values()) {
+    for (const name of found.keys()) allNames.add(name);
+  }
+
+  const result = new Map<string, PiPackageInstallInfo>();
+  for (const name of allNames) {
+    const viaManagers = order.filter((manager) => byManager.get(manager)?.has(name));
+    if (viaManagers.length === 0) continue;
+
+    const preferredHas = viaManagers.includes(preferredManager);
+    const via = preferredHas ? preferredManager : viaManagers[0]!;
+    const version = byManager.get(via)?.get(name) ?? null;
+
+    result.set(name, {
+      version,
+      via,
+      viaManagers,
+      managerMismatch: !preferredHas,
+    });
+  }
+
+  return result;
+}
+
+export function getGlobalPiPackageVersions(preferredManager: PackageManager = getPackageManager()): Map<string, string | null> {
+  const info = getGlobalPiPackageInstallInfo(preferredManager);
+  const versions = new Map<string, string | null>();
+  for (const [name, value] of info.entries()) {
+    versions.set(name, value.version);
+  }
+  return versions;
 }
 
 function resolvePackagePath(source: string): string {
@@ -674,14 +786,15 @@ export async function fetchNpmPackages(): Promise<PiPackage[]> {
     }
 
     const settings = loadPiSettings();
-    const installedVersions = getGlobalNpmPiPackageVersions();
+    const installInfo = getGlobalPiPackageInstallInfo();
 
     return allObjects.map((item): PiPackage => {
       const pkg = item.package;
       const source = `npm:${pkg.name}`;
       const installed = isPackageInstalled(source, settings);
       const latestVersion = pkg.version ?? "unknown";
-      const installedVersion = installedVersions.get(pkg.name) ?? undefined;
+      const detected = installInfo.get(pkg.name);
+      const installedVersion = detected?.version ?? undefined;
       const hasUpdate = Boolean(
         installed &&
         installedVersion &&
@@ -699,6 +812,9 @@ export async function fetchNpmPackages(): Promise<PiPackage[]> {
         installed,
         installedVersion,
         hasUpdate,
+        installedVia: detected?.via,
+        installedViaManagers: detected?.viaManagers,
+        managerMismatch: Boolean(installed && detected?.managerMismatch),
         extensions: [],
         skills: [],
         prompts: [],
