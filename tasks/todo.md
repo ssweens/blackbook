@@ -16,7 +16,19 @@
 ## Phase 4 — Validation
 - [x] U8: Perf profiling — Lightweight measurement utility with counters for renders, store updates, fs calls, and function invocations
 
+## Hotfix — Manual-Only Performance Mode
+- [x] Disable all startup auto-loading in `App.tsx`
+- [x] Disable automatic background plugin drift scans
+- [x] Short-circuit heavy list filtering/sorting on unrelated tabs
+- [x] Normalize path-like marketplace metadata values to valid item names
+- [x] Deduplicate repeated validation error logs
+
 ## Quality Gates
-- [ ] All tests pass: `cd tui && pnpm test`
-- [ ] Type check passes: `cd tui && pnpm typecheck`
-- [ ] Build succeeds: `cd tui && pnpm build`
+- [x] All tests pass: `cd tui && pnpm test`
+- [x] Type check passes: `cd tui && pnpm typecheck`
+- [x] Build succeeds: `cd tui && pnpm build`
+
+## Review
+- Tab switching now performs no automatic network/file refresh work.
+- Startup now performs no background loading; user controls loading via `R`.
+- Repeated invalid metadata log spam is eliminated and path-like metadata is normalized.

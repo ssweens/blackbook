@@ -103,7 +103,7 @@ Blackbook opens on the **Sync** tab by default.
 - **Tools**: `Enter` open detail, `i` install, `u` update, `d` uninstall, `Space` toggle enabled, `e` edit config dir, `R` refresh detection
 - **Sync**: `y` sync selected items (missing plus `source-changed` / `target-changed` / `both-changed` files/plugins and tool updates; press twice to confirm), `R` refresh sync inputs
 
-Blackbook performs one startup scan, then refreshes only when requested manually with `R` on each tab. A loading indicator is shown across tabs (including Sync) while refresh is in progress.
+Blackbook now starts in manual-only mode: no startup scan runs automatically. Refresh/load data on the current tab with `R`. A loading indicator is shown while refresh is in progress.
 
 ## Configuration
 

@@ -357,17 +357,10 @@ export function App() {
     setShowSourceSetupWizard(shouldShowSourceSetupWizard());
   }, []);
 
-  // One-time startup load: fire ALL data fetches in background.
-  // NEVER await — the UI renders immediately with whatever data is in the
-  // store (empty on first run, cached on subsequent runs). Each load function
-  // calls set() when it completes, triggering a re-render with fresh data.
+  // Manual-only mode: do not auto-load anything on startup.
+  // User triggers loading explicitly with "R" on the current tab.
   useEffect(() => {
-    void loadMarketplaces();
-    void loadInstalledPlugins();
-    void loadPiPackages();
-    refreshManagedTools();
-    void refreshToolDetection();
-    void loadFiles();
+    // Intentionally empty.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -379,22 +372,11 @@ export function App() {
     }
   }, [files, detailFile]);
 
-  // Compute drift for all installed plugins (for list badges + detail view)
+  // Manual-only mode: skip expensive background drift scans.
+  // Drift is still computed on-demand when opening plugin detail.
   useEffect(() => {
-    if (effectiveInstalledPlugins.length === 0) return;
-    let cancelled = false;
-    void (async () => {
-      const map: Record<string, PluginDrift> = {};
-      await Promise.all(
-        effectiveInstalledPlugins.map(async (p) => {
-          const drift = await computeItemDrift(pluginToManagedItem(p));
-          if (!cancelled && drift.kind === "plugin") map[p.name] = drift.plugin;
-        })
-      );
-      if (!cancelled) setPluginDriftMap(map);
-    })();
-    return () => { cancelled = true; };
-  }, [effectiveInstalledPlugins]);
+    setPluginDriftMap({});
+  }, [setPluginDriftMap]);
 
   useEffect(() => {
     if (!syncArmed) return;
@@ -424,6 +406,8 @@ export function App() {
   }, [marketplaces]);
 
   const filteredPlugins = useMemo(() => {
+    if (tab !== "discover" && tab !== "installed") return [];
+
     const lowerSearch = search.toLowerCase();
     const base = tab === "installed" ? effectiveInstalledPlugins : allPlugins;
     let filtered = base;
@@ -435,7 +419,7 @@ export function App() {
           p.marketplace.toLowerCase().includes(lowerSearch)
       );
     }
-    
+
     const sorted = [...filtered].sort((a, b) => {
       if (sortBy === "name") {
         const cmp = a.name.localeCompare(b.name);
@@ -448,7 +432,7 @@ export function App() {
         return a.name.localeCompare(b.name);
       }
     });
-    
+
     return sorted;
   }, [tab, allPlugins, effectiveInstalledPlugins, search, sortBy, sortDir]);
 
@@ -463,6 +447,8 @@ export function App() {
   );
 
   const filteredPiPackages = useMemo(() => {
+    if (tab !== "discover" && tab !== "installed") return [];
+
     const lowerSearch = search.toLowerCase();
     const base = tab === "installed" ? effectivePiPackages.filter((p) => p.installed) : effectivePiPackages;
     let filtered = base;
@@ -548,6 +534,8 @@ export function App() {
   };
 
   const filteredFiles = useMemo(() => {
+    if (tab !== "installed") return [];
+
     const q = search.trim().toLowerCase();
 
     const filtered =

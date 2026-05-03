@@ -430,6 +430,7 @@ const defaultStoreState = () => ({
   missingSummary: null,
   piPackages: [] as PiPackage[],
   piMarketplaces: [],
+  pluginDriftMap: {},
   currentSection: "plugins" as const,
   discoverSubView: null,
 });
@@ -586,10 +587,10 @@ describe("App E2E — Installed Tab", () => {
   });
 
   it("plugin with drift shows changed badge in list", async () => {
-    vi.mocked(computePluginDrift).mockResolvedValue({ "skill:test-skill": "target-changed" });
     useStore.setState({
       tab: "installed",
       installedPlugins: [createPlugin()],
+      pluginDriftMap: { "test-plugin": { "skill:test-skill": "target-changed" } },
     });
     const { stdout, unmount } = render(<App />);
     try {
@@ -723,7 +724,6 @@ describe("App E2E — Plugin Detail", () => {
   });
 
   it("drifted plugin detail shows Changed instance with +/- counts", async () => {
-    vi.mocked(computePluginDrift).mockResolvedValue({ "skill:test-skill": "target-changed" });
     vi.mocked(resolvePluginSourcePaths).mockReturnValue({ pluginDir: "/src/plugins/test", repoRoot: "/src" });
     vi.mocked(buildFileDiffTarget).mockReturnValue({
       kind: "file",
@@ -737,10 +737,10 @@ describe("App E2E — Plugin Detail", () => {
       tab: "installed",
       detailPlugin: createPlugin(),
       installedPlugins: [createPlugin()],
+      pluginDriftMap: { "test-plugin": { "skill:test-skill": "target-changed" } },
     });
     const { stdout, unmount } = render(<App />);
     try {
-      // Wait for drift computation and re-render
       await waitForFrame(stdout.lastFrame, (f) => f.includes("Changed") || f.includes("+10"), 5000);
       const frame = stdout.lastFrame()!;
       expect(frame).toContain("Changed");
@@ -752,7 +752,6 @@ describe("App E2E — Plugin Detail", () => {
   });
 
   it("shows (drifted) label on status line when drift detected", async () => {
-    vi.mocked(computePluginDrift).mockResolvedValue({ "skill:test-skill": "target-changed" });
     vi.mocked(resolvePluginSourcePaths).mockReturnValue({ pluginDir: "/src/plugins/test", repoRoot: "/src" });
     vi.mocked(buildFileDiffTarget).mockReturnValue({
       kind: "file", title: "t",
@@ -764,6 +763,7 @@ describe("App E2E — Plugin Detail", () => {
       tab: "installed",
       detailPlugin: createPlugin(),
       installedPlugins: [createPlugin()],
+      pluginDriftMap: { "test-plugin": { "skill:test-skill": "target-changed" } },
     });
     const { stdout, unmount } = render(<App />);
     try {
@@ -844,7 +844,32 @@ describe("App E2E — Sync Tab", () => {
     toolLifecycleState.latestVersion = "1.2.0";
     toolLifecycleState.binaryPath = "/usr/local/bin/claude";
 
-    useStore.setState({ tab: "sync", selectedIndex: 0, notifications: [] });
+    useStore.setState({
+      tab: "sync",
+      selectedIndex: 0,
+      notifications: [],
+      managedTools: [
+        {
+          toolId: "claude-code",
+          displayName: "Claude",
+          instanceId: "default",
+          configDir: "/tmp/claude",
+          enabled: true,
+          synthetic: false,
+        },
+      ],
+      toolDetection: {
+        "claude-code": {
+          toolId: "claude-code",
+          installed: true,
+          binaryPath: "/usr/local/bin/claude",
+          installedVersion: "1.0.0",
+          latestVersion: "1.2.0",
+          hasUpdate: true,
+          error: null,
+        },
+      },
+    });
     const { stdout, unmount } = render(<App />);
     try {
       await waitForFrame(stdout.lastFrame, (f) => f.includes("Update: v1.0.0 → v1.2.0"));
