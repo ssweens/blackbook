@@ -287,14 +287,18 @@ describe("marketplace", () => {
       expect(plugins[0].hasMcp).toBe(true);
     });
 
-    it("uses empty arrays when plugin contents not declared in manifest", async () => {
+    it("normalizes path-like manifest item entries to safe names", async () => {
       const mockMarketplace = createMockMarketplace("test-org-7");
       const mockMarketplaceJson = {
         plugins: [
           {
-            name: "minimal-plugin",
-            description: "Plugin with no contents declared",
-            source: "./plugins/minimal",
+            name: "path-plugin",
+            description: "Plugin with path-like entries",
+            source: "./plugins/path-plugin",
+            skills: ["./.claude/skills/browser-automation", "./netsuite-ai-connector-instructions"],
+            commands: ["./commands/my-command.md"],
+            agents: ["./agents/my-agent.md"],
+            hooks: ["./hooks/pre-commit.json"],
           },
         ],
       };
@@ -310,10 +314,10 @@ describe("marketplace", () => {
       const plugins = await fetchMarketplace(mockMarketplace);
 
       expect(plugins).toHaveLength(1);
-      expect(plugins[0].skills).toEqual([]);
-      expect(plugins[0].commands).toEqual([]);
-      expect(plugins[0].agents).toEqual([]);
-      expect(plugins[0].hooks).toEqual([]);
+      expect(plugins[0].skills).toEqual(["browser-automation", "netsuite-ai-connector-instructions"]);
+      expect(plugins[0].commands).toEqual(["my-command"]);
+      expect(plugins[0].agents).toEqual(["my-agent"]);
+      expect(plugins[0].hooks).toEqual(["pre-commit"]);
       expect(plugins[0].hasMcp).toBe(false);
     });
 

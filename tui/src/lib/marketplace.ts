@@ -176,6 +176,32 @@ function resolveLocalMarketplacePath(url: string, isLocal: boolean): string | nu
   return (looksLocal || existsSync(normalized)) ? normalized : null;
 }
 
+function normalizeDeclaredItem(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const unix = trimmed.replace(/\\/g, "/");
+  const base = unix.split("/").filter(Boolean).pop() || "";
+  if (!base || base === "." || base === "..") return null;
+
+  return base.replace(/\.(md|json)$/i, "");
+}
+
+function normalizeDeclaredList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const entry of value) {
+    const normalized = normalizeDeclaredItem(entry);
+    if (!normalized) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
 async function fetchPluginContents(
   repo: string,
   branch: string,
@@ -402,10 +428,10 @@ export async function fetchMarketplace(
       name: p.name || "",
       description: p.description || "",
       source,
-      skills: (p as any).skills ?? [],
-      commands: (p as any).commands ?? [],
-      agents: (p as any).agents ?? [],
-      hooks: (p as any).hooks ?? [],
+      skills: normalizeDeclaredList((p as any).skills),
+      commands: normalizeDeclaredList((p as any).commands),
+      agents: normalizeDeclaredList((p as any).agents),
+      hooks: normalizeDeclaredList((p as any).hooks),
       hasMcp: Object.keys(p.mcpServers ?? {}).length > 0,
       hasLsp: Object.keys(p.lspServers ?? {}).length > 0,
       lspServers: p.lspServers,

@@ -1,12 +1,17 @@
 import { resolve, relative } from "path";
 import type { Plugin } from "./types.js";
 
-const SAFE_NAME_PATTERN = /^[a-zA-Z0-9._-]+$/;
+const SAFE_NAME_PATTERN = /^[a-zA-Z0-9._:-]+$/;
 const SAFE_GIT_REF_PATTERN = /^[a-zA-Z0-9._/-]+$/;
+
+const seenErrors = new Set<string>();
 
 export function logError(context: string, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
-  console.error(`${context}: ${message}`);
+  const key = `${context}: ${message}`;
+  if (seenErrors.has(key)) return;
+  seenErrors.add(key);
+  console.error(key);
 }
 
 export function validatePluginName(name: string): void {
