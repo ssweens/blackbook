@@ -27,6 +27,11 @@ import { buildCommonSpineDiff } from "../diff-builder.js";
 import { addAgentsMdVariants, scanCommonSpine } from "../scanner.js";
 import type { EmitResult, ToolAdapter } from "../types.js";
 import { buildClaudeOwnership } from "./bundle-ownership.js";
+import {
+  installClaudeBundle,
+  updateClaudeBundle,
+  uninstallClaudeBundle,
+} from "./bundle-ops.js";
 import { CLAUDE_AGENTS_MD_VARIANTS, CLAUDE_DEFAULTS } from "./defaults.js";
 import { detectClaude } from "./detect.js";
 import { emitClaudeMcp } from "./mcp.js";
@@ -72,14 +77,14 @@ export const claudeAdapter: ToolAdapter = {
     return emitClaudeMcp(servers, instance);
   },
 
-  async installBundle(_ref: BundleEntry, _instance: ToolInstance): Promise<void> {
-    throw new Error("claudeAdapter.installBundle: not yet wired (engine TODO)");
+  async installBundle(ref: BundleEntry, instance: ToolInstance): Promise<void> {
+    return installClaudeBundle(ref, instance);
   },
-  async updateBundle(_name: string, _instance: ToolInstance): Promise<void> {
-    throw new Error("claudeAdapter.updateBundle: not yet wired (engine TODO)");
+  async updateBundle(name: string, instance: ToolInstance): Promise<void> {
+    return updateClaudeBundle(name, instance);
   },
-  async uninstallBundle(_name: string, _instance: ToolInstance): Promise<void> {
-    throw new Error("claudeAdapter.uninstallBundle: not yet wired (engine TODO)");
+  async uninstallBundle(name: string, instance: ToolInstance): Promise<void> {
+    return uninstallClaudeBundle(name, instance);
   },
 };
 

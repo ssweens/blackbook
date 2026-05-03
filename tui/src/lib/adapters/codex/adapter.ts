@@ -88,13 +88,8 @@ export const codexAdapter: ToolAdapter = {
     return emitCodexMcp(servers, instance);
   },
 
-  async installBundle(_ref: BundleEntry, _instance: ToolInstance): Promise<void> {
-    throw new Error("codexAdapter.installBundle: not yet wired (engine TODO)");
-  },
-  async updateBundle(_name: string, _instance: ToolInstance): Promise<void> {
-    throw new Error("codexAdapter.updateBundle: not yet wired (engine TODO)");
-  },
-  async uninstallBundle(_name: string, _instance: ToolInstance): Promise<void> {
-    throw new Error("codexAdapter.uninstallBundle: not yet wired (engine TODO)");
-  },
+  // Codex plugin install/uninstall requires the app-server JSON-RPC protocol
+  // (not a CLI command). Deferred to v2. Leaving installBundle/uninstallBundle
+  // undefined so the engine falls through to the graceful "adapter has no
+  // installBundle" skip path.
 };

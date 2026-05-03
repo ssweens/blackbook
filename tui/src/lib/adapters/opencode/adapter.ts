@@ -15,6 +15,11 @@ import { resolveConfigDir } from "../base.js";
 import { buildCommonSpineDiff } from "../diff-builder.js";
 import { scanCommonSpine } from "../scanner.js";
 import type { EmitResult, ToolAdapter } from "../types.js";
+import {
+  installOpenCodeBundle,
+  updateOpenCodeBundle,
+  uninstallOpenCodeBundle,
+} from "./bundle-ops.js";
 import { buildOpenCodeOwnership } from "./bundle-ownership.js";
 import { OPENCODE_DEFAULTS } from "./defaults.js";
 import { detectOpenCode } from "./detect.js";
@@ -66,13 +71,13 @@ export const opencodeAdapter: ToolAdapter = {
     return emitOpenCodeMcp(servers, instance);
   },
 
-  async installBundle(_ref: BundleEntry, _instance: ToolInstance): Promise<void> {
-    throw new Error("opencodeAdapter.installBundle: not yet wired (engine TODO)");
+  async installBundle(ref: BundleEntry, instance: ToolInstance): Promise<void> {
+    return installOpenCodeBundle(ref, instance);
   },
-  async updateBundle(_name: string, _instance: ToolInstance): Promise<void> {
-    throw new Error("opencodeAdapter.updateBundle: not yet wired (engine TODO)");
+  async updateBundle(name: string, instance: ToolInstance): Promise<void> {
+    return updateOpenCodeBundle(name, instance);
   },
-  async uninstallBundle(_name: string, _instance: ToolInstance): Promise<void> {
-    throw new Error("opencodeAdapter.uninstallBundle: not yet wired (engine TODO)");
+  async uninstallBundle(name: string, instance: ToolInstance): Promise<void> {
+    return uninstallOpenCodeBundle(name, instance);
   },
 };
