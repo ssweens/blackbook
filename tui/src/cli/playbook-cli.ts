@@ -214,7 +214,10 @@ async function cmdApply(
   log: (s?: string) => void,
   elog: (s: string) => void,
 ): Promise<number> {
-  const args = parseArgs(argv, { bool: ["confirm-removals"], string: [] });
+  const args = parseArgs(argv, {
+    bool: ["confirm-removals", "skip-bundles"],
+    string: [],
+  });
   const path = resolvePlaybookPath(args.positional);
   const playbook = loadPlaybook(path);
   const report = validatePlaybook(playbook);
@@ -223,6 +226,7 @@ async function cmdApply(
   const result = await engineApply(playbook, {
     confirmRemovals: !!args.bool["confirm-removals"],
     dryRun: false,
+    skipBundles: !!args.bool["skip-bundles"],
   });
 
   if (!result.envCheck.ok) {
@@ -234,7 +238,10 @@ async function cmdApply(
   printSyncResult(result, false, log, elog);
 
   const errors = result.perInstance.flatMap((p) => p.apply.errors);
-  return errors.length ? 1 : 0;
+  const bundleErrors = result.perInstance
+    .flatMap((p) => p.bundleOps)
+    .filter((b) => !b.ok);
+  return errors.length || bundleErrors.length ? 1 : 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -374,6 +381,13 @@ function printSyncResult(
       const unchanged = p.mcpEmit.unchanged.length;
       log(`  mcp: ${written} written, ${unchanged} unchanged`);
     }
+    if (p.bundleOps.length) {
+      log(`  bundles:`);
+      for (const b of p.bundleOps) {
+        const glyph = b.ok ? (b.op === "skip" ? "=" : b.op === "install" ? "+" : "-") : "!";
+        log(`    ${glyph} ${b.name}: ${b.op}${b.reason ? " — " + b.reason : ""}`);
+      }
+    }
     for (const err of p.apply.errors) {
       elog(`  ERR ${p.toolId}/${p.instanceId}: ${err.op.name}: ${err.message}`);
     }
@@ -448,7 +462,8 @@ Usage:
   blackbook init --from <path> Use an existing playbook directory (e.g. cloned from git)
   blackbook preview [path]     Show what apply would do (dry-run)
   blackbook apply [path]       Apply playbook to local tools
-                                 --confirm-removals  allow file deletions
+                                 --confirm-removals  allow file deletions and bundle uninstalls
+                                 --skip-bundles      skip bundle install/uninstall (file-only sync)
   blackbook status             Show detection + brief drift summary
   blackbook validate [path]    Check schema + cross-file consistency
 

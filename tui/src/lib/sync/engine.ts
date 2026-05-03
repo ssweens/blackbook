@@ -39,6 +39,19 @@ export interface EngineSyncOptions {
   toolFilter?: ToolId[];
   /** Override env source (for tests). */
   env?: NodeJS.ProcessEnv;
+  /**
+   * Skip bundle reconciliation (install/update/uninstall via tool CLIs).
+   * Useful for fast file-only syncs and for tests that don't have the tool
+   * binaries available. Default: false.
+   */
+  skipBundles?: boolean;
+}
+
+export interface BundleOpReport {
+  name: string;
+  op: "install" | "update" | "uninstall" | "skip";
+  ok: boolean;
+  reason?: string;
 }
 
 export interface PerInstanceResult {
@@ -47,6 +60,7 @@ export interface PerInstanceResult {
   diff: Diff;
   apply: ApplyResult;
   mcpEmit?: EmitResult;
+  bundleOps: BundleOpReport[];
   /** Errors specific to this instance (env, adapter routing, etc.) */
   errors: EngineError[];
 }
@@ -195,12 +209,34 @@ export async function engineApply(
         });
       }
 
+      // Bundle ops (install missing / uninstall removed) — only on apply,
+      // never on dry-run, and only when the adapter advertises a paradigm.
+      const bundleOps: BundleOpReport[] = [];
+      if (!options.dryRun && !options.skipBundles) {
+        bundleOps.push(
+          ...(await reconcileBundles(
+            adapter,
+            toolConfig,
+            instance,
+            options.confirmRemovals,
+            (msg) =>
+              errors.push({
+                scope: "instance",
+                toolId,
+                instanceId: instance.id,
+                message: msg,
+              }),
+          )),
+        );
+      }
+
       perInstance.push({
         toolId,
         instanceId: instance.id,
         diff,
         apply: applyResult,
         mcpEmit,
+        bundleOps,
         errors,
       });
     }
@@ -240,6 +276,110 @@ function collectAllRequiredEnvNames(playbook: LoadedPlaybook): string[] {
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bundle reconciliation
+// ─────────────────────────────────────────────────────────────────────────────
+
+import type { LoadedToolConfig } from "../playbook/index.js";
+import type { ToolAdapter } from "../adapters/types.js";
+
+async function reconcileBundles(
+  adapter: ToolAdapter,
+  toolConfig: LoadedToolConfig,
+  instance: ToolInstance,
+  confirmRemovals: boolean,
+  reportError: (msg: string) => void,
+): Promise<BundleOpReport[]> {
+  const ops: BundleOpReport[] = [];
+  const paradigm = adapter.defaults.capabilities.bundleParadigm;
+  if (!paradigm) return ops;
+
+  const declared =
+    paradigm === "artifact"
+      ? toolConfig.pluginsManifest?.plugins ?? []
+      : toolConfig.packagesManifest?.packages ?? [];
+
+  // Snapshot installed bundles via scan.
+  const inv = await adapter.scan(instance);
+  const installedNames = new Set<string>();
+  for (const a of inv.artifacts) {
+    if (a.provenance.kind === "bundle") installedNames.add(a.provenance.bundleName);
+  }
+
+  // Install missing-and-enabled bundles.
+  for (const bundle of declared) {
+    if (!bundle.enabled) {
+      // Disabled bundles installed today should be uninstalled iff confirmRemovals.
+      if (installedNames.has(bundle.name)) {
+        if (!confirmRemovals) {
+          ops.push({ name: bundle.name, op: "skip", ok: true, reason: "disabled but not uninstalled (confirmRemovals=false)" });
+          continue;
+        }
+        if (!adapter.uninstallBundle) {
+          ops.push({ name: bundle.name, op: "skip", ok: false, reason: "adapter has no uninstallBundle" });
+          continue;
+        }
+        try {
+          await adapter.uninstallBundle(bundle.name, instance);
+          ops.push({ name: bundle.name, op: "uninstall", ok: true });
+        } catch (err) {
+          ops.push({ name: bundle.name, op: "uninstall", ok: false, reason: errorMessage(err) });
+          reportError(`uninstall ${bundle.name}: ${errorMessage(err)}`);
+        }
+      }
+      continue;
+    }
+
+    if (installedNames.has(bundle.name)) {
+      // Already installed. Update is intentionally NOT auto-run — keep float
+      // semantics explicit: user runs `blackbook update` (separate command,
+      // not part of apply) when they want a refresh. v1: skip.
+      ops.push({ name: bundle.name, op: "skip", ok: true, reason: "already installed" });
+      continue;
+    }
+
+    if (!adapter.installBundle) {
+      ops.push({ name: bundle.name, op: "skip", ok: false, reason: "adapter has no installBundle" });
+      continue;
+    }
+    try {
+      await adapter.installBundle(bundle, instance);
+      ops.push({ name: bundle.name, op: "install", ok: true });
+    } catch (err) {
+      ops.push({ name: bundle.name, op: "install", ok: false, reason: errorMessage(err) });
+      reportError(`install ${bundle.name}: ${errorMessage(err)}`);
+    }
+  }
+
+  // Bundles installed on disk but NOT in the playbook → only uninstall if confirmRemovals.
+  const declaredNames = new Set(declared.map((b) => b.name));
+  for (const installedName of installedNames) {
+    if (declaredNames.has(installedName)) continue;
+    if (!confirmRemovals) {
+      ops.push({
+        name: installedName,
+        op: "skip",
+        ok: true,
+        reason: "installed but absent from playbook (confirmRemovals=false)",
+      });
+      continue;
+    }
+    if (!adapter.uninstallBundle) {
+      ops.push({ name: installedName, op: "skip", ok: false, reason: "adapter has no uninstallBundle" });
+      continue;
+    }
+    try {
+      await adapter.uninstallBundle(installedName, instance);
+      ops.push({ name: installedName, op: "uninstall", ok: true });
+    } catch (err) {
+      ops.push({ name: installedName, op: "uninstall", ok: false, reason: errorMessage(err) });
+      reportError(`uninstall ${installedName}: ${errorMessage(err)}`);
+    }
+  }
+
+  return ops;
 }
 
 /** Convenience: throw if topLevelErrors are present. */

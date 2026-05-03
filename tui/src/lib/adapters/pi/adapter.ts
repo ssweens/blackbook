@@ -26,6 +26,11 @@ import { buildCommonSpineDiff } from "../diff-builder.js";
 import { scanCommonSpine } from "../scanner.js";
 import type { EmitResult, ToolAdapter } from "../types.js";
 import { buildPiOwnership } from "./bundle-ownership.js";
+import {
+  installPiBundle,
+  uninstallPiBundle,
+  updatePiBundle,
+} from "./bundle-ops.js";
 import { PI_DEFAULTS } from "./defaults.js";
 import { detectPi } from "./detect.js";
 import { emitPiMcp, piMcpEnabled } from "./mcp.js";
@@ -71,18 +76,14 @@ export const piAdapter: ToolAdapter = {
     return emitPiMcp(servers, instance);
   },
 
-  async installBundle(_ref: BundleEntry, _instance: ToolInstance): Promise<void> {
-    // Pi packages are installed via the `pi install` CLI; the engine drives
-    // this via the pi binary. Bundle install logic for Pi lives in the
-    // sync engine, not the adapter, because it shells out to the user's pi.
-    // Placeholder for now; engine will route here.
-    throw new Error("piAdapter.installBundle: not yet wired (engine TODO)");
+  async installBundle(ref: BundleEntry, instance: ToolInstance): Promise<void> {
+    return installPiBundle(ref, instance);
   },
-  async updateBundle(_name: string, _instance: ToolInstance): Promise<void> {
-    throw new Error("piAdapter.updateBundle: not yet wired (engine TODO)");
+  async updateBundle(name: string, instance: ToolInstance): Promise<void> {
+    return updatePiBundle(name, instance);
   },
-  async uninstallBundle(_name: string, _instance: ToolInstance): Promise<void> {
-    throw new Error("piAdapter.uninstallBundle: not yet wired (engine TODO)");
+  async uninstallBundle(name: string, instance: ToolInstance): Promise<void> {
+    return uninstallPiBundle(name, instance);
   },
 };
 

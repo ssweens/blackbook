@@ -244,9 +244,11 @@ describe("engine — MCP emission gating", () => {
       includeMcp: ["github"],
       piWithAdapter: true,
     });
+    // skipBundles avoids shelling to `pi install pi-mcp-adapter` in this test.
     const result = await engineApply(playbook, {
       confirmRemovals: false,
       dryRun: false,
+      skipBundles: true,
       env: { GITHUB_TOKEN: "x" } as NodeJS.ProcessEnv,
     });
     expect(result.perInstance[0].mcpEmit?.written).toHaveLength(1);
