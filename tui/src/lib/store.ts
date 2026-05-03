@@ -66,6 +66,7 @@ import {
   manifestPath,
 } from "./install.js";
 import { invalidatePluginToolStatusCache } from "./plugin-status.js";
+import type { PluginDrift } from "./plugin-drift.js";
 import { filesToManagedItems, piPackagesToManagedItems, pluginsToManagedItems } from "./managed-item.js";
 import type { ManagedItem } from "./managed-item.js";
 
@@ -110,8 +111,13 @@ interface Actions {
   addPiMarketplace: (name: string, source: string) => Promise<void>;
   removePiMarketplace: (name: string) => Promise<void>;
   // Section navigation
+  setSortBy: (by: AppState["sortBy"]) => void;
+  setSortDir: (dir: AppState["sortDir"]) => void;
   setCurrentSection: (section: DiscoverSection) => void;
   setDiscoverSubView: (subView: DiscoverSubView) => void;
+  toggleSyncSelection: (key: string) => void;
+  setSyncArmed: (armed: boolean) => void;
+  setPluginDriftMap: (map: Record<string, PluginDrift>) => void;
   // Diff view actions
   openDiffForFile: (file: FileStatus, instance?: DiffInstanceRef) => void;
   openMissingSummaryForFile: (file: FileStatus, instance?: DiffInstanceRef) => void;
@@ -350,6 +356,14 @@ export const useStore = create<Store>((set, get) => ({
   piPackagesLoaded: false,
   piMarketplaces: [],
   managedItems: [],
+  // Sort state
+  sortBy: "default" as AppState["sortBy"],
+  sortDir: "asc" as AppState["sortDir"],
+  // Sync tab state
+  syncSelection: [] as string[],
+  syncArmed: false,
+  // Plugin drift cache
+  pluginDriftMap: {} as Record<string, PluginDrift>,
   // Section navigation
   currentSection: "plugins" as DiscoverSection,
   discoverSubView: null as DiscoverSubView,
@@ -368,6 +382,8 @@ export const useStore = create<Store>((set, get) => ({
             currentSection: "plugins",
           }
     ),
+  setSortBy: (by) => set({ sortBy: by }),
+  setSortDir: (dir) => set({ sortDir: dir }),
   setSearch: (search) => set({ search, selectedIndex: 0 }),
   setSelectedIndex: (index) => set({ selectedIndex: index }),
   setDetailPlugin: (plugin) => set({ detailPlugin: plugin }),
@@ -396,6 +412,16 @@ export const useStore = create<Store>((set, get) => ({
   },
   setCurrentSection: (section) => set({ currentSection: section }),
   setDiscoverSubView: (subView) => set({ discoverSubView: subView }),
+  toggleSyncSelection: (key: string) =>
+    set((state) => {
+      const has = state.syncSelection.includes(key);
+      const next = has
+        ? state.syncSelection.filter((k) => k !== key)
+        : [...state.syncSelection, key];
+      return { syncSelection: next, syncArmed: false };
+    }),
+  setSyncArmed: (armed: boolean) => set({ syncArmed: armed }),
+  setPluginDriftMap: (map) => set({ pluginDriftMap: map }),
 
   notify: (message, type = "info", options) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;

@@ -30,6 +30,12 @@ import { PiPackagePreview } from "./components/PiPackagePreview.js";
 // PiPackageDetail actions built via toPiPkgItemActions in lib/item-actions.ts
 import { ComponentManager, getComponentItems } from "./components/ComponentManager.js";
 import { SettingsPanel } from "./components/SettingsPanel.js";
+import { ToolsTab } from "./tabs/ToolsTab.js";
+import { SettingsTab } from "./tabs/SettingsTab.js";
+import { MarketplacesTab } from "./tabs/MarketplacesTab.js";
+import { SyncTab } from "./tabs/SyncTab.js";
+import { DiscoverTab } from "./tabs/DiscoverTab.js";
+import { InstalledTab } from "./tabs/InstalledTab.js";
 import { getPluginToolStatus, togglePluginComponent } from "./lib/plugin-status.js";
 import { syncPluginInstances, uninstallPluginFromInstance } from "./lib/install.js";
 import { resolvePluginSourcePaths, type PluginDrift } from "./lib/plugin-drift.js";
@@ -157,7 +163,8 @@ export function App() {
   const [componentManagerMode, setComponentManagerMode] = useState(false);
   const [componentIndex, setComponentIndex] = useState(0);
   const [detailPluginDrift, setDetailPluginDrift] = useState<PluginDrift | null>(null);
-  const [pluginDriftMap, setPluginDriftMap] = useState<Record<string, PluginDrift>>({});
+  const pluginDriftMap = useStore((s) => s.pluginDriftMap);
+  const setPluginDriftMap = useStore((s) => s.setPluginDriftMap);
   const [detailFile, setDetailFile] = useState<FileStatus | null>(null);
   const [detailPiMarketplace, setDetailPiMarketplace] = useState<PiMarketplace | null>(null);
   const [detailToolKey, setDetailToolKey] = useState<string | null>(null);
@@ -184,16 +191,16 @@ export function App() {
   const setToolModalDone = (v: boolean) => setToolModal((s) => ({ ...s, done: v }));
   const setToolModalSuccess = (v: boolean) => setToolModal((s) => ({ ...s, success: v }));
   const resetToolModal = () => setToolModal({ action: null, warning: null, migrate: false, running: false, done: false, success: false });
-  const [syncPreview, setSyncPreview] = useState<SyncPreviewItem[]>([]);
-  const [syncSelection, setSyncSelection] = useState<Set<string>>(new Set());
-  const [syncArmed, setSyncArmed] = useState(false);
-  const [sort, setSort] = useState<{ by: "default" | "name" | "installed" | "popularity"; dir: "asc" | "desc" }>({ by: "default", dir: "asc" });
-  const sortBy = sort.by; const sortDir = sort.dir;
-  const setSortBy = (v: typeof sortBy | ((p: typeof sortBy) => typeof sortBy)) =>
-    setSort((s) => ({ ...s, by: typeof v === "function" ? v(s.by) : v }));
-  const setSortDir = (v: typeof sortDir | ((p: typeof sortDir) => typeof sortDir)) =>
-    setSort((s) => ({ ...s, dir: typeof v === "function" ? v(s.dir) : v }));
+  const sortBy = useStore((s) => s.sortBy);
+  const sortDir = useStore((s) => s.sortDir);
+  const setSortBy = useStore((s) => s.setSortBy);
+  const setSortDir = useStore((s) => s.setSortDir);
+  const syncArmed = useStore((s) => s.syncArmed);
+  const setSyncArmed = useStore((s) => s.setSyncArmed);
+  const syncSelection = useStore((s) => s.syncSelection);
+  const toggleSyncSelection = useStore((s) => s.toggleSyncSelection);
   const [searchFocused, setSearchFocused] = useState(false);
+  const syncPreview = useMemo(() => getSyncPreview(), [getSyncPreview]);
   const [subViewIndex, setSubViewIndex] = useState(0);
   const [marketplaceBrowseContext, setMarketplaceBrowseContext] = useState<Marketplace | null>(null);
   const [tabRefreshInProgress, setTabRefreshInProgress] = useState(false);
@@ -215,24 +222,7 @@ export function App() {
     settings: false,
   });
 
-  // Refs to break the feedback loop in the sync preview useEffect.
-  // These values are read inside the effect but must NOT be deps,
-  // because the effect itself sets them — listing them as deps
-  // causes infinite re-renders during incremental toolDetection updates.
-  const syncPreviewRef = useRef(syncPreview);
-  syncPreviewRef.current = syncPreview;
-  const syncArmedRef = useRef(syncArmed);
-  syncArmedRef.current = syncArmed;
 
-  const getSyncItemKey = (item: SyncPreviewItem) => {
-    if (item.kind === "plugin") {
-      return `plugin:${item.plugin.marketplace}:${item.plugin.name}`;
-    }
-    if (item.kind === "tool") {
-      return `tool:${item.toolId}`;
-    }
-    return `file:${item.file.name}`;
-  };
 
   const effectiveInstalledPlugins = useMemo(() => {
     const fromManaged = managedItems
@@ -364,63 +354,11 @@ export function App() {
     setShowSourceSetupWizard(shouldShowSourceSetupWizard());
   }, []);
 
-  // Single startup scan for all item/update state; no navigation-triggered refreshes.
+  // Lazy tab loading: only fetch data for the currently-visible tab.
   useEffect(() => {
-    void refreshAll();
-  }, [refreshAll]);
-
-  useEffect(() => {
-    if (tab !== "sync") return;
-    const preview = getSyncPreview();
-
-    // Compare against the ref (not the state dep) to avoid self-triggering.
-    const prev = syncPreviewRef.current;
-    const isSame =
-      preview.length === prev.length &&
-      preview.every((item, index) => {
-        const existing = prev[index];
-        if (!existing) return false;
-        if (existing.kind !== item.kind) return false;
-        if (item.kind === "plugin" && existing.kind === "plugin") {
-          return (
-            existing.plugin.name === item.plugin.name &&
-            existing.missingInstances.join("|") === item.missingInstances.join("|")
-          );
-        }
-        if (item.kind === "file" && existing.kind === "file") {
-          return (
-            existing.file.name === item.file.name &&
-            existing.missingInstances.join("|") === item.missingInstances.join("|") &&
-            existing.driftedInstances.join("|") === item.driftedInstances.join("|")
-          );
-        }
-        if (item.kind === "tool" && existing.kind === "tool") {
-          return (
-            existing.toolId === item.toolId &&
-            existing.installedVersion === item.installedVersion &&
-            existing.latestVersion === item.latestVersion
-          );
-        }
-        return false;
-      });
-
-    if (isSame) return;
-
-    setSyncPreview(preview);
-    setSyncSelection(() => {
-      const next = new Set<string>();
-      for (const item of preview) {
-        next.add(getSyncItemKey(item));
-      }
-      return next;
-    });
-
-    if (syncArmedRef.current) {
-      setSyncArmed(false);
-    }
-    // Only react to input data changes — NOT syncPreview/syncArmed (written here).
+    void refreshTabData(tab);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, marketplaces, effectiveInstalledPlugins, managedTools, toolDetection]);
+  }, [tab]);
 
   useEffect(() => {
     if (!detailFile) return;
@@ -455,10 +393,16 @@ export function App() {
     return () => clearTimeout(timeoutId);
   }, [syncArmed]);
 
+  const getSyncItemKey = (item: import("./lib/types.js").SyncPreviewItem) => {
+    if (item.kind === "plugin") return `plugin:${item.plugin.marketplace}:${item.plugin.name}`;
+    if (item.kind === "tool") return `tool:${item.toolId}`;
+    return `file:${item.file.name}`;
+  };
+
   const selectedSyncCount = useMemo(() => {
     let count = 0;
     for (const item of syncPreview) {
-      if (syncSelection.has(getSyncItemKey(item))) count += 1;
+      if (syncSelection.includes(getSyncItemKey(item))) count += 1;
     }
     return count;
   }, [syncPreview, syncSelection]);
@@ -1036,13 +980,7 @@ export function App() {
     if (tab === "sync") {
       const item = syncPreview[selectedIndex];
       if (!item) return;
-      const k = getSyncItemKey(item);
-      setSyncSelection((current) => {
-        const next = new Set(current);
-        if (next.has(k)) next.delete(k); else next.add(k);
-        return next;
-      });
-      setSyncArmed(false);
+      toggleSyncSelection(getSyncItemKey(item));
       return;
     }
 
@@ -1158,7 +1096,7 @@ export function App() {
   const handleSyncShortcut = (input: string): boolean => {
     if (input === "y") {
       if (syncArmed) {
-        const items = syncPreview.filter((item) => syncSelection.has(getSyncItemKey(item)));
+        const items = syncPreview.filter((item) => syncSelection.includes(getSyncItemKey(item)));
         if (items.length === 0) {
           notify("Select at least one item to sync.", "warning");
           setSyncArmed(false);
@@ -1214,7 +1152,7 @@ export function App() {
     setSelectedIndex,
     setDetailPiPackage: (pkg) => { void setDetailPiPackage(pkg); },
     setActionIndex,
-    setSyncArmed,
+    setSyncArmed: () => setSyncArmed(false),
     onOpenPluginDetail: openPluginDetail,
     onEnterList: handleEnterOnList,
     onSpaceToggle: handleSpaceToggle,
@@ -1308,16 +1246,14 @@ export function App() {
     // Sort shortcuts (s to cycle sort, r to reverse) - only when search not focused
     if ((tab === "discover" || tab === "installed") && !isOverlayOpen && !searchFocused) {
       if (input === "s") {
-        setSort((s) => {
-          if (s.by === "default") return { by: "name", dir: "asc" };
-          if (s.by === "name") return { by: "installed", dir: s.dir };
-          if (s.by === "installed") return { by: "popularity", dir: "desc" };
-          return { by: "default", dir: "asc" };
-        });
+        if (sortBy === "default") { setSortBy("name"); setSortDir("asc"); }
+        else if (sortBy === "name") { setSortBy("installed"); }
+        else if (sortBy === "installed") { setSortBy("popularity"); setSortDir("desc"); }
+        else { setSortBy("default"); setSortDir("asc"); }
         return;
       }
       if (input === "r") {
-        setSort((s) => ({ ...s, dir: s.dir === "asc" ? "desc" : "asc" }));
+        setSortDir(sortDir === "asc" ? "desc" : "asc");
         return;
       }
     }
@@ -1709,217 +1645,18 @@ export function App() {
         />
       ) : (
         <Box flexDirection="column" height={(({ sync: 19, discover: 20, installed: 20 } as Record<string, number>)[tab] ?? 25)}>
-          {(tab === "installed" || (tab === "discover" && discoverSubView)) && (
-            <Box flexDirection="row" justifyContent="space-between">
-              <Box flexGrow={1}>
-                <SearchBox
-                  value={search}
-                  onChange={setSearch}
-                  placeholder={
-                    discoverSubView === "plugins"
-                      ? "Search plugins..."
-                      : discoverSubView === "piPackages"
-                        ? "Search pi packages..."
-                        : "Search installed files and plugins..."
-                  }
-                  focus={searchFocused}
-                  onFocus={() => setSearchFocused(true)}
-                  onBlur={() => {
-                    setSearchFocused(false);
-                    setSearch("");
-                  }}
-                />
-              </Box>
-              <Box marginLeft={2}>
-                <Text color="gray">
-                  Sort: {sortBy === "default" ? "Default" : sortBy === "name" ? "Name" : sortBy === "installed" ? "Installed" : "Popular"} {sortBy !== "default" ? (sortDir === "asc" ? "↑" : "↓") : ""}
-                </Text>
-              </Box>
-            </Box>
-          )}
+          {tab === "discover" && <DiscoverTab />}
 
-          {tab === "discover" && (
-            <>
-              {shouldShowDiscoverLoading ? (
-                <Box marginY={1}><Text color="cyan">⠋ Loading plugins from marketplaces...</Text></Box>
-              ) : discoverSubView === "plugins" ? (
-                <Box flexDirection="column">
-                  <Box marginBottom={1}><Text color="cyan" bold>Plugins </Text><Text color="gray" dimColor>{getRange(subViewIndex, managedPlugins.length, 12)}</Text><Text color="gray"> · Press Esc to go back</Text></Box>
-                  <ItemList items={managedPlugins} selectedIndex={subViewIndex} maxHeight={12} columns={PLUGIN_COLUMNS} />
-                </Box>
-              ) : discoverSubView === "piPackages" ? (
-                <Box flexDirection="column">
-                  <Box marginBottom={1}><Text color="cyan" bold>Pi Packages </Text><Text color="gray" dimColor>{getRange(subViewIndex, managedPiPackages.length, 12)}</Text><Text color="gray"> · Press Esc to go back</Text></Box>
-                  <ItemList items={managedPiPackages} selectedIndex={subViewIndex} maxHeight={12} columns={PLUGIN_COLUMNS} />
-                </Box>
-              ) : (
-                // Dashboard view - inline lists for Configs/Assets, summary cards for Plugins/PiPackages
-                <Box flexDirection="column">
-                  {filteredPlugins.length > 0 && (
-                    <Box flexDirection="column">
-                      <PluginSummary
-                        plugins={filteredPlugins}
-                        selected={selectedLibraryItem?.kind === "pluginSummary"}
-                      />
-                    </Box>
-                  )}
-                  {filteredPiPackages.length > 0 && (
-                    <Box flexDirection="column" marginTop={filteredPlugins.length > 0 ? 1 : 0}>
-                      <PiPackageSummary
-                        packages={filteredPiPackages}
-                        selected={selectedLibraryItem?.kind === "piPackageSummary"}
-                      />
-                    </Box>
-                  )}
-                </Box>
-              )}
-            </>
-          )}
+          {tab === "installed" && <InstalledTab />}
 
-          {tab === "installed" && (
-            <Box flexDirection="column">
-              {(managedFiles.length > 0 || !filesLoaded) && (
-                <Box flexDirection="column">
-                  <Box>
-                    <Text color="gray">  Files </Text>
-                    <Text color="gray" dimColor>
-                      {managedFiles.length > 0
-                        ? getRange(selectedIndex < fileCount ? selectedIndex : 0, managedFiles.length, 5)
-                        : "(loading...)"}
-                    </Text>
-                  </Box>
-                  {managedFiles.length > 0 ? (
-                    <ItemList items={managedFiles} selectedIndex={selectedIndex < fileCount ? selectedIndex : -1} maxHeight={5} columns={FILE_COLUMNS} />
-                  ) : (
-                    <Box marginLeft={2}><Text color="cyan">⠋ Loading files...</Text></Box>
-                  )}
-                </Box>
-              )}
+          {tab === "marketplaces" && <MarketplacesTab />}
 
-              {(managedPlugins.length > 0 || !installedPluginsLoaded) && (
-                <Box flexDirection="column" marginTop={(managedFiles.length > 0 || !filesLoaded) ? 1 : 0}>
-                  <Box>
-                    <Text color="gray">  Plugins </Text>
-                    <Text color="gray" dimColor>
-                      {managedPlugins.length > 0
-                        ? getRange(selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : 0, managedPlugins.length, 4)
-                        : "(loading...)"}
-                    </Text>
-                  </Box>
-                  {managedPlugins.length > 0 ? (
-                    <ItemList items={managedPlugins} selectedIndex={selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : -1} maxHeight={4} columns={PLUGIN_COLUMNS} />
-                  ) : (
-                    <Box marginLeft={2}><Text color="cyan">⠋ Loading plugins...</Text></Box>
-                  )}
-                </Box>
-              )}
+          {tab === "tools" && <ToolsTab />}
 
-              {(managedPiPackages.length > 0 || !piPackagesLoaded) && (
-                <Box flexDirection="column" marginTop={(managedFiles.length > 0 || !filesLoaded || managedPlugins.length > 0 || !installedPluginsLoaded) ? 1 : 0}>
-                  <Box>
-                    <Text color="gray">  Pi Packages </Text>
-                    <Text color="gray" dimColor>
-                      {managedPiPackages.length > 0
-                        ? getRange(selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : 0, managedPiPackages.length, 3)
-                        : "(loading...)"}
-                    </Text>
-                  </Box>
-                  {managedPiPackages.length > 0 ? (
-                    <ItemList items={managedPiPackages} selectedIndex={selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : -1} maxHeight={3} columns={PLUGIN_COLUMNS} />
-                  ) : (
-                    <Box marginLeft={2}><Text color="cyan">⠋ Loading pi packages...</Text></Box>
-                  )}
-                </Box>
-              )}
-            </Box>
-          )}
+          {tab === "sync" && <SyncTab />}
 
-          {tab === "marketplaces" && (
-            <>
-              {shouldShowMarketplacesLoading ? (
-                <Box marginY={1}>
-                  <Text color="cyan">⠋ Loading marketplaces...</Text>
-                </Box>
-              ) : discoverSubView === "plugins" && marketplaceBrowseContext ? (
-                <Box flexDirection="column">
-                  <Box marginBottom={1}>
-                    <Text color="cyan" bold>{marketplaceBrowseContext.name} plugins </Text>
-                    <Text color="gray" dimColor>{getRange(subViewIndex, marketplaceBrowsePlugins.length, 12)}</Text>
-                    <Text color="gray"> · Press Esc to go back</Text>
-                  </Box>
-                  <ItemList
-                    items={managedBrowsePlugins}
-                    selectedIndex={subViewIndex}
-                    maxHeight={12}
-                    columns={PLUGIN_COLUMNS}
-                  />
-                  <Box marginTop={1}>
-                    <PluginPreview plugin={marketplaceBrowsePlugins[subViewIndex]} />
-                  </Box>
-                </Box>
-              ) : (
-                <Box flexDirection="column">
-                  <MarketplaceList
-                    rows={marketplaceRows}
-                    selectedIndex={selectedIndex}
-                  />
-                </Box>
-              )}
-            </>
-          )}
-
-          {tab === "tools" && (
-            <ToolsList
-              tools={managedTools}
-              selectedIndex={selectedIndex}
-              detection={toolDetection}
-              detectionPending={toolDetectionPending}
-              actionInProgress={toolActionInProgress}
-            />
-          )}
-
-          {tab === "sync" && (
-            <>
-              {syncPreview.length > 0 && (
-                <Box>
-                  <Text color={syncArmed ? "yellow" : "gray"}>
-                    {syncArmed
-                      ? `Press y again to confirm sync (${selectedSyncCount} selected)`
-                      : `Space to toggle · Press y to sync (${selectedSyncCount} selected)`}
-                  </Text>
-                </Box>
-              )}
-              <SyncList
-                items={syncPreview}
-                selectedIndex={selectedIndex}
-                selectedKeys={syncSelection}
-                getItemKey={getSyncItemKey}
-              />
-            </>
-          )}
-
-          {tab === "settings" && (
-            <SettingsPanel />
-          )}
+          {tab === "settings" && <SettingsTab />}
         </Box>
-      )}
-
-      {(tab === "discover" || tab === "installed") && !isOverlayOpen && (
-        discoverSubView === "plugins" ? (
-          <PluginPreview plugin={filteredPlugins[subViewIndex] ?? null} />
-        ) : discoverSubView === "piPackages" ? (
-          <PiPackagePreview pkg={filteredPiPackages[subViewIndex] ?? null} />
-        ) : selectedLibraryItem?.kind === "plugin" ? (
-          <PluginPreview plugin={selectedLibraryItem.plugin} />
-        ) : selectedLibraryItem?.kind === "piPackage" ? (
-          <PiPackagePreview pkg={selectedLibraryItem.piPackage} />
-        ) : selectedLibraryItem?.kind === "file" ? (
-          <FilePreview file={selectedLibraryItem.file} />
-        ) : null
-      )}
-
-      {tab === "sync" && !isOverlayOpen && (
-        <SyncPreview item={syncPreview[selectedIndex] ?? null} />
       )}
 
       <Notifications />

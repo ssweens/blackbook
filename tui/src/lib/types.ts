@@ -120,6 +120,8 @@ export type SyncPreviewItem =
       file: FileStatus;
       missingInstances: string[];
       driftedInstances: string[];
+      /** When true, allow syncing instances with driftKind "both-changed" (force overwrite target with source) */
+      forceBothChanged?: boolean;
     };
 
 export interface Marketplace {
@@ -185,11 +187,19 @@ export interface AppState {
   // Diff view state
   diffTarget: DiffTarget | null;
   missingSummary: MissingSummary | null;
+  // Sync tab state
+  syncSelection: string[];
+  syncArmed: boolean;
+  // Plugin drift cache
+  pluginDriftMap: Record<string, import("./plugin-drift.js").PluginDrift>;
   // Pi packages state
   piPackages: PiPackage[];
   piPackagesLoaded: boolean;
   piMarketplaces: PiMarketplace[];
   managedItems: import("./managed-item.js").ManagedItem[];
+  // Sort state
+  sortBy: "default" | "name" | "installed" | "popularity";
+  sortDir: "asc" | "desc";
   // Section navigation
   currentSection: DiscoverSection;
   discoverSubView: DiscoverSubView;
@@ -277,6 +287,10 @@ export interface PiPackage {
   installed: boolean;
   installedVersion?: string;
   hasUpdate?: boolean;
+  installedVia?: PackageManager;
+  installedViaManagers?: PackageManager[];
+  managerMismatch?: boolean;
+  preferredManager?: PackageManager;
   // Package contents
   extensions: string[];
   skills: string[];
