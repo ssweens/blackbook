@@ -1,71 +1,82 @@
 /**
- * Claude bundle ownership — read installed_plugins.json + plugin folder contents.
+ * Claude bundle ownership — read installed_plugins.json and walk each plugin's
+ * installPath to discover which skills/commands/agents it contributed.
  *
- * Claude installs each plugin under <config_dir>/plugins/<name>/ and registers
- * it in <config_dir>/plugins/installed_plugins.json. Each plugin folder may
- * contain skills/, commands/, agents/, hooks/, .mcp.json — all of which
- * contribute to the user-facing list when the plugin is enabled.
+ * Claude v2+ installs plugins into a cache:
+ *   ~/.claude/plugins/installed_plugins.json  — registry
+ *   entry.installPath                          — where the plugin's files live
  *
- * For provenance we walk each registered plugin's folder and record:
- *   (artifactType, name) → pluginName
- *
- * If the live <config_dir>/skills/<name>/ is a copy or symlink of a plugin's
- * contributed skill, the same name appears here, so the scanner will tag it
- * as bundle-owned. Standalone names (not in any plugin) stay standalone.
+ * Each installPath may contain skills/, commands/, agents/ directories.
+ * We walk those to build the ownership map.
  */
 
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { discoverMarkdownDir, discoverSkillsDir } from "../base.js";
 import type { BundleOwnershipMap } from "../scanner.js";
 import { ownershipKey, readJsonSafe } from "../scanner.js";
 
 interface InstalledPluginsManifest {
+  version?: number;
   plugins?: Record<
     string,
-    {
+    Array<{
+      scope?: string;
+      installPath?: string;
       version?: string;
-      enabled?: boolean;
-      source?: unknown;
-    }
+    }>
   >;
 }
 
 export function buildClaudeOwnership(configDir: string): BundleOwnershipMap {
   const ownership: BundleOwnershipMap = new Map();
-  const pluginsDir = join(configDir, "plugins");
-  if (!existsSync(pluginsDir) || !statSync(pluginsDir).isDirectory()) return ownership;
 
-  // Read registry to know which plugins are "installed" (vs orphan dirs).
-  const registry = readJsonSafe<InstalledPluginsManifest>(
-    join(pluginsDir, "installed_plugins.json"),
-  );
-  const registered = new Set<string>(Object.keys(registry?.plugins ?? {}));
+  const manifestPath = join(configDir, "plugins", "installed_plugins.json");
+  const manifest = readJsonSafe<InstalledPluginsManifest>(manifestPath);
+  if (!manifest?.plugins) return ownership;
 
-  for (const entry of readdirSync(pluginsDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    if (entry.name.startsWith(".")) continue;
-    // Walk plugin contents regardless of registration — orphaned plugin dirs
-    // still own files on disk; better to attribute correctly than treat as
-    // standalone.
-    const pluginRoot = join(pluginsDir, entry.name);
-    const pluginName = entry.name;
+  for (const [pluginKey, entries] of Object.entries(manifest.plugins)) {
+    if (!entries?.length) continue;
 
-    for (const e of discoverSkillsDir(join(pluginRoot, "skills"))) {
-      ownership.set(ownershipKey("skill", e.name), pluginName);
+    // Plugin key format: "name@marketplace" — use the short name for display.
+    const pluginName = pluginKey.split("@")[0] ?? pluginKey;
+
+    for (const entry of entries) {
+      if (!entry.installPath) continue;
+      const installPath = resolve(entry.installPath);
+      if (!existsSync(installPath) || !statSync(installPath).isDirectory()) continue;
+
+      recordContributions(installPath, pluginName, ownership);
     }
-    for (const e of discoverMarkdownDir(join(pluginRoot, "commands"))) {
-      ownership.set(ownershipKey("command", e.name), pluginName);
-    }
-    for (const e of discoverMarkdownDir(join(pluginRoot, "agents"))) {
-      ownership.set(ownershipKey("agent", e.name), pluginName);
-    }
-    // hooks are tool-specific; they're attributed in the hook scanner if needed
   }
 
-  // Use `registered` later to mark unregistered plugin dirs as orphan in UI.
-  // For ownership, presence is enough.
-  void registered;
+  // Also walk the legacy plugin dirs (plugins/<name>/skills etc.)
+  // in case any older-format plugins are present.
+  const legacyPluginsDir = join(configDir, "plugins");
+  if (existsSync(legacyPluginsDir) && statSync(legacyPluginsDir).isDirectory()) {
+    for (const entry of readdirSync(legacyPluginsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name.startsWith(".")) continue;
+      const pluginRoot = join(legacyPluginsDir, entry.name);
+      recordContributions(pluginRoot, entry.name, ownership);
+    }
+  }
 
   return ownership;
+}
+
+function recordContributions(
+  root: string,
+  pluginName: string,
+  ownership: BundleOwnershipMap,
+): void {
+  for (const e of discoverSkillsDir(join(root, "skills"))) {
+    ownership.set(ownershipKey("skill", e.name), pluginName);
+  }
+  for (const e of discoverMarkdownDir(join(root, "commands"))) {
+    ownership.set(ownershipKey("command", e.name), pluginName);
+  }
+  for (const e of discoverMarkdownDir(join(root, "agents"))) {
+    ownership.set(ownershipKey("agent", e.name), pluginName);
+  }
 }

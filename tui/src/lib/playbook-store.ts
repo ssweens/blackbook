@@ -279,24 +279,65 @@ export const usePlaybookStore = create<PlaybookStore>((set, get) => ({
         set({ playbook: pb, playbookValidation: validation });
       }
 
-      // 2. Surgically remove this op from the current preview state.
-      //    Disk and playbook are now identical for this artifact.
+      // 2. Surgically update the preview:
+      //    - Remove this op from the tool we pulled from (disk now matches playbook).
+      //    - Invalidate (drop) preview entries for OTHER tools that share this
+      //      artifact, because the playbook file content just changed — their
+      //      cached diff is now wrong. They'll show "press r to load" until
+      //      the user presses Enter/r on each.
+      const currentPb = get().playbook;  // freshly reloaded above
       const preview = get().enginePreview;
-      if (preview) {
+      if (preview && currentPb) {
+        const toolsThatShareThis = new Set<string>();
+        for (const [toolId, tc] of Object.entries(currentPb.tools)) {
+          if (!tc) continue;
+          const inc = tc.config.include_shared;
+          const shares =
+            (op.artifactType === "agents_md" && inc.agents_md) ||
+            (op.artifactType === "skill"     && inc.skills.includes(op.name)) ||
+            (op.artifactType === "command"   && inc.commands.includes(op.name)) ||
+            (op.artifactType === "agent"     && inc.agents.includes(op.name));
+          if (shares) toolsThatShareThis.add(toolId);
+        }
+
+        // The tool we pulled from: remove just that op.
+        // Other sharing tools: remove their entire perInstance so they show "press r".
+        const pulledFromToolId = preview.perInstance.find(
+          (p) => p.diff.ops.some((o) => o.targetPath === op.targetPath)
+        )?.toolId;
+
         const updated = {
           ...preview,
-          perInstance: preview.perInstance.map((inst) => ({
-            ...inst,
-            diff: {
-              ...inst.diff,
-              ops: inst.diff.ops.filter(
-                (o) => !(o.artifactType === op.artifactType && o.name === op.name),
-              ),
-            },
-          })),
+          perInstance: preview.perInstance
+            .filter((inst) => {
+              // Drop other sharing tools entirely — their diff is now stale
+              if (inst.toolId !== pulledFromToolId && toolsThatShareThis.has(inst.toolId)) {
+                return false;
+              }
+              return true;
+            })
+            .map((inst) => {
+              if (inst.toolId !== pulledFromToolId) return inst;
+              // For the source tool: remove just this op
+              return {
+                ...inst,
+                diff: {
+                  ...inst.diff,
+                  ops: inst.diff.ops.filter(
+                    (o) => !(o.artifactType === op.artifactType && o.name === op.name),
+                  ),
+                },
+              };
+            }),
         };
         set({ enginePreview: updated });
       }
+
+      // 3. Warn that the playbook file is modified on disk but not committed.
+      get().addNotification({
+        level: "warning",
+        message: `${op.name} pulled back. Playbook file updated — commit + push to sync across machines.`,
+      });
     } catch (e) {
       get().addNotification({
         level: "error",
