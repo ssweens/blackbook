@@ -14,7 +14,7 @@ import { Box, Text, useApp, useInput } from "ink";
 import { usePlaybookStore, type PlaybookTab } from "../lib/playbook-store.js";
 import { DashboardTab, handleDashboardInput, dashboardEffectiveToolId } from "./DashboardTab.js";
 import { SettingsTab, handleSettingsInput } from "./SettingsTab.js";
-import { DriftDiffView } from "./DriftDiffView.js";
+import { DriftDiffView, handleDiffInput } from "./DriftDiffView.js";
 import { PlaybookTab as PlaybookBrowseTab } from "./PlaybookTab.js";
 import { SourcesTab } from "./SourcesTab.js";
 
@@ -31,6 +31,8 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
   const { exit } = useApp();
   const activeTab = usePlaybookStore((s) => s.activeTab);
   const [diffOp, setDiffOp] = useState<import("../lib/playbook/index.js").DiffOp | null>(null);
+  const [diffScroll, setDiffScroll] = useState(0);
+  const closeDiff = () => { setDiffOp(null); setDiffScroll(0); };
   const setActiveTab = usePlaybookStore((s) => s.setActiveTab);
   const reloadPlaybook = usePlaybookStore((s) => s.reloadPlaybook);
   const notifications = usePlaybookStore((s) => s.notifications);
@@ -55,9 +57,9 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
   // This avoids ink's setRawMode conflicts when multiple useInput are active.
   const store = usePlaybookStore;
   useInput((input, key) => {
-    // Diff view open — Esc closes it, everything else goes to DiffDetail's own handler
+    // Diff view open — route all input through handleDiffInput
     if (diffOp) {
-      if (key.escape) setDiffOp(null);
+      handleDiffInput(key, input, closeDiff);
       return;
     }
 
@@ -109,7 +111,12 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
     <Box flexDirection="column" flexGrow={1}>
       {/* Diff overlay — replaces tab content when active */}
       {diffOp && (
-        <DriftDiffView op={diffOp} onBack={() => setDiffOp(null)} />
+        <DriftDiffView
+          op={diffOp}
+          scrollOffset={diffScroll}
+          setScrollOffset={setDiffScroll}
+          onBack={closeDiff}
+        />
       )}
 
       {!diffOp && (

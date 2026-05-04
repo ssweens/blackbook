@@ -407,7 +407,7 @@ export function handleDashboardInput(
     if (key.return && setDiffOp) {
       const highlighted = local.driftOps[local.driftScrollIdx];
       if (highlighted?.kind === "update" && highlighted.sourcePath && highlighted.targetPath) {
-        setDiffOp(highlighted);
+        setDiffOp(highlighted);  // PlaybookApp resets scroll via closeDiff/setDiffScroll
       }
       return;
     }
