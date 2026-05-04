@@ -77,9 +77,12 @@
 - [ ] Bundle install/update/uninstall wiring (engine TODO; throws today)
 - [ ] CLI commands (`blackbook init`, `blackbook apply` plumbing) — Phase 5
 
-### Phase 5 — UI Rebuild (pending)
-- [ ] 4-tab structure: Dashboard, Playbook, Sources, Settings
-- [ ] Per-tool drill-in views (tool-native)
-- [ ] Drift visualization
-- [ ] Confirmation flows
-- [ ] e2e coverage
+### Phase 5 — UI Rebuild (complete on this branch)
+- [x] 4-tab structure: Dashboard, Playbook, Sources, Settings (`tui/src/tabs-v2/`)
+- [x] Playbook store (Zustand, separate from legacy store) (`tui/src/lib/playbook-store.ts`)
+- [x] Dashboard: per-tool detection + drift ops display
+- [x] Playbook tab: shared + per-tool artifact tree + bundle references
+- [x] Sources tab: marketplace declarations + required env status
+- [x] Settings tab: validation, instances, settings summary
+- [x] cli.tsx routing: auto-detects playbook from config, --playbook flag, falls back to legacy TUI
+- [x] New TUI verified end-to-end against real ~/.claude and ~/.pi/agent
