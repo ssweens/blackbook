@@ -9,10 +9,11 @@
  *   q / Ctrl+C             — quit
  */
 
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { usePlaybookStore, type PlaybookTab } from "../lib/playbook-store.js";
 import { DashboardTab, handleDashboardInput, dashboardEffectiveToolId } from "./DashboardTab.js";
+import { DriftDiffView } from "./DriftDiffView.js";
 import { PlaybookTab as PlaybookBrowseTab } from "./PlaybookTab.js";
 import { SourcesTab } from "./SourcesTab.js";
 import { SettingsTab } from "./SettingsTab.js";
@@ -28,6 +29,7 @@ const TABS: { id: PlaybookTab; label: string }[] = [
 export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
   const { exit } = useApp();
   const activeTab = usePlaybookStore((s) => s.activeTab);
+  const [diffOp, setDiffOp] = useState<import("../lib/playbook/index.js").DiffOp | null>(null);
   const setActiveTab = usePlaybookStore((s) => s.setActiveTab);
   const reloadPlaybook = usePlaybookStore((s) => s.reloadPlaybook);
   const notifications = usePlaybookStore((s) => s.notifications);
@@ -52,6 +54,12 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
   // This avoids ink's setRawMode conflicts when multiple useInput are active.
   const store = usePlaybookStore;
   useInput((input, key) => {
+    // Diff view open — Esc closes it, everything else goes to DiffDetail's own handler
+    if (diffOp) {
+      if (key.escape) setDiffOp(null);
+      return;
+    }
+
     // Quit
     if (input === "q" || (key.ctrl && input === "c")) {
       exit();
@@ -89,16 +97,21 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
 
     // Delegate remaining keys to active tab
     if (activeTab === "dashboard") {
-      handleDashboardInput(input, key, store);
+      handleDashboardInput(input, key, store, setDiffOp);
     }
   });
 
   return (
     <Box flexDirection="column" flexGrow={1}>
+      {/* Diff overlay — replaces tab content when active */}
+      {diffOp && (
+        <DriftDiffView op={diffOp} onBack={() => setDiffOp(null)} />
+      )}
+
+      {!diffOp && (
+        <>
       {/* Tab bar */}
       <TabBar activeTab={activeTab} onSelect={setActiveTab} />
-
-      {/* Error and loading are surfaced inside DashboardTab */}
 
       {/* Tab content */}
       <Box flexGrow={1}>
@@ -128,6 +141,8 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
           1-4: switch tabs  ·  r: reload  ·  q: quit
         </Text>
       </Box>
+        </>
+      )}
     </Box>
   );
 }

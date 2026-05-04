@@ -256,7 +256,7 @@ function ToolDetail({
           {detailFocused && hasDrift && (
             <Text dimColor>
               ({driftScrollIdx + 1}–{Math.min(driftScrollIdx + DETAIL_PAGE_SIZE, driftOps.length)}/{driftOps.length})
-              ↑↓ scroll  Esc exit
+              ↑↓ scroll  {driftOps[driftScrollIdx]?.kind === "update" ? "Enter diff  " : ""}Esc exit
             </Text>
           )}
         </Box>
@@ -359,6 +359,7 @@ export function handleDashboardInput(
   input: string,
   key: Key,
   store: typeof usePlaybookStore,
+  setDiffOp?: (op: import("../lib/playbook/index.js").DiffOp | null) => void,
 ) {
   const state = store.getState();
   const { applyState, playbook } = state;
@@ -400,6 +401,14 @@ export function handleDashboardInput(
     }
     if (key.upArrow) {
       local.setDriftScrollIdx(Math.max(0, local.driftScrollIdx - 1));
+      return;
+    }
+    // Enter on an update op opens the diff view
+    if (key.return && setDiffOp) {
+      const highlighted = local.driftOps[local.driftScrollIdx];
+      if (highlighted?.kind === "update" && highlighted.sourcePath && highlighted.targetPath) {
+        setDiffOp(highlighted);
+      }
       return;
     }
     if (input === "a" && effectiveToolId && applyState === null) {
