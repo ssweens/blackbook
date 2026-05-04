@@ -333,7 +333,7 @@ function ToolDetail({
       <Box marginTop={1}>
         {!detailFocused ? (
           <Text dimColor>
-            ↑↓ select{hasDrift ? "  · Enter view drift" : ""}
+            ↑↓ select  · Enter view detail
             {hasDrift && !applying ? (
               <>
                 {"  · "}
@@ -440,8 +440,17 @@ export function handleDashboardInput(
     local.setDriftScrollIdx(0);
     return;
   }
-  if (key.return && local.driftOps.length > 0) {
+  if (key.return) {
+    // Always enter detail mode on Enter.
+    // If drift hasn't been loaded for this tool yet, auto-fetch it.
     local.setDetailFocused(true);
+    if (effectiveToolId) {
+      const preview = state.enginePreview;
+      const alreadyLoaded = preview?.perInstance.some((p) => p.toolId === effectiveToolId);
+      if (!alreadyLoaded) {
+        void state.refreshPreviewForTool(effectiveToolId);
+      }
+    }
     return;
   }
   if (input === "a" && effectiveToolId && applyState === null) {
