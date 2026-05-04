@@ -62,13 +62,13 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
       setActiveTab(TABS[num - 1]!.id);
       return;
     }
-    // Tab / Shift+Tab cycling
-    if (key.tab && !key.shift) {
+    // Tab / Shift+Tab / left / right cycling
+    if ((key.tab && !key.shift) || key.rightArrow) {
       const next = (tabIdx + 1) % TABS.length;
       setActiveTab(TABS[next]!.id);
       return;
     }
-    if (key.tab && key.shift) {
+    if ((key.tab && key.shift) || key.leftArrow) {
       const next = (tabIdx - 1 + TABS.length) % TABS.length;
       setActiveTab(TABS[next]!.id);
       return;
