@@ -32,8 +32,6 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
     setActiveTab,
     loadPlaybookFromPath,
     reloadPlaybook,
-    playbookError,
-    playbookLoading,
     notifications,
     dismissNotification,
   } = usePlaybookStore();
@@ -80,17 +78,7 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
       {/* Tab bar */}
       <TabBar activeTab={activeTab} onSelect={setActiveTab} />
 
-      {/* Error banner */}
-      {playbookError && (
-        <Box paddingX={2} paddingY={0}>
-          <Text color="red">✗ {playbookError}</Text>
-        </Box>
-      )}
-      {playbookLoading && (
-        <Box paddingX={2}>
-          <Text dimColor>Loading playbook…</Text>
-        </Box>
-      )}
+      {/* Error and loading are surfaced inside DashboardTab */}
 
       {/* Tab content */}
       <Box flexGrow={1}>

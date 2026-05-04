@@ -29,6 +29,8 @@ export function DashboardTab({ isFocused }: { isFocused: boolean }) {
     enginePreviewLoading,
     selectedToolId,
     playbook,
+    playbookLoading,
+    playbookError,
     applyState,
     setSelectedToolId,
     applyTool,
@@ -81,8 +83,19 @@ export function DashboardTab({ isFocused }: { isFocused: boolean }) {
   if (!playbook) {
     return (
       <Box flexDirection="column" paddingX={2} paddingY={1}>
-        <Text color="yellow">No playbook loaded.</Text>
-        <Text dimColor>Point blackbook at one: blackbook --playbook=/path/to/playbook</Text>
+        {playbookLoading ? (
+          <Text dimColor>Loading playbook…</Text>
+        ) : playbookError ? (
+          <>
+            <Text color="red">✗ {playbookError}</Text>
+            <Text dimColor>Check the path in ~/.config/blackbook/config.yaml</Text>
+          </>
+        ) : (
+          <>
+            <Text color="yellow">No playbook loaded.</Text>
+            <Text dimColor>Point blackbook at one: blackbook --playbook=/path/to/playbook</Text>
+          </>
+        )}
       </Box>
     );
   }
