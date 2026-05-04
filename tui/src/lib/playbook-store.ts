@@ -102,9 +102,12 @@ export interface PlaybookActions {
   detectAllTools(): Promise<void>;
   detectTool(toolId: ToolId): Promise<void>;
 
-  // Apply
+  // Apply (playbook → disk)
   applyTool(toolId: ToolId, confirmRemovals?: boolean): Promise<void>;
   cancelApply(): void;
+
+  // Pullback (disk → playbook): copy a single drifted file from disk back into the playbook
+  pullbackArtifact(op: import('./playbook/index.js').DiffOp): Promise<void>;
 
   // Notifications
   addNotification(n: Omit<PlaybookNotification, "id">): void;
@@ -225,6 +228,61 @@ export const usePlaybookStore = create<PlaybookStore>((set, get) => ({
       });
     } finally {
       set({ applyState: null });
+    }
+  },
+
+  async pullbackArtifact(op) {
+    const pb = get().playbook;
+    if (!pb) return;
+    if (op.kind !== "update" || !op.sourcePath || !op.targetPath) {
+      get().addNotification({ level: "error", message: `Cannot pull back: not an update op` });
+      return;
+    }
+
+    const { join } = await import("node:path");
+    const { copyFileSync, mkdirSync, existsSync, statSync } = await import("node:fs");
+
+    // sourcePath = playbook file, targetPath = disk file
+    // Pullback = disk → playbook (copy targetPath → sourcePath)
+    try {
+      let diskFile = op.targetPath;
+      let playbookFile = op.sourcePath;
+
+      // For skills, copy SKILL.md specifically
+      if (op.artifactType === "skill") {
+        diskFile = join(op.targetPath, "SKILL.md");
+        playbookFile = join(op.sourcePath, "SKILL.md");
+      }
+
+      if (!existsSync(diskFile)) {
+        get().addNotification({ level: "error", message: `Disk file not found: ${diskFile}` });
+        return;
+      }
+
+      const destDir = join(playbookFile, "..");
+      if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true });
+
+      // Backup the playbook version first
+      if (existsSync(playbookFile)) {
+        copyFileSync(playbookFile, `${playbookFile}.bak.${Date.now()}`);
+      }
+
+      copyFileSync(diskFile, playbookFile);
+
+      get().addNotification({
+        level: "success",
+        message: `Pulled ${op.name} from disk → playbook`,
+        dismissAfter: 4000,
+      });
+
+      // Reload playbook to pick up the changed file
+      const path = get().playbookPath;
+      if (path) await get().loadPlaybookFromPath(path);
+    } catch (e) {
+      get().addNotification({
+        level: "error",
+        message: `Pullback failed: ${e instanceof Error ? e.message : String(e)}`,
+      });
     }
   },
 

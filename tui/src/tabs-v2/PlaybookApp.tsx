@@ -59,7 +59,10 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
   useInput((input, key) => {
     // Diff view open — route all input through handleDiffInput
     if (diffOp) {
-      handleDiffInput(key, input, closeDiff);
+      const selectedTool = dashboardEffectiveToolId(usePlaybookStore);
+      handleDiffInput(key, input, closeDiff, diffOp, () => {
+        void usePlaybookStore.getState().applyTool(selectedTool);
+      });
       return;
     }
 

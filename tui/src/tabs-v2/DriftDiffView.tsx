@@ -94,7 +94,13 @@ type LocalState = {
 };
 let _local: LocalState | null = null;
 
-export function handleDiffInput(key: Key, input: string, onBack: () => void) {
+export function handleDiffInput(
+  key: Key,
+  input: string,
+  onBack: () => void,
+  op: import("../lib/playbook/index.js").DiffOp,
+  onApplyTool?: () => void,
+) {
   const local = _local;
   if (!local) return;
   const { scrollOffset, setScrollOffset, totalRows } = local;
@@ -105,6 +111,19 @@ export function handleDiffInput(key: Key, input: string, onBack: () => void) {
   if (key.downArrow) { setScrollOffset(Math.min(max, scrollOffset + 1)); return; }
   if (key.pageUp)    { setScrollOffset(Math.max(0, scrollOffset - PAGE_SIZE)); return; }
   if (key.pageDown)  { setScrollOffset(Math.min(max, scrollOffset + PAGE_SIZE)); return; }
+  // p = pullback: copy disk version → playbook
+  if (input === "p") {
+    const { usePlaybookStore } = require("../lib/playbook-store.js");
+    void usePlaybookStore.getState().pullbackArtifact(op);
+    onBack();
+    return;
+  }
+  // a = apply this tool (playbook → disk)
+  if (input === "a" && onApplyTool) {
+    void onApplyTool();
+    onBack();
+    return;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -171,9 +190,9 @@ export function DriftDiffView({ op, scrollOffset, setScrollOffset, onBack }: Pro
 
       {/* Column labels */}
       <Box>
-        <Box width={colWidth}><Text dimColor bold>{"  disk (current)".padEnd(colWidth)}</Text></Box>
+        <Box width={colWidth}><Text color="red" bold>{"  ← disk (a=overwrite with playbook)".padEnd(colWidth)}</Text></Box>
         <Text dimColor>│</Text>
-        <Box width={colWidth}><Text dimColor bold>  playbook (after apply)</Text></Box>
+        <Box width={colWidth}><Text color="green" bold>  playbook → (p=pull disk into playbook)</Text></Box>
       </Box>
 
       {/* Divider */}
@@ -195,7 +214,10 @@ export function DriftDiffView({ op, scrollOffset, setScrollOffset, onBack }: Pro
 
       {/* Footer */}
       <Box paddingX={1} borderStyle="single" borderTop>
-        <Text dimColor>↑↓ scroll  PgUp/PgDn jump  Esc back</Text>
+        <Text dimColor>↑↓ scroll  PgUp/PgDn jump  </Text>
+        <Text bold dimColor>a</Text><Text dimColor> apply (playbook→disk)  </Text>
+        <Text bold dimColor>p</Text><Text dimColor> pullback (disk→playbook)  </Text>
+        <Text dimColor>Esc back</Text>
       </Box>
     </Box>
   );

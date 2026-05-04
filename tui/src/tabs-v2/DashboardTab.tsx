@@ -337,14 +337,14 @@ function ToolDetail({
             {hasDrift && !applying ? (
               <>
                 {"  · "}
-                <Text bold dimColor>a</Text> apply
+                <Text bold dimColor>a</Text> apply (playbook→disk)
                 {totalRemoves > 0 && <Text color="yellow"> (confirm {totalRemoves} removal{totalRemoves !== 1 ? "s" : ""})</Text>}
               </>
             ) : null}
             {!hasDrift && enginePreview && <Text color="green">  ✓ nothing to do</Text>}
           </Text>
         ) : (
-          <Text dimColor>↑↓ scroll drift  · <Text bold dimColor>a</Text> apply  · Esc back</Text>
+          <Text dimColor>↑↓ scroll  <Text bold dimColor>a</Text> apply playbook→disk  <Text bold dimColor>p</Text> pull disk→playbook  Esc back</Text>
         )}
       </Box>
     </Box>
@@ -401,6 +401,16 @@ export function handleDashboardInput(
     }
     if (key.upArrow) {
       local.setDriftScrollIdx(Math.max(0, local.driftScrollIdx - 1));
+      return;
+    }
+    // p = pull back highlighted item (disk → playbook)
+    if (input === "p") {
+      const highlighted = local.driftOps[local.driftScrollIdx];
+      if (highlighted?.kind === "update") {
+        void state.pullbackArtifact(highlighted);
+        local.setDetailFocused(false);
+        local.setDriftScrollIdx(0);
+      }
       return;
     }
     // Enter on an update op opens the diff view
