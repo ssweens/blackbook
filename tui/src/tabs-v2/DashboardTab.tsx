@@ -267,9 +267,14 @@ function ToolDetail({
         {!previewLoading && enginePreview && !toolConfig && (
           <Text dimColor>  not in playbook — add to tools_enabled in playbook.yaml</Text>
         )}
-        {!previewLoading && enginePreview && toolConfig && !hasDrift && (
-          <Text color="green">  ✓ in sync</Text>
-        )}
+        {!previewLoading && enginePreview && toolConfig && !hasDrift && (() => {
+          // Only show "in sync" if this tool was actually scanned in the current preview.
+          // If r was pressed for a different tool, this tool was never checked.
+          const wasChecked = enginePreview.perInstance.some((p) => p.toolId === toolId);
+          return wasChecked
+            ? <Text color="green">  ✓ in sync</Text>
+            : <Text dimColor>  press r to load</Text>;
+        })()}
 
         {/* Summary counts */}
         {!previewLoading && hasDrift && (
