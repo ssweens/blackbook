@@ -97,6 +97,7 @@ function createCallbacks(): DispatchCallbacks {
     installPiPackage: vi.fn().mockResolvedValue(true),
     uninstallPiPackage: vi.fn().mockResolvedValue(true),
     updatePiPackage: vi.fn().mockResolvedValue(true),
+    repairPiPackage: vi.fn().mockResolvedValue(true),
     refreshDetailPiPackage: vi.fn(),
     buildPluginDiffTarget: vi.fn().mockResolvedValue(null),
   };
@@ -230,6 +231,15 @@ describe("handleItemAction", () => {
     await handleItemAction(item, action, callbacks);
     expect(callbacks.updatePlugin).toHaveBeenCalledWith(plugin);
     expect(callbacks.refreshDetailPlugin).toHaveBeenCalledWith(plugin);
+  });
+
+  it("repair pi-package calls repairPiPackage + refresh", async () => {
+    const pkg = createPiPackage();
+    const item = createItem({ _piPackage: pkg });
+    const action: ItemAction = { id: "r", label: "Repair", type: "repair" };
+    await handleItemAction(item, action, callbacks);
+    expect(callbacks.repairPiPackage).toHaveBeenCalledWith(pkg);
+    expect(callbacks.refreshDetailPiPackage).toHaveBeenCalledWith(pkg);
   });
 
   // ── install_tool ─────────────────────────────────────────────────────

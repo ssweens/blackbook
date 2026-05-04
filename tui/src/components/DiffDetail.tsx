@@ -15,9 +15,18 @@ const MAX_VISIBLE_LINES = 20;
 
 function formatMtime(ms: number): string {
   const d = new Date(ms);
-  const mon = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  const time = d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
-  return `${mon} ${time}`;
+  const date = d.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const time = d.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  return `${date} ${time}`;
 }
 
 export function DiffDetail({ file, title, instanceName, onBack, onPullBack }: DiffDetailProps) {
@@ -68,6 +77,22 @@ export function DiffDetail({ file, title, instanceName, onBack, onPullBack }: Di
         <Box marginBottom={1}>
           <Text color="yellow">Binary files differ</Text>
         </Box>
+        <Box marginBottom={1} flexDirection="column">
+          <Box>
+            <Text color="red">- </Text>
+            <Text color="gray" dimColor>instance ({instanceName})</Text>
+            {file.targetMtime != null && (
+              <Text color="gray" dimColor>  {formatMtime(file.targetMtime)}</Text>
+            )}
+          </Box>
+          <Box>
+            <Text color="green">+ </Text>
+            <Text color="gray" dimColor>source repo</Text>
+            {file.sourceMtime != null && (
+              <Text color="gray" dimColor>  {formatMtime(file.sourceMtime)}</Text>
+            )}
+          </Box>
+        </Box>
         <Box>
           <Text color="gray">{onPullBack ? "p pull to source · " : ""}Esc back</Text>
         </Box>
@@ -87,6 +112,22 @@ export function DiffDetail({ file, title, instanceName, onBack, onPullBack }: Di
         </Box>
         <Box marginBottom={1}>
           <Text color="green">✓ No differences</Text>
+        </Box>
+        <Box marginBottom={1} flexDirection="column">
+          <Box>
+            <Text color="red">- </Text>
+            <Text color="gray" dimColor>instance ({instanceName})</Text>
+            {file.targetMtime != null && (
+              <Text color="gray" dimColor>  {formatMtime(file.targetMtime)}</Text>
+            )}
+          </Box>
+          <Box>
+            <Text color="green">+ </Text>
+            <Text color="gray" dimColor>source repo</Text>
+            {file.sourceMtime != null && (
+              <Text color="gray" dimColor>  {formatMtime(file.sourceMtime)}</Text>
+            )}
+          </Box>
         </Box>
         <Box>
           <Text color="gray">{onPullBack ? "p pull to source · " : ""}Esc back</Text>

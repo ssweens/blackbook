@@ -29,6 +29,7 @@ export interface ItemAction {
     | "install"
     | "uninstall"
     | "update"
+    | "repair"
     | "install_tool"
     | "uninstall_tool"
     | "pullback"
@@ -173,6 +174,8 @@ function getActionColor(type: ItemAction["type"]): string {
       return "red";
     case "update":
       return "cyan";
+    case "repair":
+      return "yellow";
     case "pullback":
       return "cyan";
     default:
@@ -284,6 +287,22 @@ export function PiPackageMetadata({ item }: { item: ManagedItem }) {
         <Box marginBottom={1}>
           <Text color="gray">Source: </Text>
           <Text>{item.sourceType === "npm" ? "npm" : item.sourceType}</Text>
+        </Box>
+      )}
+
+      {item.installedVia && (
+        <Box marginBottom={1}>
+          <Text color="gray">Installed via: </Text>
+          <Text>{item.installedVia}</Text>
+          {item.installedViaManagers && item.installedViaManagers.length > 1 && (
+            <Text color="gray"> (also: {item.installedViaManagers.filter((m) => m !== item.installedVia).join(", ")})</Text>
+          )}
+        </Box>
+      )}
+
+      {item.managerMismatch && (
+        <Box marginBottom={1}>
+          <Text color="yellow">Manager mismatch detected — use Repair to migrate to preferred manager ({item.preferredManager || "configured"}).</Text>
         </Box>
       )}
 

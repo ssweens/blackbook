@@ -1121,6 +1121,7 @@ export function togglePluginComponent(
 
 function getInstalledPluginsForClaudeInstance(
   instance: ToolInstance,
+  marketplacePlugins?: Plugin[],
 ): Plugin[] {
   const plugins: Plugin[] = [];
 
@@ -1246,6 +1247,26 @@ function getInstalledPluginsForClaudeInstance(
   // in the plugin cache (e.g., manually installed or installed via Claude Code)
   const foundPluginNames = new Set(plugins.map((p) => p.name));
 
+  // Build lookup maps from component name to marketplace plugin
+  const skillToPlugin = new Map<string, Plugin>();
+  const commandToPlugin = new Map<string, Plugin>();
+  const agentToPlugin = new Map<string, Plugin>();
+  const marketplacePluginByName = new Map<string, Plugin>();
+  if (marketplacePlugins) {
+    for (const mp of marketplacePlugins) {
+      marketplacePluginByName.set(mp.name, mp);
+      for (const skill of mp.skills) {
+        skillToPlugin.set(skill, mp);
+      }
+      for (const cmd of mp.commands) {
+        commandToPlugin.set(cmd, mp);
+      }
+      for (const agent of mp.agents) {
+        agentToPlugin.set(agent, mp);
+      }
+    }
+  }
+
   const scanComponentDir = (
     dirName: string,
     type: "skill" | "command" | "agent",
@@ -1279,23 +1300,55 @@ function getInstalledPluginsForClaudeInstance(
           );
           if (existingPlugin) continue;
 
-          // Create a standalone plugin entry for this component
-          foundPluginNames.add(name);
-          plugins.push({
-            name,
-            marketplace: "local",
-            description: "",
-            source: itemPath,
-            skills: type === "skill" ? [name] : [],
-            commands: type === "command" ? [name] : [],
-            agents: type === "agent" ? [name] : [],
-            hooks: [],
-            hasMcp: false,
-            hasLsp: false,
-            homepage: "",
-            installed: true,
-            scope: "user",
-          });
+          // Check if this component belongs to a marketplace plugin
+          const mp = type === "skill" ? skillToPlugin.get(name)
+            : type === "command" ? commandToPlugin.get(name)
+            : agentToPlugin.get(name);
+
+          if (mp) {
+            // Component belongs to a marketplace plugin - add to existing or create new entry
+            const existingMpEntry = plugins.find((p) => p.name === mp.name && p.marketplace === mp.marketplace);
+            if (existingMpEntry) {
+              // Add to existing plugin entry
+              if (type === "skill" && !existingMpEntry.skills.includes(name)) {
+                existingMpEntry.skills.push(name);
+              } else if (type === "command" && !existingMpEntry.commands.includes(name)) {
+                existingMpEntry.commands.push(name);
+              } else if (type === "agent" && !existingMpEntry.agents.includes(name)) {
+                existingMpEntry.agents.push(name);
+              }
+            } else {
+              // Create new plugin entry based on marketplace plugin
+              foundPluginNames.add(mp.name);
+              plugins.push({
+                ...mp,
+                source: itemPath,
+                skills: type === "skill" ? [name] : [],
+                commands: type === "command" ? [name] : [],
+                agents: type === "agent" ? [name] : [],
+                installed: true,
+                scope: "user" as const,
+              });
+            }
+          } else {
+            // Truly local component - create a standalone plugin entry
+            foundPluginNames.add(name);
+            plugins.push({
+              name,
+              marketplace: "local",
+              description: "",
+              source: itemPath,
+              skills: type === "skill" ? [name] : [],
+              commands: type === "command" ? [name] : [],
+              agents: type === "agent" ? [name] : [],
+              hooks: [],
+              hasMcp: false,
+              hasLsp: false,
+              homepage: "",
+              installed: true,
+              scope: "user",
+            });
+          }
         } catch {
           // Ignore individual item errors
         }
@@ -1314,10 +1367,11 @@ function getInstalledPluginsForClaudeInstance(
 
 export function getInstalledPluginsForInstance(
   instance: ToolInstance,
+  marketplacePlugins?: Plugin[],
 ): Plugin[] {
   if (!instance.enabled) return [];
   if (instance.toolId === "claude-code") {
-    return getInstalledPluginsForClaudeInstance(instance);
+    return getInstalledPluginsForClaudeInstance(instance, marketplacePlugins);
   }
 
   // Load manifest to get authoritative source paths
@@ -1447,6 +1501,24 @@ export function getInstalledPluginsForInstance(
     }
   >();
 
+  // Build a lookup from component name to marketplace plugin
+  const skillToPlugin = new Map<string, Plugin>();
+  const commandToPlugin = new Map<string, Plugin>();
+  const agentToPlugin = new Map<string, Plugin>();
+  if (marketplacePlugins) {
+    for (const mp of marketplacePlugins) {
+      for (const skill of mp.skills) {
+        skillToPlugin.set(skill, mp);
+      }
+      for (const cmd of mp.commands) {
+        commandToPlugin.set(cmd, mp);
+      }
+      for (const agent of mp.agents) {
+        agentToPlugin.set(agent, mp);
+      }
+    }
+  }
+
   for (const component of components) {
     const pluginInfo = extractPluginInfoFromSource(component.source);
 
@@ -1455,15 +1527,27 @@ export function getInstalledPluginsForInstance(
     let pluginName: string;
 
     if (pluginInfo) {
-      // Component came from a marketplace plugin
+      // Component came from a marketplace plugin (found in cache)
       key = `${pluginInfo.marketplace}:${pluginInfo.pluginName}`;
       marketplace = pluginInfo.marketplace;
       pluginName = pluginInfo.pluginName;
     } else {
-      // Truly local component - treat it as its own plugin
-      key = `local:${component.name}`;
-      marketplace = "local";
-      pluginName = component.name;
+      // Not in cache - check if component belongs to a marketplace plugin
+      const mp = component.type === "skill" ? skillToPlugin.get(component.name)
+        : component.type === "command" ? commandToPlugin.get(component.name)
+        : agentToPlugin.get(component.name);
+      
+      if (mp) {
+        // Component belongs to a marketplace plugin
+        key = `${mp.marketplace}:${mp.name}`;
+        marketplace = mp.marketplace;
+        pluginName = mp.name;
+      } else {
+        // Truly local component - treat it as its own plugin
+        key = `local:${component.name}`;
+        marketplace = "local";
+        pluginName = component.name;
+      }
     }
 
     let group = pluginGroups.get(key);
@@ -1522,7 +1606,7 @@ export function getInstalledPluginsForInstance(
   return plugins;
 }
 
-export function getAllInstalledPlugins(): {
+export function getAllInstalledPlugins(marketplacePlugins?: Plugin[]): {
   plugins: Plugin[];
   byTool: Record<string, Plugin[]>;
 } {
@@ -1538,7 +1622,7 @@ export function getAllInstalledPlugins(): {
       continue;
     }
 
-    const instancePlugins = getInstalledPluginsForInstance(instance);
+    const instancePlugins = getInstalledPluginsForInstance(instance, marketplacePlugins);
     byTool[key] = instancePlugins;
 
     for (const p of instancePlugins) {

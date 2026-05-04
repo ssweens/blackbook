@@ -24,6 +24,22 @@ function statusIcon(status: DiffFileSummary["status"]): { icon: string; color: s
   }
 }
 
+function formatMtime(ms: number): string {
+  const d = new Date(ms);
+  const date = d.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const time = d.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  return `${date} ${time}`;
+}
+
 export function DiffFileList({ title, instanceName, files, onSelect, onClose, onPullBack }: DiffFileListProps) {
   const [selected, setSelected] = useState(0);
 
@@ -121,6 +137,25 @@ export function DiffFileList({ title, instanceName, files, onSelect, onClose, on
           <Text color="green">→ </Text><Text color="gray" dimColor>source newer  </Text>
           <Text color="cyan">← </Text><Text color="gray" dimColor>instance newer</Text>
         </Box>
+        {files[selected] && (
+          <Box marginTop={1} flexDirection="column">
+            <Text color="gray" dimColor>Selected: {files[selected].displayPath}</Text>
+            <Box>
+              <Text color="red">- </Text>
+              <Text color="gray" dimColor>instance ({instanceName})</Text>
+              {files[selected].targetMtime != null && (
+                <Text color="gray" dimColor>  {formatMtime(files[selected].targetMtime)}</Text>
+              )}
+            </Box>
+            <Box>
+              <Text color="green">+ </Text>
+              <Text color="gray" dimColor>source repo</Text>
+              {files[selected].sourceMtime != null && (
+                <Text color="gray" dimColor>  {formatMtime(files[selected].sourceMtime)}</Text>
+              )}
+            </Box>
+          </Box>
+        )}
       </Box>
     </Box>
   );

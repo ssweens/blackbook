@@ -299,6 +299,10 @@ export function getFileActions(file: FileStatus): FileAction[] {
 export function getPiPackageActions(pkg: PiPackage): ItemAction[] {
   const actions: ItemAction[] = [];
   if (pkg.installed) {
+    if (pkg.managerMismatch) {
+      const preferred = pkg.preferredManager ?? "preferred";
+      actions.push({ id: "repair", label: `Repair install manager → ${preferred}`, type: "repair" });
+    }
     if (pkg.hasUpdate) actions.push({ id: "update", label: "Update", type: "update" });
     actions.push({ id: "uninstall", label: "Uninstall", type: "uninstall" });
   } else {

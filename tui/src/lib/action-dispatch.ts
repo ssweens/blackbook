@@ -45,6 +45,7 @@ export interface DispatchCallbacks {
   installPiPackage: (pkg: PiPackage) => Promise<boolean>;
   uninstallPiPackage: (pkg: PiPackage) => Promise<boolean>;
   updatePiPackage: (pkg: PiPackage) => Promise<boolean>;
+  repairPiPackage: (pkg: PiPackage) => Promise<boolean>;
   refreshDetailPiPackage: (pkg: PiPackage) => void;
 
   // Plugin diff support
@@ -91,6 +92,9 @@ export async function handleItemAction(
 
     case "update":
       return handleUpdateAction(item, callbacks);
+
+    case "repair":
+      return handleRepairAction(item, callbacks);
 
     case "install_tool":
       return handleInstallToolAction(item, action, callbacks);
@@ -162,6 +166,8 @@ async function handleSyncAction(
       driftedInstances: item._file.instances
         .filter((i) => i.status === "drifted")
         .map((i) => i.instanceName),
+      // Force sync both-changed instances when explicitly requested from ItemDetail
+      forceBothChanged: true,
     };
     await callbacks.syncFiles([syncItem]);
     return true;
@@ -218,6 +224,16 @@ async function handleUpdateAction(
     return true;
   }
   return false;
+}
+
+async function handleRepairAction(
+  item: ManagedItem,
+  callbacks: DispatchCallbacks,
+): Promise<boolean> {
+  if (!item._piPackage) return false;
+  await callbacks.repairPiPackage(item._piPackage);
+  callbacks.refreshDetailPiPackage(item._piPackage);
+  return true;
 }
 
 async function handleInstallToolAction(
