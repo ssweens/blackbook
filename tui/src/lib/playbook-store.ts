@@ -54,8 +54,9 @@ export interface PlaybookState {
 
   // ── UI state ─────────────────────────────────────────────────────────────
   activeTab: PlaybookTab;
-  /** Which toolId is selected in the Dashboard list. */
+  /** Selected item in the Dashboard — one row per instance. */
   selectedToolId: ToolId | null;
+  selectedInstanceId: string | null;
   /** Which artifact is expanded in the Playbook tab. */
   expandedArtifact: string | null;
 
@@ -87,6 +88,7 @@ export interface PlaybookActions {
   // Navigation
   setActiveTab(tab: PlaybookTab): void;
   setSelectedToolId(id: ToolId | null): void;
+  setSelectedInstance(toolId: ToolId | null, instanceId: string | null): void;
   setExpandedArtifact(key: string | null): void;
 
   /** Pre-populate from a synchronous load before first render (used in cli.tsx). */
@@ -136,6 +138,7 @@ const INITIAL: PlaybookState = {
 
   activeTab: "dashboard",
   selectedToolId: null,
+  selectedInstanceId: null,
   expandedArtifact: null,
 
   applyState: null,
@@ -161,6 +164,10 @@ export const usePlaybookStore = create<PlaybookStore>((set, get) => ({
 
   setSelectedToolId(id) {
     set({ selectedToolId: id });
+  },
+
+  setSelectedInstance(toolId, instanceId) {
+    set({ selectedToolId: toolId, selectedInstanceId: instanceId });
   },
 
   setExpandedArtifact(key) {

@@ -177,10 +177,10 @@ describe("Playbook TUI E2E", () => {
     const { stdout, unmount } = render(<PlaybookApp playbookPath={pbRoot} />);
     try {
       const frame = await waitForFrame(stdout.lastFrame, (f) =>
-        f.includes("claude") && f.includes("Dashboard") && !f.includes("No playbook"),
+        f.includes("Claude Test") && f.includes("Dashboard") && !f.includes("No playbook"),
       );
-      expect(frame).toContain("claude");
-      expect(frame).toContain("pi");
+      expect(frame).toContain("Claude Test");
+      expect(frame).toContain("Pi Test");
     } finally {
       unmount();
     }
@@ -195,7 +195,7 @@ describe("Playbook TUI E2E", () => {
     const { stdout, unmount } = render(<PlaybookApp playbookPath={pbRoot} />);
     try {
       // Dashboard first
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Tools"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Instances"));
 
       // Switch to Playbook
       usePlaybookStore.getState().setActiveTab("playbook");
@@ -211,7 +211,7 @@ describe("Playbook TUI E2E", () => {
 
       // Back to Dashboard
       usePlaybookStore.getState().setActiveTab("dashboard");
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Tools"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Instances"));
     } finally {
       unmount();
     }

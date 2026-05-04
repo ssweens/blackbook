@@ -61,6 +61,8 @@ export interface PerInstanceResult {
   apply: ApplyResult;
   mcpEmit?: EmitResult;
   bundleOps: BundleOpReport[];
+  /** Bundle names installed on disk but not declared in plugins.yaml/packages.yaml. */
+  untrackedBundles: string[];
   /** Errors specific to this instance (env, adapter routing, etc.) */
   errors: EngineError[];
 }
@@ -134,6 +136,16 @@ export async function engineApply(
       if (!instance.enabled) continue;
 
       const errors: EngineError[] = [];
+
+      // Scan inventory (used for both diff and untracked bundle detection)
+      let inventory: import("../playbook/index.js").Inventory;
+      try {
+        inventory = await adapter.scan(instance);
+      } catch (err) {
+        errors.push({ scope: "instance", toolId, instanceId: instance.id,
+          message: `scan failed: ${errorMessage(err)}` });
+        continue;
+      }
 
       // Common-spine preview + apply
       let diff: Diff;
@@ -230,6 +242,9 @@ export async function engineApply(
         );
       }
 
+      // Compute untracked bundles: installed on disk but not in the manifest.
+      const untrackedBundles = computeUntrackedBundles(adapter, toolConfig, inventory!);
+
       perInstance.push({
         toolId,
         instanceId: instance.id,
@@ -237,6 +252,7 @@ export async function engineApply(
         apply: applyResult,
         mcpEmit,
         bundleOps,
+        untrackedBundles,
         errors,
       });
     }
@@ -284,6 +300,29 @@ function errorMessage(err: unknown): string {
 
 import type { LoadedToolConfig } from "../playbook/index.js";
 import type { ToolAdapter } from "../adapters/types.js";
+
+function computeUntrackedBundles(
+  adapter: ToolAdapter,
+  toolConfig: LoadedToolConfig,
+  inventory: import("../playbook/index.js").Inventory,
+): string[] {
+  if (!adapter.defaults.capabilities.bundleParadigm) return [];
+
+  // All bundle names seen on disk via provenance tagging
+  const onDisk = new Set<string>();
+  for (const a of inventory.artifacts) {
+    if (a.provenance.kind === "bundle") onDisk.add(a.provenance.bundleName);
+  }
+
+  // All bundle names declared in the manifest
+  const declared = new Set<string>();
+  const plugins = toolConfig.pluginsManifest?.plugins ?? [];
+  const packages = toolConfig.packagesManifest?.packages ?? [];
+  for (const b of [...plugins, ...packages]) declared.add(b.name);
+
+  // Untracked = on disk but not declared
+  return Array.from(onDisk).filter((n) => !declared.has(n)).sort();
+}
 
 async function reconcileBundles(
   adapter: ToolAdapter,
