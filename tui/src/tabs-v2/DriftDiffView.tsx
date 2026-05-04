@@ -100,6 +100,7 @@ export function handleDiffInput(
   onBack: () => void,
   op: import("../lib/playbook/index.js").DiffOp,
   onApplyTool?: () => void,
+  onPullback?: () => void,
 ) {
   const local = _local;
   if (!local) return;
@@ -112,9 +113,8 @@ export function handleDiffInput(
   if (key.pageUp)    { setScrollOffset(Math.max(0, scrollOffset - PAGE_SIZE)); return; }
   if (key.pageDown)  { setScrollOffset(Math.min(max, scrollOffset + PAGE_SIZE)); return; }
   // p = pullback: copy disk version → playbook
-  if (input === "p") {
-    const { usePlaybookStore } = require("../lib/playbook-store.js");
-    void usePlaybookStore.getState().pullbackArtifact(op);
+  if (input === "p" && onPullback) {
+    void onPullback();
     onBack();
     return;
   }
