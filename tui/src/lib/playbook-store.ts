@@ -283,6 +283,8 @@ export const usePlaybookStore = create<PlaybookStore>((set, get) => ({
     set({ enginePreviewLoading: true, enginePreviewError: null });
     try {
       ensureAdapters();
+      // Yield before heavy work so pending renders and input events process.
+      await new Promise((r) => setTimeout(r, 0));
       const result = await enginePreview(pb, { confirmRemovals: false });
       set({ enginePreview: result, enginePreviewLoading: false });
     } catch (e) {

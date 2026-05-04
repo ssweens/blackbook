@@ -14,28 +14,27 @@
  */
 
 import React from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
+import type { Key } from "ink";
 import type { ToolId } from "../lib/playbook/index.js";
-import { usePlaybookStore, type ToolStatus } from "../lib/playbook-store.js";
+import { usePlaybookStore, type PlaybookStore, type ToolStatus } from "../lib/playbook-store.js";
 import type { EngineSyncResult } from "../lib/sync/index.js";
 
 const ALL_TOOLS: ToolId[] = ["claude", "codex", "opencode", "amp", "pi"];
 
 export function DashboardTab({ isFocused }: { isFocused: boolean }) {
-  const {
-    toolStatuses,
-    detectionLoading,
-    enginePreview,
-    enginePreviewLoading,
-    selectedToolId,
-    playbook,
-    playbookLoading,
-    playbookError,
-    applyState,
-    setSelectedToolId,
-    applyTool,
-    cancelApply,
-  } = usePlaybookStore();
+  const toolStatuses = usePlaybookStore((s) => s.toolStatuses);
+  const detectionLoading = usePlaybookStore((s) => s.detectionLoading);
+  const enginePreview = usePlaybookStore((s) => s.enginePreviewLoading ? null : s.enginePreview);
+  const enginePreviewLoading = usePlaybookStore((s) => s.enginePreviewLoading);
+  const selectedToolId = usePlaybookStore((s) => s.selectedToolId);
+  const playbook = usePlaybookStore((s) => s.playbook);
+  const playbookLoading = usePlaybookStore((s) => s.playbookLoading);
+  const playbookError = usePlaybookStore((s) => s.playbookError);
+  const applyState = usePlaybookStore((s) => s.applyState);
+  const setSelectedToolId = usePlaybookStore((s) => s.setSelectedToolId);
+  const applyTool = usePlaybookStore((s) => s.applyTool);
+  const cancelApply = usePlaybookStore((s) => s.cancelApply);
 
   const tools = ALL_TOOLS.filter(
     (t) =>
@@ -53,32 +52,7 @@ export function DashboardTab({ isFocused }: { isFocused: boolean }) {
   );
   const effectiveToolId = activeTools[effectiveIdx] ?? null;
 
-  useInput((_input, key) => {
-    if (!isFocused) return;
-
-    // Confirmation overlay active — only y / Escape handled
-    if (applyState?.phase === "confirming") {
-      if (_input === "y" || _input === "Y") {
-        void applyTool(applyState.toolId, true);
-      }
-      if (key.escape || _input === "n" || _input === "N") {
-        cancelApply();
-      }
-      return;
-    }
-
-    if (key.upArrow) {
-      const next = Math.max(0, effectiveIdx - 1);
-      setSelectedToolId(activeTools[next] ?? null);
-    }
-    if (key.downArrow) {
-      const next = Math.min(activeTools.length - 1, effectiveIdx + 1);
-      setSelectedToolId(activeTools[next] ?? null);
-    }
-    if (_input === "a" && effectiveToolId && applyState === null) {
-      void applyTool(effectiveToolId);
-    }
-  });
+  // Input is handled by PlaybookApp's single useInput — see handleDashboardInput().
 
   if (!playbook) {
     return (
@@ -388,4 +362,58 @@ function ToolDetail({
       </Box>
     </Box>
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Input handler — called from PlaybookApp's single useInput
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function handleDashboardInput(
+  input: string,
+  key: Key,
+  store: typeof usePlaybookStore,
+) {
+  const state = store.getState();
+  const { applyState, playbook } = state;
+
+  if (!playbook) return;
+
+  const tools = ALL_TOOLS.filter(
+    (t) =>
+      state.toolStatuses[t] !== undefined ||
+      playbook.manifest.tools_enabled.includes(t),
+  );
+  const activeTools = tools.length > 0 ? tools : ALL_TOOLS;
+
+  const selectedIdx = state.selectedToolId
+    ? activeTools.indexOf(state.selectedToolId)
+    : 0;
+  const effectiveIdx = Math.max(0, Math.min(selectedIdx, activeTools.length - 1));
+  const effectiveToolId = activeTools[effectiveIdx] ?? null;
+
+  // Confirmation active — only y / n / Escape
+  if (applyState?.phase === "confirming") {
+    if (input === "y" || input === "Y") {
+      void state.applyTool(applyState.toolId, true);
+    }
+    if (key.escape || input === "n" || input === "N") {
+      state.cancelApply();
+    }
+    return;
+  }
+
+  if (key.downArrow) {
+    const next = Math.min(activeTools.length - 1, effectiveIdx + 1);
+    const nextTool = activeTools[next] ?? null;
+    state.setSelectedToolId(nextTool);
+    return;
+  }
+  if (key.upArrow) {
+    const next = Math.max(0, effectiveIdx - 1);
+    state.setSelectedToolId(activeTools[next] ?? null);
+    return;
+  }
+  if (input === "a" && effectiveToolId && applyState === null) {
+    void state.applyTool(effectiveToolId);
+  }
 }

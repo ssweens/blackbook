@@ -35,7 +35,9 @@ function sectionLabel(s: Section): string {
 }
 
 export function PlaybookTab({ isFocused }: { isFocused: boolean }) {
-  const { playbook, playbookLoading, playbookError } = usePlaybookStore();
+  const playbook = usePlaybookStore((s) => s.playbook);
+  const playbookLoading = usePlaybookStore((s) => s.playbookLoading);
+  const playbookError = usePlaybookStore((s) => s.playbookError);
   const [sectionIdx, setSectionIdx] = useState(0);
 
   if (!playbook) {

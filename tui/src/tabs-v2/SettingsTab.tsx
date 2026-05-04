@@ -7,7 +7,11 @@ import { Box, Text } from "ink";
 import { usePlaybookStore } from "../lib/playbook-store.js";
 
 export function SettingsTab({ isFocused: _f }: { isFocused: boolean }) {
-  const { playbook, playbookPath, playbookValidation, playbookLoading, playbookError } = usePlaybookStore();
+  const playbook = usePlaybookStore((s) => s.playbook);
+  const playbookPath = usePlaybookStore((s) => s.playbookPath);
+  const playbookValidation = usePlaybookStore((s) => s.playbookValidation);
+  const playbookLoading = usePlaybookStore((s) => s.playbookLoading);
+  const playbookError = usePlaybookStore((s) => s.playbookError);
 
   if (!playbook) {
     return (

@@ -9,10 +9,10 @@
  *   q / Ctrl+C             — quit
  */
 
-import React, { useEffect } from "react";
+import React from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { usePlaybookStore, type PlaybookTab } from "../lib/playbook-store.js";
-import { DashboardTab } from "./DashboardTab.js";
+import { DashboardTab, handleDashboardInput } from "./DashboardTab.js";
 import { PlaybookTab as PlaybookBrowseTab } from "./PlaybookTab.js";
 import { SourcesTab } from "./SourcesTab.js";
 import { SettingsTab } from "./SettingsTab.js";
@@ -27,30 +27,24 @@ const TABS: { id: PlaybookTab; label: string }[] = [
 
 export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
   const { exit } = useApp();
-  const {
-    activeTab,
-    setActiveTab,
-    reloadPlaybook,
-    notifications,
-    dismissNotification,
-  } = usePlaybookStore();
+  const activeTab = usePlaybookStore((s) => s.activeTab);
+  const setActiveTab = usePlaybookStore((s) => s.setActiveTab);
+  const reloadPlaybook = usePlaybookStore((s) => s.reloadPlaybook);
+  const notifications = usePlaybookStore((s) => s.notifications);
+  const dismissNotification = usePlaybookStore((s) => s.dismissNotification);
 
   // On mount: if playbook was already loaded synchronously in cli.tsx, just
   // kick off background detection + preview. If it wasn't (error during load),
   // don't retry — the error is already in the store.
-  useEffect(() => {
-    const state = usePlaybookStore.getState();
-    if (state.playbook) {
-      // Loaded synchronously — kick off background detection + preview.
-      void state.detectAllTools();
-      void state.refreshPreview();
-    }
-    // If state.playbookError is set, Dashboard already shows it.
-    // If neither playbook nor error, we have no path — also handled.
-  }, []);
+  // No auto-detection or preview on mount. User presses 'r' to refresh.
+  // Background detection + file hashing blocks the event loop (sync I/O in
+  // hashDir/hashFile), which kills ink's input handling. Manual-only.
 
   const tabIdx = TABS.findIndex((t) => t.id === activeTab);
 
+  // Single useInput handler for the entire app — no child useInput hooks.
+  // This avoids ink's setRawMode conflicts when multiple useInput are active.
+  const store = usePlaybookStore;
   useInput((input, key) => {
     // Quit
     if (input === "q" || (key.ctrl && input === "c")) {
@@ -62,7 +56,7 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
       void reloadPlaybook();
       return;
     }
-    // Number shortcuts
+    // Number shortcuts for tabs
     const num = parseInt(input, 10);
     if (num >= 1 && num <= TABS.length) {
       setActiveTab(TABS[num - 1]!.id);
@@ -72,10 +66,17 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
     if (key.tab && !key.shift) {
       const next = (tabIdx + 1) % TABS.length;
       setActiveTab(TABS[next]!.id);
+      return;
     }
     if (key.tab && key.shift) {
       const next = (tabIdx - 1 + TABS.length) % TABS.length;
       setActiveTab(TABS[next]!.id);
+      return;
+    }
+
+    // Delegate remaining keys to active tab
+    if (activeTab === "dashboard") {
+      handleDashboardInput(input, key, store);
     }
   });
 
