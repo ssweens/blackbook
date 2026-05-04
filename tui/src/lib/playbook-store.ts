@@ -323,11 +323,39 @@ export const usePlaybookStore = create<PlaybookStore>((set, get) => ({
         set({ enginePreview: updated });
       }
 
-      // 3. Warn that the playbook file is modified on disk but not committed.
-      get().addNotification({
-        level: "warning",
-        message: `${op.name} pulled back. Playbook file updated — commit + push to sync across machines.`,
-      });
+      // 3. Commit and push the playbook repo.
+      const { execFile } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const execFileAsync = promisify(execFile);
+      const playbookRoot = get().playbookPath;
+
+      if (playbookRoot) {
+        try {
+          const gitOpts = { cwd: playbookRoot, timeout: 30000 };
+          await execFileAsync("git", ["add", "-A"], gitOpts);
+          await execFileAsync("git", ["commit", "-m", `pullback: ${op.artifactType}/${op.name} from disk`], gitOpts);
+          // Pull rebase first (non-fatal if remote doesn't exist)
+          await execFileAsync("git", ["pull", "--rebase"], gitOpts).catch(() => {});
+          await execFileAsync("git", ["push"], gitOpts);
+          get().addNotification({
+            level: "success",
+            message: `${op.name} pulled back, committed and pushed.`,
+            dismissAfter: 4000,
+          });
+        } catch (gitErr) {
+          // Commit/push failure is non-fatal — file is updated locally
+          const msg = gitErr instanceof Error ? gitErr.message.split("\n")[0] : String(gitErr);
+          get().addNotification({
+            level: "warning",
+            message: `${op.name} pulled back but git commit/push failed: ${msg}`,
+          });
+        }
+      } else {
+        get().addNotification({
+          level: "warning",
+          message: `${op.name} pulled back. No playbook path — commit manually.`,
+        });
+      }
     } catch (e) {
       get().addNotification({
         level: "error",
