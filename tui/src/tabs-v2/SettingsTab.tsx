@@ -7,12 +7,14 @@ import { Box, Text } from "ink";
 import { usePlaybookStore } from "../lib/playbook-store.js";
 
 export function SettingsTab({ isFocused: _f }: { isFocused: boolean }) {
-  const { playbook, playbookPath, playbookValidation } = usePlaybookStore();
+  const { playbook, playbookPath, playbookValidation, playbookLoading, playbookError } = usePlaybookStore();
 
   if (!playbook) {
     return (
       <Box paddingX={2} paddingY={1}>
-        <Text color="yellow">No playbook loaded.</Text>
+        {playbookLoading ? <Text dimColor>Loading…</Text>
+        : playbookError ? <Text color="red">✗ {playbookError}</Text>
+        : <Text color="yellow">No playbook loaded.</Text>}
       </Box>
     );
   }

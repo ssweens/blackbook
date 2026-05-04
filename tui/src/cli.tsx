@@ -31,14 +31,17 @@ async function main() {
 
   if (playbookPath) {
     // Load synchronously before first render — eliminates the "No playbook" flash.
-    // detectAllTools + refreshPreview still run async in the background after mount.
     try {
       const pb = loadPlaybook(playbookPath);
       const validation = validatePlaybook(pb);
       usePlaybookStore.getState().setPlaybookImmediate(playbookPath, pb, validation);
-    } catch (_e) {
-      // Error visible in Dashboard via playbookError once PlaybookApp mounts
-      // and loadPlaybookFromPath runs its own try/catch.
+    } catch (e) {
+      // Surface the error immediately so Dashboard renders the error, not "no playbook".
+      usePlaybookStore.setState({
+        playbookPath: playbookPath,
+        playbookError: e instanceof Error ? e.message : String(e),
+        playbookLoading: false,
+      });
     }
     render(<PlaybookApp playbookPath={playbookPath} />);
     return;

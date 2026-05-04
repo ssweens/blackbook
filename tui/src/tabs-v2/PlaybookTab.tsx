@@ -8,8 +8,8 @@
 
 import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
-import type { ToolId, LoadedPlaybook } from "../lib/playbook/index.js";
-import { usePlaybookStore, type PlaybookStore } from "../lib/playbook-store.js";
+import type { ToolId, LoadedPlaybook, ArtifactRef } from "../lib/playbook/index.js";
+import { usePlaybookStore } from "../lib/playbook-store.js";
 
 type Section =
   | { kind: "shared-skills" }
@@ -35,13 +35,15 @@ function sectionLabel(s: Section): string {
 }
 
 export function PlaybookTab({ isFocused }: { isFocused: boolean }) {
-  const { playbook } = usePlaybookStore();
+  const { playbook, playbookLoading, playbookError } = usePlaybookStore();
   const [sectionIdx, setSectionIdx] = useState(0);
 
   if (!playbook) {
     return (
       <Box paddingX={2} paddingY={1}>
-        <Text color="yellow">No playbook loaded.</Text>
+        {playbookLoading ? <Text dimColor>Loading…</Text>
+        : playbookError ? <Text color="red">✗ {playbookError}</Text>
+        : <Text color="yellow">No playbook loaded.</Text>}
       </Box>
     );
   }
@@ -63,7 +65,7 @@ export function PlaybookTab({ isFocused }: { isFocused: boolean }) {
       ...(tc.packagesManifest?.packages ?? []),
     ];
     if (bundles.length) sections.push({ kind: "tool-bundles", toolId });
-    if (Object.keys(tc.config.include_shared.mcp).length) sections.push({ kind: "tool-mcp", toolId });
+    if (tc.config.include_shared.mcp.length) sections.push({ kind: "tool-mcp", toolId });
   }
 
   const selected = sections[sectionIdx] ?? sections[0];
@@ -158,7 +160,7 @@ function SectionContents({
       const tc = playbook.tools[section.toolId];
       return <ArtifactList
         title={`${section.toolId} — tool-specific skills`}
-        items={tc?.standalone.skills.map((s: import('../lib/playbook/index.js').ArtifactRef) => s.name) ?? []}
+        items={tc?.standalone.skills.map((s: ArtifactRef) => s.name) ?? []}
         subtitle={`Opt-in shared: ${tc?.config.include_shared.skills.join(", ") || "(none)"}`}
       />;
     }
@@ -167,7 +169,7 @@ function SectionContents({
       const tc = playbook.tools[section.toolId];
       return <ArtifactList
         title={`${section.toolId} — tool-specific commands`}
-        items={tc?.standalone.commands.map((c: import('../lib/playbook/index.js').ArtifactRef) => c.name) ?? []}
+        items={tc?.standalone.commands.map((c: ArtifactRef) => c.name) ?? []}
         subtitle={`Opt-in shared: ${tc?.config.include_shared.commands.join(", ") || "(none)"}`}
       />;
     }

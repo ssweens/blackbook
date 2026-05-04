@@ -13,7 +13,7 @@ import React, { useEffect } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { usePlaybookStore, type PlaybookTab } from "../lib/playbook-store.js";
 import { DashboardTab } from "./DashboardTab.js";
-import { PlaybookTab as PlaybookTabComp } from "./PlaybookTab.js";
+import { PlaybookTab as PlaybookBrowseTab } from "./PlaybookTab.js";
 import { SourcesTab } from "./SourcesTab.js";
 import { SettingsTab } from "./SettingsTab.js";
 import { NotificationsBar } from "./NotificationsBar.js";
@@ -30,22 +30,24 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
   const {
     activeTab,
     setActiveTab,
-    loadPlaybookFromPath,
     reloadPlaybook,
     notifications,
     dismissNotification,
   } = usePlaybookStore();
 
-  // Load playbook on mount — skipped if cli.tsx already pre-populated the store.
+  // On mount: if playbook was already loaded synchronously in cli.tsx, just
+  // kick off background detection + preview. If it wasn't (error during load),
+  // don't retry — the error is already in the store.
   useEffect(() => {
-    if (playbookPath && !usePlaybookStore.getState().playbook) {
-      void loadPlaybookFromPath(playbookPath);
-    } else if (playbookPath) {
-      // Already loaded synchronously — just kick off the async background work.
-      void usePlaybookStore.getState().detectAllTools();
-      void usePlaybookStore.getState().refreshPreview();
+    const state = usePlaybookStore.getState();
+    if (state.playbook) {
+      // Loaded synchronously — kick off background detection + preview.
+      void state.detectAllTools();
+      void state.refreshPreview();
     }
-  }, [playbookPath]);
+    // If state.playbookError is set, Dashboard already shows it.
+    // If neither playbook nor error, we have no path — also handled.
+  }, []);
 
   const tabIdx = TABS.findIndex((t) => t.id === activeTab);
 
@@ -90,7 +92,7 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
           <DashboardTab isFocused={activeTab === "dashboard"} />
         )}
         {activeTab === "playbook" && (
-          <PlaybookTabComp isFocused={activeTab === "playbook"} />
+          <PlaybookBrowseTab isFocused={activeTab === "playbook"} />
         )}
         {activeTab === "sources" && (
           <SourcesTab isFocused={activeTab === "sources"} />

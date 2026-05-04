@@ -219,7 +219,7 @@ export function getVersion(binary: string, flag = "--version"): string | undefin
   try {
     const out = execSync(`${binary} ${flag}`, {
       stdio: ["ignore", "pipe", "ignore"],
-      timeout: 5000,
+      timeout: 2000,
     }).toString().trim();
     return out || undefined;
   } catch {
