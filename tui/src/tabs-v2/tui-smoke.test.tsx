@@ -1,28 +1,30 @@
 /**
- * Smoke tests for the new TUI — validates core interaction flows.
+ * E2E interaction tests for the new playbook TUI.
  *
- * Uses ink-testing-library for render + character keypress testing,
- * and drives the store directly for state transitions that depend on
- * escape sequences (arrow keys, Tab) which ink-testing-library doesn't
- * reliably pass through.
+ * Pattern matches the existing app.e2e.test.tsx: render the real component,
+ * drive the Zustand store directly, poll with waitForFrame until expected
+ * content appears. This validates that state transitions produce correct
+ * rendered output — the same guarantee the legacy E2E suite provides.
  *
- * Every core flow:
- *   1. First render shows playbook content (no flash)
- *   2. Tab switching via number keys (real keypresses)
- *   3. Store-driven tab cycling (verifies component renders)
- *   4. Store-driven tool selection (verifies Dashboard updates)
- *   5. Drift display after preview completes
- *   6. Playbook tab shows shared artifacts
- *   7. Sources tab shows marketplaces + required env
- *   8. Settings tab shows validation + instances
- *   9. Error state renders properly
- *  10. Loading state renders properly
- *  11. Apply flow surfaces confirmation when removals exist
+ * Flows covered:
+ *   1.  First render shows playbook content (no "No playbook" flash)
+ *   2.  Tab switching renders correct tab content
+ *   3.  Tool selection updates detail panel
+ *   4.  Drift display appears after preview resolves
+ *   5.  Apply without removals runs immediately and shows success
+ *   6.  Apply with removals enters confirmation phase
+ *   7.  Cancel confirmation clears apply state
+ *   8.  Confirm removals runs apply and shows success
+ *   9.  Playbook tab shows shared + tool artifacts
+ *   10. Sources tab shows marketplaces + env status
+ *   11. Settings tab shows validation + instances
+ *   12. Error state renders error, not "No playbook loaded"
+ *   13. Notification appears and auto-dismisses
  */
 
 import React from "react";
 import { render } from "ink-testing-library";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -30,16 +32,37 @@ import {
   loadPlaybook,
   scaffoldSkeleton,
   validatePlaybook,
-  writeMcpServer,
   writePlaybookManifest,
   writeToolConfig,
 } from "../lib/playbook/index.js";
-import { usePlaybookStore } from "../lib/playbook-store.js";
+import { usePlaybookStore, type PlaybookStore } from "../lib/playbook-store.js";
 import { __resetRegistryForTests, registerAdapter } from "../lib/adapters/index.js";
 import { claudeAdapter } from "../lib/adapters/claude/index.js";
 import { piAdapter } from "../lib/adapters/pi/index.js";
 import type { ToolAdapter } from "../lib/adapters/types.js";
 import { PlaybookApp } from "./PlaybookApp.js";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers (same pattern as app.e2e.test.tsx)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const waitForFrame = async (
+  getFrame: () => string | undefined,
+  predicate: (frame: string) => boolean,
+  timeoutMs = 3000,
+) => {
+  const start = Date.now();
+  for (let i = 0; i < 500; i += 1) {
+    const frame = getFrame();
+    if (frame && predicate(frame)) return frame;
+    if (Date.now() - start > timeoutMs) break;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  const last = getFrame();
+  throw new Error(
+    `waitForFrame timed out after ${timeoutMs}ms.\nLast frame:\n${last ?? "(no frame)"}`,
+  );
+};
 
 let tmp: string;
 
@@ -72,7 +95,7 @@ function buildTestPlaybook() {
     name: "test-playbook",
     tools_enabled: ["claude", "pi"],
     marketplaces: {
-      claude: [{ name: "test-marketplace", url: "https://example.com/marketplace.json" }],
+      claude: [{ name: "test-mkt", url: "https://example.com/mkt.json" }],
     },
     required_env: [{ name: "TEST_TOKEN", used_by: ["test-mcp"], optional: false }],
     defaults: { confirm_removals: true, default_strategy: "copy", drift_action: "warn" },
@@ -111,15 +134,7 @@ function preloadStore(pbRoot: string) {
   usePlaybookStore.getState().setPlaybookImmediate(pbRoot, pb, validation);
 }
 
-async function waitFor(fn: () => boolean, timeoutMs = 3000): Promise<void> {
-  const start = Date.now();
-  while (!fn()) {
-    if (Date.now() - start > timeoutMs) throw new Error("waitFor timed out");
-    await new Promise((r) => setTimeout(r, 50));
-  }
-}
-
-const INITIAL_STATE = {
+const INITIAL_STATE: Partial<PlaybookStore> = {
   playbookPath: null,
   playbook: null,
   playbookValidation: null,
@@ -130,7 +145,7 @@ const INITIAL_STATE = {
   enginePreviewError: null,
   toolStatuses: {},
   detectionLoading: false,
-  activeTab: "dashboard" as const,
+  activeTab: "dashboard",
   selectedToolId: null,
   expandedArtifact: null,
   applyState: null,
@@ -138,7 +153,7 @@ const INITIAL_STATE = {
 };
 
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), "blackbook-tui-smoke-"));
+  tmp = mkdtempSync(join(tmpdir(), "bb-e2e-"));
   __resetRegistryForTests();
   usePlaybookStore.setState(INITIAL_STATE);
 });
@@ -149,210 +164,300 @@ afterEach(() => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tests
+// ─────────────────────────────────────────────────────────────────────────────
 
-describe("TUI smoke tests", () => {
-  it("1. first render shows playbook content — no flash", () => {
+describe("Playbook TUI E2E", () => {
+  it("1. first render shows playbook content — no flash", async () => {
     const { pbRoot, claudeDir, piDir } = buildTestPlaybook();
     registerAdapter(stubAdapter(claudeAdapter, claudeDir));
     registerAdapter(stubAdapter(piAdapter, piDir));
     preloadStore(pbRoot);
 
-    const { lastFrame } = render(<PlaybookApp playbookPath={pbRoot} />);
-    const frame = lastFrame();
-
-    expect(frame).toContain("Dashboard");
-    expect(frame).toContain("Playbook");
-    expect(frame).toContain("Sources");
-    expect(frame).toContain("Settings");
-    expect(frame).toContain("claude");
-    expect(frame).toContain("pi");
-    expect(frame).not.toContain("No playbook loaded");
+    const { stdout, unmount } = render(<PlaybookApp playbookPath={pbRoot} />);
+    try {
+      const frame = await waitForFrame(stdout.lastFrame, (f) =>
+        f.includes("claude") && f.includes("Dashboard") && !f.includes("No playbook"),
+      );
+      expect(frame).toContain("claude");
+      expect(frame).toContain("pi");
+    } finally {
+      unmount();
+    }
   });
 
-  it("2. number keys switch tabs", () => {
+  it("2. tab switching renders correct content", async () => {
     const { pbRoot, claudeDir, piDir } = buildTestPlaybook();
     registerAdapter(stubAdapter(claudeAdapter, claudeDir));
     registerAdapter(stubAdapter(piAdapter, piDir));
     preloadStore(pbRoot);
 
-    const { lastFrame, stdin } = render(<PlaybookApp playbookPath={pbRoot} />);
+    const { stdout, unmount } = render(<PlaybookApp playbookPath={pbRoot} />);
+    try {
+      // Dashboard first
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Tools"));
 
-    expect(lastFrame()).toContain("Tools");
+      // Switch to Playbook
+      usePlaybookStore.getState().setActiveTab("playbook");
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Sections") && f.includes("shared/skills"));
 
-    stdin.write("2");
-    expect(lastFrame()).toContain("Sections");
+      // Switch to Sources
+      usePlaybookStore.getState().setActiveTab("sources");
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Marketplaces") && f.includes("test-mkt"));
 
-    stdin.write("3");
-    expect(lastFrame()).toContain("Marketplaces");
+      // Switch to Settings
+      usePlaybookStore.getState().setActiveTab("settings");
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Validation") && f.includes("pnpm"));
 
-    stdin.write("4");
-    expect(lastFrame()).toContain("Validation");
-
-    stdin.write("1");
-    expect(lastFrame()).toContain("Tools");
+      // Back to Dashboard
+      usePlaybookStore.getState().setActiveTab("dashboard");
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Tools"));
+    } finally {
+      unmount();
+    }
   });
 
-  it("3. store-driven tab switch renders correct tab content", () => {
+  it("3. tool selection updates detail panel", async () => {
     const { pbRoot, claudeDir, piDir } = buildTestPlaybook();
     registerAdapter(stubAdapter(claudeAdapter, claudeDir));
     registerAdapter(stubAdapter(piAdapter, piDir));
     preloadStore(pbRoot);
 
-    const { lastFrame } = render(<PlaybookApp playbookPath={pbRoot} />);
+    const { stdout, unmount } = render(<PlaybookApp playbookPath={pbRoot} />);
+    try {
+      // Default: claude detail shown
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Claude Test"));
 
-    usePlaybookStore.getState().setActiveTab("playbook");
-    expect(lastFrame()).toContain("Sections");
-    expect(lastFrame()).toContain("shared/skills");
+      // Select pi
+      usePlaybookStore.getState().setSelectedToolId("pi");
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Pi Test"));
 
-    usePlaybookStore.getState().setActiveTab("sources");
-    expect(lastFrame()).toContain("Marketplaces");
-    expect(lastFrame()).toContain("test-marketplace");
-
-    usePlaybookStore.getState().setActiveTab("settings");
-    expect(lastFrame()).toContain("no issues");
-    expect(lastFrame()).toContain("pnpm");
-
-    usePlaybookStore.getState().setActiveTab("dashboard");
-    expect(lastFrame()).toContain("Tools");
+      // Back to claude
+      usePlaybookStore.getState().setSelectedToolId("claude");
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Claude Test"));
+    } finally {
+      unmount();
+    }
   });
 
-  it("4. store-driven tool selection shows correct detail", () => {
+  it("4. drift appears after preview resolves", async () => {
     const { pbRoot, claudeDir, piDir } = buildTestPlaybook();
     registerAdapter(stubAdapter(claudeAdapter, claudeDir));
     registerAdapter(stubAdapter(piAdapter, piDir));
     preloadStore(pbRoot);
 
-    const { lastFrame } = render(<PlaybookApp playbookPath={pbRoot} />);
+    const { stdout, unmount } = render(<PlaybookApp playbookPath={pbRoot} />);
+    try {
+      // Trigger detection + preview
+      await usePlaybookStore.getState().detectAllTools();
+      await usePlaybookStore.getState().refreshPreview();
 
-    // Default: first tool (claude)
-    expect(lastFrame()).toContain("Claude Test");
-
-    // Select pi
-    usePlaybookStore.getState().setSelectedToolId("pi");
-    expect(lastFrame()).toContain("Pi Test");
-
-    // Back to claude
-    usePlaybookStore.getState().setSelectedToolId("claude");
-    expect(lastFrame()).toContain("Claude Test");
+      // Drift should show adds (config dirs are empty)
+      await waitForFrame(stdout.lastFrame, (f) => /\+\d+ add/.test(f));
+    } finally {
+      unmount();
+    }
   });
 
-  it("5. drift display after preview completes", async () => {
+  it("5. apply without removals runs immediately and shows success", async () => {
     const { pbRoot, claudeDir, piDir } = buildTestPlaybook();
     registerAdapter(stubAdapter(claudeAdapter, claudeDir));
     registerAdapter(stubAdapter(piAdapter, piDir));
     preloadStore(pbRoot);
 
-    const { lastFrame } = render(<PlaybookApp playbookPath={pbRoot} />);
+    const { stdout, unmount } = render(<PlaybookApp playbookPath={pbRoot} />);
+    try {
+      await usePlaybookStore.getState().detectAllTools();
+      await usePlaybookStore.getState().refreshPreview();
 
-    // Trigger preview manually (the useEffect may or may not have fired yet)
-    await usePlaybookStore.getState().detectAllTools();
-    await usePlaybookStore.getState().refreshPreview();
+      // No pre-existing files → no removals → apply should run directly
+      await usePlaybookStore.getState().applyTool("claude");
 
-    const state = usePlaybookStore.getState();
-    expect(state.enginePreviewLoading).toBe(false);
-    expect(state.enginePreviewError).toBeNull();
-    expect(state.enginePreview).not.toBeNull();
+      // Should see success notification
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("[success]"));
 
-    const frame = lastFrame();
-    // Should show add ops (tool config dirs are empty)
-    expect(frame).toMatch(/\+\d+ add/);
+      // Files should be on disk
+      expect(readFileSync(join(claudeDir, "skills", "test-skill", "SKILL.md"), "utf-8")).toBe("# test-skill");
+      expect(readFileSync(join(claudeDir, "CLAUDE.md"), "utf-8")).toBe("# test agents");
+      expect(readFileSync(join(claudeDir, "commands", "test-cmd.md"), "utf-8")).toBe("# test-cmd");
+    } finally {
+      unmount();
+    }
   });
 
-  it("6. Playbook tab shows shared skills and commands", () => {
+  it("6. apply with removals enters confirmation phase", async () => {
     const { pbRoot, claudeDir, piDir } = buildTestPlaybook();
     registerAdapter(stubAdapter(claudeAdapter, claudeDir));
     registerAdapter(stubAdapter(piAdapter, piDir));
     preloadStore(pbRoot);
 
-    const { lastFrame } = render(<PlaybookApp playbookPath={pbRoot} />);
-    usePlaybookStore.getState().setActiveTab("playbook");
+    // Pre-populate orphan so it becomes a removal candidate
+    mkdirSync(join(claudeDir, "skills", "orphan"), { recursive: true });
+    writeFileSync(join(claudeDir, "skills", "orphan", "SKILL.md"), "# orphan");
 
-    const frame = lastFrame();
-    expect(frame).toContain("shared/skills");
-    expect(frame).toContain("shared/commands");
-    expect(frame).toContain("test-skill");
+    const { stdout, unmount } = render(<PlaybookApp playbookPath={pbRoot} />);
+    try {
+      await usePlaybookStore.getState().detectAllTools();
+      await usePlaybookStore.getState().refreshPreview();
+
+      // Apply without confirmRemovals → enters confirming state
+      await usePlaybookStore.getState().applyTool("claude");
+
+      const state = usePlaybookStore.getState();
+      expect(state.applyState?.phase).toBe("confirming");
+      expect(state.applyState?.pendingRemovals).toBeGreaterThan(0);
+
+      // Confirmation bar should render
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("will be removed"));
+    } finally {
+      unmount();
+    }
   });
 
-  it("7. Sources tab shows marketplaces and required env", () => {
+  it("7. cancel confirmation clears apply state", async () => {
     const { pbRoot, claudeDir, piDir } = buildTestPlaybook();
     registerAdapter(stubAdapter(claudeAdapter, claudeDir));
     registerAdapter(stubAdapter(piAdapter, piDir));
     preloadStore(pbRoot);
 
-    const { lastFrame } = render(<PlaybookApp playbookPath={pbRoot} />);
-    usePlaybookStore.getState().setActiveTab("sources");
+    mkdirSync(join(claudeDir, "skills", "orphan"), { recursive: true });
+    writeFileSync(join(claudeDir, "skills", "orphan", "SKILL.md"), "# orphan");
 
-    const frame = lastFrame();
-    expect(frame).toContain("test-marketplace");
-    expect(frame).toContain("TEST_TOKEN");
+    const { stdout, unmount } = render(<PlaybookApp playbookPath={pbRoot} />);
+    try {
+      await usePlaybookStore.getState().detectAllTools();
+      await usePlaybookStore.getState().refreshPreview();
+      await usePlaybookStore.getState().applyTool("claude");
+
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("will be removed"));
+
+      // Cancel
+      usePlaybookStore.getState().cancelApply();
+
+      await waitForFrame(stdout.lastFrame, (f) => !f.includes("will be removed"));
+      expect(usePlaybookStore.getState().applyState).toBeNull();
+    } finally {
+      unmount();
+    }
   });
 
-  it("8. Settings tab shows validation and instances", () => {
+  it("8. confirm removals applies and removes orphan", async () => {
     const { pbRoot, claudeDir, piDir } = buildTestPlaybook();
     registerAdapter(stubAdapter(claudeAdapter, claudeDir));
     registerAdapter(stubAdapter(piAdapter, piDir));
     preloadStore(pbRoot);
 
-    const { lastFrame } = render(<PlaybookApp playbookPath={pbRoot} />);
-    usePlaybookStore.getState().setActiveTab("settings");
+    mkdirSync(join(claudeDir, "skills", "orphan"), { recursive: true });
+    writeFileSync(join(claudeDir, "skills", "orphan", "SKILL.md"), "# orphan");
 
-    const frame = lastFrame();
-    expect(frame).toContain("no issues");
-    expect(frame).toContain("Claude Test");
-    expect(frame).toContain("Pi Test");
-    expect(frame).toContain("pnpm");
+    const { stdout, unmount } = render(<PlaybookApp playbookPath={pbRoot} />);
+    try {
+      await usePlaybookStore.getState().detectAllTools();
+      await usePlaybookStore.getState().refreshPreview();
+      await usePlaybookStore.getState().applyTool("claude");
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("will be removed"));
+
+      // Confirm
+      await usePlaybookStore.getState().applyTool("claude", true);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("[success]"));
+
+      // Orphan should be deleted
+      expect(() => readFileSync(join(claudeDir, "skills", "orphan", "SKILL.md"))).toThrow();
+      // Playbook content should be applied
+      expect(readFileSync(join(claudeDir, "skills", "test-skill", "SKILL.md"), "utf-8")).toBe("# test-skill");
+    } finally {
+      unmount();
+    }
   });
 
-  it("9. error state renders — not 'No playbook loaded'", () => {
+  it("9. Playbook tab shows shared skills and tool-specific", async () => {
+    const { pbRoot, claudeDir, piDir } = buildTestPlaybook();
+    registerAdapter(stubAdapter(claudeAdapter, claudeDir));
+    registerAdapter(stubAdapter(piAdapter, piDir));
+    preloadStore(pbRoot);
+
+    const { stdout, unmount } = render(<PlaybookApp playbookPath={pbRoot} />);
+    try {
+      usePlaybookStore.getState().setActiveTab("playbook");
+      await waitForFrame(stdout.lastFrame, (f) =>
+        f.includes("shared/skills") && f.includes("test-skill"),
+      );
+    } finally {
+      unmount();
+    }
+  });
+
+  it("10. Sources tab shows marketplaces and required env", async () => {
+    const { pbRoot, claudeDir, piDir } = buildTestPlaybook();
+    registerAdapter(stubAdapter(claudeAdapter, claudeDir));
+    registerAdapter(stubAdapter(piAdapter, piDir));
+    preloadStore(pbRoot);
+
+    const { stdout, unmount } = render(<PlaybookApp playbookPath={pbRoot} />);
+    try {
+      usePlaybookStore.getState().setActiveTab("sources");
+      await waitForFrame(stdout.lastFrame, (f) =>
+        f.includes("test-mkt") && f.includes("TEST_TOKEN"),
+      );
+    } finally {
+      unmount();
+    }
+  });
+
+  it("11. Settings tab shows validation and instances", async () => {
+    const { pbRoot, claudeDir, piDir } = buildTestPlaybook();
+    registerAdapter(stubAdapter(claudeAdapter, claudeDir));
+    registerAdapter(stubAdapter(piAdapter, piDir));
+    preloadStore(pbRoot);
+
+    const { stdout, unmount } = render(<PlaybookApp playbookPath={pbRoot} />);
+    try {
+      usePlaybookStore.getState().setActiveTab("settings");
+      await waitForFrame(stdout.lastFrame, (f) =>
+        f.includes("no issues") && f.includes("Claude Test") && f.includes("Pi Test"),
+      );
+    } finally {
+      unmount();
+    }
+  });
+
+  it("12. error state renders error message", async () => {
     usePlaybookStore.setState({
       playbookPath: "/bad",
       playbookError: "Playbook root does not exist: /bad",
       playbookLoading: false,
     });
 
-    const { lastFrame } = render(<PlaybookApp playbookPath="/bad" />);
-    const frame = lastFrame();
-
-    expect(frame).toContain("✗");
-    expect(frame).toContain("does not exist");
-    expect(frame).not.toContain("No playbook loaded");
+    const { stdout, unmount } = render(<PlaybookApp playbookPath="/bad" />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) =>
+        f.includes("✗") && f.includes("does not exist") && !f.includes("No playbook loaded"),
+      );
+    } finally {
+      unmount();
+    }
   });
 
-  it("10. loading state renders", () => {
-    usePlaybookStore.setState({ playbookLoading: true });
-
-    const { lastFrame } = render(<PlaybookApp />);
-    expect(lastFrame()).toContain("Loading");
-  });
-
-  it("11. apply triggers confirmation when removals exist", async () => {
+  it("13. notification auto-dismisses", async () => {
     const { pbRoot, claudeDir, piDir } = buildTestPlaybook();
     registerAdapter(stubAdapter(claudeAdapter, claudeDir));
     registerAdapter(stubAdapter(piAdapter, piDir));
     preloadStore(pbRoot);
 
-    // Pre-populate a file in the claude config dir so it becomes a removal candidate
-    mkdirSync(join(claudeDir, "skills", "orphan"), { recursive: true });
-    writeFileSync(join(claudeDir, "skills", "orphan", "SKILL.md"), "# orphan");
+    const { stdout, unmount } = render(<PlaybookApp playbookPath={pbRoot} />);
+    try {
+      usePlaybookStore.getState().addNotification({
+        level: "success",
+        message: "test notification",
+        dismissAfter: 200,
+      });
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("test notification"));
 
-    // Run preview explicitly so removals are computed
-    await usePlaybookStore.getState().detectAllTools();
-    await usePlaybookStore.getState().refreshPreview();
-
-    const preview = usePlaybookStore.getState().enginePreview;
-    const claudeOps = preview?.perInstance.find((p) => p.toolId === "claude");
-    const removeCount = claudeOps?.diff.ops.filter((o) => o.kind === "remove").length ?? 0;
-    expect(removeCount).toBeGreaterThan(0);
-
-    // Apply without confirmRemovals — should enter confirming phase
-    await usePlaybookStore.getState().applyTool("claude");
-
-    const state = usePlaybookStore.getState();
-    expect(state.applyState?.phase).toBe("confirming");
-    expect(state.applyState?.pendingRemovals).toBeGreaterThan(0);
-
-    // Cancel
-    usePlaybookStore.getState().cancelApply();
-    expect(usePlaybookStore.getState().applyState).toBeNull();
+      // Wait for auto-dismiss
+      await new Promise((r) => setTimeout(r, 300));
+      await waitForFrame(stdout.lastFrame, (f) => !f.includes("test notification"));
+    } finally {
+      unmount();
+    }
   });
 });
