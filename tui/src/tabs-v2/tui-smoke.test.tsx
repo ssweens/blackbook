@@ -207,7 +207,7 @@ describe("Playbook TUI E2E", () => {
 
       // Switch to Settings
       usePlaybookStore.getState().setActiveTab("settings");
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Validation") && f.includes("pnpm"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Settings") && f.includes("claude"));
 
       // Back to Dashboard
       usePlaybookStore.getState().setActiveTab("dashboard");
@@ -414,7 +414,7 @@ describe("Playbook TUI E2E", () => {
     try {
       usePlaybookStore.getState().setActiveTab("settings");
       await waitForFrame(stdout.lastFrame, (f) =>
-        f.includes("no issues") && f.includes("Claude Test") && f.includes("Pi Test"),
+        f.includes("Settings") && f.includes("Claude Test"),
       );
     } finally {
       unmount();

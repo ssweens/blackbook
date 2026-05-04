@@ -13,10 +13,11 @@ import React, { useEffect, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { usePlaybookStore, type PlaybookTab } from "../lib/playbook-store.js";
 import { DashboardTab, handleDashboardInput, dashboardEffectiveToolId } from "./DashboardTab.js";
+import { SettingsTab, handleSettingsInput } from "./SettingsTab.js";
 import { DriftDiffView } from "./DriftDiffView.js";
 import { PlaybookTab as PlaybookBrowseTab } from "./PlaybookTab.js";
 import { SourcesTab } from "./SourcesTab.js";
-import { SettingsTab } from "./SettingsTab.js";
+
 import { NotificationsBar } from "./NotificationsBar.js";
 
 const TABS: { id: PlaybookTab; label: string }[] = [
@@ -99,6 +100,9 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
     if (activeTab === "dashboard") {
       handleDashboardInput(input, key, store, setDiffOp);
     }
+    if (activeTab === "settings") {
+      handleSettingsInput(input, key);
+    }
   });
 
   return (
@@ -138,7 +142,9 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
       {/* Status bar */}
       <Box paddingX={2} borderStyle="single" borderTop>
         <Text dimColor>
-          1-4: switch tabs  ·  r: reload  ·  q: quit
+          {activeTab === "settings"
+            ? "↑↓ select  i install  u update  x uninstall  ←→ tabs  q quit"
+            : "1-4/←→ tabs  r reload  q quit"}
         </Text>
       </Box>
         </>
