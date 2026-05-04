@@ -352,9 +352,11 @@ export const usePlaybookStore = create<PlaybookStore>((set, get) => ({
   },
 }));
 
-let _adaptersRegistered = false;
+import { listRegisteredToolIds } from "./adapters/index.js";
+
 function ensureAdapters() {
-  if (_adaptersRegistered) return;
+  // Only auto-register if nothing is registered yet.
+  // Tests pre-register stubs; we must not clobber them.
+  if (listRegisteredToolIds().length > 0) return;
   _ra();
-  _adaptersRegistered = true;
 }
