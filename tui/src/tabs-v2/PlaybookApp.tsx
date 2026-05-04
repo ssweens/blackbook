@@ -9,7 +9,7 @@
  *   q / Ctrl+C             — quit
  */
 
-import React from "react";
+import React, { useEffect } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { usePlaybookStore, type PlaybookTab } from "../lib/playbook-store.js";
 import { DashboardTab, handleDashboardInput } from "./DashboardTab.js";
@@ -36,9 +36,15 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
   // On mount: if playbook was already loaded synchronously in cli.tsx, just
   // kick off background detection + preview. If it wasn't (error during load),
   // don't retry — the error is already in the store.
-  // No auto-detection or preview on mount. User presses 'r' to refresh.
-  // Background detection + file hashing blocks the event loop (sync I/O in
-  // hashDir/hashFile), which kills ink's input handling. Manual-only.
+  // Auto-detect tools on mount — fast (just `which` calls, all async).
+  // Preview is manual-only (press r) — file hashing is sync I/O that blocks
+  // the event loop and kills input handling.
+  useEffect(() => {
+    const state = usePlaybookStore.getState();
+    if (state.playbook) {
+      state.detectAllTools().catch(() => {});
+    }
+  }, []);
 
   const tabIdx = TABS.findIndex((t) => t.id === activeTab);
 

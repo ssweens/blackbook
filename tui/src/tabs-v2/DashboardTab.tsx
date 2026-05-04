@@ -25,7 +25,7 @@ const ALL_TOOLS: ToolId[] = ["claude", "codex", "opencode", "amp", "pi"];
 export function DashboardTab({ isFocused }: { isFocused: boolean }) {
   const toolStatuses = usePlaybookStore((s) => s.toolStatuses);
   const detectionLoading = usePlaybookStore((s) => s.detectionLoading);
-  const enginePreview = usePlaybookStore((s) => s.enginePreviewLoading ? null : s.enginePreview);
+  const enginePreview = usePlaybookStore((s) => s.enginePreview);
   const enginePreviewLoading = usePlaybookStore((s) => s.enginePreviewLoading);
   const selectedToolId = usePlaybookStore((s) => s.selectedToolId);
   const playbook = usePlaybookStore((s) => s.playbook);
@@ -271,10 +271,16 @@ function ToolDetail({
         <Text bold dimColor>
           {previewLoading ? "computing…" : "Drift"}
         </Text>
-        {!previewLoading && instanceResults.length === 0 && (
-          <Text dimColor>  not in playbook or no instances</Text>
+        {/* No preview loaded yet */}
+        {!previewLoading && !enginePreview && (
+          <Text dimColor>  press r to load</Text>
         )}
-        {!previewLoading && instanceResults.length > 0 && clean && (
+        {/* Preview loaded, tool not in playbook */}
+        {!previewLoading && enginePreview && instanceResults.length === 0 && !toolConfig && (
+          <Text dimColor>  not in playbook — add to tools_enabled in playbook.yaml</Text>
+        )}
+        {/* Preview loaded, tool in playbook, no drift */}
+        {!previewLoading && enginePreview && (instanceResults.length === 0 && toolConfig || instanceResults.length > 0 && clean) && (
           <Text color="green">  ✓ in sync</Text>
         )}
         {instanceResults.map((r) => {
