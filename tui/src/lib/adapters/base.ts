@@ -17,7 +17,10 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
-import { execSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 import type { McpServer, ToolInstance } from "../playbook/index.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -199,12 +202,13 @@ export function collectMcpEnvRefs(server: McpServer): string[] {
 
 /**
  * Find a binary on PATH. Returns the absolute path or undefined.
- * Uses `which` / `where` synchronously.
+ * Async — does not block the event loop.
  */
-export function findBinary(name: string): string | undefined {
+export async function findBinary(name: string): Promise<string | undefined> {
   try {
-    const cmd = process.platform === "win32" ? `where ${name}` : `which ${name}`;
-    const out = execSync(cmd, { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    const cmd = process.platform === "win32" ? "where" : "which";
+    const { stdout } = await execFileAsync(cmd, [name], { timeout: 2000 });
+    const out = stdout.trim();
     if (!out) return undefined;
     return out.split("\n")[0]?.trim() || undefined;
   } catch {
@@ -214,14 +218,12 @@ export function findBinary(name: string): string | undefined {
 
 /**
  * Get a binary's `--version` output. Returns undefined if the binary fails.
+ * Async — does not block the event loop.
  */
-export function getVersion(binary: string, flag = "--version"): string | undefined {
+export async function getVersion(binary: string, flag = "--version"): Promise<string | undefined> {
   try {
-    const out = execSync(`${binary} ${flag}`, {
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 2000,
-    }).toString().trim();
-    return out || undefined;
+    const { stdout } = await execFileAsync(binary, [flag], { timeout: 2000 });
+    return stdout.trim() || undefined;
   } catch {
     return undefined;
   }

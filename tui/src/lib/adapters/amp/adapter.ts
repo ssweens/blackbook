@@ -27,11 +27,11 @@ export const ampAdapter: ToolAdapter = {
   defaults: AMP_DEFAULTS,
 
   async detect() {
-    const binary = findBinary(AMP_DEFAULTS.binary);
+    const binary = await findBinary(AMP_DEFAULTS.binary);
     return {
       toolId: AMP_DEFAULTS.toolId,
       installed: !!binary,
-      version: binary ? getVersion(binary) : undefined,
+      version: binary ? await getVersion(binary) : undefined,
       binaryPath: binary,
       configDir: AMP_DEFAULTS.defaultConfigDir,
     };
