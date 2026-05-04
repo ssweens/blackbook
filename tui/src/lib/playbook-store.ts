@@ -300,35 +300,25 @@ export const usePlaybookStore = create<PlaybookStore>((set, get) => ({
           if (shares) toolsThatShareThis.add(toolId);
         }
 
-        // The tool we pulled from: remove just that op.
-        // Other sharing tools: remove their entire perInstance so they show "press r".
-        const pulledFromToolId = preview.perInstance.find(
-          (p) => p.diff.ops.some((o) => o.targetPath === op.targetPath)
-        )?.toolId;
-
+        // Remove this specific op from ALL tools that share the artifact.
+        // The playbook file content just changed — this op is no longer
+        // valid for any tool. Other ops in their diffs remain correct.
         const updated = {
           ...preview,
-          perInstance: preview.perInstance
-            .filter((inst) => {
-              // Drop other sharing tools entirely — their diff is now stale
-              if (inst.toolId !== pulledFromToolId && toolsThatShareThis.has(inst.toolId)) {
-                return false;
-              }
-              return true;
-            })
-            .map((inst) => {
-              if (inst.toolId !== pulledFromToolId) return inst;
-              // For the source tool: remove just this op
-              return {
-                ...inst,
-                diff: {
-                  ...inst.diff,
-                  ops: inst.diff.ops.filter(
-                    (o) => !(o.artifactType === op.artifactType && o.name === op.name),
-                  ),
-                },
-              };
-            }),
+          perInstance: preview.perInstance.map((inst) => {
+            if (!toolsThatShareThis.has(inst.toolId)) {
+              return inst;
+            }
+            return {
+              ...inst,
+              diff: {
+                ...inst.diff,
+                ops: inst.diff.ops.filter(
+                  (o) => !(o.artifactType === op.artifactType && o.name === op.name),
+                ),
+              },
+            };
+          }),
         };
         set({ enginePreview: updated });
       }
