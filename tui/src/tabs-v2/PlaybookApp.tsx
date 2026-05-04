@@ -36,10 +36,14 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
     dismissNotification,
   } = usePlaybookStore();
 
-  // Load playbook on mount
+  // Load playbook on mount — skipped if cli.tsx already pre-populated the store.
   useEffect(() => {
-    if (playbookPath) {
+    if (playbookPath && !usePlaybookStore.getState().playbook) {
       void loadPlaybookFromPath(playbookPath);
+    } else if (playbookPath) {
+      // Already loaded synchronously — just kick off the async background work.
+      void usePlaybookStore.getState().detectAllTools();
+      void usePlaybookStore.getState().refreshPreview();
     }
   }, [playbookPath]);
 

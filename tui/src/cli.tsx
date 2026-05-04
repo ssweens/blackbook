@@ -8,6 +8,8 @@ import { patchExistsSync, mark, measure, logReport, setStartupTime } from "./lib
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
+import { loadPlaybook, validatePlaybook } from "./lib/playbook/index.js";
+import { usePlaybookStore } from "./lib/playbook-store.js";
 
 function readConfiguredPlaybookPath(): string | undefined {
   const cfgPath = resolve(homedir(), ".config", "blackbook", "config.yaml");
@@ -28,6 +30,16 @@ async function main() {
   const playbookPath = playbookPathArg ? resolve(playbookPathArg) : configuredPath;
 
   if (playbookPath) {
+    // Load synchronously before first render — eliminates the "No playbook" flash.
+    // detectAllTools + refreshPreview still run async in the background after mount.
+    try {
+      const pb = loadPlaybook(playbookPath);
+      const validation = validatePlaybook(pb);
+      usePlaybookStore.getState().setPlaybookImmediate(playbookPath, pb, validation);
+    } catch (_e) {
+      // Error visible in Dashboard via playbookError once PlaybookApp mounts
+      // and loadPlaybookFromPath runs its own try/catch.
+    }
     render(<PlaybookApp playbookPath={playbookPath} />);
     return;
   }

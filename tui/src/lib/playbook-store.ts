@@ -89,7 +89,8 @@ export interface PlaybookActions {
   setSelectedToolId(id: ToolId | null): void;
   setExpandedArtifact(key: string | null): void;
 
-  // Playbook management
+  /** Pre-populate from a synchronous load before first render (used in cli.tsx). */
+  setPlaybookImmediate(path: string, pb: LoadedPlaybook, validation: ValidationReport): void;
   loadPlaybookFromPath(path: string): Promise<void>;
   reloadPlaybook(): Promise<void>;
 
@@ -238,6 +239,16 @@ export const usePlaybookStore = create<PlaybookStore>((set, get) => ({
     set((s) => ({ notifications: s.notifications.filter((n) => n.id !== id) }));
   },
 
+  setPlaybookImmediate(path, pb, validation) {
+    set({
+      playbookPath: path,
+      playbook: pb,
+      playbookValidation: validation,
+      playbookLoading: false,
+      playbookError: null,
+    });
+  },
+
   async loadPlaybookFromPath(path) {
     set({ playbookLoading: true, playbookError: null });
     try {
@@ -285,27 +296,22 @@ export const usePlaybookStore = create<PlaybookStore>((set, get) => ({
   async detectAllTools() {
     set({ detectionLoading: true });
     ensureAdapters();
-    const statuses: Partial<Record<ToolId, ToolStatus>> = {};
-    for (const adapter of listAdapters()) {
-      try {
-        const det = await adapter.detect();
-        statuses[adapter.defaults.toolId] = {
-          toolId: adapter.defaults.toolId,
-          detection: det,
-          loading: false,
-        };
-      } catch (e) {
-        statuses[adapter.defaults.toolId] = {
-          toolId: adapter.defaults.toolId,
-          detection: {
+    const results = await Promise.all(
+      listAdapters().map(async (adapter) => {
+        try {
+          const det = await adapter.detect();
+          return [adapter.defaults.toolId, { toolId: adapter.defaults.toolId, detection: det, loading: false }] as const;
+        } catch (e) {
+          return [adapter.defaults.toolId, {
             toolId: adapter.defaults.toolId,
-            installed: false,
-          },
-          loading: false,
-          error: e instanceof Error ? e.message : String(e),
-        };
-      }
-    }
+            detection: { toolId: adapter.defaults.toolId, installed: false },
+            loading: false,
+            error: e instanceof Error ? e.message : String(e),
+          }] as const;
+        }
+      }),
+    );
+    const statuses = Object.fromEntries(results) as Partial<Record<ToolId, ToolStatus>>;
     set({ toolStatuses: statuses, detectionLoading: false });
   },
 
