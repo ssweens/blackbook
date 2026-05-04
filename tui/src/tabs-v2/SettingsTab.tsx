@@ -18,6 +18,18 @@ import type { ToolId } from "../lib/playbook/index.js";
 import { usePlaybookStore, type PlaybookStore } from "../lib/playbook-store.js";
 import { installTool, updateTool, uninstallTool } from "../lib/tool-lifecycle.js";
 
+// New adapter IDs → legacy registry IDs used by tool-lifecycle/tool-registry
+const REGISTRY_ID: Partial<Record<ToolId, string>> = {
+  claude: "claude-code",
+  codex: "openai-codex",
+  opencode: "opencode",
+  amp: "amp-code",
+  pi: "pi",
+};
+function registryId(toolId: ToolId): string {
+  return REGISTRY_ID[toolId] ?? toolId;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -264,7 +276,7 @@ export function handleSettingsInput(
       setActionState({ phase: "running", action: "uninstall", toolId });
       const store = usePlaybookStore.getState();
       const pm = store.playbook?.manifest.settings.package_manager ?? "pnpm";
-      uninstallTool(toolId, pm, () => {}).then((ok) => {
+      uninstallTool(registryId(toolId), pm, () => {}).then((ok) => {
         setActionState({ phase: "result", ok, message: ok ? `${toolId} uninstalled` : `uninstall failed` });
         store.detectAllTools().catch(() => {});
       });
@@ -294,7 +306,7 @@ export function handleSettingsInput(
 
   if (input === "i" && !installed) {
     setActionState({ phase: "running", action: "install", toolId });
-    installTool(toolId, pm, () => {}).then((ok) => {
+    installTool(registryId(toolId), pm, () => {}).then((ok) => {
       setActionState({ phase: "result", ok, message: ok ? `${toolId} installed` : `install failed` });
       store.detectAllTools().catch(() => {});
     });
@@ -302,7 +314,7 @@ export function handleSettingsInput(
 
   if (input === "u" && installed) {
     setActionState({ phase: "running", action: "update", toolId });
-    updateTool(toolId, pm, () => {}).then((ok) => {
+    updateTool(registryId(toolId), pm, () => {}).then((ok) => {
       setActionState({ phase: "result", ok, message: ok ? `${toolId} updated` : `update failed` });
       store.detectAllTools().catch(() => {});
     });
