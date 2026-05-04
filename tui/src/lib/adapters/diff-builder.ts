@@ -8,7 +8,7 @@
  */
 
 import { existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type {
   Diff,
   DiffOp,
@@ -28,6 +28,8 @@ export interface BuildDiffArgs {
   instance: ToolInstance;
   defaults: AdapterDefaults;
   inventory: Inventory;
+  /** Absolute path to the tools/<tool>/ dir in the playbook (for config_files resolution). */
+  toolRootPath?: string;
 }
 
 /**
@@ -158,6 +160,74 @@ export function buildCommonSpineDiff(args: BuildDiffArgs): Diff {
   }
 
   return { toolId: inventory.toolId, instanceId: inventory.instanceId, ops };
+}
+
+/**
+ * Append config_file ops for syncable entries in tool.yaml onto an existing Diff.
+ * Call this after buildCommonSpineDiff.
+ */
+export function appendConfigFileOps(diff: Diff, args: BuildDiffArgs): Diff {
+  const { toolConfig, instance, toolRootPath } = args;
+  if (!toolRootPath) return diff;
+
+  const configDir = resolveConfigDir(instance);
+  const ops: DiffOp[] = [...diff.ops];
+
+  for (const cf of toolConfig.config.config_files) {
+    if (!cf.syncable) continue;                    // read-only reference, skip
+
+    const sourcePath = resolve(toolRootPath, cf.source);
+    const targetPath = join(configDir, cf.target);
+
+    if (!existsSync(sourcePath)) {
+      // Source missing in playbook — warn but don't error.
+      ops.push({
+        kind: "no-op",
+        artifactType: "config_file",
+        name: cf.target,
+        sourcePath,
+        targetPath,
+        reason: "source missing in playbook",
+      });
+      continue;
+    }
+
+    const sourceHash = hashTarget(sourcePath, "config_file");
+
+    if (!existsSync(targetPath)) {
+      ops.push({
+        kind: "add",
+        artifactType: "config_file",
+        name: cf.target,
+        sourcePath,
+        targetPath,
+        reason: "missing on disk",
+      });
+    } else {
+      const diskHash = hashTarget(targetPath, "config_file");
+      if (diskHash !== sourceHash) {
+        ops.push({
+          kind: "update",
+          artifactType: "config_file",
+          name: cf.target,
+          sourcePath,
+          targetPath,
+          reason: "content differs",
+        });
+      } else {
+        ops.push({
+          kind: "no-op",
+          artifactType: "config_file",
+          name: cf.target,
+          sourcePath,
+          targetPath,
+          reason: "in sync",
+        });
+      }
+    }
+  }
+
+  return { ...diff, ops };
 }
 
 function isCommonSpineType(type: DiscoveredArtifact["type"]): boolean {

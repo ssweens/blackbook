@@ -18,7 +18,7 @@ import type {
 } from "../../playbook/index.js";
 import { applyCommonSpine } from "../applier.js";
 import { findBinary, getVersion } from "../base.js";
-import { buildCommonSpineDiff } from "../diff-builder.js";
+import { buildCommonSpineDiff, appendConfigFileOps } from "../diff-builder.js";
 import { scanCommonSpine } from "../scanner.js";
 import type { ToolAdapter } from "../types.js";
 import { AMP_DEFAULTS } from "./defaults.js";
@@ -45,13 +45,15 @@ export const ampAdapter: ToolAdapter = {
     const toolConfig = playbook.tools.amp;
     if (!toolConfig) throw new Error("preview: amp tool not enabled in playbook");
     const inventory = await ampAdapter.scan(instance);
-    return buildCommonSpineDiff({
+    const args = {
       playbook,
       toolConfig,
       instance,
       defaults: AMP_DEFAULTS,
       inventory,
-    });
+      toolRootPath: playbook.tools.amp?.rootPath,
+    };
+    return appendConfigFileOps(buildCommonSpineDiff(args), args);
   },
 
   async apply(diff: Diff, _instance: ToolInstance, opts: ApplyOpts): Promise<ApplyResult> {

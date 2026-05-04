@@ -12,6 +12,7 @@ export {
 } from "./applier.js";
 export {
   buildCommonSpineDiff,
+  appendConfigFileOps,
 } from "./diff-builder.js";
 export {
   scanCommonSpine,

@@ -22,7 +22,7 @@ import type {
 } from "../../playbook/index.js";
 import { applyCommonSpine } from "../applier.js";
 import { resolveConfigDir } from "../base.js";
-import { buildCommonSpineDiff } from "../diff-builder.js";
+import { buildCommonSpineDiff, appendConfigFileOps } from "../diff-builder.js";
 import { scanCommonSpine } from "../scanner.js";
 import type { EmitResult, ToolAdapter } from "../types.js";
 import { buildCodexOwnership } from "./bundle-ownership.js";
@@ -47,13 +47,15 @@ export const codexAdapter: ToolAdapter = {
     const toolConfig = playbook.tools.codex;
     if (!toolConfig) throw new Error("preview: codex tool not enabled in playbook");
     const inventory = await codexAdapter.scan(instance);
-    return buildCommonSpineDiff({
+    const args = {
       playbook,
       toolConfig,
       instance,
       defaults: CODEX_DEFAULTS,
       inventory,
-    });
+      toolRootPath: playbook.tools.codex?.rootPath,
+    };
+    return appendConfigFileOps(buildCommonSpineDiff(args), args);
   },
 
   async apply(diff: Diff, _instance: ToolInstance, opts: ApplyOpts): Promise<ApplyResult> {

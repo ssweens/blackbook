@@ -23,7 +23,7 @@ import type {
 } from "../../playbook/index.js";
 import { applyCommonSpine } from "../applier.js";
 import { resolveConfigDir } from "../base.js";
-import { buildCommonSpineDiff } from "../diff-builder.js";
+import { buildCommonSpineDiff, appendConfigFileOps } from "../diff-builder.js";
 import { addAgentsMdVariants, scanCommonSpine } from "../scanner.js";
 import type { EmitResult, ToolAdapter } from "../types.js";
 import { buildClaudeOwnership } from "./bundle-ownership.js";
@@ -55,13 +55,15 @@ export const claudeAdapter: ToolAdapter = {
     const toolConfig = playbook.tools.claude;
     if (!toolConfig) throw new Error("preview: claude tool not enabled in playbook");
     const inventory = await claudeAdapter.scan(instance);
-    return buildCommonSpineDiff({
+    const args = {
       playbook,
       toolConfig,
       instance,
       defaults: CLAUDE_DEFAULTS,
       inventory,
-    });
+      toolRootPath: playbook.tools.claude?.rootPath,
+    };
+    return appendConfigFileOps(buildCommonSpineDiff(args), args);
   },
 
   async apply(diff: Diff, _instance: ToolInstance, opts: ApplyOpts): Promise<ApplyResult> {
