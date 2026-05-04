@@ -1,28 +1,45 @@
 /**
- * Dashboard tab — per-tool detection status + drift summary + apply.
+ * Dashboard tab — per-tool detection status + drift + apply.
  *
- * Layout:
- *   Left panel (1/3): tool list with install/drift indicators
- *   Right panel (2/3): selected tool detail — instances, drift ops, actions
+ * Two focus modes:
+ *   Tool mode (default): ↑↓ moves between tools, Enter focuses detail
+ *   Detail mode:         ↑↓ scrolls drift items, Esc returns to tool mode
  *
- * Keybinds:
- *   ↑↓        navigate tool list
- *   a         apply selected tool (skips removals unless confirmed)
- *   y         confirm pending removals and apply
- *   Escape    cancel confirmation
- *   r         reload playbook + refresh preview (global, handled in PlaybookApp)
+ * Other keys:
+ *   a   apply selected tool
+ *   y   confirm removals
+ *   n/Esc  cancel confirmation / exit detail mode
+ *   r   refresh preview for selected tool (handled in PlaybookApp)
  */
 
-import React from "react";
+import React, { useState } from "react";
 import { Box, Text } from "ink";
 import type { Key } from "ink";
-import type { ToolId } from "../lib/playbook/index.js";
+import type { DiffOp, ToolId } from "../lib/playbook/index.js";
 import { usePlaybookStore, type PlaybookStore, type ToolStatus } from "../lib/playbook-store.js";
-import type { EngineSyncResult } from "../lib/sync/index.js";
+import type { EngineSyncResult, PerInstanceResult } from "../lib/sync/index.js";
 
 const ALL_TOOLS: ToolId[] = ["claude", "codex", "opencode", "amp", "pi"];
+const DETAIL_PAGE_SIZE = 10;
 
-export function DashboardTab({ isFocused }: { isFocused: boolean }) {
+// ─────────────────────────────────────────────────────────────────────────────
+// State shared between component and input handler (via store + local ref)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Local UI state lives here so the input handler can read/write it.
+// We use a module-level object so handleDashboardInput can mutate it
+// and the component re-renders via its own useState setter.
+type DashboardLocalState = {
+  detailFocused: boolean;
+  driftScrollIdx: number;
+  setDetailFocused: (v: boolean) => void;
+  setDriftScrollIdx: (v: number) => void;
+  driftOps: DiffOp[];
+};
+
+let _localState: DashboardLocalState | null = null;
+
+export function DashboardTab({ isFocused: _isFocused }: { isFocused: boolean }) {
   const toolStatuses = usePlaybookStore((s) => s.toolStatuses);
   const detectionLoading = usePlaybookStore((s) => s.detectionLoading);
   const enginePreview = usePlaybookStore((s) => s.enginePreview);
@@ -32,33 +49,39 @@ export function DashboardTab({ isFocused }: { isFocused: boolean }) {
   const playbookLoading = usePlaybookStore((s) => s.playbookLoading);
   const playbookError = usePlaybookStore((s) => s.playbookError);
   const applyState = usePlaybookStore((s) => s.applyState);
-  const setSelectedToolId = usePlaybookStore((s) => s.setSelectedToolId);
-  const applyTool = usePlaybookStore((s) => s.applyTool);
-  const cancelApply = usePlaybookStore((s) => s.cancelApply);
 
   const tools = ALL_TOOLS.filter(
-    (t) =>
-      toolStatuses[t] !== undefined ||
-      playbook?.manifest.tools_enabled.includes(t),
+    (t) => toolStatuses[t] !== undefined || playbook?.manifest.tools_enabled.includes(t),
   );
   const activeTools = tools.length > 0 ? tools : ALL_TOOLS;
-
-  const selectedIdx = selectedToolId
-    ? activeTools.indexOf(selectedToolId)
-    : 0;
-  const effectiveIdx = Math.max(
-    0,
-    Math.min(selectedIdx, activeTools.length - 1),
-  );
+  const selectedIdx = selectedToolId ? activeTools.indexOf(selectedToolId) : 0;
+  const effectiveIdx = Math.max(0, Math.min(selectedIdx, activeTools.length - 1));
   const effectiveToolId = activeTools[effectiveIdx] ?? null;
 
-  // Input is handled by PlaybookApp's single useInput — see handleDashboardInput().
+  const [detailFocused, setDetailFocused] = useState(false);
+  const [driftScrollIdx, setDriftScrollIdx] = useState(0);
+
+  // Compute drift ops for selected tool (all instances, flat)
+  const instanceResults =
+    enginePreview?.perInstance.filter((p) => p.toolId === effectiveToolId) ?? [];
+  const driftOps = instanceResults.flatMap((r) =>
+    r.diff.ops.filter((o) => o.kind !== "no-op"),
+  );
+
+  // Expose local state to handleDashboardInput
+  _localState = {
+    detailFocused,
+    driftScrollIdx,
+    setDetailFocused,
+    setDriftScrollIdx,
+    driftOps,
+  };
 
   if (!playbook) {
     return (
       <Box flexDirection="column" paddingX={2} paddingY={1}>
         {playbookLoading ? (
-          <Text dimColor>Loading playbook…</Text>
+          <Text dimColor>Loading…</Text>
         ) : playbookError ? (
           <>
             <Text color="red">✗ {playbookError}</Text>
@@ -76,29 +99,17 @@ export function DashboardTab({ isFocused }: { isFocused: boolean }) {
 
   return (
     <Box flexDirection="column" flexGrow={1}>
-      {/* Confirmation overlay */}
       {applyState?.phase === "confirming" && (
-        <ConfirmRemovalsBar
-          toolId={applyState.toolId}
-          count={applyState.pendingRemovals}
-        />
+        <ConfirmRemovalsBar toolId={applyState.toolId} count={applyState.pendingRemovals} />
       )}
 
       <Box flexDirection="row" flexGrow={1}>
         {/* Tool list */}
-        <Box
-          flexDirection="column"
-          width={28}
-          borderStyle="single"
-          borderRight
-          paddingX={1}
-        >
-          <Text bold dimColor>
-            Tools
-          </Text>
+        <Box flexDirection="column" width={28} borderStyle="single" borderRight paddingX={1}>
+          <Text bold dimColor>Tools</Text>
           {activeTools.map((toolId, i) => {
             const status = toolStatuses[toolId];
-            const isSelected = i === effectiveIdx && isFocused;
+            const isSelected = i === effectiveIdx && !detailFocused;
             const enabled = playbook.manifest.tools_enabled.includes(toolId);
             const applying = applyState?.toolId === toolId;
             return (
@@ -124,6 +135,10 @@ export function DashboardTab({ isFocused }: { isFocused: boolean }) {
               enginePreview={enginePreview}
               previewLoading={enginePreviewLoading}
               applying={applyState?.toolId === effectiveToolId && applyState.phase === "running"}
+              detailFocused={detailFocused}
+              driftScrollIdx={driftScrollIdx}
+              driftOps={driftOps}
+              instanceResults={instanceResults}
             />
           )}
         </Box>
@@ -136,23 +151,11 @@ export function DashboardTab({ isFocused }: { isFocused: boolean }) {
 // Confirmation bar
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ConfirmRemovalsBar({
-  toolId,
-  count,
-}: {
-  toolId: ToolId;
-  count: number;
-}) {
+function ConfirmRemovalsBar({ toolId, count }: { toolId: ToolId; count: number }) {
   return (
-    <Box
-      paddingX={2}
-      paddingY={0}
-      borderStyle="single"
-      borderColor="yellow"
-    >
+    <Box paddingX={2} borderStyle="single" borderColor="yellow">
       <Text color="yellow">
-        ⚠ {count} file{count !== 1 ? "s" : ""} will be removed from{" "}
-        <Text bold>{toolId}</Text>.{"  "}
+        ⚠ {count} file{count !== 1 ? "s" : ""} will be removed from <Text bold>{toolId}</Text>.{"  "}
         <Text bold>y</Text> confirm{"  "}
         <Text bold>n / Esc</Text> cancel
       </Text>
@@ -165,24 +168,14 @@ function ConfirmRemovalsBar({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ToolListItem({
-  toolId,
-  status,
-  enabled,
-  isSelected,
-  applying,
+  toolId, status, enabled, isSelected, applying,
 }: {
-  toolId: ToolId;
-  status: ToolStatus | undefined;
-  enabled: boolean;
-  isSelected: boolean;
-  applying: boolean;
+  toolId: ToolId; status: ToolStatus | undefined; enabled: boolean;
+  isSelected: boolean; applying: boolean;
 }) {
   const installed = status?.detection.installed;
-  const installGlyph =
-    installed === undefined ? "?" : installed ? "✓" : "·";
-  const installColor =
-    installed === undefined ? "gray" : installed ? "green" : "gray";
-
+  const installGlyph = installed === undefined ? "?" : installed ? "✓" : "·";
+  const installColor = installed === undefined ? "gray" : installed ? "green" : "gray";
   const bg = isSelected ? "blue" : undefined;
   const fg = isSelected ? "white" : enabled ? "white" : "gray";
 
@@ -204,62 +197,52 @@ function ToolListItem({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ToolDetail({
-  toolId,
-  status,
-  enginePreview,
-  previewLoading,
-  applying,
+  toolId, status, enginePreview, previewLoading, applying,
+  detailFocused, driftScrollIdx, driftOps, instanceResults,
 }: {
   toolId: ToolId;
   status: ToolStatus | undefined;
   enginePreview: EngineSyncResult | null;
   previewLoading: boolean;
   applying: boolean;
+  detailFocused: boolean;
+  driftScrollIdx: number;
+  driftOps: DiffOp[];
+  instanceResults: PerInstanceResult[];
 }) {
   const det = status?.detection;
   const playbook = usePlaybookStore((s) => s.playbook);
   const toolConfig = playbook?.tools[toolId];
 
-  const instanceResults =
-    enginePreview?.perInstance.filter((p) => p.toolId === toolId) ?? [];
+  const totalAdds = driftOps.filter((o) => o.kind === "add").length;
+  const totalUpdates = driftOps.filter((o) => o.kind === "update").length;
+  const totalRemoves = driftOps.filter((o) => o.kind === "remove").length;
+  const hasDrift = totalAdds > 0 || totalUpdates > 0 || totalRemoves > 0;
 
-  const totalAdds = instanceResults.flatMap((r) =>
-    r.diff.ops.filter((o) => o.kind === "add"),
-  ).length;
-  const totalUpdates = instanceResults.flatMap((r) =>
-    r.diff.ops.filter((o) => o.kind === "update"),
-  ).length;
-  const totalRemoves = instanceResults.flatMap((r) =>
-    r.diff.ops.filter((o) => o.kind === "remove"),
-  ).length;
-  const clean = totalAdds === 0 && totalUpdates === 0 && totalRemoves === 0;
+  // Visible window of drift ops
+  const visibleOps = driftOps.slice(driftScrollIdx, driftScrollIdx + DETAIL_PAGE_SIZE);
+  const canScrollUp = driftScrollIdx > 0;
+  const canScrollDown = driftScrollIdx + DETAIL_PAGE_SIZE < driftOps.length;
 
   return (
     <Box flexDirection="column" gap={0}>
       {/* Header */}
       <Box gap={1}>
         <Text bold>{toolId}</Text>
-        {det?.version && (
-          <Text dimColor>{det.version.split("\n")[0]}</Text>
-        )}
+        {det?.version && <Text dimColor>{det.version.split("\n")[0]}</Text>}
         {applying && <Text color="cyan">  applying…</Text>}
       </Box>
       <Text dimColor>
-        {det?.installed
-          ? `✓ installed  →  ${det.configDir ?? "~"}`
-          : "· not detected on PATH"}
+        {det?.installed ? `✓ installed  →  ${det.configDir ?? "~"}` : "· not detected on PATH"}
       </Text>
 
       {/* Instances */}
       {toolConfig && (
         <Box flexDirection="column" marginTop={1}>
-          <Text bold dimColor>
-            Instances
-          </Text>
+          <Text bold dimColor>Instances</Text>
           {toolConfig.config.instances.map((inst) => (
             <Text key={inst.id}>
-              {"  "}
-              {inst.enabled ? "✓" : "·"} {inst.name}{" "}
+              {"  "}{inst.enabled ? "✓" : "·"} {inst.name}{" "}
               <Text dimColor>({inst.config_dir})</Text>
             </Text>
           ))}
@@ -268,103 +251,96 @@ function ToolDetail({
 
       {/* Drift */}
       <Box flexDirection="column" marginTop={1}>
-        <Text bold dimColor>
-          {previewLoading ? "computing…" : "Drift"}
-        </Text>
-        {/* No preview loaded yet */}
+        <Box gap={1}>
+          <Text bold dimColor>{previewLoading ? "computing…" : "Drift"}</Text>
+          {detailFocused && hasDrift && (
+            <Text dimColor>
+              ({driftScrollIdx + 1}–{Math.min(driftScrollIdx + DETAIL_PAGE_SIZE, driftOps.length)}/{driftOps.length})
+              ↑↓ scroll  Esc exit
+            </Text>
+          )}
+        </Box>
+
         {!previewLoading && !enginePreview && (
           <Text dimColor>  press r to load</Text>
         )}
-        {/* Preview loaded, tool not in playbook */}
-        {!previewLoading && enginePreview && instanceResults.length === 0 && !toolConfig && (
+        {!previewLoading && enginePreview && !toolConfig && (
           <Text dimColor>  not in playbook — add to tools_enabled in playbook.yaml</Text>
         )}
-        {/* Preview loaded, tool in playbook, no drift */}
-        {!previewLoading && enginePreview && (instanceResults.length === 0 && toolConfig || instanceResults.length > 0 && clean) && (
+        {!previewLoading && enginePreview && toolConfig && !hasDrift && (
           <Text color="green">  ✓ in sync</Text>
         )}
-        {instanceResults.map((r) => {
-          const adds = r.diff.ops.filter((o) => o.kind === "add");
-          const updates = r.diff.ops.filter((o) => o.kind === "update");
-          const removes = r.diff.ops.filter((o) => o.kind === "remove");
-          if (adds.length === 0 && updates.length === 0 && removes.length === 0)
-            return null;
-          return (
-            <Box key={r.instanceId} flexDirection="column">
-              <Text>
-                {"  "}
-                <Text dimColor>[{r.instanceId}]</Text>
-                {adds.length > 0 && (
-                  <Text color="green">  +{adds.length} add</Text>
-                )}
-                {updates.length > 0 && (
-                  <Text color="yellow">  ~{updates.length} update</Text>
-                )}
-                {removes.length > 0 && (
-                  <Text color="red">  -{removes.length} remove</Text>
-                )}
-              </Text>
-              {/* List each pending op (up to 8, then summarise) */}
-              {[...adds, ...updates, ...removes]
-                .slice(0, 8)
-                .map((op, i) => (
-                  <Text key={i} dimColor>
-                    {"    "}
-                    {op.kind === "add"
-                      ? "+"
-                      : op.kind === "remove"
-                      ? "-"
-                      : "~"}{" "}
-                    {op.artifactType}/{op.name}
-                  </Text>
-                ))}
-              {adds.length + updates.length + removes.length > 8 && (
-                <Text dimColor>
-                  {"    "}…and{" "}
-                  {adds.length + updates.length + removes.length - 8} more
+
+        {/* Summary counts */}
+        {!previewLoading && hasDrift && (
+          <Box>
+            <Text>  </Text>
+            {totalAdds > 0 && <Text color="green">+{totalAdds} add  </Text>}
+            {totalUpdates > 0 && <Text color="yellow">~{totalUpdates} update  </Text>}
+            {totalRemoves > 0 && <Text color="red">-{totalRemoves} remove</Text>}
+          </Box>
+        )}
+
+        {/* Drift items — paginated, focused when in detail mode */}
+        {!previewLoading && hasDrift && (
+          <Box flexDirection="column">
+            {canScrollUp && <Text dimColor>    ↑ {driftScrollIdx} more above</Text>}
+            {visibleOps.map((op, i) => {
+              const isHighlighted = detailFocused && i === 0;
+              return (
+                <Text
+                  key={`${op.artifactType}-${op.name}-${i}`}
+                  color={
+                    op.kind === "remove" ? "red"
+                    : op.kind === "add" ? "green"
+                    : "yellow"
+                  }
+                  dimColor={!isHighlighted}
+                >
+                  {"    "}
+                  {op.kind === "add" ? "+" : op.kind === "remove" ? "-" : "~"}{" "}
+                  {op.artifactType}/{op.name}
                 </Text>
-              )}
-              {/* Bundle ops */}
-              {r.bundleOps
-                .filter((b) => b.op !== "skip")
-                .map((b, i) => (
-                  <Text key={i} dimColor>
-                    {"    "}
-                    {b.op === "install" ? "+" : "-"} bundle:{b.name}
-                  </Text>
-                ))}
-            </Box>
-          );
-        })}
+              );
+            })}
+            {canScrollDown && (
+              <Text dimColor>    ↓ {driftOps.length - driftScrollIdx - DETAIL_PAGE_SIZE} more below</Text>
+            )}
+          </Box>
+        )}
+
+        {/* Bundle ops */}
+        {instanceResults.flatMap((r) => r.bundleOps.filter((b) => b.op !== "skip")).map((b, i) => (
+          <Text key={i} dimColor>
+            {"    "}{b.op === "install" ? "+" : "-"} bundle:{b.name}
+          </Text>
+        ))}
       </Box>
 
       {/* Env check warning */}
       {enginePreview && !enginePreview.envCheck.ok && (
         <Box marginTop={1}>
-          <Text color="yellow">
-            ⚠ unset env: {enginePreview.envCheck.missing.join(", ")}
-          </Text>
+          <Text color="yellow">⚠ unset env: {enginePreview.envCheck.missing.join(", ")}</Text>
         </Box>
       )}
 
-      {/* Keybinds */}
+      {/* Keybinds hint */}
       <Box marginTop={1}>
-        <Text dimColor>
-          ↑↓ select{" "}
-          {!clean && !applying && (
-            <>
-              ·{" "}
-              <Text bold dimColor>
-                a
-              </Text>{" "}
-              apply
-              {totalRemoves > 0 && (
-                <Text color="yellow"> (will confirm {totalRemoves} removal{totalRemoves !== 1 ? "s" : ""})</Text>
-              )}
-            </>
-          )}
-          {clean && !applying && <Text color="green">  ✓ nothing to do</Text>}
-        </Text>
+        {!detailFocused ? (
+          <Text dimColor>
+            ↑↓ select{hasDrift ? "  · Enter view drift" : ""}
+            {hasDrift && !applying ? (
+              <>
+                {"  · "}
+                <Text bold dimColor>a</Text> apply
+                {totalRemoves > 0 && <Text color="yellow"> (confirm {totalRemoves} removal{totalRemoves !== 1 ? "s" : ""})</Text>}
+              </>
+            ) : null}
+            {!hasDrift && enginePreview && <Text color="green">  ✓ nothing to do</Text>}
+          </Text>
+        ) : (
+          <Text dimColor>↑↓ scroll drift  · <Text bold dimColor>a</Text> apply  · Esc back</Text>
+        )}
       </Box>
     </Box>
   );
@@ -381,23 +357,20 @@ export function handleDashboardInput(
 ) {
   const state = store.getState();
   const { applyState, playbook } = state;
+  const local = _localState;
+  if (!local) return;
 
   if (!playbook) return;
 
   const tools = ALL_TOOLS.filter(
-    (t) =>
-      state.toolStatuses[t] !== undefined ||
-      playbook.manifest.tools_enabled.includes(t),
+    (t) => state.toolStatuses[t] !== undefined || playbook.manifest.tools_enabled.includes(t),
   );
   const activeTools = tools.length > 0 ? tools : ALL_TOOLS;
-
-  const selectedIdx = state.selectedToolId
-    ? activeTools.indexOf(state.selectedToolId)
-    : 0;
+  const selectedIdx = state.selectedToolId ? activeTools.indexOf(state.selectedToolId) : 0;
   const effectiveIdx = Math.max(0, Math.min(selectedIdx, activeTools.length - 1));
   const effectiveToolId = activeTools[effectiveIdx] ?? null;
 
-  // Confirmation active — only y / n / Escape
+  // ── Confirmation overlay — only y/n/Esc ──────────────────────────────────
   if (applyState?.phase === "confirming") {
     if (input === "y" || input === "Y") {
       void state.applyTool(applyState.toolId, true);
@@ -408,18 +381,57 @@ export function handleDashboardInput(
     return;
   }
 
+  // ── Detail focused: scroll drift items ───────────────────────────────────
+  if (local.detailFocused) {
+    if (key.escape || input === "q") {
+      local.setDetailFocused(false);
+      local.setDriftScrollIdx(0);
+      return;
+    }
+    if (key.downArrow) {
+      const max = Math.max(0, local.driftOps.length - DETAIL_PAGE_SIZE);
+      local.setDriftScrollIdx(Math.min(local.driftScrollIdx + 1, max));
+      return;
+    }
+    if (key.upArrow) {
+      local.setDriftScrollIdx(Math.max(0, local.driftScrollIdx - 1));
+      return;
+    }
+    if (input === "a" && effectiveToolId && applyState === null) {
+      void state.applyTool(effectiveToolId);
+    }
+    return;
+  }
+
+  // ── Tool list navigation ──────────────────────────────────────────────────
   if (key.downArrow) {
     const next = Math.min(activeTools.length - 1, effectiveIdx + 1);
-    const nextTool = activeTools[next] ?? null;
-    state.setSelectedToolId(nextTool);
+    state.setSelectedToolId(activeTools[next] ?? null);
+    local.setDriftScrollIdx(0);
     return;
   }
   if (key.upArrow) {
     const next = Math.max(0, effectiveIdx - 1);
     state.setSelectedToolId(activeTools[next] ?? null);
+    local.setDriftScrollIdx(0);
+    return;
+  }
+  if (key.return && local.driftOps.length > 0) {
+    local.setDetailFocused(true);
     return;
   }
   if (input === "a" && effectiveToolId && applyState === null) {
     void state.applyTool(effectiveToolId);
   }
+}
+
+export function dashboardEffectiveToolId(store: typeof usePlaybookStore): ToolId {
+  const state = store.getState();
+  const tools = ALL_TOOLS.filter(
+    (t) => state.toolStatuses[t] !== undefined || state.playbook?.manifest.tools_enabled.includes(t),
+  );
+  const activeTools = tools.length > 0 ? tools : ALL_TOOLS;
+  const selectedIdx = state.selectedToolId ? activeTools.indexOf(state.selectedToolId) : 0;
+  const effectiveIdx = Math.max(0, Math.min(selectedIdx, activeTools.length - 1));
+  return activeTools[effectiveIdx] ?? activeTools[0];
 }

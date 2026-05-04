@@ -12,7 +12,7 @@
 import React, { useEffect } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { usePlaybookStore, type PlaybookTab } from "../lib/playbook-store.js";
-import { DashboardTab, handleDashboardInput } from "./DashboardTab.js";
+import { DashboardTab, handleDashboardInput, dashboardEffectiveToolId } from "./DashboardTab.js";
 import { PlaybookTab as PlaybookBrowseTab } from "./PlaybookTab.js";
 import { SourcesTab } from "./SourcesTab.js";
 import { SettingsTab } from "./SettingsTab.js";
@@ -57,9 +57,16 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
       exit();
       return;
     }
-    // Reload
+    // Reload — refresh preview for currently highlighted tool
     if (input === "r") {
-      void reloadPlaybook();
+      // Use the same tool resolution as handleDashboardInput
+      if (activeTab === "dashboard") {
+        void usePlaybookStore.getState().refreshPreviewForTool(
+          dashboardEffectiveToolId(usePlaybookStore),
+        );
+      } else {
+        void reloadPlaybook();
+      }
       return;
     }
     // Number shortcuts for tabs

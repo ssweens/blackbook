@@ -117,10 +117,32 @@ export function hashDir(dir: string): string {
   return hasher.digest("hex");
 }
 
+/**
+ * Async version of hashDir — yields to the event loop every N files
+ * so ink's input handling stays responsive during large directory scans.
+ */
+export async function hashDirAsync(dir: string, yieldEvery = 20): Promise<string> {
+  const files = walkFilesSorted(dir);
+  const hasher = createHash("sha256");
+  for (let i = 0; i < files.length; i++) {
+    if (i > 0 && i % yieldEvery === 0) {
+      await new Promise((r) => setImmediate(r));
+    }
+    hasher.update(files[i].relPath);
+    hasher.update("\0");
+    hasher.update(readFileSync(files[i].absPath));
+    hasher.update("\0");
+  }
+  return hasher.digest("hex");
+}
+
 interface FileEntry {
   relPath: string;
   absPath: string;
 }
+
+// Directories to skip when walking for hashing
+const SKIP_DIRS = new Set([".git", "node_modules", ".pnpm", ".yarn", "dist", "build", "__pycache__"]);
 
 function walkFilesSorted(root: string): FileEntry[] {
   const out: FileEntry[] = [];
@@ -130,6 +152,8 @@ function walkFilesSorted(root: string): FileEntry[] {
       a.name.localeCompare(b.name),
     );
     for (const e of entries) {
+      // Skip heavy dirs that don't affect skill content
+      if (e.isDirectory() && (SKIP_DIRS.has(e.name) || e.name.startsWith("."))) continue;
       const abs = join(dir, e.name);
       const r = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) walk(abs, r);

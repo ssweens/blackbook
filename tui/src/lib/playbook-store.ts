@@ -96,6 +96,7 @@ export interface PlaybookActions {
 
   // Engine
   refreshPreview(): Promise<void>;
+  refreshPreviewForTool(toolId: ToolId): Promise<void>;
 
   // Tool detection
   detectAllTools(): Promise<void>;
@@ -275,6 +276,39 @@ export const usePlaybookStore = create<PlaybookStore>((set, get) => ({
     const path = get().playbookPath;
     if (!path) return;
     return get().loadPlaybookFromPath(path);
+  },
+
+  async refreshPreviewForTool(toolId) {
+    const pb = get().playbook;
+    if (!pb) return;
+    set({ enginePreviewLoading: true, enginePreviewError: null });
+    try {
+      ensureAdapters();
+      await new Promise((r) => setTimeout(r, 0));
+      const result = await enginePreview(pb, {
+        confirmRemovals: false,
+        toolFilter: [toolId],
+      });
+      // Merge this tool's results into the existing preview
+      const existing = get().enginePreview;
+      const merged = existing
+        ? {
+            ...existing,
+            envCheck: result.envCheck,
+            perInstance: [
+              ...existing.perInstance.filter((p) => p.toolId !== toolId),
+              ...result.perInstance,
+            ],
+            topLevelErrors: result.topLevelErrors,
+          }
+        : result;
+      set({ enginePreview: merged, enginePreviewLoading: false });
+    } catch (e) {
+      set({
+        enginePreviewLoading: false,
+        enginePreviewError: e instanceof Error ? e.message : String(e),
+      });
+    }
   },
 
   async refreshPreview() {

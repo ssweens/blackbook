@@ -50,7 +50,7 @@ export const opencodeAdapter: ToolAdapter = {
       inventory,
       toolRootPath: playbook.tools.opencode?.rootPath,
     };
-    return appendConfigFileOps(buildCommonSpineDiff(args), args);
+    return appendConfigFileOps(await buildCommonSpineDiff(args), args);
   },
 
   async apply(diff: Diff, _instance: ToolInstance, opts: ApplyOpts): Promise<ApplyResult> {

@@ -20,7 +20,7 @@ import type {
   ToolInstance,
 } from "../playbook/index.js";
 import type { AdapterDefaults } from "./types.js";
-import { hashDir, hashFile, resolveConfigDir } from "./base.js";
+import { hashDir, hashDirAsync, hashFile, resolveConfigDir } from "./base.js";
 
 export interface BuildDiffArgs {
   playbook: LoadedPlaybook;
@@ -37,7 +37,7 @@ export interface BuildDiffArgs {
  *
  * Bundles, MCP, hooks, and config_files are tool-specific — adapters layer those on top.
  */
-export function buildCommonSpineDiff(args: BuildDiffArgs): Diff {
+export async function buildCommonSpineDiff(args: BuildDiffArgs): Promise<Diff> {
   const { playbook, toolConfig, instance, defaults, inventory } = args;
   const ops: DiffOp[] = [];
 
@@ -82,7 +82,7 @@ export function buildCommonSpineDiff(args: BuildDiffArgs): Diff {
   }
 
   // Skills, commands, agents — opt-in shared + tool-standalone (standalone replaces same-named shared)
-  expected.push(...collectArtifactExpectations(playbook, toolConfig, configDir, defaults));
+  expected.push(...await collectArtifactExpectations(playbook, toolConfig, configDir, defaults));
 
   // ─── Index inventory by (type, name) for matching ──────────────────────────
 
@@ -115,7 +115,7 @@ export function buildCommonSpineDiff(args: BuildDiffArgs): Diff {
     }
 
     // Compare content
-    const diskHash = inv.contentHash ?? hashTarget(exp.targetPath, exp.type);
+    const diskHash = inv.contentHash ?? await hashTarget(exp.targetPath, exp.type);
     if (diskHash !== exp.sourceHash) {
       ops.push({
         kind: "update",
@@ -166,7 +166,7 @@ export function buildCommonSpineDiff(args: BuildDiffArgs): Diff {
  * Append config_file ops for syncable entries in tool.yaml onto an existing Diff.
  * Call this after buildCommonSpineDiff.
  */
-export function appendConfigFileOps(diff: Diff, args: BuildDiffArgs): Diff {
+export async function appendConfigFileOps(diff: Diff, args: BuildDiffArgs): Promise<Diff> {
   const { toolConfig, instance, toolRootPath } = args;
   if (!toolRootPath) return diff;
 
@@ -192,7 +192,7 @@ export function appendConfigFileOps(diff: Diff, args: BuildDiffArgs): Diff {
       continue;
     }
 
-    const sourceHash = hashTarget(sourcePath, "config_file");
+    const sourceHash = await hashTarget(sourcePath, "config_file");
 
     if (!existsSync(targetPath)) {
       ops.push({
@@ -204,7 +204,7 @@ export function appendConfigFileOps(diff: Diff, args: BuildDiffArgs): Diff {
         reason: "missing on disk",
       });
     } else {
-      const diskHash = hashTarget(targetPath, "config_file");
+      const diskHash = await hashTarget(targetPath, "config_file");
       if (diskHash !== sourceHash) {
         ops.push({
           kind: "update",
@@ -234,19 +234,19 @@ function isCommonSpineType(type: DiscoveredArtifact["type"]): boolean {
   return type === "skill" || type === "command" || type === "agent" || type === "agents_md";
 }
 
-function collectArtifactExpectations(
+async function collectArtifactExpectations(
   playbook: LoadedPlaybook,
   toolConfig: LoadedToolConfig,
   configDir: string,
   defaults: AdapterDefaults,
-): {
+): Promise<{
   name: string;
   type: "skill" | "command" | "agent";
   sourcePath: string;
   targetPath: string;
   sourceHash: string;
-}[] {
-  const out: ReturnType<typeof collectArtifactExpectations> = [];
+}[]> {
+  const out: Awaited<ReturnType<typeof collectArtifactExpectations>> = [];
 
   // Skills (dir-based)
   const skillSources = mergeSharedAndStandalone(
@@ -260,7 +260,7 @@ function collectArtifactExpectations(
       type: "skill",
       sourcePath: ref.sourcePath,
       targetPath: join(configDir, defaults.paths.skills, ref.name),
-      sourceHash: hashDir(ref.sourcePath),
+      sourceHash: await hashDirAsync(ref.sourcePath),
     });
   }
 
@@ -330,11 +330,11 @@ function mergeSharedAndStandalone(
   return result;
 }
 
-function hashTarget(targetPath: string, type: DiscoveredArtifact["type"]): string {
+async function hashTarget(targetPath: string, type: DiscoveredArtifact["type"]): Promise<string> {
   if (!existsSync(targetPath)) return "";
-  if (type === "skill") return hashDir(targetPath);
+  if (type === "skill") return hashDirAsync(targetPath);
   if (statSync(targetPath).isFile()) return hashFile(targetPath);
-  return hashDir(targetPath);
+  return hashDirAsync(targetPath);
 }
 
 /** Suppress unused import warnings from re-exports. */
