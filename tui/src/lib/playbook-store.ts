@@ -17,7 +17,7 @@ import { loadPlaybook, validatePlaybook } from "./playbook/index.js";
 import type { EngineSyncResult, PerInstanceResult } from "./sync/index.js";
 import { getAdapter, listAdapters } from "./adapters/index.js";
 import { registerAllAdapters as _ra } from "./adapters/all.js";
-import { enginePreview } from "./sync/index.js";
+import { enginePreview, engineApply } from "./sync/index.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -59,8 +59,20 @@ export interface PlaybookState {
   /** Which artifact is expanded in the Playbook tab. */
   expandedArtifact: string | null;
 
-  // ── Notifications ─────────────────────────────────────────────────────────
+  // ── Apply state ────────────────────────────────────────────────────────
+  /** Tool currently being applied (or awaiting confirmation). */
+  applyState: ApplyState | null;
+
+  // ── Notifications ─────────────────────────────────────────────────────
   notifications: PlaybookNotification[];
+}
+
+export interface ApplyState {
+  toolId: ToolId;
+  /** 'confirming' = waiting for user to confirm removals; 'running' = in flight. */
+  phase: "confirming" | "running";
+  /** How many remove ops are pending confirmation. */
+  pendingRemovals: number;
 }
 
 export interface PlaybookNotification {
@@ -87,6 +99,10 @@ export interface PlaybookActions {
   // Tool detection
   detectAllTools(): Promise<void>;
   detectTool(toolId: ToolId): Promise<void>;
+
+  // Apply
+  applyTool(toolId: ToolId, confirmRemovals?: boolean): Promise<void>;
+  cancelApply(): void;
 
   // Notifications
   addNotification(n: Omit<PlaybookNotification, "id">): void;
@@ -117,6 +133,8 @@ const INITIAL: PlaybookState = {
   selectedToolId: null,
   expandedArtifact: null,
 
+  applyState: null,
+
   notifications: [],
 };
 
@@ -142,6 +160,70 @@ export const usePlaybookStore = create<PlaybookStore>((set, get) => ({
 
   setExpandedArtifact(key) {
     set({ expandedArtifact: key });
+  },
+
+  cancelApply() {
+    set({ applyState: null });
+  },
+
+  async applyTool(toolId, confirmRemovals = false) {
+    const pb = get().playbook;
+    if (!pb) return;
+
+    // Check if this tool has pending removals in the current preview
+    const preview = get().enginePreview;
+    const removals = preview?.perInstance
+      .filter((p) => p.toolId === toolId)
+      .flatMap((p) => p.diff.ops.filter((o) => o.kind === "remove"))
+      .length ?? 0;
+
+    // If there are removals and caller hasn't confirmed, gate on confirmation
+    if (removals > 0 && !confirmRemovals) {
+      set({ applyState: { toolId, phase: "confirming", pendingRemovals: removals } });
+      return;
+    }
+
+    set({ applyState: { toolId, phase: "running", pendingRemovals: removals } });
+    ensureAdapters();
+
+    try {
+      const result = await engineApply(pb, {
+        confirmRemovals,
+        dryRun: false,
+        toolFilter: [toolId],
+      });
+
+      const instance = result.perInstance[0];
+      const performed = instance?.apply.performed.length ?? 0;
+      const errors = [
+        ...(instance?.apply.errors ?? []),
+        ...(instance?.errors ?? []),
+      ];
+      const bundleInstalls = instance?.bundleOps.filter((b) => b.op === "install" && b.ok).length ?? 0;
+
+      if (errors.length === 0) {
+        get().addNotification({
+          level: "success",
+          message: `${toolId}: ${performed} file op(s)${bundleInstalls ? `, ${bundleInstalls} bundle(s) installed` : ""} applied`,
+          dismissAfter: 4000,
+        });
+      } else {
+        get().addNotification({
+          level: "error",
+          message: `${toolId}: ${errors.map((e) => e.message).join("; ")}`,
+        });
+      }
+
+      // Refresh preview to reflect new state
+      await get().refreshPreview();
+    } catch (e) {
+      get().addNotification({
+        level: "error",
+        message: `${toolId} apply failed: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    } finally {
+      set({ applyState: null });
+    }
   },
 
   addNotification(n) {
