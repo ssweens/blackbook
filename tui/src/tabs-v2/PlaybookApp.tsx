@@ -32,7 +32,8 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
   const activeTab = usePlaybookStore((s) => s.activeTab);
   const [diffOp, setDiffOp] = useState<import("../lib/playbook/index.js").DiffOp | null>(null);
   const [diffScroll, setDiffScroll] = useState(0);
-  const closeDiff = () => { setDiffOp(null); setDiffScroll(0); };
+  const [pullbackState, setPullbackState] = useState<import("./DriftDiffView.js").PullbackState>(null);
+  const closeDiff = () => { setDiffOp(null); setDiffScroll(0); setPullbackState(null); };
   const setActiveTab = usePlaybookStore((s) => s.setActiveTab);
   const reloadPlaybook = usePlaybookStore((s) => s.reloadPlaybook);
   const notifications = usePlaybookStore((s) => s.notifications);
@@ -61,9 +62,14 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
     if (diffOp) {
       const selectedTool = dashboardEffectiveToolId(usePlaybookStore);
       handleDiffInput(
-        key, input, closeDiff, diffOp,
+        key, input, closeDiff, diffOp, pullbackState,
         () => { void usePlaybookStore.getState().applyTool(selectedTool); },
-        () => { void usePlaybookStore.getState().pullbackArtifact(diffOp); },
+        () => {
+          setPullbackState("running");
+          usePlaybookStore.getState().pullbackArtifact(diffOp)
+            .then(() => setPullbackState({ ok: true, message: `${diffOp.name} pulled back → playbook` }))
+            .catch((e: unknown) => setPullbackState({ ok: false, message: e instanceof Error ? e.message : String(e) }));
+        },
       );
       return;
     }
@@ -121,6 +127,7 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
           scrollOffset={diffScroll}
           setScrollOffset={setDiffScroll}
           onBack={closeDiff}
+          pullbackState={pullbackState}
         />
       )}
 

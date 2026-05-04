@@ -269,15 +269,34 @@ export const usePlaybookStore = create<PlaybookStore>((set, get) => ({
 
       copyFileSync(diskFile, playbookFile);
 
-      get().addNotification({
-        level: "success",
-        message: `Pulled ${op.name} from disk → playbook`,
-        dismissAfter: 4000,
-      });
-
-      // Reload playbook to pick up the changed file
+      // 1. Reload playbook model only — no detection, no preview re-run.
+      //    We know exactly which artifact changed; no blanket refresh needed.
       const path = get().playbookPath;
-      if (path) await get().loadPlaybookFromPath(path);
+      if (path) {
+        const { loadPlaybook, validatePlaybook } = await import("./playbook/index.js");
+        const pb = loadPlaybook(path);
+        const validation = validatePlaybook(pb);
+        set({ playbook: pb, playbookValidation: validation });
+      }
+
+      // 2. Surgically remove this op from the current preview state.
+      //    Disk and playbook are now identical for this artifact.
+      const preview = get().enginePreview;
+      if (preview) {
+        const updated = {
+          ...preview,
+          perInstance: preview.perInstance.map((inst) => ({
+            ...inst,
+            diff: {
+              ...inst.diff,
+              ops: inst.diff.ops.filter(
+                (o) => !(o.artifactType === op.artifactType && o.name === op.name),
+              ),
+            },
+          })),
+        };
+        set({ enginePreview: updated });
+      }
     } catch (e) {
       get().addNotification({
         level: "error",

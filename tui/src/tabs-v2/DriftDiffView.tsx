@@ -99,6 +99,7 @@ export function handleDiffInput(
   input: string,
   onBack: () => void,
   op: import("../lib/playbook/index.js").DiffOp,
+  pullbackState: PullbackState,
   onApplyTool?: () => void,
   onPullback?: () => void,
 ) {
@@ -107,37 +108,38 @@ export function handleDiffInput(
   const { scrollOffset, setScrollOffset, totalRows } = local;
   const max = Math.max(0, totalRows - PAGE_SIZE);
 
+  // While pullback is running, swallow all input.
+  if (pullbackState === "running") return;
+
+  // After pullback completes, any key closes the diff.
+  if (pullbackState !== null) { onBack(); return; }
+
   if (key.escape || input === "q") { onBack(); return; }
   if (key.upArrow)   { setScrollOffset(Math.max(0, scrollOffset - 1)); return; }
   if (key.downArrow) { setScrollOffset(Math.min(max, scrollOffset + 1)); return; }
   if (key.pageUp)    { setScrollOffset(Math.max(0, scrollOffset - PAGE_SIZE)); return; }
   if (key.pageDown)  { setScrollOffset(Math.min(max, scrollOffset + PAGE_SIZE)); return; }
-  // p = pullback: copy disk version → playbook
-  if (input === "p" && onPullback) {
-    void onPullback();
-    onBack();
-    return;
-  }
+  // p = pullback: copy disk version → playbook (stays open until done)
+  if (input === "p" && onPullback) { void onPullback(); return; }
   // a = apply this tool (playbook → disk)
-  if (input === "a" && onApplyTool) {
-    void onApplyTool();
-    onBack();
-    return;
-  }
+  if (input === "a" && onApplyTool) { void onApplyTool(); onBack(); return; }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
+export type PullbackState = null | "running" | { ok: boolean; message: string };
+
 interface Props {
   op: DiffOp;
   scrollOffset: number;
   setScrollOffset: (n: number) => void;
   onBack: () => void;
+  pullbackState: PullbackState;
 }
 
-export function DriftDiffView({ op, scrollOffset, setScrollOffset, onBack }: Props) {
+export function DriftDiffView({ op, scrollOffset, setScrollOffset, onBack, pullbackState }: Props) {
   if (op.kind !== "update" || !op.sourcePath || !op.targetPath) {
     return (
       <Box paddingX={2}><Text color="yellow">No diff for {op.kind} op. Esc back.</Text></Box>
@@ -212,13 +214,31 @@ export function DriftDiffView({ op, scrollOffset, setScrollOffset, onBack }: Pro
         )}
       </Box>
 
-      {/* Footer */}
-      <Box paddingX={1} borderStyle="single" borderTop>
-        <Text dimColor>↑↓ scroll  PgUp/PgDn jump  </Text>
-        <Text bold dimColor>a</Text><Text dimColor> apply (playbook→disk)  </Text>
-        <Text bold dimColor>p</Text><Text dimColor> pullback (disk→playbook)  </Text>
-        <Text dimColor>Esc back</Text>
-      </Box>
+      {/* Pullback status */}
+      {pullbackState === "running" && (
+        <Box paddingX={1} borderStyle="single" borderTop borderColor="cyan">
+          <Text color="cyan">⟳ Copying disk → playbook…</Text>
+        </Box>
+      )}
+      {pullbackState !== null && pullbackState !== "running" && (
+        <Box paddingX={1} borderStyle="single" borderTop
+          borderColor={pullbackState.ok ? "green" : "red"}>
+          <Text color={pullbackState.ok ? "green" : "red"}>
+            {pullbackState.ok ? "✓" : "✗"} {pullbackState.message}
+          </Text>
+          <Text dimColor>  · any key to close</Text>
+        </Box>
+      )}
+
+      {/* Footer (hidden while pullback is in flight or showing result) */}
+      {!pullbackState && (
+        <Box paddingX={1} borderStyle="single" borderTop>
+          <Text dimColor>↑↓ scroll  PgUp/PgDn jump  </Text>
+          <Text bold dimColor>a</Text><Text dimColor> apply (playbook→disk)  </Text>
+          <Text bold dimColor>p</Text><Text dimColor> pullback (disk→playbook)  </Text>
+          <Text dimColor>Esc back</Text>
+        </Box>
+      )}
     </Box>
   );
 }
