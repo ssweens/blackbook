@@ -232,6 +232,17 @@ function InstanceDetail({
   const hasDrift = adds > 0 || updates > 0 || removes > 0;
 
   const untrackedBundles = instanceResult?.untrackedBundles ?? [];
+  const bundleStates    = instanceResult?.bundleStates ?? [];
+
+  // Categorize bundles into sync states (parallel to artifact sync states)
+  const bundleSync     = bundleStates.filter((b) => b.declared === "enabled"  && b.installed);
+  const bundleMissing  = bundleStates.filter((b) => b.declared === "enabled"  && !b.installed);
+  const bundleExtra    = bundleStates.filter((b) => b.declared === "disabled" && b.installed);
+  const bundleUntracked= bundleStates.filter((b) => b.declared === "undeclared");
+  const totalBundles = bundleStates.length;
+  const bundleParadigm = playbook.tools[item.toolId]?.config
+    ? (item.toolId === "claude" || item.toolId === "codex" ? "plugins" : "packages")
+    : "bundles";
 
   // Group ops by state for an intuitive inventory display
   const opsByKind = {
@@ -244,34 +255,53 @@ function InstanceDetail({
   type InvItem = { label: string; color: string; dim: boolean; isHeader?: boolean; op?: DiffOp };
   const inventoryItems: InvItem[] = [];
 
+  // Modified — only artifacts (bundles are atomic; their content isn't diffed)
   if (opsByKind.update.length > 0) {
     inventoryItems.push({ label: `▸ Modified — different in playbook vs disk (Enter for diff, p to pull from disk):`, color: "yellow", dim: false, isHeader: true });
     for (const op of opsByKind.update) {
       inventoryItems.push({ label: `  ~ ${op.artifactType}/${op.name}`, color: "yellow", dim: false, op });
     }
   }
-  if (opsByKind.add.length > 0) {
+
+  // Missing on disk — artifacts to install + bundles to install
+  if (opsByKind.add.length > 0 || bundleMissing.length > 0) {
     inventoryItems.push({ label: `▸ Missing on disk — in playbook, would be installed:`, color: "green", dim: false, isHeader: true });
     for (const op of opsByKind.add) {
       inventoryItems.push({ label: `  + ${op.artifactType}/${op.name}`, color: "green", dim: false, op });
     }
+    for (const b of bundleMissing) {
+      inventoryItems.push({ label: `  + ${bundleParadigm}/${b.name}${b.version ? "@" + b.version : ""}  (${b.sourceKind})`, color: "green", dim: false });
+    }
   }
-  if (opsByKind.remove.length > 0) {
+
+  // Extra on disk — artifacts to remove + disabled bundles still installed
+  if (opsByKind.remove.length > 0 || bundleExtra.length > 0) {
     inventoryItems.push({ label: `▸ Extra on disk — not in playbook, apply would remove:`, color: "red", dim: false, isHeader: true });
     for (const op of opsByKind.remove) {
       inventoryItems.push({ label: `  − ${op.artifactType}/${op.name}`, color: "red", dim: false, op });
     }
-  }
-  if (untrackedBundles.length > 0) {
-    inventoryItems.push({ label: `▸ Bundles installed but not declared in playbook:`, color: "yellow", dim: false, isHeader: true });
-    for (const name of untrackedBundles) {
-      inventoryItems.push({ label: `  ? bundle/${name}`, color: "yellow", dim: false });
+    for (const b of bundleExtra) {
+      inventoryItems.push({ label: `  − ${bundleParadigm}/${b.name}  (declared but disabled)`, color: "red", dim: false });
     }
   }
-  if (opsByKind.noOp.length > 0) {
-    inventoryItems.push({ label: `▸ In sync — playbook and disk match (${opsByKind.noOp.length}):`, color: "gray", dim: true, isHeader: true });
+
+  // Untracked bundles — installed but not declared at all
+  if (bundleUntracked.length > 0) {
+    inventoryItems.push({ label: `▸ Bundles installed but not declared in playbook:`, color: "yellow", dim: false, isHeader: true });
+    for (const b of bundleUntracked) {
+      inventoryItems.push({ label: `  ? ${bundleParadigm}/${b.name}`, color: "yellow", dim: false });
+    }
+  }
+
+  // In sync — artifacts + bundles that match
+  if (opsByKind.noOp.length > 0 || bundleSync.length > 0) {
+    const total = opsByKind.noOp.length + bundleSync.length;
+    inventoryItems.push({ label: `▸ In sync — playbook and disk match (${total}):`, color: "gray", dim: true, isHeader: true });
     for (const op of opsByKind.noOp) {
       inventoryItems.push({ label: `  ✓ ${op.artifactType}/${op.name}`, color: "gray", dim: true, op });
+    }
+    for (const b of bundleSync) {
+      inventoryItems.push({ label: `  ✓ ${bundleParadigm}/${b.name}${b.version ? "@" + b.version : ""}`, color: "gray", dim: true });
     }
   }
 
@@ -331,12 +361,12 @@ function InstanceDetail({
             {/* Summary line */}
             <Box>
               <Text dimColor>  </Text>
-              {synced  > 0 && <Text dimColor>{synced} synced  </Text>}
+              {(synced + bundleSync.length) > 0 && <Text dimColor>{synced + bundleSync.length} synced  </Text>}
               {updates > 0 && <Text color="yellow">{updates} modified  </Text>}
-              {adds    > 0 && <Text color="green">{adds} missing on disk  </Text>}
-              {removes > 0 && <Text color="red">{removes} not in playbook  </Text>}
-              {untrackedBundles.length > 0 && <Text color="yellow">{untrackedBundles.length} untracked bundle{untrackedBundles.length !== 1 ? "s" : ""}</Text>}
-              {!hasDrift && untrackedBundles.length === 0 && synced > 0 && <Text color="green">✓ fully in sync</Text>}
+              {(adds + bundleMissing.length) > 0 && <Text color="green">{adds + bundleMissing.length} missing on disk  </Text>}
+              {(removes + bundleExtra.length) > 0 && <Text color="red">{removes + bundleExtra.length} not in playbook  </Text>}
+              {bundleUntracked.length > 0 && <Text color="yellow">{bundleUntracked.length} untracked {bundleParadigm}</Text>}
+              {!hasDrift && bundleStates.every(b => b.declared === "enabled" && b.installed) && synced > 0 && <Text color="green">✓ fully in sync</Text>}
             </Box>
 
             {/* Full inventory list */}

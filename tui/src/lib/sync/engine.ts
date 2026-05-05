@@ -54,6 +54,18 @@ export interface BundleOpReport {
   reason?: string;
 }
 
+export interface BundleState {
+  name: string;
+  /** What the playbook says: declared+enabled / declared+disabled / undeclared */
+  declared: "enabled" | "disabled" | "undeclared";
+  /** Whether the bundle is currently installed on disk */
+  installed: boolean;
+  /** Pinned version from manifest, if any */
+  version?: string;
+  /** Source type (npm/git/marketplace/local) for display */
+  sourceKind?: "marketplace" | "npm" | "git" | "local";
+}
+
 export interface PerInstanceResult {
   toolId: ToolId;
   instanceId: string;
@@ -63,6 +75,8 @@ export interface PerInstanceResult {
   bundleOps: BundleOpReport[];
   /** Bundle names installed on disk but not declared in plugins.yaml/packages.yaml. */
   untrackedBundles: string[];
+  /** Full bundle state map: declared status + installed status for each known bundle. */
+  bundleStates: BundleState[];
   /** Errors specific to this instance (env, adapter routing, etc.) */
   errors: EngineError[];
 }
@@ -242,8 +256,9 @@ export async function engineApply(
         );
       }
 
-      // Compute untracked bundles: installed on disk but not in the manifest.
-      const untrackedBundles = computeUntrackedBundles(adapter, toolConfig, inventory!);
+      // Compute full bundle state: declared+installed combinations.
+      const { states: bundleStates, untracked: untrackedBundles } =
+        computeBundleStates(adapter, toolConfig, inventory!);
 
       perInstance.push({
         toolId,
@@ -253,6 +268,7 @@ export async function engineApply(
         mcpEmit,
         bundleOps,
         untrackedBundles,
+        bundleStates,
         errors,
       });
     }
@@ -301,27 +317,54 @@ function errorMessage(err: unknown): string {
 import type { LoadedToolConfig } from "../playbook/index.js";
 import type { ToolAdapter } from "../adapters/types.js";
 
-function computeUntrackedBundles(
+function computeBundleStates(
   adapter: ToolAdapter,
   toolConfig: LoadedToolConfig,
   inventory: import("../playbook/index.js").Inventory,
-): string[] {
-  if (!adapter.defaults.capabilities.bundleParadigm) return [];
+): { states: BundleState[]; untracked: string[] } {
+  if (!adapter.defaults.capabilities.bundleParadigm) {
+    return { states: [], untracked: [] };
+  }
 
-  // All bundle names seen on disk via provenance tagging
+  // Installed on disk
   const onDisk = new Set<string>();
   for (const a of inventory.artifacts) {
     if (a.provenance.kind === "bundle") onDisk.add(a.provenance.bundleName);
   }
 
-  // All bundle names declared in the manifest
-  const declared = new Set<string>();
+  // Declared in manifest
   const plugins = toolConfig.pluginsManifest?.plugins ?? [];
   const packages = toolConfig.packagesManifest?.packages ?? [];
-  for (const b of [...plugins, ...packages]) declared.add(b.name);
+  const declared = [...plugins, ...packages];
 
-  // Untracked = on disk but not declared
-  return Array.from(onDisk).filter((n) => !declared.has(n)).sort();
+  const states: BundleState[] = [];
+  const declaredNames = new Set<string>();
+
+  for (const b of declared) {
+    declaredNames.add(b.name);
+    states.push({
+      name: b.name,
+      declared: b.enabled ? "enabled" : "disabled",
+      installed: onDisk.has(b.name),
+      version: b.version,
+      sourceKind: b.source.type,
+    });
+  }
+
+  const untracked: string[] = [];
+  for (const installedName of onDisk) {
+    if (declaredNames.has(installedName)) continue;
+    untracked.push(installedName);
+    states.push({
+      name: installedName,
+      declared: "undeclared",
+      installed: true,
+    });
+  }
+
+  states.sort((a, b) => a.name.localeCompare(b.name));
+  untracked.sort();
+  return { states, untracked };
 }
 
 async function reconcileBundles(
