@@ -102,6 +102,14 @@ export interface ToolAdapter {
   validate?(playbook: LoadedPlaybook): ValidationReport;
 
   /**
+   * Return the set of bundle names currently installed for an instance.
+   * Used to detect bundles that have no on-disk artifacts (e.g. Pi packages
+   * that only contribute extensions, not skills).
+   * Default behavior: derive from inventory.artifacts provenance tags.
+   */
+  installedBundles?(instance: ToolInstance): Promise<string[]>;
+
+  /**
    * Emit MCP server config in the tool's native format. Optional.
    * Adapter is responsible for env-var indirection (no literal secrets).
    */

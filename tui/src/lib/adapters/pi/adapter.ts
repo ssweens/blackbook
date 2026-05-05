@@ -78,6 +78,11 @@ export const piAdapter: ToolAdapter = {
     return emitPiMcp(servers, instance);
   },
 
+  async installedBundles(instance: ToolInstance): Promise<string[]> {
+    const { listInstalledPiPackages } = await import("./bundle-ownership.js");
+    return listInstalledPiPackages(resolveConfigDir(instance));
+  },
+
   async installBundle(ref: BundleEntry, instance: ToolInstance): Promise<void> {
     return installPiBundle(ref, instance);
   },

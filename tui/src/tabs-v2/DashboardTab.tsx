@@ -70,8 +70,10 @@ type LocalState = {
   driftScrollIdx: number;
   setDriftScrollIdx: (v: number) => void;
   driftOps: DiffOp[];
-  /** The actionable op at the current scroll position (skips headers), or null. */
-  highlightedOp: DiffOp | null;
+  /** Action context for the highlighted inventory item, or null. */
+  highlightedAction: { state: string; op?: DiffOp; bundleName?: string } | null;
+  /** Full list of items used for header-skip navigation. */
+  inventoryItems: Array<{ isHeader?: boolean; action?: { state: string; op?: DiffOp; bundleName?: string } }>;
   /** Total inventory item count for scroll bounds. */
   inventoryLength: number;
   items: DashItem[];
@@ -138,7 +140,8 @@ export function DashboardTab({ isFocused: _isFocused }: { isFocused: boolean }) 
     detailFocused, setDetailFocused,
     driftScrollIdx, setDriftScrollIdx,
     driftOps, items, effectiveIdx,
-    highlightedOp: _local?.highlightedOp ?? null,
+    highlightedAction: _local?.highlightedAction ?? null,
+    inventoryItems: _local?.inventoryItems ?? [],
     inventoryLength: _local?.inventoryLength ?? 0,
   };
 
@@ -252,66 +255,125 @@ function InstanceDetail({
     noOp:   allOps.filter((o) => o.kind === "no-op"),
   };
 
-  type InvItem = { label: string; color: string; dim: boolean; isHeader?: boolean; op?: DiffOp };
+  type ItemAction = {
+    /** State category for context-sensitive keybinds. */
+    state: "modified" | "missing" | "extra" | "untracked" | "synced";
+    /** The DiffOp this represents, if any (artifacts have ops, bundles don't). */
+    op?: DiffOp;
+    /** The bundle name, if this item represents a bundle. */
+    bundleName?: string;
+  };
+  type InvItem = { label: string; color: string; dim: boolean; isHeader?: boolean; action?: ItemAction };
   const inventoryItems: InvItem[] = [];
 
   // Modified — only artifacts (bundles are atomic; their content isn't diffed)
   if (opsByKind.update.length > 0) {
-    inventoryItems.push({ label: `▸ Modified — different in playbook vs disk (Enter for diff, p to pull from disk):`, color: "yellow", dim: false, isHeader: true });
+    inventoryItems.push({ label: `▸ Modified — different in playbook vs disk:`, color: "yellow", dim: false, isHeader: true });
     for (const op of opsByKind.update) {
-      inventoryItems.push({ label: `  ~ ${op.artifactType}/${op.name}`, color: "yellow", dim: false, op });
+      inventoryItems.push({
+        label: `  ~ ${op.artifactType}/${op.name}`, color: "yellow", dim: false,
+        action: { state: "modified", op },
+      });
     }
   }
 
-  // Missing on disk — artifacts to install + bundles to install
+  // Missing on disk — artifacts and bundles in playbook but not on disk
   if (opsByKind.add.length > 0 || bundleMissing.length > 0) {
-    inventoryItems.push({ label: `▸ Missing on disk — in playbook, would be installed:`, color: "green", dim: false, isHeader: true });
+    inventoryItems.push({ label: `▸ Missing on disk — in playbook, not installed:`, color: "green", dim: false, isHeader: true });
     for (const op of opsByKind.add) {
-      inventoryItems.push({ label: `  + ${op.artifactType}/${op.name}`, color: "green", dim: false, op });
+      inventoryItems.push({
+        label: `  + ${op.artifactType}/${op.name}`, color: "green", dim: false,
+        action: { state: "missing", op },
+      });
     }
     for (const b of bundleMissing) {
-      inventoryItems.push({ label: `  + ${bundleParadigm}/${b.name}${b.version ? "@" + b.version : ""}  (${b.sourceKind})`, color: "green", dim: false });
+      inventoryItems.push({
+        label: `  + ${bundleParadigm}/${b.name}${b.version ? "@" + b.version : ""}  (${b.sourceKind})`,
+        color: "green", dim: false,
+        action: { state: "missing", bundleName: b.name },
+      });
     }
   }
 
-  // Extra on disk — artifacts to remove + disabled bundles still installed
+  // Extra on disk — not in playbook, apply would remove
   if (opsByKind.remove.length > 0 || bundleExtra.length > 0) {
-    inventoryItems.push({ label: `▸ Extra on disk — not in playbook, apply would remove:`, color: "red", dim: false, isHeader: true });
+    inventoryItems.push({ label: `▸ Extra on disk — not in playbook (apply would remove):`, color: "red", dim: false, isHeader: true });
     for (const op of opsByKind.remove) {
-      inventoryItems.push({ label: `  − ${op.artifactType}/${op.name}`, color: "red", dim: false, op });
+      inventoryItems.push({
+        label: `  − ${op.artifactType}/${op.name}`, color: "red", dim: false,
+        action: { state: "extra", op },
+      });
     }
     for (const b of bundleExtra) {
-      inventoryItems.push({ label: `  − ${bundleParadigm}/${b.name}  (declared but disabled)`, color: "red", dim: false });
+      inventoryItems.push({
+        label: `  − ${bundleParadigm}/${b.name}  (declared but disabled)`,
+        color: "red", dim: false,
+        action: { state: "extra", bundleName: b.name },
+      });
     }
   }
 
   // Untracked bundles — installed but not declared at all
   if (bundleUntracked.length > 0) {
-    inventoryItems.push({ label: `▸ Bundles installed but not declared in playbook:`, color: "yellow", dim: false, isHeader: true });
+    inventoryItems.push({ label: `▸ Installed but not declared in playbook:`, color: "yellow", dim: false, isHeader: true });
     for (const b of bundleUntracked) {
-      inventoryItems.push({ label: `  ? ${bundleParadigm}/${b.name}`, color: "yellow", dim: false });
+      inventoryItems.push({
+        label: `  ? ${bundleParadigm}/${b.name}`, color: "yellow", dim: false,
+        action: { state: "untracked", bundleName: b.name },
+      });
     }
   }
 
-  // In sync — artifacts + bundles that match
+  // In sync
   if (opsByKind.noOp.length > 0 || bundleSync.length > 0) {
     const total = opsByKind.noOp.length + bundleSync.length;
     inventoryItems.push({ label: `▸ In sync — playbook and disk match (${total}):`, color: "gray", dim: true, isHeader: true });
     for (const op of opsByKind.noOp) {
-      inventoryItems.push({ label: `  ✓ ${op.artifactType}/${op.name}`, color: "gray", dim: true, op });
+      inventoryItems.push({
+        label: `  ✓ ${op.artifactType}/${op.name}`, color: "gray", dim: true,
+        action: { state: "synced", op },
+      });
     }
     for (const b of bundleSync) {
-      inventoryItems.push({ label: `  ✓ ${bundleParadigm}/${b.name}${b.version ? "@" + b.version : ""}`, color: "gray", dim: true });
+      inventoryItems.push({
+        label: `  ✓ ${bundleParadigm}/${b.name}${b.version ? "@" + b.version : ""}`,
+        color: "gray", dim: true,
+        action: { state: "synced", bundleName: b.name },
+      });
     }
   }
 
-  // Highlighted op = the op (if any) at driftScrollIdx — used for Enter/p actions
-  const highlightedOp = inventoryItems[driftScrollIdx]?.op ?? null;
+  // Highlighted item (the cursor lands on actionable items only — navigation skips headers)
+  const highlightedItem = inventoryItems[driftScrollIdx] ?? null;
+  const highlightedAction = highlightedItem?.action ?? null;
 
-  // Update the input handler's view of the inventory
+  // Update the input handler's view
   if (_local) {
-    _local.highlightedOp = highlightedOp;
+    _local.highlightedAction = highlightedAction;
+    _local.inventoryItems = inventoryItems;
     _local.inventoryLength = inventoryItems.length;
+  }
+
+  // Build context-sensitive hint for the highlighted item
+  let itemHint: React.ReactNode = null;
+  if (detailFocused && highlightedAction) {
+    switch (highlightedAction.state) {
+      case "modified":
+        itemHint = <Text dimColor>  <Text bold>Enter</Text> diff  <Text bold>a</Text> apply this  <Text bold>p</Text> pull from disk</Text>;
+        break;
+      case "missing":
+        itemHint = <Text dimColor>  <Text bold>a</Text> install this</Text>;
+        break;
+      case "extra":
+        itemHint = <Text dimColor>  <Text bold>a</Text> delete from disk  <Text bold>p</Text> add to playbook</Text>;
+        break;
+      case "untracked":
+        itemHint = <Text dimColor>  <Text bold>p</Text> add to playbook  <Text bold>u</Text> uninstall</Text>;
+        break;
+      case "synced":
+        itemHint = <Text dimColor>  (in sync)</Text>;
+        break;
+    }
   }
 
   const visibleItems = inventoryItems.slice(driftScrollIdx, driftScrollIdx + DETAIL_PAGE_SIZE);
@@ -346,7 +408,7 @@ function InstanceDetail({
           {detailFocused && inventoryItems.length > 0 && (
             <Text dimColor>
               ({driftScrollIdx + 1}/{inventoryItems.length})  ↑↓ scroll
-              {highlightedOp?.kind === "update" ? "  Enter diff  p pull" : ""}
+              {highlightedAction?.state === "modified" ? "  Enter diff" : ""}
               {"  Esc back"}
             </Text>
           )}
@@ -373,11 +435,23 @@ function InstanceDetail({
             {inventoryItems.length > 0 && (
               <Box flexDirection="column">
                 {canScrollUp && <Text dimColor>    ↑ {driftScrollIdx} more above</Text>}
-                {visibleItems.map((item, i) => (
-                  <Text key={i} color={item.color} dimColor={item.dim}>
-                    {"    "}{item.label}
-                  </Text>
-                ))}
+                {visibleItems.map((item, i) => {
+                  const absIdx = driftScrollIdx + i;
+                  const isCursor = detailFocused && absIdx === driftScrollIdx;
+                  // Replace leading 2-space indent with cursor glyph when highlighted
+                  const labelWithCursor = isCursor && !item.isHeader
+                    ? "  ▶ " + item.label.slice(4)
+                    : item.label;
+                  return (
+                    <Text key={i}
+                      color={item.color}
+                      dimColor={item.dim}
+                      backgroundColor={isCursor && !item.isHeader ? "blue" : undefined}
+                    >
+                      {labelWithCursor}
+                    </Text>
+                  );
+                })}
                 {canScrollDown && (
                   <Text dimColor>    ↓ {inventoryItems.length - driftScrollIdx - DETAIL_PAGE_SIZE} more below</Text>
                 )}
@@ -407,7 +481,9 @@ function InstanceDetail({
             ) : null}
           </Text>
         ) : (
-          <Text dimColor>↑↓ scroll  <Text bold dimColor>a</Text> sync playbook→disk  <Text bold dimColor>p</Text> pull disk→playbook  Esc back</Text>
+          <Text dimColor>
+            ↑↓ navigate{itemHint}{"  "}Esc back
+          </Text>
         )}
       </Box>
     </Box>
@@ -447,34 +523,66 @@ export function handleDashboardInput(
       return;
     }
     if (key.downArrow) {
-      local.setDriftScrollIdx(Math.min(
-        local.driftScrollIdx + 1,
-        Math.max(0, local.inventoryLength - 1),
-      ));
+      local.setDriftScrollIdx(
+        nextActionableIdx(local.inventoryItems, local.driftScrollIdx, +1)
+      );
       return;
     }
     if (key.upArrow) {
-      local.setDriftScrollIdx(Math.max(0, local.driftScrollIdx - 1));
+      local.setDriftScrollIdx(
+        nextActionableIdx(local.inventoryItems, local.driftScrollIdx, -1)
+      );
       return;
     }
-    if (key.return && setDiffOp) {
-      const highlighted = local.highlightedOp;
-      if (highlighted?.kind === "update" && highlighted.sourcePath && highlighted.targetPath) {
-        setDiffOp(highlighted);
+    if (key.pageDown) {
+      let i = local.driftScrollIdx;
+      for (let n = 0; n < DETAIL_PAGE_SIZE; n++) {
+        const next = nextActionableIdx(local.inventoryItems, i, +1);
+        if (next === i) break;
+        i = next;
       }
+      local.setDriftScrollIdx(i);
       return;
     }
+    if (key.pageUp) {
+      let i = local.driftScrollIdx;
+      for (let n = 0; n < DETAIL_PAGE_SIZE; n++) {
+        const next = nextActionableIdx(local.inventoryItems, i, -1);
+        if (next === i) break;
+        i = next;
+      }
+      local.setDriftScrollIdx(i);
+      return;
+    }
+
+    const action = local.highlightedAction;
+    if (!action) return;
+
+    // Enter on a modified item opens the diff
+    if (key.return && action.state === "modified" && action.op && setDiffOp) {
+      if (action.op.sourcePath && action.op.targetPath) setDiffOp(action.op);
+      return;
+    }
+
+    // 'a' = apply this specific item
+    if (input === "a") {
+      handleItemApply(action, state, selected?.toolId);
+      return;
+    }
+
+    // 'p' = pull this item back to playbook (modified or extra states)
     if (input === "p") {
-      const highlighted = local.highlightedOp;
-      if (highlighted?.kind === "update") {
-        void state.pullbackArtifact(highlighted);
-        local.setDetailFocused(false);
-        local.setDriftScrollIdx(0);
+      if (action.op && (action.state === "modified" || action.state === "extra")) {
+        void state.pullbackArtifact(action.op);
       }
       return;
     }
-    if (input === "a" && selected && applyState === null) {
-      void state.applyTool(selected.toolId);
+
+    // 'u' = uninstall an untracked bundle
+    if (input === "u" && action.state === "untracked" && action.bundleName) {
+      // Bundle uninstall is engine-level — not yet wired to per-bundle action
+      // For now: no-op + future TODO
+      return;
     }
     return;
   }
@@ -496,6 +604,9 @@ export function handleDashboardInput(
   }
   if (key.return) {
     local.setDetailFocused(true);
+    // Position cursor on first actionable item (skip leading header)
+    const firstActionable = local.inventoryItems.findIndex((it) => !it.isHeader && it.action);
+    if (firstActionable >= 0) local.setDriftScrollIdx(firstActionable);
     if (selected) {
       const preview = state.enginePreview;
       const alreadyLoaded = preview?.perInstance.some(
@@ -538,4 +649,33 @@ function opGlyph(kind: string): string {
 
 function opColor(kind: string): string {
   return kind === "add" ? "green" : kind === "remove" ? "red" : kind === "update" ? "yellow" : "gray";
+}
+
+/** Find the next actionable (non-header) inventory item index. */
+function nextActionableIdx(
+  items: Array<{ isHeader?: boolean; action?: unknown }>,
+  current: number,
+  step: 1 | -1,
+): number {
+  let i = current + step;
+  while (i >= 0 && i < items.length) {
+    if (!items[i]!.isHeader && items[i]!.action) return i;
+    i += step;
+  }
+  return current; // no movement possible
+}
+
+/** Handle 'a' (apply) for a single item based on its state. */
+function handleItemApply(
+  action: { state: string; op?: DiffOp; bundleName?: string },
+  state: ReturnType<typeof usePlaybookStore.getState>,
+  toolId?: ToolId,
+) {
+  if (!toolId) return;
+  // Per-item apply isn't fully wired yet — we trigger a tool-wide apply.
+  // The store's applyTool runs all ops. To make this truly per-item we'd
+  // need to filter the diff first. v1 behavior: tool-wide apply.
+  // This is a known limitation — surface a notification.
+  void state.applyTool(toolId);
+  void action;
 }

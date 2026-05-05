@@ -258,7 +258,7 @@ export async function engineApply(
 
       // Compute full bundle state: declared+installed combinations.
       const { states: bundleStates, untracked: untrackedBundles } =
-        computeBundleStates(adapter, toolConfig, inventory!);
+        await computeBundleStates(adapter, toolConfig, inventory!, instance);
 
       perInstance.push({
         toolId,
@@ -317,19 +317,27 @@ function errorMessage(err: unknown): string {
 import type { LoadedToolConfig } from "../playbook/index.js";
 import type { ToolAdapter } from "../adapters/types.js";
 
-function computeBundleStates(
+async function computeBundleStates(
   adapter: ToolAdapter,
   toolConfig: LoadedToolConfig,
   inventory: import("../playbook/index.js").Inventory,
-): { states: BundleState[]; untracked: string[] } {
+  instance: ToolInstance,
+): Promise<{ states: BundleState[]; untracked: string[] }> {
   if (!adapter.defaults.capabilities.bundleParadigm) {
     return { states: [], untracked: [] };
   }
 
-  // Installed on disk
+  // Installed on disk — union of (artifact provenance) + adapter.installedBundles()
   const onDisk = new Set<string>();
   for (const a of inventory.artifacts) {
     if (a.provenance.kind === "bundle") onDisk.add(a.provenance.bundleName);
+  }
+  if (adapter.installedBundles) {
+    try {
+      for (const name of await adapter.installedBundles(instance)) {
+        onDisk.add(name);
+      }
+    } catch { /* non-fatal */ }
   }
 
   // Declared in manifest
