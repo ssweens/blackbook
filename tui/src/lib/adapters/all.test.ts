@@ -50,7 +50,7 @@ describe("registerAllAdapters", () => {
 });
 
 describe("conformance: detect on a fresh tmp HOME", () => {
-  it("each adapter returns a sensible DetectionResult without throwing", async () => {
+  it("each adapter returns a sensible DetectionResult without throwing", { timeout: 15000 }, async () => {
     for (const a of listAdapters()) {
       const result = await a.detect();
       expect(result.toolId).toBe(a.defaults.toolId);

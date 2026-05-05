@@ -252,8 +252,8 @@ describe("Playbook TUI E2E", () => {
       await usePlaybookStore.getState().detectAllTools();
       await usePlaybookStore.getState().refreshPreview();
 
-      // Drift should show adds (config dirs are empty)
-      await waitForFrame(stdout.lastFrame, (f) => /\+\d+ add/.test(f));
+      // Inventory should show 'missing on disk' counts (config dirs are empty)
+      await waitForFrame(stdout.lastFrame, (f) => /\d+ missing on disk/.test(f));
     } finally {
       unmount();
     }

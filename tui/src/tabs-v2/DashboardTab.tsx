@@ -70,6 +70,10 @@ type LocalState = {
   driftScrollIdx: number;
   setDriftScrollIdx: (v: number) => void;
   driftOps: DiffOp[];
+  /** The actionable op at the current scroll position (skips headers), or null. */
+  highlightedOp: DiffOp | null;
+  /** Total inventory item count for scroll bounds. */
+  inventoryLength: number;
   items: DashItem[];
   effectiveIdx: number;
 };
@@ -127,10 +131,15 @@ export function DashboardTab({ isFocused: _isFocused }: { isFocused: boolean }) 
   const allOps = instanceResult?.diff.ops ?? [];
   const driftOps = allOps.filter((o) => o.kind !== "no-op");
 
+  // Preserve highlightedOp/inventoryLength from previous render — they're set
+  // by InstanceDetail below. Setting fresh state here would race with input
+  // events that fire between the parent render and the child render.
   _local = {
     detailFocused, setDetailFocused,
     driftScrollIdx, setDriftScrollIdx,
     driftOps, items, effectiveIdx,
+    highlightedOp: _local?.highlightedOp ?? null,
+    inventoryLength: _local?.inventoryLength ?? 0,
   };
 
   return (
@@ -224,19 +233,56 @@ function InstanceDetail({
 
   const untrackedBundles = instanceResult?.untrackedBundles ?? [];
 
-  // Inventory scroll operates over the full list: all ops + untracked bundles
-  const inventoryItems: { label: string; color: string; dim: boolean }[] = [
-    ...allOps.map((op) => ({
-      label: `${opGlyph(op.kind)} ${op.artifactType}/${op.name}`,
-      color: opColor(op.kind),
-      dim: op.kind === "no-op",
-    })),
-    ...untrackedBundles.map((name) => ({
-      label: `? bundle/${name}  (installed, not in playbook)`,
-      color: "yellow",
-      dim: false,
-    })),
-  ];
+  // Group ops by state for an intuitive inventory display
+  const opsByKind = {
+    add:    allOps.filter((o) => o.kind === "add"),
+    update: allOps.filter((o) => o.kind === "update"),
+    remove: allOps.filter((o) => o.kind === "remove"),
+    noOp:   allOps.filter((o) => o.kind === "no-op"),
+  };
+
+  type InvItem = { label: string; color: string; dim: boolean; isHeader?: boolean; op?: DiffOp };
+  const inventoryItems: InvItem[] = [];
+
+  if (opsByKind.update.length > 0) {
+    inventoryItems.push({ label: `▸ Modified — different in playbook vs disk (Enter for diff, p to pull from disk):`, color: "yellow", dim: false, isHeader: true });
+    for (const op of opsByKind.update) {
+      inventoryItems.push({ label: `  ~ ${op.artifactType}/${op.name}`, color: "yellow", dim: false, op });
+    }
+  }
+  if (opsByKind.add.length > 0) {
+    inventoryItems.push({ label: `▸ Missing on disk — in playbook, would be installed:`, color: "green", dim: false, isHeader: true });
+    for (const op of opsByKind.add) {
+      inventoryItems.push({ label: `  + ${op.artifactType}/${op.name}`, color: "green", dim: false, op });
+    }
+  }
+  if (opsByKind.remove.length > 0) {
+    inventoryItems.push({ label: `▸ Extra on disk — not in playbook, apply would remove:`, color: "red", dim: false, isHeader: true });
+    for (const op of opsByKind.remove) {
+      inventoryItems.push({ label: `  − ${op.artifactType}/${op.name}`, color: "red", dim: false, op });
+    }
+  }
+  if (untrackedBundles.length > 0) {
+    inventoryItems.push({ label: `▸ Bundles installed but not declared in playbook:`, color: "yellow", dim: false, isHeader: true });
+    for (const name of untrackedBundles) {
+      inventoryItems.push({ label: `  ? bundle/${name}`, color: "yellow", dim: false });
+    }
+  }
+  if (opsByKind.noOp.length > 0) {
+    inventoryItems.push({ label: `▸ In sync — playbook and disk match (${opsByKind.noOp.length}):`, color: "gray", dim: true, isHeader: true });
+    for (const op of opsByKind.noOp) {
+      inventoryItems.push({ label: `  ✓ ${op.artifactType}/${op.name}`, color: "gray", dim: true, op });
+    }
+  }
+
+  // Highlighted op = the op (if any) at driftScrollIdx — used for Enter/p actions
+  const highlightedOp = inventoryItems[driftScrollIdx]?.op ?? null;
+
+  // Update the input handler's view of the inventory
+  if (_local) {
+    _local.highlightedOp = highlightedOp;
+    _local.inventoryLength = inventoryItems.length;
+  }
 
   const visibleItems = inventoryItems.slice(driftScrollIdx, driftScrollIdx + DETAIL_PAGE_SIZE);
   const canScrollUp   = driftScrollIdx > 0;
@@ -246,8 +292,7 @@ function InstanceDetail({
     (p) => p.toolId === item.toolId && p.instanceId === item.instanceId,
   );
 
-  // For Enter-on-~ to open diff, map scroll position back to a DiffOp
-  const highlightedOp = allOps[driftScrollIdx] ?? null;
+
 
   return (
     <Box flexDirection="column" gap={0}>
@@ -270,8 +315,9 @@ function InstanceDetail({
           <Text bold dimColor>{previewLoading ? "computing…" : "Inventory"}</Text>
           {detailFocused && inventoryItems.length > 0 && (
             <Text dimColor>
-              {driftScrollIdx + 1}–{Math.min(driftScrollIdx + DETAIL_PAGE_SIZE, inventoryItems.length)}/{inventoryItems.length}
-              { }↑↓ scroll{highlightedOp?.kind === "update" ? "  Enter diff" : ""}  Esc exit
+              ({driftScrollIdx + 1}/{inventoryItems.length})  ↑↓ scroll
+              {highlightedOp?.kind === "update" ? "  Enter diff  p pull" : ""}
+              {"  Esc back"}
             </Text>
           )}
         </Box>
@@ -285,12 +331,12 @@ function InstanceDetail({
             {/* Summary line */}
             <Box>
               <Text dimColor>  </Text>
-              {synced  > 0 && <Text dimColor>✓{synced} ok  </Text>}
-              {adds    > 0 && <Text color="green">+{adds} add  </Text>}
-              {updates > 0 && <Text color="yellow">~{updates} update  </Text>}
-              {removes > 0 && <Text color="red">-{removes} remove  </Text>}
-              {untrackedBundles.length > 0 && <Text color="yellow">?{untrackedBundles.length} untracked</Text>}
-              {synced > 0 && adds === 0 && updates === 0 && removes === 0 && untrackedBundles.length === 0 && <Text color="green">✓ all in sync</Text>}
+              {synced  > 0 && <Text dimColor>{synced} synced  </Text>}
+              {updates > 0 && <Text color="yellow">{updates} modified  </Text>}
+              {adds    > 0 && <Text color="green">{adds} missing on disk  </Text>}
+              {removes > 0 && <Text color="red">{removes} not in playbook  </Text>}
+              {untrackedBundles.length > 0 && <Text color="yellow">{untrackedBundles.length} untracked bundle{untrackedBundles.length !== 1 ? "s" : ""}</Text>}
+              {!hasDrift && untrackedBundles.length === 0 && synced > 0 && <Text color="green">✓ fully in sync</Text>}
             </Box>
 
             {/* Full inventory list */}
@@ -325,13 +371,13 @@ function InstanceDetail({
             ↑↓ select  · Enter view inventory
             {hasDrift && !applying ? (
               <Text>
-                {" · "}<Text bold dimColor>a</Text> apply (playbook→disk)
-                {removes > 0 && <Text color="yellow"> (confirm {removes})</Text>}
+                {" · "}<Text bold dimColor>a</Text> sync playbook → disk
+                {removes > 0 && <Text color="yellow"> (will delete {removes})</Text>}
               </Text>
             ) : null}
           </Text>
         ) : (
-          <Text dimColor>↑↓ scroll  <Text bold dimColor>a</Text> apply  <Text bold dimColor>p</Text> pullback  Esc back</Text>
+          <Text dimColor>↑↓ scroll  <Text bold dimColor>a</Text> sync playbook→disk  <Text bold dimColor>p</Text> pull disk→playbook  Esc back</Text>
         )}
       </Box>
     </Box>
@@ -373,7 +419,7 @@ export function handleDashboardInput(
     if (key.downArrow) {
       local.setDriftScrollIdx(Math.min(
         local.driftScrollIdx + 1,
-        Math.max(0, local.driftOps.length - DETAIL_PAGE_SIZE),
+        Math.max(0, local.inventoryLength - 1),
       ));
       return;
     }
@@ -382,19 +428,14 @@ export function handleDashboardInput(
       return;
     }
     if (key.return && setDiffOp) {
-      // highlighted op is indexed over allOps (same indices as inventoryItems[0..allOps.length-1])
-      const highlighted = state.enginePreview?.perInstance
-        .find((p) => p.toolId === selected?.toolId && p.instanceId === selected?.instanceId)
-        ?.diff.ops[local.driftScrollIdx];
+      const highlighted = local.highlightedOp;
       if (highlighted?.kind === "update" && highlighted.sourcePath && highlighted.targetPath) {
         setDiffOp(highlighted);
       }
       return;
     }
     if (input === "p") {
-      const highlighted = state.enginePreview?.perInstance
-        .find((p) => p.toolId === selected?.toolId && p.instanceId === selected?.instanceId)
-        ?.diff.ops[local.driftScrollIdx];
+      const highlighted = local.highlightedOp;
       if (highlighted?.kind === "update") {
         void state.pullbackArtifact(highlighted);
         local.setDetailFocused(false);
