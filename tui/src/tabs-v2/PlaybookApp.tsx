@@ -15,6 +15,7 @@ import { usePlaybookStore, type PlaybookTab } from "../lib/playbook-store.js";
 import { DashboardTab, handleDashboardInput, dashboardEffectiveToolId } from "./DashboardTab.js";
 import { SettingsTab, handleSettingsInput } from "./SettingsTab.js";
 import { DriftDiffView, handleDiffInput } from "./DriftDiffView.js";
+import { ItemActionMenu, handleActionMenuInput, actionsForItem, type ItemContext, type ItemActionId } from "./ItemActionMenu.js";
 import { PlaybookTab as PlaybookBrowseTab } from "./PlaybookTab.js";
 import { SourcesTab } from "./SourcesTab.js";
 
@@ -33,7 +34,9 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
   const [diffOp, setDiffOp] = useState<import("../lib/playbook/index.js").DiffOp | null>(null);
   const [diffScroll, setDiffScroll] = useState(0);
   const [pullbackState, setPullbackState] = useState<import("./DriftDiffView.js").PullbackState>(null);
+  const [actionCtx, setActionCtx] = useState<ItemContext | null>(null);
   const closeDiff = () => { setDiffOp(null); setDiffScroll(0); setPullbackState(null); };
+  const closeActionMenu = () => setActionCtx(null);
   const setActiveTab = usePlaybookStore((s) => s.setActiveTab);
   const reloadPlaybook = usePlaybookStore((s) => s.reloadPlaybook);
   const notifications = usePlaybookStore((s) => s.notifications);
@@ -58,6 +61,15 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
   // This avoids ink's setRawMode conflicts when multiple useInput are active.
   const store = usePlaybookStore;
   useInput((input, key) => {
+    // Action menu open — route input to it
+    if (actionCtx) {
+      const actions = actionsForItem(actionCtx);
+      handleActionMenuInput(input, key, actions, (id) => {
+        handleItemAction(id, actionCtx, setDiffOp, closeActionMenu);
+      }, closeActionMenu);
+      return;
+    }
+
     // Diff view open — route all input through handleDiffInput
     if (diffOp) {
       const selectedTool = dashboardEffectiveToolId(usePlaybookStore);
@@ -111,7 +123,7 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
 
     // Delegate remaining keys to active tab
     if (activeTab === "dashboard") {
-      handleDashboardInput(input, key, store, setDiffOp);
+      handleDashboardInput(input, key, store, setDiffOp, setActionCtx);
     }
     if (activeTab === "settings") {
       handleSettingsInput(input, key);
@@ -120,8 +132,15 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
 
   return (
     <Box flexDirection="column" flexGrow={1}>
+      {/* Action menu overlay */}
+      {actionCtx && (
+        <Box flexDirection="column" paddingX={4} paddingY={2}>
+          <ItemActionMenu ctx={actionCtx} />
+        </Box>
+      )}
+
       {/* Diff overlay — replaces tab content when active */}
-      {diffOp && (
+      {!actionCtx && diffOp && (
         <DriftDiffView
           op={diffOp}
           scrollOffset={diffScroll}
@@ -131,7 +150,7 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
         />
       )}
 
-      {!diffOp && (
+      {!actionCtx && !diffOp && (
         <>
       {/* Tab bar */}
       <TabBar activeTab={activeTab} onSelect={setActiveTab} />
@@ -173,6 +192,53 @@ export function PlaybookApp({ playbookPath }: { playbookPath?: string }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+function handleItemAction(
+  id: ItemActionId,
+  ctx: ItemContext,
+  setDiffOp: (op: import("../lib/playbook/index.js").DiffOp | null) => void,
+  close: () => void,
+) {
+  const store = usePlaybookStore.getState();
+
+  switch (id) {
+    case "view-diff":
+      if (ctx.op?.sourcePath && ctx.op.targetPath) {
+        setDiffOp(ctx.op);
+      }
+      close();
+      return;
+
+    case "apply":
+      // Per-op apply isn't precise yet — falls back to tool-wide apply.
+      // TODO: wire applySingleOp(ctx.op) for true per-item application.
+      void store.applyTool(ctx.toolId);
+      close();
+      return;
+
+    case "pullback":
+      if (ctx.op) void store.pullbackArtifact(ctx.op);
+      close();
+      return;
+
+    case "track":
+    case "untrack":
+    case "uninstall":
+    case "disable":
+      store.addNotification({
+        level: "warning",
+        message: `'${id}' for ${ctx.displayName} — not yet implemented (TODO)`,
+      });
+      close();
+      return;
+
+    case "skip":
+      close();
+      return;
+  }
+}
 
 function TabBar({
   activeTab,

@@ -228,10 +228,14 @@ function InstanceDetail({
   const tc = playbook.tools[item.toolId];
 
   const allOps = instanceResult?.diff.ops ?? [];
-  const adds    = driftOps.filter((o) => o.kind === "add").length;
-  const updates = driftOps.filter((o) => o.kind === "update").length;
-  const removes = driftOps.filter((o) => o.kind === "remove").length;
-  const synced  = allOps.filter((o) => o.kind === "no-op").length;
+  // Counts use the SAME filter as inventoryItems below — must match what's shown.
+  // (Filter is applied below; we recompute here to keep summary in sync.)
+  const _SHOWN = new Set(["skill", "agents_md", "mcp", "hook", "config_file"]);
+  const _shown = allOps.filter((o) => _SHOWN.has(o.artifactType));
+  const adds    = _shown.filter((o) => o.kind === "add").length;
+  const updates = _shown.filter((o) => o.kind === "update").length;
+  const removes = _shown.filter((o) => o.kind === "remove").length;
+  const synced  = _shown.filter((o) => o.kind === "no-op").length;
   const hasDrift = adds > 0 || updates > 0 || removes > 0;
 
   const untrackedBundles = instanceResult?.untrackedBundles ?? [];
@@ -247,12 +251,17 @@ function InstanceDetail({
     ? (item.toolId === "claude" || item.toolId === "codex" ? "plugins" : "packages")
     : "bundles";
 
+  // Filter out artifact types we don't surface yet (commands and agents are
+  // tracked by the engine but not shown — too noisy, low signal for now).
+  const SHOWN_TYPES = new Set(["skill", "agents_md", "mcp", "hook", "config_file"]);
+  const shownOps = allOps.filter((o) => SHOWN_TYPES.has(o.artifactType));
+
   // Group ops by state for an intuitive inventory display
   const opsByKind = {
-    add:    allOps.filter((o) => o.kind === "add"),
-    update: allOps.filter((o) => o.kind === "update"),
-    remove: allOps.filter((o) => o.kind === "remove"),
-    noOp:   allOps.filter((o) => o.kind === "no-op"),
+    add:    shownOps.filter((o) => o.kind === "add"),
+    update: shownOps.filter((o) => o.kind === "update"),
+    remove: shownOps.filter((o) => o.kind === "remove"),
+    noOp:   shownOps.filter((o) => o.kind === "no-op"),
   };
 
   type ItemAction = {
@@ -354,27 +363,10 @@ function InstanceDetail({
     _local.inventoryLength = inventoryItems.length;
   }
 
-  // Build context-sensitive hint for the highlighted item
-  let itemHint: React.ReactNode = null;
-  if (detailFocused && highlightedAction) {
-    switch (highlightedAction.state) {
-      case "modified":
-        itemHint = <Text dimColor>  <Text bold>Enter</Text> diff  <Text bold>a</Text> apply this  <Text bold>p</Text> pull from disk</Text>;
-        break;
-      case "missing":
-        itemHint = <Text dimColor>  <Text bold>a</Text> install this</Text>;
-        break;
-      case "extra":
-        itemHint = <Text dimColor>  <Text bold>a</Text> delete from disk  <Text bold>p</Text> add to playbook</Text>;
-        break;
-      case "untracked":
-        itemHint = <Text dimColor>  <Text bold>p</Text> add to playbook  <Text bold>u</Text> uninstall</Text>;
-        break;
-      case "synced":
-        itemHint = <Text dimColor>  (in sync)</Text>;
-        break;
-    }
-  }
+  // Hint: Enter opens the per-item action menu
+  const itemHint = detailFocused && highlightedAction
+    ? <Text dimColor>  <Text bold>Enter</Text> for options</Text>
+    : null;
 
   const visibleItems = inventoryItems.slice(driftScrollIdx, driftScrollIdx + DETAIL_PAGE_SIZE);
   const canScrollUp   = driftScrollIdx > 0;
@@ -499,6 +491,7 @@ export function handleDashboardInput(
   key: Key,
   store: typeof usePlaybookStore,
   setDiffOp?: (op: DiffOp | null) => void,
+  openActionMenu?: (ctx: import("./ItemActionMenu.js").ItemContext) => void,
 ) {
   const state = store.getState();
   const { applyState, playbook, selectedToolId, selectedInstanceId } = state;
@@ -555,33 +548,38 @@ export function handleDashboardInput(
       return;
     }
 
-    const action = local.highlightedAction;
-    if (!action) return;
-
-    // Enter on a modified item opens the diff
-    if (key.return && action.state === "modified" && action.op && setDiffOp) {
-      if (action.op.sourcePath && action.op.targetPath) setDiffOp(action.op);
-      return;
-    }
-
-    // 'a' = apply this specific item
-    if (input === "a") {
-      handleItemApply(action, state, selected?.toolId);
-      return;
-    }
-
-    // 'p' = pull this item back to playbook (modified or extra states)
-    if (input === "p") {
-      if (action.op && (action.state === "modified" || action.state === "extra")) {
-        void state.pullbackArtifact(action.op);
+    // If cursor is on a header/empty (e.g. first render after load), nudge to
+    // the first actionable item so Enter has something to act on.
+    if (!local.highlightedAction) {
+      const first = local.inventoryItems.findIndex((it) => !it.isHeader && it.action);
+      if (first >= 0) {
+        local.setDriftScrollIdx(first);
       }
       return;
     }
 
-    // 'u' = uninstall an untracked bundle
-    if (input === "u" && action.state === "untracked" && action.bundleName) {
-      // Bundle uninstall is engine-level — not yet wired to per-bundle action
-      // For now: no-op + future TODO
+    const action = local.highlightedAction;
+    if (!action) return;
+
+    // Enter opens the per-item action menu (view diff, apply, pullback,
+    // track, untrack, uninstall, etc.) — single decision point per item.
+    if (key.return && selected && openActionMenu) {
+      const display = action.op
+        ? `${action.op.artifactType}/${action.op.name}`
+        : action.bundleName
+          ? action.bundleName
+          : "(unknown)";
+      const typeLabel = action.op
+        ? action.op.artifactType
+        : (selected.toolId === "claude" || selected.toolId === "codex" ? "plugin" : "package");
+      openActionMenu({
+        state: action.state as import("./ItemActionMenu.js").ItemState,
+        toolId: selected.toolId,
+        op: action.op,
+        bundleName: action.bundleName,
+        displayName: display,
+        typeLabel,
+      });
       return;
     }
     return;
