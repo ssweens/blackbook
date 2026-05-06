@@ -236,18 +236,21 @@ export function InventoryView({ rows, scrollIdx, detailFocused, configDir, playb
           const cursor  = isCursor ? "▶ " : "  ";
           const left    = truncate(row.left,  colW - 1).padEnd(colW - 1);
           const right   = truncate(row.right, colW - 4).padEnd(colW - 4);
-          // One Text node = one terminal line, no ink block-layout artifacts.
+          // Color: cursor = highlighted, synced = dim, everything else = neutral white.
+          // We deliberately avoid red/green on the content — the content just EXISTS
+          // on one or both sides. Red would imply "wrong" which is misleading.
+          // The state glyph at the right edge carries the status color.
           const glyphColor = isCursor ? "white"
             : row.glyph === "~" ? "yellow"
             : row.glyph === "+" ? "green"
-            : row.glyph === "−" ? "red"
+            : row.glyph === "−" ? "yellow"   // yellow = needs attention, not red = danger
             : row.glyph === "?" ? "yellow"
-            : undefined;
+            : undefined;                      // ✓ = no glyph color, content is dim below
           const line = `${cursor}${left} │ ${right} ${row.glyph}`;
           return (
             <Text
               key={`row-${i}`}
-              color={isCursor ? "white" : glyphColor ?? undefined}
+              color={isCursor ? "white" : "white"}
               dimColor={!isCursor && row.glyph === "✓"}
               backgroundColor={isCursor ? "blue" : undefined}
               wrap="truncate"

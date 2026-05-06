@@ -181,8 +181,8 @@ export function DriftDiffView({ op, scrollOffset, setScrollOffset, onBack, pullb
       {/* Header */}
       <Box paddingX={1} gap={2}>
         <Text bold>{op.name}</Text>
-        {removes > 0 && <Text color="red">-{removes} disk</Text>}
-        {adds > 0    && <Text color="green">+{adds} playbook</Text>}
+        {removes > 0 && <Text color="yellow">-{removes} disk only</Text>}
+        {adds > 0    && <Text color="cyan">+{adds} playbook only</Text>}
         {rows.length > PAGE_SIZE && (
           <Text dimColor>
             rows {clamped + 1}–{Math.min(clamped + PAGE_SIZE, rows.length)}/{rows.length}
@@ -192,9 +192,9 @@ export function DriftDiffView({ op, scrollOffset, setScrollOffset, onBack, pullb
 
       {/* Column labels */}
       <Box>
-        <Box width={colWidth}><Text color="red" bold>{"  ← disk (a=overwrite with playbook)".padEnd(colWidth)}</Text></Box>
+        <Box width={colWidth}><Text color="yellow" bold>{"  ← disk  (a=overwrite with playbook)".padEnd(colWidth)}</Text></Box>
         <Text dimColor>│</Text>
-        <Box width={colWidth}><Text color="green" bold>  playbook → (p=pull disk into playbook)</Text></Box>
+        <Box width={colWidth}><Text color="cyan" bold>  playbook →  (p=pull disk into playbook)</Text></Box>
       </Box>
 
       {/* Divider */}
@@ -251,8 +251,11 @@ function SideBySideRow({ row, colWidth }: { row: Row; colWidth: number }) {
   const leftText  = pad(row.left.text,  colWidth);
   const rightText = pad(row.right.text, colWidth);
 
-  const leftColor  = row.left.kind  === "removed" ? "red"   : row.left.kind  === "empty" ? undefined : undefined;
-  const rightColor = row.right.kind === "added"   ? "green" : row.right.kind === "empty" ? undefined : undefined;
+  // Yellow for disk-only lines, cyan for playbook-only lines.
+  // Neutral (no color) for context. Red/green implies good/bad which is wrong —
+  // the content just exists on one side.
+  const leftColor  = row.left.kind  === "removed" ? "yellow" : undefined;
+  const rightColor = row.right.kind === "added"   ? "cyan"   : undefined;
   const leftDim    = row.left.kind  === "context";
   const rightDim   = row.right.kind === "context";
 
