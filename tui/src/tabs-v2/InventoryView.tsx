@@ -177,7 +177,7 @@ export function buildInventoryRows(
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
-const PAGE = 15;
+const PAGE = 20;
 
 interface Props {
   rows: InvRow[];

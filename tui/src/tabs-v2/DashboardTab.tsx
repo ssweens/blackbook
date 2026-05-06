@@ -154,20 +154,20 @@ export function DashboardTab({ isFocused: _isFocused }: { isFocused: boolean }) 
             const status = toolStatuses[item.toolId];
             const installed = status?.detection.installed;
             const glyph = installed === undefined ? "?" : installed ? "✓" : "·";
+            const glyphColor = installed ? "green" : "gray";
             const applying = applyState?.toolId === item.toolId;
-            // Single Text node avoids ink multi-line rendering between nested Text children
-            const cursor = isSelected ? "▶" : " ";
-            const label = item.label.slice(0, 15); // max 15 chars to fit in 22-wide panel
-            const line = `${cursor} ${glyph} ${label}${applying ? " ⟳" : ""}`;
+            const bg = isSelected ? "blue" as const : undefined;
+            const fg = isSelected ? "white" as const : undefined;
+            const label = item.label.slice(0, 14);
+            // Box flexDirection="row" (default) renders children inline = exactly one line,
+            // no blank-line artifacts, and each Text keeps its own color.
             return (
-              <Text
-                key={`${item.toolId}:${item.instanceId}`}
-                color={isSelected ? "white" : undefined}
-                backgroundColor={isSelected ? "blue" : undefined}
-                wrap="truncate"
-              >
-                {line}
-              </Text>
+              <Box key={`${item.toolId}:${item.instanceId}`} {...(bg ? { backgroundColor: bg } : {})}>
+                <Text color={fg}>{isSelected ? "▶ " : "  "}</Text>
+                <Text color={glyphColor}>{glyph}</Text>
+                <Text color={fg}>{" "}{label}</Text>
+                {applying && <Text color="cyan"> ⟳</Text>}
+              </Box>
             );
           })}
           {detectionLoading && <Text dimColor>detecting…</Text>}
