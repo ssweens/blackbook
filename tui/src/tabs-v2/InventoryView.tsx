@@ -80,7 +80,7 @@ export function buildInventoryRows(
     for (const op of addOps) {
       rows.push({
         left:  label(op),
-        right: "·  (not installed)",
+        right: "(not installed)",
         glyph: "+",
         color: "green",
         isHeader: false,
@@ -90,7 +90,7 @@ export function buildInventoryRows(
     for (const b of addBundles) {
       rows.push({
         left:  `${bundleLabel}/${b.name}${b.version ? "@" + b.version : ""}${b.sourceKind ? "  (" + b.sourceKind + ")" : ""}`,
-        right: "·  (not installed)",
+        right: "(not installed)",
         glyph: "+",
         color: "green",
         isHeader: false,
@@ -106,7 +106,7 @@ export function buildInventoryRows(
     rows.push(header("On disk, not in playbook — apply would remove", "red"));
     for (const op of removeOps) {
       rows.push({
-        left:  "·  (not in playbook)",
+        left:  "(not in playbook)",
         right: label(op),
         glyph: "−",
         color: "red",
@@ -132,7 +132,7 @@ export function buildInventoryRows(
     rows.push(header("Installed but not declared in playbook", "yellow"));
     for (const b of untracked) {
       rows.push({
-        left:  "·  (not in playbook)",
+        left:  "(not in playbook)",
         right: `${bundleLabel}/${b.name}`,
         glyph: "?",
         color: "yellow",
@@ -177,7 +177,7 @@ export function buildInventoryRows(
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
-const PAGE = 18;
+const PAGE = 10;
 
 interface Props {
   rows: InvRow[];
@@ -190,10 +190,10 @@ interface Props {
 export function InventoryView({ rows, scrollIdx, detailFocused, configDir, playbookName }: Props) {
   if (rows.length === 0) return null;
 
-  const termWidth = (process.stdout.columns || 120);
-  // Layout: glyph(2) + left(col) + " │ " (3) + right(col) = termWidth - 2 (padding)
-  const inner = termWidth - 8;   // 8 = glyph + separator + margins
-  const colW  = Math.floor(inner / 2);
+  // Available = terminal minus left panel (22) + border/padding (~6)
+  const available = (process.stdout.columns || 120) - 28;
+  // Row layout: cursor(2) + left(colW) + " │ "(3) + right(colW) + " ~"(2) = 2*colW + 7
+  const colW = Math.max(20, Math.floor((available - 7) / 2));
 
   const visible = rows.slice(scrollIdx, scrollIdx + PAGE);
   const canUp   = scrollIdx > 0;
@@ -203,7 +203,7 @@ export function InventoryView({ rows, scrollIdx, detailFocused, configDir, playb
   const hasCur = cur && !cur.isHeader;
 
   return (
-    <Box flexDirection="column" flexGrow={1}>
+    <Box flexDirection="column">
       {/* Column headers */}
       <Box>
         <Text dimColor>{"  "}</Text>
@@ -216,7 +216,7 @@ export function InventoryView({ rows, scrollIdx, detailFocused, configDir, playb
       <Text dimColor>{"  " + "─".repeat(colW) + "─┼─" + "─".repeat(colW)}</Text>
 
       {/* Rows */}
-      <Box flexDirection="column" flexGrow={1}>
+      <Box flexDirection="column">
         {canUp && (
           <Text dimColor>  ↑ {scrollIdx} more above</Text>
         )}
@@ -232,38 +232,28 @@ export function InventoryView({ rows, scrollIdx, detailFocused, configDir, playb
             );
           }
 
-          const leftText  = truncate(row.left,  colW - 1);
-          const rightText = truncate(row.right, colW - 4);  // room for glyph
-
-          const rowBg = isCursor ? ({ backgroundColor: "blue" as const }) : {};
+          // Single Text node avoids ink multi-line layout artifacts from nested Boxes.
+          const cursor  = isCursor ? "▶ " : "  ";
+          const left    = truncate(row.left,  colW - 1).padEnd(colW - 1);
+          const right   = truncate(row.right, colW - 4).padEnd(colW - 4);
+          // One Text node = one terminal line, no ink block-layout artifacts.
+          const glyphColor = isCursor ? "white"
+            : row.glyph === "~" ? "yellow"
+            : row.glyph === "+" ? "green"
+            : row.glyph === "−" ? "red"
+            : row.glyph === "?" ? "yellow"
+            : undefined;
+          const line = `${cursor}${left} │ ${right} ${row.glyph}`;
           return (
-            <Box key={`row-${i}`} {...rowBg}>
-              <Text color={isCursor ? "white" : row.color} bold={isCursor}>
-                {isCursor ? "▶ " : "  "}
-              </Text>
-              <Box width={colW}>
-                <Text
-                  color={isCursor ? "white" : row.glyph === "+" || row.glyph === "✓" ? row.color : "white"}
-                  dimColor={!isCursor && (row.glyph === "✓" || row.left.startsWith("·"))}
-                  backgroundColor={isCursor ? "blue" : undefined}
-                >
-                  {leftText.padEnd(colW - 1)}
-                </Text>
-              </Box>
-              <Text dimColor={!isCursor} backgroundColor={isCursor ? "blue" : undefined}> │ </Text>
-              <Box width={colW - 3}>
-                <Text
-                  color={isCursor ? "white" : row.glyph === "−" || row.glyph === "?" ? row.color : "white"}
-                  dimColor={!isCursor && (row.glyph === "✓" || row.right.startsWith("·"))}
-                  backgroundColor={isCursor ? "blue" : undefined}
-                >
-                  {rightText.padEnd(colW - 4)}
-                </Text>
-              </Box>
-              <Text color={row.color} bold backgroundColor={isCursor ? "blue" : undefined}>
-                {" " + row.glyph}
-              </Text>
-            </Box>
+            <Text
+              key={`row-${i}`}
+              color={isCursor ? "white" : glyphColor ?? undefined}
+              dimColor={!isCursor && row.glyph === "✓"}
+              backgroundColor={isCursor ? "blue" : undefined}
+              wrap="truncate"
+            >
+              {line}
+            </Text>
           );
         })}
         {canDown && (
