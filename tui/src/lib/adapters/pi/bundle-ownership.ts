@@ -57,12 +57,13 @@ export function buildPiOwnership(configDir: string): BundleOwnershipMap {
     }
   }
 
-  // ── 2. Packages declared in settings.json (npm + local paths) ──────────
+  // ── 2. npm-installed packages from settings.json (file paths skipped) ──
   const settings = readJsonSafe<PiSettings>(join(configDir, "settings.json"));
   if (settings?.packages) {
     for (const entry of settings.packages) {
       const ref = typeof entry === "string" ? entry : entry?.source;
       if (!ref) continue;
+      if (isFilePath(ref)) continue;  // local dev copy — not the playbook's concern
       const path = resolvePiPackagePath(ref);
       if (path) recordPackageContributions(path, ownership);
     }
@@ -169,8 +170,9 @@ function recordPackageContributions(packageRoot: string, ownership: BundleOwners
 void readFileSync;
 
 /**
- * List the names of all currently-installed Pi packages by reading
- * settings.json + git/ — regardless of whether they contribute artifacts.
+ * List the names of all currently-installed Pi packages that are trackable
+ * cross-machine (npm and git sources only). File-based/local packages are
+ * excluded — they're dev copies managed outside the playbook.
  */
 export function listInstalledPiPackages(configDir: string): string[] {
   const names = new Set<string>();
@@ -191,15 +193,15 @@ export function listInstalledPiPackages(configDir: string): string[] {
     }
   }
 
-  // settings.json packages
+  // settings.json packages — npm and git only, skip file paths
   const settings = readJsonSafe<PiSettings>(join(configDir, "settings.json"));
   if (settings?.packages) {
     for (const entry of settings.packages) {
       const ref = typeof entry === "string" ? entry : entry?.source;
       if (!ref) continue;
+      if (isFilePath(ref)) continue;  // local path — skip
       const path = resolvePiPackagePath(ref);
       if (!path) {
-        // Couldn't locate — fall back to the ref name (best-effort display)
         names.add(ref.replace(/^npm:/, ""));
         continue;
       }
@@ -209,4 +211,14 @@ export function listInstalledPiPackages(configDir: string): string[] {
   }
 
   return Array.from(names).sort();
+}
+
+/** True if a package ref is a local filesystem path (not npm: or git:). */
+function isFilePath(ref: string): boolean {
+  return (
+    ref.startsWith("/") ||
+    ref.startsWith("./") ||
+    ref.startsWith("../") ||
+    ref.startsWith("~")
+  );
 }
