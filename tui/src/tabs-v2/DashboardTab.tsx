@@ -154,16 +154,19 @@ export function DashboardTab({ isFocused: _isFocused }: { isFocused: boolean }) 
             const status = toolStatuses[item.toolId];
             const installed = status?.detection.installed;
             const glyph = installed === undefined ? "?" : installed ? "✓" : "·";
-            const glyphColor = installed ? "green" : "gray";
             const applying = applyState?.toolId === item.toolId;
-            const bg = isSelected ? "blue" : undefined;
-            const fg = isSelected ? "white" : undefined;
+            // Single Text node avoids ink multi-line rendering between nested Text children
+            const cursor = isSelected ? "▶" : " ";
+            const label = item.label.slice(0, 15); // max 15 chars to fit in 22-wide panel
+            const line = `${cursor} ${glyph} ${label}${applying ? " ⟳" : ""}`;
             return (
-              <Text key={`${item.toolId}:${item.instanceId}`} backgroundColor={bg} color={fg}>
-                {isSelected ? "▶ " : "  "}
-                <Text color={glyphColor}>{glyph}</Text>{" "}
-                {item.label.padEnd(16).slice(0, 16)}
-                {applying ? <Text color="cyan"> ⟳</Text> : null}
+              <Text
+                key={`${item.toolId}:${item.instanceId}`}
+                color={isSelected ? "white" : undefined}
+                backgroundColor={isSelected ? "blue" : undefined}
+                wrap="truncate"
+              >
+                {line}
               </Text>
             );
           })}
