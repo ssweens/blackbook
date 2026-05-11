@@ -74,15 +74,13 @@ export function InstalledTab() {
     });
   }, [files, search, sortDir]);
 
-  // Skills: only provide skill directories (no commands/agents/hooks/MCP)
-  // Plugins: provide commands, agents, hooks, MCP, LSP — things that extend Claude
-  const isSkillOnly = (p: import("../lib/types.js").Plugin) =>
-    (p.skills?.length ?? 0) > 0 &&
-    (p.commands?.length ?? 0) === 0 &&
-    (p.agents?.length ?? 0) === 0 &&
-    (p.hooks?.length ?? 0) === 0 &&
-    !p.hasMcp &&
-    !p.hasLsp;
+  // Plugins: installed via Claude's native plugin system (source path is inside
+  // ~/.claude/plugins/cache/ — meaning `claude plugin install` put it there).
+  // Skills: synced by blackbook from a source repo, not via the plugin system.
+  const isSkillOnly = (p: import("../lib/types.js").Plugin) => {
+    const src = typeof p.source === "string" ? p.source : p.source?.source ?? "";
+    return !src.includes("/plugins/cache/") && !src.includes("/plugins/cache\\");
+  };
 
   const filteredSkills = useMemo(() => {
     const lowerSearch = search.toLowerCase();
