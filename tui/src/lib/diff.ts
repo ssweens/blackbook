@@ -153,19 +153,21 @@ function buildFileSummary(
   let linesRemoved = 0;
 
   if (status === "modified") {
-    const oldText = readFileSync(targetPath!, "utf-8");
-    const newText = readFileSync(sourcePath!, "utf-8");
+    // source = base (old), instance/target = head (new)
+    // so + = local additions, - = source lines not in local
+    const oldText = readFileSync(sourcePath!, "utf-8");
+    const newText = readFileSync(targetPath!, "utf-8");
     const counts = computeDiffCounts(oldText, newText);
     linesAdded = counts.linesAdded;
     linesRemoved = counts.linesRemoved;
   } else if (status === "missing" && sourceExists) {
-    // All lines are additions (target is empty)
-    const newText = readFileSync(sourcePath!, "utf-8");
-    linesAdded = newText.split("\n").length;
-  } else if (status === "extra" && targetExists) {
-    // All lines are removals (source is empty)
-    const oldText = readFileSync(targetPath!, "utf-8");
+    // File is in source but not local — all source lines are "removed" from local's view
+    const oldText = readFileSync(sourcePath!, "utf-8");
     linesRemoved = oldText.split("\n").length;
+  } else if (status === "extra" && targetExists) {
+    // File is in local but not source — all local lines are additions
+    const newText = readFileSync(targetPath!, "utf-8");
+    linesAdded = newText.split("\n").length;
   }
 
   return {
@@ -244,16 +246,19 @@ export function computeFileDetail(summary: DiffFileSummary): DiffFileDetail {
     return { ...summary, hunks: [] };
   }
 
+  // Orientation: source = base (old), instance = head (new).
+  // This means local-only lines appear as green "+" additions,
+  // matching GitHub's convention where your local changes are the head.
   const oldText =
-    summary.targetPath && existsSync(summary.targetPath)
-      ? readFileSync(summary.targetPath, "utf-8")
-      : "";
-  const newText =
     summary.sourcePath && existsSync(summary.sourcePath)
       ? readFileSync(summary.sourcePath, "utf-8")
       : "";
+  const newText =
+    summary.targetPath && existsSync(summary.targetPath)
+      ? readFileSync(summary.targetPath, "utf-8")
+      : "";
 
-  const hunks = computeUnifiedDiff(oldText, newText, "target", "source");
+  const hunks = computeUnifiedDiff(oldText, newText, "source", "target");
 
   return { ...summary, hunks };
 }
@@ -262,11 +267,17 @@ export function computeFileDetail(summary: DiffFileSummary): DiffFileDetail {
 // Recursively list files in a directory
 // ─────────────────────────────────────────────────────────────────────────────
 
+// OS/tooling noise that should never appear in diff results
+const SKIP_NAMES = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
+const SKIP_DIRS  = new Set([".git"]);
+
 function listFilesRecursive(dir: string, base: string = ""): string[] {
   if (!existsSync(dir)) return [];
   const entries = readdirSync(dir, { withFileTypes: true });
   const files: string[] = [];
   for (const entry of entries) {
+    if (SKIP_NAMES.has(entry.name)) continue;
+    if (entry.isDirectory() && SKIP_DIRS.has(entry.name)) continue;
     const relPath = base ? join(base, entry.name) : entry.name;
     if (entry.isDirectory()) {
       files.push(...listFilesRecursive(join(dir, entry.name), relPath));

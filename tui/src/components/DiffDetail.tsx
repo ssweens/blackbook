@@ -122,16 +122,16 @@ export function DiffDetail({ file, title, instanceName, onBack, onPullBack }: Di
       <Box marginBottom={1} flexDirection="column">
         <Box>
           <Text color="red">- </Text>
-          <Text color="gray" dimColor>instance ({instanceName})</Text>
-          {file.targetMtime != null && (
-            <Text color="gray" dimColor>  {formatMtime(file.targetMtime)}</Text>
+          <Text color="gray" dimColor>source repo</Text>
+          {file.sourceMtime != null && (
+            <Text color="gray" dimColor>  {formatMtime(file.sourceMtime)}</Text>
           )}
         </Box>
         <Box>
           <Text color="green">+ </Text>
-          <Text color="gray" dimColor>source repo</Text>
-          {file.sourceMtime != null && (
-            <Text color="gray" dimColor>  {formatMtime(file.sourceMtime)}</Text>
+          <Text color="gray" dimColor>instance ({instanceName})</Text>
+          {file.targetMtime != null && (
+            <Text color="gray" dimColor>  {formatMtime(file.targetMtime)}</Text>
           )}
         </Box>
       </Box>

@@ -76,3 +76,20 @@ export async function updatePiPackage(pkg: PiPackage): Promise<PiInstallResult> 
     return { success: false, error: message };
   }
 }
+
+/**
+ * Re-install a Pi package, potentially switching package managers.
+ */
+export async function repairPiPackageManager(
+  pkg: PiPackage,
+  _opts: { from: string; to: string },
+): Promise<PiInstallResult> {
+  try {
+    const source = getPiSource(pkg);
+    await execFileAsync("pi", ["install", source], { timeout: 120000 });
+    return { success: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { success: false, error: message };
+  }
+}
