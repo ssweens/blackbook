@@ -1387,17 +1387,10 @@ export function getInstalledPluginsForInstance(
     let marketplace: string;
     let pluginName: string;
 
-    if (pluginInfo) {
-      // Component came from a marketplace plugin
-      key = `${pluginInfo.marketplace}:${pluginInfo.pluginName}`;
-      marketplace = pluginInfo.marketplace;
-      pluginName = pluginInfo.pluginName;
-    } else {
-      // Truly local component - treat it as its own plugin
-      key = `local:${component.name}`;
-      marketplace = "local";
-      pluginName = component.name;
-    }
+    if (!pluginInfo) continue; // no known plugin source — skip rather than fake a local entry
+    key = `${pluginInfo.marketplace}:${pluginInfo.pluginName}`;
+    marketplace = pluginInfo.marketplace;
+    pluginName = pluginInfo.pluginName;
 
     let group = pluginGroups.get(key);
     if (!group) {

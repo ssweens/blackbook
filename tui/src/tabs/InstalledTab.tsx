@@ -74,16 +74,36 @@ export function InstalledTab() {
     });
   }, [files, search, sortDir]);
 
+  // Skills: only provide skill directories (no commands/agents/hooks/MCP)
+  // Plugins: provide commands, agents, hooks, MCP, LSP — things that extend Claude
+  const isSkillOnly = (p: import("../lib/types.js").Plugin) =>
+    (p.skills?.length ?? 0) > 0 &&
+    (p.commands?.length ?? 0) === 0 &&
+    (p.agents?.length ?? 0) === 0 &&
+    (p.hooks?.length ?? 0) === 0 &&
+    !p.hasMcp &&
+    !p.hasLsp;
+
+  const filteredSkills = useMemo(() => {
+    const lowerSearch = search.toLowerCase();
+    const base = installedPlugins.filter(isSkillOnly);
+    const filtered = search
+      ? base.filter((p) => p.name.toLowerCase().includes(lowerSearch) || p.description.toLowerCase().includes(lowerSearch))
+      : base;
+    return [...filtered].sort((a, b) => a.name.localeCompare(b.name));
+  }, [installedPlugins, search]);
+
   const filteredPlugins = useMemo(() => {
     const lowerSearch = search.toLowerCase();
+    const base = installedPlugins.filter((p) => !isSkillOnly(p));
     const filtered = search
-      ? installedPlugins.filter(
+      ? base.filter(
           (p) =>
             p.name.toLowerCase().includes(lowerSearch) ||
             p.description.toLowerCase().includes(lowerSearch) ||
             p.marketplace.toLowerCase().includes(lowerSearch)
         )
-      : installedPlugins;
+      : base;
     return [...filtered].sort((a, b) => {
       if (sortBy === "name") {
         const cmp = a.name.localeCompare(b.name);
@@ -144,10 +164,11 @@ export function InstalledTab() {
 
   const pluginDriftMap = useStore((s) => s.pluginDriftMap);
 
-  const managedFiles = useMemo(() => filesToManagedItems(filteredFiles), [filteredFiles]);
-  const managedPlugins = useMemo(() => {
+  const managedFiles    = useMemo(() => filesToManagedItems(filteredFiles), [filteredFiles]);
+  const managedSkills   = useMemo(() => pluginsToManagedItems(filteredSkills), [filteredSkills]);
+  const managedPlugins  = useMemo(() => {
     return filteredPlugins.map((p) => {
-      const item = pluginsToManagedItems([p])[0];
+      const item = pluginsToManagedItems([p])[0]!;
       const drift = pluginDriftMap[p.name];
       if (drift && Object.values(drift).some((s) => s !== "in-sync")) {
         return { ...item, instances: item.instances.map((inst) => ({ ...inst, status: "changed" as const })) };
@@ -157,7 +178,8 @@ export function InstalledTab() {
   }, [filteredPlugins, pluginDriftMap]);
   const managedPiPackages = useMemo(() => piPackagesToManagedItems(filteredPiPackages), [filteredPiPackages]);
 
-  const fileCount = filteredFiles.length;
+  const fileCount   = filteredFiles.length;
+  const skillCount  = filteredSkills.length;
   const pluginCount = filteredPlugins.length;
 
   const selectedLibraryItem = useMemo(() => {
@@ -165,13 +187,17 @@ export function InstalledTab() {
       const file = filteredFiles[selectedIndex];
       return file ? { kind: "file" as const, file } : null;
     }
-    if (selectedIndex < fileCount + pluginCount) {
-      const plugin = filteredPlugins[selectedIndex - fileCount];
+    if (selectedIndex < fileCount + skillCount) {
+      const plugin = filteredSkills[selectedIndex - fileCount];
       return plugin ? { kind: "plugin" as const, plugin } : null;
     }
-    const piPkg = filteredPiPackages[selectedIndex - fileCount - pluginCount];
+    if (selectedIndex < fileCount + skillCount + pluginCount) {
+      const plugin = filteredPlugins[selectedIndex - fileCount - skillCount];
+      return plugin ? { kind: "plugin" as const, plugin } : null;
+    }
+    const piPkg = filteredPiPackages[selectedIndex - fileCount - skillCount - pluginCount];
     return piPkg ? { kind: "piPackage" as const, piPackage: piPkg } : null;
-  }, [selectedIndex, fileCount, pluginCount, filteredFiles, filteredPlugins, filteredPiPackages]);
+  }, [selectedIndex, fileCount, skillCount, pluginCount, filteredFiles, filteredSkills, filteredPlugins, filteredPiPackages]);
 
   return (
     <Box flexDirection="column">
@@ -208,18 +234,28 @@ export function InstalledTab() {
         </Box>
       )}
 
+      {managedSkills.length > 0 && (
+        <Box flexDirection="column" marginTop={1}>
+          <Box>
+            <Text color="gray">  Skills </Text>
+            <Text color="gray" dimColor>{getRange(selectedIndex >= fileCount && selectedIndex < fileCount + skillCount ? selectedIndex - fileCount : 0, managedSkills.length, 4)}</Text>
+          </Box>
+          <ItemList items={managedSkills} selectedIndex={selectedIndex >= fileCount && selectedIndex < fileCount + skillCount ? selectedIndex - fileCount : -1} maxHeight={4} columns={PLUGIN_COLUMNS} />
+        </Box>
+      )}
+
       {(managedPlugins.length > 0 || !installedPluginsLoaded) && (
-        <Box flexDirection="column" marginTop={(managedFiles.length > 0 || !filesLoaded) ? 1 : 0}>
+        <Box flexDirection="column" marginTop={1}>
           <Box>
             <Text color="gray">  Plugins </Text>
             <Text color="gray" dimColor>
               {managedPlugins.length > 0
-                ? getRange(selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : 0, managedPlugins.length, 4)
+                ? getRange(selectedIndex >= fileCount + skillCount && selectedIndex < fileCount + skillCount + pluginCount ? selectedIndex - fileCount - skillCount : 0, managedPlugins.length, 4)
                 : "(loading...)"}
             </Text>
           </Box>
           {managedPlugins.length > 0 ? (
-            <ItemList items={managedPlugins} selectedIndex={selectedIndex >= fileCount && selectedIndex < fileCount + pluginCount ? selectedIndex - fileCount : -1} maxHeight={4} columns={PLUGIN_COLUMNS} />
+            <ItemList items={managedPlugins} selectedIndex={selectedIndex >= fileCount + skillCount && selectedIndex < fileCount + skillCount + pluginCount ? selectedIndex - fileCount - skillCount : -1} maxHeight={4} columns={PLUGIN_COLUMNS} />
           ) : (
             <Box marginLeft={2}><Text color="cyan">⠋ Loading plugins...</Text></Box>
           )}
@@ -227,17 +263,17 @@ export function InstalledTab() {
       )}
 
       {(managedPiPackages.length > 0 || !piPackagesLoaded) && (
-        <Box flexDirection="column" marginTop={(managedFiles.length > 0 || !filesLoaded || managedPlugins.length > 0 || !installedPluginsLoaded) ? 1 : 0}>
+        <Box flexDirection="column" marginTop={1}>
           <Box>
             <Text color="gray">  Pi Packages </Text>
             <Text color="gray" dimColor>
               {managedPiPackages.length > 0
-                ? getRange(selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : 0, managedPiPackages.length, 3)
+                ? getRange(selectedIndex >= fileCount + skillCount + pluginCount ? selectedIndex - fileCount - skillCount - pluginCount : 0, managedPiPackages.length, 3)
                 : "(loading...)"}
             </Text>
           </Box>
           {managedPiPackages.length > 0 ? (
-            <ItemList items={managedPiPackages} selectedIndex={selectedIndex >= fileCount + pluginCount ? selectedIndex - fileCount - pluginCount : -1} maxHeight={3} columns={PLUGIN_COLUMNS} />
+            <ItemList items={managedPiPackages} selectedIndex={selectedIndex >= fileCount + skillCount + pluginCount ? selectedIndex - fileCount - skillCount - pluginCount : -1} maxHeight={3} columns={PLUGIN_COLUMNS} />
           ) : (
             <Box marginLeft={2}><Text color="cyan">⠋ Loading pi packages...</Text></Box>
           )}

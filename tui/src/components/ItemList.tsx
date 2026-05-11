@@ -48,7 +48,10 @@ function getColumnValue(item: ManagedItem, col: ColumnDef): string {
 function getTypeLabel(item: ManagedItem): string {
   switch (item.kind) {
     case "plugin":
-      return item.hasMcp ? "MCP" : "Plugin";
+      if (item.hasMcp) return "MCP";
+      if (item.skills && item.skills.length > 0 && !item.commands?.length && !item.agents?.length) return "Skill";
+      if (item.skills && item.skills.length > 0) return "Plugin";
+      return "Plugin";
     case "file":
       return "File";
     case "config":
