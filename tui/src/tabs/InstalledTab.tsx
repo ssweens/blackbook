@@ -74,8 +74,6 @@ export function InstalledTab() {
     });
   }, [files, search, sortDir]);
 
-  // After removing standalone skill scanning, every item in installedPlugins
-  // is a real plugin installed via a tool's native plugin system.
   const filteredSkills: import("../lib/types.js").Plugin[] = [];
 
   const filteredPlugins = useMemo(() => {
