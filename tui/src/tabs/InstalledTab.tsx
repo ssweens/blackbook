@@ -74,26 +74,13 @@ export function InstalledTab() {
     });
   }, [files, search, sortDir]);
 
-  // Plugins: installed via Claude's native plugin system (source path is inside
-  // ~/.claude/plugins/cache/ — meaning `claude plugin install` put it there).
-  // Skills: synced by blackbook from a source repo, not via the plugin system.
-  const isSkillOnly = (p: import("../lib/types.js").Plugin) => {
-    const src = typeof p.source === "string" ? p.source : p.source?.source ?? "";
-    return !src.includes("/plugins/cache/") && !src.includes("/plugins/cache\\");
-  };
-
-  const filteredSkills = useMemo(() => {
-    const lowerSearch = search.toLowerCase();
-    const base = installedPlugins.filter(isSkillOnly);
-    const filtered = search
-      ? base.filter((p) => p.name.toLowerCase().includes(lowerSearch) || p.description.toLowerCase().includes(lowerSearch))
-      : base;
-    return [...filtered].sort((a, b) => a.name.localeCompare(b.name));
-  }, [installedPlugins, search]);
+  // After removing standalone skill scanning, every item in installedPlugins
+  // is a real plugin installed via a tool's native plugin system.
+  const filteredSkills: import("../lib/types.js").Plugin[] = [];
 
   const filteredPlugins = useMemo(() => {
     const lowerSearch = search.toLowerCase();
-    const base = installedPlugins.filter((p) => !isSkillOnly(p));
+    const base = installedPlugins;
     const filtered = search
       ? base.filter(
           (p) =>
