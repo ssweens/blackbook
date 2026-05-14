@@ -1693,6 +1693,9 @@ export function getStandaloneSkills(): StandaloneSkill[] {
     // name to its source path even when the source repo groups skills in subdirs
     // (e.g. skills/gbrain/<name>/SKILL.md). Tool disks always have a flat layout,
     // but the source repo can use namespaced subdirs for organization.
+    // Also use this index to surface skills that exist in the source repo but
+    // aren't yet installed on any tool — those still show up in the Skills section
+    // with an empty installations[] so the user can sync them from source.
     const sourceSkillIndex = new Map<string, string>(); // name -> absolute SKILL.md path
     const skillsRoot = join(sourceRepo, "skills");
     if (existsSync(skillsRoot)) {
@@ -1714,6 +1717,25 @@ export function getStandaloneSkills(): StandaloneSkill[] {
         } catch { /* skip */ }
       };
       walk(skillsRoot);
+    }
+
+    // Add source-only skills (in source repo but not installed on any tool disk).
+    // They appear in the Skills section with empty installations so the user can
+    // "Sync to <tool>" them.
+    for (const [name, skillMd] of sourceSkillIndex) {
+      if (byName.has(name)) continue;
+      // Skip plugin-owned and compound-engineering ce-* if applicable.
+      if (globalPluginOwnedSkills.has(name)) continue;
+      if (compoundEngineeringInstalled && name.startsWith("ce-")) continue;
+      const sourceDir = dirname(skillMd);
+      byName.set(name, {
+        name,
+        installations: [],
+        diskPath: sourceDir,   // use source path as the canonical disk reference
+        toolId: "",
+        instanceId: "",
+        instanceName: "",
+      });
     }
 
     for (const skill of byName.values()) {
@@ -1925,8 +1947,10 @@ export function installSkillToInstance(
   toolId: string,
   instanceId: string,
 ): boolean {
-  if (skill.installations.length === 0) return false;
-  const sourcePath = skill.installations[0].diskPath;
+  // Prefer source-repo path (canonical) over an existing disk install. Falls back to
+  // an existing install when the skill isn't tracked in the source repo.
+  const sourcePath = skill.sourcePath ?? skill.installations[0]?.diskPath;
+  if (!sourcePath) return false;
   const target = getToolInstances().find(
     (i) => i.toolId === toolId && i.instanceId === instanceId,
   );

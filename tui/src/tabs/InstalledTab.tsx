@@ -92,16 +92,22 @@ export function InstalledTab() {
     return base.map((s): import("../lib/managed-item.js").ManagedItem => {
       const toolIds = s.installations.map((i) => i.toolId);
       const uniqueTools = Array.from(new Set(toolIds));
+      const isInstalled = s.installations.length > 0;
       // If installed in every tool that supports skills, treat as "All tools" (empty array).
       const isEverywhere =
+        isInstalled &&
         uniqueTools.length === skillCapableTools.size &&
         uniqueTools.every((t) => skillCapableTools.has(t));
+      // Label for skills not yet installed anywhere (exist only in source repo).
+      const scopeLabel = isInstalled
+        ? uniqueTools.join(", ")
+        : "source only";
       return {
         name: s.name,
         kind: "file" as const,
-        marketplace: uniqueTools.join(", "),
-        description: `Standalone skill · ${uniqueTools.join(", ")}`,
-        installed: true,
+        marketplace: scopeLabel,
+        description: `Standalone skill · ${scopeLabel}`,
+        installed: isInstalled,
         incomplete: false,
         scope: "user" as const,
         tools: isEverywhere ? [] : uniqueTools,

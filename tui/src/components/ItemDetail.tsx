@@ -70,7 +70,7 @@ export function ItemDetail({ item, actions, selectedAction, metadata }: ItemDeta
       {/* Header */}
       <Box marginBottom={1}>
         <Text bold>{item.name}</Text>
-        {item.marketplace !== "local" && (
+        {item.marketplace && item.marketplace !== "local" && (
           <Text color="gray"> @ {item.marketplace}</Text>
         )}
       </Box>
@@ -406,7 +406,12 @@ export function SkillMetadata({ item }: { item: ManagedItem }) {
   const fm = parseSkillFrontmatter(diskPath);
   const tree = buildSkillTree(diskPath);
   const isScoped = item.tools && item.tools.length > 0;
-  const toolScope = isScoped ? item.tools!.join(", ") : "All tools";
+  const isInstalledAnywhere = item.instances.length > 0;
+  const toolScope = !isInstalledAnywhere
+    ? "(none yet)"
+    : isScoped
+      ? item.tools!.join(", ")
+      : "All tools";
   const skill = item._skill;
 
   // Truncate long descriptions so the title/source/git rows stay visible.
@@ -445,10 +450,10 @@ export function SkillMetadata({ item }: { item: ManagedItem }) {
           <Box marginLeft={1}>
             <Text color="gray">Layout: </Text>
             {skill.sourceLayout === "canonical" && (
-              <Text color="green">✓ canonical (skills/{skill.name}/)</Text>
+              <Text color="green">✓ canonical</Text>
             )}
             {skill.sourceLayout === "legacy-plugin" && (
-              <Text color="yellow">⚠ legacy plugin-wrapped (plugins/{skill.name}/skills/{skill.name}/)</Text>
+              <Text color="yellow">⚠ legacy plugin-wrapped</Text>
             )}
           </Box>
           <Box marginLeft={1}>
@@ -479,20 +484,27 @@ export function SkillMetadata({ item }: { item: ManagedItem }) {
         </Box>
       )}
 
-      <Box marginBottom={1} flexDirection="column">
-        <Text color="gray">Installed at ({item.instances.length} tool{item.instances.length === 1 ? "" : "s"}):</Text>
-        {item.instances.slice(0, 4).map((inst) => (
-          <Box key={`${inst.toolId}:${inst.instanceId}`} marginLeft={1}>
-            <Text color="cyan">{inst.toolId}</Text>
-            <Text color="gray"> → {inst.sourcePath}</Text>
-          </Box>
-        ))}
-        {item.instances.length > 4 && (
-          <Box marginLeft={1}>
-            <Text color="gray" dimColor>… (+{item.instances.length - 4} more)</Text>
-          </Box>
-        )}
-      </Box>
+      {item.instances.length > 0 ? (
+        <Box marginBottom={1} flexDirection="column">
+          <Text color="gray">Installed at ({item.instances.length} tool{item.instances.length === 1 ? "" : "s"}):</Text>
+          {item.instances.slice(0, 4).map((inst) => (
+            <Box key={`${inst.toolId}:${inst.instanceId}`} marginLeft={1}>
+              <Text color="cyan">{inst.toolId}</Text>
+              <Text color="gray"> → {inst.sourcePath}</Text>
+            </Box>
+          ))}
+          {item.instances.length > 4 && (
+            <Box marginLeft={1}>
+              <Text color="gray" dimColor>… (+{item.instances.length - 4} more)</Text>
+            </Box>
+          )}
+        </Box>
+      ) : (
+        <Box marginBottom={1}>
+          <Text color="gray">Installed: </Text>
+          <Text color="yellow" dimColor>not installed on any tool yet — use "Sync to …" actions below</Text>
+        </Box>
+      )}
 
       {tree.length > 0 && (
         <Box marginBottom={1} flexDirection="column">

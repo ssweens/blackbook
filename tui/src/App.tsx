@@ -878,12 +878,13 @@ export function App() {
   const detailSkillItem = useMemo((): ManagedItem | null => {
     if (!detailSkill) return null;
     const uniqueTools = Array.from(new Set(detailSkill.installations.map((i) => i.toolId)));
+    const isInstalled = detailSkill.installations.length > 0;
     return {
       name: detailSkill.name,
       kind: "file" as const,
-      marketplace: uniqueTools.join(", "),
+      marketplace: isInstalled ? uniqueTools.join(", ") : "source only",
       description: `Standalone skill`,
-      installed: true,
+      installed: isInstalled,
       incomplete: false,
       scope: "user" as const,
       tools: uniqueTools,

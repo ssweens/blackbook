@@ -83,6 +83,10 @@ function getScopeLabel(item: ManagedItem): string {
   if (item.tools && item.tools.length > 0) {
     return item.tools.join(", ");
   }
+  // Skills/files not installed on any tool yet — distinguish from "installed everywhere".
+  if (!item.installed && item.instances.length === 0) {
+    return "source only";
+  }
   return "All tools";
 }
 
