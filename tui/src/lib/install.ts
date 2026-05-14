@@ -1689,20 +1689,51 @@ export function getStandaloneSkills(): StandaloneSkill[] {
   const sourceRepo = getConfigRepoPath();
   const repoGitStatus = sourceRepo ? getRepoGitStatus(sourceRepo) : null;
   if (sourceRepo && existsSync(sourceRepo)) {
+    // Index every SKILL.md under <repo>/skills/** so we can map a tool-disk skill
+    // name to its source path even when the source repo groups skills in subdirs
+    // (e.g. skills/gbrain/<name>/SKILL.md). Tool disks always have a flat layout,
+    // but the source repo can use namespaced subdirs for organization.
+    const sourceSkillIndex = new Map<string, string>(); // name -> absolute SKILL.md path
+    const skillsRoot = join(sourceRepo, "skills");
+    if (existsSync(skillsRoot)) {
+      const walk = (dir: string) => {
+        try {
+          for (const e of readdirSync(dir, { withFileTypes: true })) {
+            if (e.name.startsWith(".")) continue;
+            const p = join(dir, e.name);
+            if (e.isDirectory()) {
+              const skillMd = join(p, "SKILL.md");
+              if (existsSync(skillMd)) {
+                // First match wins for any given basename.
+                if (!sourceSkillIndex.has(e.name)) sourceSkillIndex.set(e.name, skillMd);
+              } else {
+                walk(p);
+              }
+            }
+          }
+        } catch { /* skip */ }
+      };
+      walk(skillsRoot);
+    }
+
     for (const skill of byName.values()) {
       skill.sourceLayout = "missing";
-      const candidates = [
-        // Standalone skill layout: source_repo/skills/<name>/SKILL.md
-        join(sourceRepo, "skills", skill.name, "SKILL.md"),
-        // Playbook plugin layout: source_repo/plugins/<name>/skills/<name>/SKILL.md
-        join(sourceRepo, "plugins", skill.name, "skills", skill.name, "SKILL.md"),
-      ];
-      for (let i = 0; i < candidates.length; i++) {
-        const candidate = candidates[i];
+      // Candidates in priority order:
+      //   0. Canonical flat: source_repo/skills/<name>/SKILL.md
+      //   1. Nested in skills/: discovered via the recursive index (e.g. skills/gbrain/<name>/)
+      //   2. Legacy plugin-wrapped: source_repo/plugins/<name>/skills/<name>/SKILL.md
+      const flat = join(sourceRepo, "skills", skill.name, "SKILL.md");
+      const indexed = sourceSkillIndex.get(skill.name);
+      const legacy = join(sourceRepo, "plugins", skill.name, "skills", skill.name, "SKILL.md");
+      const candidates: Array<{ path: string; layout: SkillSourceLayout }> = [];
+      if (existsSync(flat)) candidates.push({ path: flat, layout: "canonical" });
+      else if (indexed) candidates.push({ path: indexed, layout: "canonical" });
+      if (existsSync(legacy)) candidates.push({ path: legacy, layout: "legacy-plugin" });
+      for (const { path: candidate, layout } of candidates) {
         if (existsSync(candidate)) {
           const sourceDir = dirname(candidate);
           skill.sourcePath = sourceDir;
-          skill.sourceLayout = i === 0 ? "canonical" : "legacy-plugin";
+          skill.sourceLayout = layout;
           // Lightweight per-install drift: compare each disk SKILL.md to the source one.
           try {
             const sourceSkillMd = readFileSync(candidate, "utf-8");
