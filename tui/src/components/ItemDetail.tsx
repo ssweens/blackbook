@@ -376,40 +376,31 @@ function parseSkillFrontmatter(skillDir: string): { description?: string; versio
   }
 }
 
-/** Build a short 2-level directory tree for a skill. */
-function buildSkillTree(root: string, maxEntries = 15): string[] {
+/**
+ * Build a compact top-level tree for a skill.
+ * Only shows top-level entries (no nested children) so the metadata fits
+ * in the terminal without scrolling the title off-screen.
+ */
+function buildSkillTree(root: string, maxEntries = 8): string[] {
   const lines: string[] = [];
   if (!existsSync(root)) return lines;
   try {
     const top = readdirSync(root, { withFileTypes: true })
       .filter((e) => !e.name.startsWith("."))
       .sort((a, b) => {
-        // Directories first, then files
         if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
         return a.name.localeCompare(b.name);
       });
     for (const entry of top.slice(0, maxEntries)) {
-      if (entry.isDirectory()) {
-        lines.push(`📁 ${entry.name}/`);
-        try {
-          const child = readdirSync(join(root, entry.name), { withFileTypes: true })
-            .filter((e) => !e.name.startsWith("."))
-            .sort((a, b) => a.name.localeCompare(b.name));
-          for (const c of child.slice(0, 6)) {
-            lines.push(`   │  ${c.isDirectory() ? "📁 " + c.name + "/" : "📄 " + c.name}`);
-          }
-          if (child.length > 6) lines.push(`   │  … (+${child.length - 6} more)`);
-        } catch { /* skip */ }
-      } else {
-        lines.push(`📄 ${entry.name}`);
-      }
+      lines.push(entry.isDirectory() ? `📁 ${entry.name}/` : `📄 ${entry.name}`);
     }
     if (top.length > maxEntries) lines.push(`… (+${top.length - maxEntries} more)`);
   } catch { /* skip */ }
   return lines;
 }
 
-/** Skill metadata: SKILL.md description + tools where installed + file tree. */
+/** Skill metadata: SKILL.md description + tools where installed + file tree.
+ *  Compact-layout to ensure title and key info stay on-screen for big skills. */
 export function SkillMetadata({ item }: { item: ManagedItem }) {
   const diskPath = item.instances[0]?.sourcePath ?? "";
   const fm = parseSkillFrontmatter(diskPath);
@@ -418,12 +409,17 @@ export function SkillMetadata({ item }: { item: ManagedItem }) {
   const toolScope = isScoped ? item.tools!.join(", ") : "All tools";
   const skill = item._skill;
 
+  // Truncate long descriptions so the title/source/git rows stay visible.
+  const truncate = (s: string, max: number) =>
+    s.length > max ? s.slice(0, max).replace(/\s+\S*$/, "") + "…" : s;
+  const description = fm.description ? truncate(fm.description, 240) : "";
+
   return (
     <>
-      {fm.description && (
+      {description && (
         <Box marginBottom={1} flexDirection="column">
           <Text color="gray">Description:</Text>
-          <Text>{fm.description}</Text>
+          <Text>{description}</Text>
         </Box>
       )}
 
@@ -484,13 +480,18 @@ export function SkillMetadata({ item }: { item: ManagedItem }) {
       )}
 
       <Box marginBottom={1} flexDirection="column">
-        <Text color="gray">Installed at:</Text>
-        {item.instances.map((inst) => (
+        <Text color="gray">Installed at ({item.instances.length} tool{item.instances.length === 1 ? "" : "s"}):</Text>
+        {item.instances.slice(0, 4).map((inst) => (
           <Box key={`${inst.toolId}:${inst.instanceId}`} marginLeft={1}>
             <Text color="cyan">{inst.toolId}</Text>
             <Text color="gray"> → {inst.sourcePath}</Text>
           </Box>
         ))}
+        {item.instances.length > 4 && (
+          <Box marginLeft={1}>
+            <Text color="gray" dimColor>… (+{item.instances.length - 4} more)</Text>
+          </Box>
+        )}
       </Box>
 
       {tree.length > 0 && (
