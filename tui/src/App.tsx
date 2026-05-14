@@ -1064,8 +1064,17 @@ export function App() {
   };
 
   const openPluginDetail = (plugin: Plugin) => {
-    setDetailPlugin(plugin); setDetailPluginDrift(null);
-    void computeItemDrift(pluginToManagedItem(plugin)).then((drift) => {
+    // If this plugin is installed, prefer the merged installed version — it has the
+    // scanned hooks/components, not just what the marketplace declares. This matters
+    // when entering from Marketplaces browse, where the plugin object comes straight
+    // from marketplace metadata.
+    const installedPlugins = useStore.getState().installedPlugins;
+    const merged = installedPlugins.find(
+      (p) => p.name === plugin.name && p.marketplace === plugin.marketplace,
+    );
+    const resolved = merged || plugin;
+    setDetailPlugin(resolved); setDetailPluginDrift(null);
+    void computeItemDrift(pluginToManagedItem(resolved)).then((drift) => {
       if (drift.kind === "plugin") setDetailPluginDrift(drift.plugin);
     });
     setActionIndex(0);
