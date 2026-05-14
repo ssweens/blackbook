@@ -112,6 +112,9 @@ describe("diff utilities", () => {
     });
 
     it("computes hunks for modified file", () => {
+      // GitHub-style orientation: local (target) = head/green/+, source = base/red/-
+      // Source has "lineNew" (base), target has "lineOld" (head).
+      // So diff shows: REMOVE "lineNew" (was in base) + ADD "lineOld" (now in head).
       const sourceFile = join(testDir, "source.txt");
       const targetFile = join(testDir, "target.txt");
       writeFileSync(sourceFile, "line1\nlineNew\nline3\n");
@@ -131,15 +134,19 @@ describe("diff utilities", () => {
 
       const detail = computeFileDetail(summary);
       expect(detail.hunks.length).toBeGreaterThan(0);
-      expect(detail.hunks[0].lines.some((l) => l.type === "add" && l.content === "lineNew")).toBe(
+      // Target (head) has lineOld -> shown as ADDITION
+      expect(detail.hunks[0].lines.some((l) => l.type === "add" && l.content === "lineOld")).toBe(
         true
       );
-      expect(detail.hunks[0].lines.some((l) => l.type === "remove" && l.content === "lineOld")).toBe(
+      // Source (base) had lineNew -> shown as REMOVAL
+      expect(detail.hunks[0].lines.some((l) => l.type === "remove" && l.content === "lineNew")).toBe(
         true
       );
     });
 
-    it("handles missing target (all additions)", () => {
+    it("handles missing target (all removals from head)", () => {
+      // Source has content, target doesn't. In GitHub orientation: base had content,
+      // head doesn't -> all REMOVALS.
       const sourceFile = join(testDir, "source.txt");
       writeFileSync(sourceFile, "new content\n");
 
@@ -149,22 +156,23 @@ describe("diff utilities", () => {
         sourcePath: sourceFile,
         targetPath: join(testDir, "nonexistent.txt"),
         status: "missing",
-        linesAdded: 1,
-        linesRemoved: 0,
+        linesAdded: 0,
+        linesRemoved: 1,
         sourceMtime: null,
         targetMtime: null,
       };
 
       const detail = computeFileDetail(summary);
       expect(detail.hunks.length).toBeGreaterThan(0);
-      // All lines should be additions (type === "add")
-      const allAdds = detail.hunks.every((h) =>
-        h.lines.every((l) => l.type === "add" || l.type === "context")
+      const allRemoves = detail.hunks.every((h) =>
+        h.lines.every((l) => l.type === "remove" || l.type === "context")
       );
-      expect(allAdds).toBe(true);
+      expect(allRemoves).toBe(true);
     });
 
-    it("handles extra file (all removals)", () => {
+    it("handles extra file (all additions in head)", () => {
+      // Target exists, source doesn't. In GitHub orientation: head has content that
+      // base doesn't -> all ADDITIONS.
       const targetFile = join(testDir, "target.txt");
       writeFileSync(targetFile, "extra content\n");
 
@@ -174,19 +182,18 @@ describe("diff utilities", () => {
         sourcePath: null,
         targetPath: targetFile,
         status: "extra",
-        linesAdded: 0,
-        linesRemoved: 1,
+        linesAdded: 1,
+        linesRemoved: 0,
         sourceMtime: null,
         targetMtime: null,
       };
 
       const detail = computeFileDetail(summary);
       expect(detail.hunks.length).toBeGreaterThan(0);
-      // All lines should be removals (type === "remove")
-      const allRemoves = detail.hunks.every((h) =>
-        h.lines.every((l) => l.type === "remove" || l.type === "context")
+      const allAdds = detail.hunks.every((h) =>
+        h.lines.every((l) => l.type === "add" || l.type === "context")
       );
-      expect(allRemoves).toBe(true);
+      expect(allAdds).toBe(true);
     });
 
     it("returns empty hunks for binary file", () => {
