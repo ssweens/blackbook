@@ -103,6 +103,10 @@ interface Actions {
   updatePlugin: (plugin: Plugin) => Promise<boolean>;
   setDetailPlugin: (plugin: Plugin | null) => void;
   setDetailMarketplace: (marketplace: Marketplace | null) => void;
+  /** Unified detail setter. Replaces setDetailPlugin/etc. */
+  setDetail: (d: import("./types.js").DetailArtifact | null) => void;
+  /** Re-resolve `detail` from current store state; close if artifact no longer exists. */
+  refreshDetail: () => void;
   addMarketplace: (name: string, url: string) => void;
   removeMarketplace: (name: string) => void;
   updateMarketplace: (name: string) => Promise<void>;
@@ -367,6 +371,7 @@ export const useStore = create<Store>((rawSet, get) => {
   detailPlugin: null,
   detailMarketplace: null,
   detailPiPackage: null,
+  detail: null,
   notifications: [],
   diffTarget: null,
   missingSummary: null,
@@ -399,33 +404,109 @@ export const useStore = create<Store>((rawSet, get) => {
             detailMarketplace: null,
             discoverSubView: null,
             currentSection: "plugins",
+            detail: null,
           }
     ),
   setSortBy: (by) => set({ sortBy: by }),
   setSortDir: (dir) => set({ sortDir: dir }),
   setSearch: (search) => set({ search, selectedIndex: 0 }),
   setSelectedIndex: (index) => set({ selectedIndex: index }),
-  setDetailPlugin: (plugin) => set({ detailPlugin: plugin }),
+  setDetailPlugin: (plugin) => {
+    // Mirror into the unified `detail` field.
+    const prev = get().detail;
+    set({
+      detailPlugin: plugin,
+      detail: plugin
+        ? { kind: "plugin", data: plugin, drift: prev?.kind === "plugin" ? prev.drift : undefined }
+        : null,
+    });
+  },
   setDetailMarketplace: (marketplace) => set({ detailMarketplace: marketplace }),
+  /**
+   * Unified detail setter. Replaces setDetailPlugin/setDetailFile/setDetailSkill/setDetailPiPackage.
+   * Sets `detail` and mirrors plugin/piPackage data into the legacy detailPlugin/detailPiPackage
+   * fields during the migration period (tests still reference those).
+   */
+  setDetail: (d) => {
+    set({
+      detail: d,
+      detailPlugin: d?.kind === "plugin" ? d.data : null,
+      detailPiPackage: d?.kind === "piPackage" ? d.data : null,
+    });
+  },
+  /**
+   * Re-resolve the active detail from the current store state. Used after a mutation
+   * to pick up fresh data (e.g. drift updates, install status changes). Closes detail
+   * if the artifact no longer exists.
+   */
+  refreshDetail: () => {
+    const state = get();
+    const d = state.detail;
+    if (!d) return;
+    switch (d.kind) {
+      case "plugin": {
+        const fromMP = state.marketplaces
+          .find((m) => m.name === d.data.marketplace)
+          ?.plugins.find((p) => p.name === d.data.name);
+        const fromInstalled = state.installedPlugins.find(
+          (p) => p.name === d.data.name && p.marketplace === d.data.marketplace,
+        );
+        const resolved = fromMP || fromInstalled;
+        if (resolved) {
+          set({
+            detail: { kind: "plugin", data: resolved, drift: d.drift },
+            detailPlugin: resolved,
+          });
+        } else {
+          set({ detail: null, detailPlugin: null });
+        }
+        return;
+      }
+      case "file": {
+        const fresh = state.files.find((f) => f.name === d.data.name);
+        set({ detail: fresh ? { kind: "file", data: fresh } : null });
+        return;
+      }
+      case "skill": {
+        const fresh = state.standaloneSkills.find((s) => s.name === d.data.name);
+        set({ detail: fresh ? { kind: "skill", data: fresh } : null });
+        return;
+      }
+      case "piPackage": {
+        const fresh = state.piPackages.find(
+          (p) => p.name === d.data.name && p.marketplace === d.data.marketplace,
+        );
+        if (fresh) {
+          set({ detail: { kind: "piPackage", data: fresh }, detailPiPackage: fresh });
+        } else {
+          set({ detail: null, detailPiPackage: null });
+        }
+        return;
+      }
+    }
+  },
   setDetailPiPackage: async (pkg) => {
     if (!pkg) {
-      set({ detailPiPackage: null });
+      set({ detailPiPackage: null, detail: null });
       return;
     }
-    
-    // Set immediately so UI shows something
-    set({ detailPiPackage: pkg });
-    
+
+    // Set immediately so UI shows something. Mirror into unified `detail`.
+    set({ detailPiPackage: pkg, detail: { kind: "piPackage", data: pkg } });
+
     // Fetch full details for npm packages
     if (pkg.sourceType === "npm") {
       const details = await fetchNpmPackageDetails(pkg.source);
       if (details) {
-        // Merge details into the package
-        set((state) => ({
-          detailPiPackage: state.detailPiPackage?.source === pkg.source
-            ? { ...state.detailPiPackage, ...details }
-            : state.detailPiPackage,
-        }));
+        // Merge details into the package (both mirrors)
+        set((state) => {
+          if (state.detailPiPackage?.source !== pkg.source) return {};
+          const merged = { ...state.detailPiPackage, ...details };
+          return {
+            detailPiPackage: merged,
+            detail: { kind: "piPackage", data: merged },
+          };
+        });
       }
     }
   },

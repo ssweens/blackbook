@@ -309,6 +309,12 @@ const createPlugin = (overrides: Partial<Plugin> = {}): Plugin => ({
   ...overrides,
 });
 
+/** Open a plugin in the unified detail state (replaces legacy { detailPlugin: ... }). */
+const openPluginDetail = (plugin: Plugin) => ({
+  detailPlugin: plugin,
+  detail: { kind: "plugin" as const, data: plugin },
+});
+
 const createFileStatus = (overrides: Partial<FileStatus> = {}): FileStatus => ({
   name: "AGENTS.md",
   source: "config/AGENTS.md",
@@ -425,6 +431,7 @@ const defaultStoreState = () => ({
   detailPlugin: null,
   detailMarketplace: null,
   detailPiPackage: null,
+  detail: null,
   notifications: [],
   diffTarget: null,
   missingSummary: null,
@@ -538,7 +545,7 @@ describe("App E2E — Installed Tab", () => {
   it("plugin detail shows Instances section with metadata", async () => {
     useStore.setState({
       tab: "installed",
-      detailPlugin: createPlugin(),
+      ...openPluginDetail(createPlugin()),
       installedPlugins: [createPlugin()],
     });
     const { stdout, unmount } = render(<App />);
@@ -557,13 +564,13 @@ describe("App E2E — Installed Tab", () => {
   it("clearing detailPlugin returns to list view", async () => {
     useStore.setState({
       tab: "installed",
-      detailPlugin: createPlugin(),
+      ...openPluginDetail(createPlugin()),
       installedPlugins: [createPlugin()],
     });
     const { stdout, unmount } = render(<App />);
     try {
       await waitForFrame(stdout.lastFrame, (f) => f.includes("Instances:"));
-      useStore.setState({ detailPlugin: null });
+      useStore.setState({ detailPlugin: null, detail: null });
       await waitForFrame(stdout.lastFrame, (f) => f.includes("Plugins") && !f.includes("Instances:"));
     } finally {
       unmount();
@@ -613,7 +620,7 @@ describe("App E2E — Plugin Detail", () => {
     vi.mocked(getPluginToolStatusDirect).mockReturnValue(toolStatusBothInstalled);
     useStore.setState({
       tab: "installed",
-      detailPlugin: createPlugin(),
+      ...openPluginDetail(createPlugin()),
       installedPlugins: [createPlugin()],
     });
     const { stdout, unmount } = render(<App />);
@@ -630,7 +637,7 @@ describe("App E2E — Plugin Detail", () => {
   it("incomplete plugin shows Install to all tools action", async () => {
     useStore.setState({
       tab: "installed",
-      detailPlugin: createPlugin({ incomplete: true }),
+      ...openPluginDetail(createPlugin({ incomplete: true })),
       installedPlugins: [createPlugin({ incomplete: true })],
     });
     const { stdout, unmount } = render(<App />);
@@ -651,7 +658,7 @@ describe("App E2E — Plugin Detail", () => {
     });
     useStore.setState({
       tab: "discover",
-      detailPlugin: createPlugin({ incomplete: true }),
+      ...openPluginDetail(createPlugin({ incomplete: true })),
       selectedIndex: 0,
     });
     const { stdout, unmount } = render(<App />);
@@ -674,7 +681,7 @@ describe("App E2E — Plugin Detail", () => {
     });
     useStore.setState({
       tab: "discover",
-      detailPlugin: createPlugin({ incomplete: true }),
+      ...openPluginDetail(createPlugin({ incomplete: true })),
       selectedIndex: 0,
     });
     const { stdout, unmount } = render(<App />);
@@ -692,7 +699,7 @@ describe("App E2E — Plugin Detail", () => {
     vi.mocked(getPluginToolStatusDirect).mockReturnValue(toolStatusPartial);
     useStore.setState({
       tab: "installed",
-      detailPlugin: createPlugin({ incomplete: true }),
+      ...openPluginDetail(createPlugin({ incomplete: true })),
     });
     const { stdout, unmount } = render(<App />);
     try {
@@ -706,7 +713,7 @@ describe("App E2E — Plugin Detail", () => {
   it("shows components section with skills, commands", async () => {
     useStore.setState({
       tab: "installed",
-      detailPlugin: createPlugin({ skills: ["my-skill"], commands: ["my-cmd"], agents: ["my-agent"] }),
+      ...openPluginDetail(createPlugin({ skills: ["my-skill"], commands: ["my-cmd"], agents: ["my-agent"] })),
     });
     const { stdout, unmount } = render(<App />);
     try {
@@ -735,7 +742,7 @@ describe("App E2E — Plugin Detail", () => {
 
     useStore.setState({
       tab: "installed",
-      detailPlugin: createPlugin(),
+      ...openPluginDetail(createPlugin()),
       installedPlugins: [createPlugin()],
       pluginDriftMap: { "test-plugin": { "skill:test-skill": "target-changed" } },
     });
@@ -761,7 +768,7 @@ describe("App E2E — Plugin Detail", () => {
 
     useStore.setState({
       tab: "installed",
-      detailPlugin: createPlugin(),
+      ...openPluginDetail(createPlugin()),
       installedPlugins: [createPlugin()],
       pluginDriftMap: { "test-plugin": { "skill:test-skill": "target-changed" } },
     });

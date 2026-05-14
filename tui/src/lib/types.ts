@@ -104,6 +104,21 @@ export interface FileStatus {
   gitStatus?: "clean" | "modified" | "untracked" | "unknown";
 }
 
+// ---------------------------------------------------------------------------
+// Unified artifact-detail discriminated union
+// ---------------------------------------------------------------------------
+
+/**
+ * The currently-open item-detail view. Replaces per-kind detailPlugin / detailFile /
+ * detailSkill / detailPiPackage states. All four artifact kinds carry their data here;
+ * plugin drift state attaches via the discriminant.
+ */
+export type DetailArtifact =
+  | { kind: "plugin"; data: Plugin; drift?: import("./plugin-drift.js").PluginDrift }
+  | { kind: "file"; data: FileStatus }
+  | { kind: "skill"; data: import("./install.js").StandaloneSkill }
+  | { kind: "piPackage"; data: PiPackage };
+
 export type SyncPreviewItem =
   | {
       kind: "plugin";
@@ -186,6 +201,9 @@ export interface AppState {
   detailPlugin: Plugin | null;
   detailMarketplace: Marketplace | null;
   detailPiPackage: PiPackage | null;
+  /** Unified artifact-detail state. The four detailX fields above are deprecated;
+   * this replaces them. Plugin drift attaches to the union discriminant. */
+  detail: DetailArtifact | null;
   notifications: Notification[];
   // Diff view state
   diffTarget: DiffTarget | null;

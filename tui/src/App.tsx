@@ -112,13 +112,39 @@ export function App() {
   // ── Data: Managed Items (legacy bridge) ──
   const managedItems = useStore((s) => s.managedItems);
 
-  // ── Detail State ──
-  const detailPlugin = useStore((s) => s.detailPlugin);
-  const setDetailPlugin = useStore((s) => s.setDetailPlugin);
+  // ── Detail State (unified) ──
+  // Single discriminated-union state for the currently-open detail view.
+  // Replaces the previous detailPlugin / detailFile / detailSkill / detailPiPackage states.
+  const detail = useStore((s) => s.detail);
+  const setDetail = useStore((s) => s.setDetail);
+  const refreshDetail = useStore((s) => s.refreshDetail);
+
+  // Convenience accessors (computed views into `detail` for backward-compat with existing code).
+  const detailPlugin = detail?.kind === "plugin" ? detail.data : null;
+  const detailFile = detail?.kind === "file" ? detail.data : null;
+  const detailSkill = detail?.kind === "skill" ? detail.data : null;
+  const detailPiPackage = detail?.kind === "piPackage" ? detail.data : null;
+  const detailPluginDrift = detail?.kind === "plugin" ? (detail.drift ?? null) : null;
+  // Setters that delegate to the unified setDetail.
+  const setDetailPlugin = (p: Plugin | null) => setDetail(p ? { kind: "plugin", data: p, drift: detailPluginDrift ?? undefined } : null);
+  const setDetailFile = (f: FileStatus | null) => setDetail(f ? { kind: "file", data: f } : null);
+  const setDetailSkill = (s: import("./lib/install.js").StandaloneSkill | null) => setDetail(s ? { kind: "skill", data: s } : null);
+  const setDetailPluginDrift = (drift: PluginDrift | null) => {
+    if (detail?.kind !== "plugin") return;
+    setDetail({ kind: "plugin", data: detail.data, drift: drift ?? undefined });
+  };
+
   const detailMarketplace = useStore((s) => s.detailMarketplace);
   const setDetailMarketplace = useStore((s) => s.setDetailMarketplace);
-  const detailPiPackage = useStore((s) => s.detailPiPackage);
-  const setDetailPiPackage = useStore((s) => s.setDetailPiPackage);
+  // detailPiPackage now derived from `detail` above. The store still has a setDetailPiPackage
+  // that fetches npm version info async; route through it for piPackages specifically.
+  const setDetailPiPackageRaw = useStore((s) => s.setDetailPiPackage);
+  const setDetailPiPackage = async (pkg: PiPackage | null) => {
+    await setDetailPiPackageRaw(pkg);
+    // Mirror into unified detail.
+    if (pkg) setDetail({ kind: "piPackage", data: pkg });
+    else if (detail?.kind === "piPackage") setDetail(null);
+  };
 
   // ── Diff View ──
   const diffTarget = useStore((s) => s.diffTarget);
@@ -175,11 +201,9 @@ export function App() {
   const [actionIndex, setActionIndex] = useState(0);
   const [componentManagerMode, setComponentManagerMode] = useState(false);
   const [componentIndex, setComponentIndex] = useState(0);
-  const [detailPluginDrift, setDetailPluginDrift] = useState<PluginDrift | null>(null);
+  // detailPluginDrift / detailFile / detailSkill are now derived from `detail` above.
   const pluginDriftMap = useStore((s) => s.pluginDriftMap);
   const setPluginDriftMap = useStore((s) => s.setPluginDriftMap);
-  const [detailFile, setDetailFile] = useState<FileStatus | null>(null);
-  const [detailSkill, setDetailSkill] = useState<import("./lib/install.js").StandaloneSkill | null>(null);
   const [detailPiMarketplace, setDetailPiMarketplace] = useState<PiMarketplace | null>(null);
   const [detailToolKey, setDetailToolKey] = useState<string | null>(null);
   const [editingToolId, setEditingToolId] = useState<string | null>(null);
@@ -884,22 +908,33 @@ export function App() {
   }, [detailPiPackage]);
 
   /** Active detail context — the currently-open entity + its actions + metadata node. */
+  /**
+   * Active detail — single switch on the unified `detail` union.
+   * Returns the ManagedItem (for rendering), the action list (kind-specific via buildItemActions),
+   * and the metadata node (per-kind small component).
+   */
   const activeDetail = useMemo((): { item: ManagedItem; actions: ItemAction[]; metadata: React.ReactNode } | null => {
-    const drift = detailPlugin ? (detailPluginDrift ?? pluginDriftMap[detailPlugin.name]) : undefined;
-    if (detailFile && detailFileItem) {
-      return { item: detailFileItem, actions: buildItemActions(detailFileItem), metadata: <FileMetadata item={detailFileItem} /> };
+    if (!detail) return null;
+    switch (detail.kind) {
+      case "file": {
+        if (!detailFileItem) return null;
+        return { item: detailFileItem, actions: buildItemActions(detailFileItem), metadata: <FileMetadata item={detailFileItem} /> };
+      }
+      case "skill": {
+        if (!detailSkillItem) return null;
+        return { item: detailSkillItem, actions: buildItemActions(detailSkillItem), metadata: <SkillMetadata item={detailSkillItem} /> };
+      }
+      case "plugin": {
+        if (!detailPluginItem) return null;
+        const drift = detail.drift ?? pluginDriftMap[detail.data.name];
+        return { item: detailPluginItem, actions: buildItemActions(detailPluginItem, drift), metadata: <PluginMetadata item={detailPluginItem} /> };
+      }
+      case "piPackage": {
+        if (!detailPiPkgItem) return null;
+        return { item: detailPiPkgItem, actions: buildItemActions(detailPiPkgItem), metadata: <PiPackageMetadata item={detailPiPkgItem} /> };
+      }
     }
-    if (detailSkill && detailSkillItem) {
-      return { item: detailSkillItem, actions: buildItemActions(detailSkillItem), metadata: <SkillMetadata item={detailSkillItem} /> };
-    }
-    if (detailPlugin && detailPluginItem) {
-      return { item: detailPluginItem, actions: buildItemActions(detailPluginItem, drift), metadata: <PluginMetadata item={detailPluginItem} /> };
-    }
-    if (detailPiPackage && detailPiPkgItem) {
-      return { item: detailPiPkgItem, actions: buildItemActions(detailPiPkgItem), metadata: <PiPackageMetadata item={detailPiPkgItem} /> };
-    }
-    return null;
-  }, [detailFile, detailFileItem, detailSkill, detailSkillItem, detailPlugin, detailPluginItem, detailPluginDrift, pluginDriftMap, detailPiPackage, detailPiPkgItem]);
+  }, [detail, detailFileItem, detailSkillItem, detailPluginItem, detailPiPkgItem, pluginDriftMap]);
 
   const activeMarketplaceDetail = useMemo((): { detail: MarketplaceDetailContext; actions: ReturnType<typeof getMarketplaceDetailActions> } | null => {
     if (detailMarketplace) {
@@ -913,46 +948,34 @@ export function App() {
     return null;
   }, [detailMarketplace, detailPiMarketplace]);
 
+  // Thin shims around the unified store.refreshDetail() for plugins (which need drift
+  // recomputed) and piPackages (which need the legacy mirror updated).
   const refreshDetailPlugin = (plugin: Plugin) => {
-    const state = useStore.getState();
-    const fromMarketplace = state.marketplaces
-      .find((m) => m.name === plugin.marketplace)
-      ?.plugins.find((p) => p.name === plugin.name);
-    const fromInstalled = state.installedPlugins.find(
-      (p) => p.name === plugin.name && p.marketplace === plugin.marketplace
-    );
-    const resolved = fromMarketplace || fromInstalled || plugin;
-    setDetailPlugin(resolved);
-    setDetailPluginDrift(null);
-    void computeItemDrift(pluginToManagedItem(resolved)).then((drift) => {
+    refreshDetail();
+    // Recompute plugin drift after refresh.
+    void computeItemDrift(pluginToManagedItem(plugin)).then((drift) => {
       if (drift.kind === "plugin") setDetailPluginDrift(drift.plugin);
     });
   };
 
   const refreshDetailPiPackage = (pkg: PiPackage) => {
+    refreshDetail();
+    // Legacy mirror for components that still subscribe to the old detailPiPackage field.
     const state = useStore.getState();
-    // For local packages, compare by name and marketplace since source paths may differ
-    // due to symlink resolution or path normalization
     const refreshed = state.piPackages.find((p) =>
       p.source === pkg.source ||
       (p.name === pkg.name && p.marketplace === pkg.marketplace)
     );
-    setDetailPiPackage(refreshed || pkg);
+    void setDetailPiPackage(refreshed || pkg);
   };
 
   // ── Extracted input handlers ───────────────────────────────────────────
 
   const closeDetail = () => { setActionIndex(0); };
   const handleEscape = () => {
-    // Any kind of item detail open? Clear ALL detail states defensively —
-    // they should never all be set simultaneously, but a stale state
-    // from a previous interaction must not block the dismissal.
-    if (detailPlugin || detailFile || detailSkill || detailPiPackage) {
-      setDetailPlugin(null);
-      setDetailPluginDrift(null);
-      setDetailFile(null);
-      setDetailSkill(null);
-      setDetailPiPackage(null);
+    // Any kind of item detail open? Close it via the unified setter.
+    if (detail) {
+      setDetail(null);
       setComponentManagerMode(false);
       closeDetail();
       return;
@@ -1018,28 +1041,18 @@ export function App() {
       return;
     }
 
-    // Installed / Discover tabs — open item detail.
-    // Clear any stale detail state from a previous interaction before opening.
-    const clearOtherDetails = (keep: "plugin" | "piPackage" | "file" | "skill") => {
-      if (keep !== "plugin") { setDetailPlugin(null); setDetailPluginDrift(null); }
-      if (keep !== "file") setDetailFile(null);
-      if (keep !== "skill") setDetailSkill(null);
-      if (keep !== "piPackage") setDetailPiPackage(null);
-    };
+    // Installed / Discover tabs — open item detail via the unified setter.
+    // Only one detail can be open at a time; setDetail replaces any prior state.
     if (selectedLibraryItem?.kind === "plugin") {
-      clearOtherDetails("plugin");
       openPluginDetail(selectedLibraryItem.plugin);
     } else if (selectedLibraryItem?.kind === "piPackage") {
-      clearOtherDetails("piPackage");
-      setDetailPiPackage(selectedLibraryItem.piPackage);
+      void setDetailPiPackage(selectedLibraryItem.piPackage);
       setActionIndex(0);
     } else if (selectedLibraryItem?.kind === "file") {
-      clearOtherDetails("file");
-      setDetailFile(selectedLibraryItem.file);
+      setDetail({ kind: "file", data: selectedLibraryItem.file });
       setActionIndex(0);
     } else if (selectedLibraryItem?.kind === "skill") {
-      clearOtherDetails("skill");
-      setDetailSkill(selectedLibraryItem.skill);
+      setDetail({ kind: "skill", data: selectedLibraryItem.skill });
       setActionIndex(0);
     } else if (selectedLibraryItem?.kind === "pluginSummary") {
       setDiscoverSubView("plugins");
