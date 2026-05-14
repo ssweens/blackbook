@@ -1068,6 +1068,8 @@ export const useStore = create<Store>((rawSet, get) => {
             skills: scannedPlugin.skills,
             commands: scannedPlugin.commands,
             agents: scannedPlugin.agents,
+            hooks: scannedPlugin.hooks,
+            hasMcp: scannedPlugin.hasMcp,
             installed: true, // Always true since it was found on disk
             incomplete: status.incomplete,
           };
@@ -1127,6 +1129,8 @@ export const useStore = create<Store>((rawSet, get) => {
           skills: scannedPlugin.skills,
           commands: scannedPlugin.commands,
           agents: scannedPlugin.agents,
+          hooks: scannedPlugin.hooks,
+          hasMcp: scannedPlugin.hasMcp,
           installed: true, // Always true since it was found on disk
           incomplete: status.incomplete,
         };

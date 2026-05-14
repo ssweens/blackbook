@@ -57,13 +57,17 @@ function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
     const hasSkills = plugin.skills.length > 0;
     const hasCommands = plugin.commands.length > 0;
     const hasAgents = plugin.agents.length > 0;
+    const hasHooks = plugin.hooks.length > 0;
 
     const canInstallSkills = hasSkills && instance.skillsSubdir !== null;
     const canInstallCommands = hasCommands && instance.commandsSubdir !== null;
     const canInstallAgents = hasAgents && instance.agentsSubdir !== null;
 
+    // Claude supports anything its plugin system handles — hooks, MCP, LSP, output styles, etc.
+    // For non-Claude tools, we only sync component types they understand (skills/commands/agents).
+    const isClaude = instance.toolId === "claude-code";
     const supported = canInstallSkills || canInstallCommands || canInstallAgents ||
-                      (instance.toolId === "claude-code" && (plugin.hasMcp || plugin.hasLsp));
+                      (isClaude && (plugin.hasMcp || plugin.hasLsp || hasHooks));
 
     let installed = false;
     const enabled = instance.enabled;
@@ -101,8 +105,10 @@ function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
         }
       }
 
-      // For MCP/LSP-only plugins on Claude, check installed_plugins.json
-      if (!installed && (plugin.hasMcp || plugin.hasLsp) && instance.toolId === "claude-code") {
+      // Claude's installed_plugins.json is the AUTHORITATIVE record of what's installed
+      // (it knows about hooks/output-styles/MCP/LSP/etc., not just our scanned components).
+      // Fall back to it for ANY Claude plugin where component-scan didn't find files.
+      if (!installed && isClaude) {
         const installedPluginsPath = join(instance.configDir, "plugins/installed_plugins.json");
         if (existsSync(installedPluginsPath)) {
           try {
