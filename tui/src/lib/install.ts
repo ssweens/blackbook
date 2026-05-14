@@ -2,6 +2,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  writeFileSync,
   symlinkSync,
   unlinkSync,
   renameSync,
@@ -28,13 +29,17 @@ import {
   resolveAssetSourcePath,
   getPluginComponentConfig,
   setPluginComponentEnabled,
+  parseMarketplaces,
 } from "./config.js";
+import { loadConfig as loadYamlConfig } from "./config/loader.js";
+import { saveConfig as saveYamlConfig } from "./config/writer.js";
 import { getGitHubToken, isGitHubHost } from "./github.js";
 import type {
   Plugin,
   InstalledItem,
   ToolInstance,
   DiffInstanceRef,
+  FileStatus,
 } from "./types.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
 import { expandTilde, scanPluginContents } from "./path-utils.js";
@@ -425,7 +430,45 @@ export function uninstallPluginFromInstance(
     (i) => i.toolId === toolId && i.instanceId === instanceId,
   );
   if (!instance) return false;
-  return uninstallPluginItemsFromInstance(plugin.name, instance) > 0;
+  const removed = uninstallPluginItemsFromInstance(plugin.name, instance) > 0;
+  removeFromClaudeInstalledPluginsJson(instance, plugin.name, plugin.marketplace);
+  return removed;
+}
+
+/**
+ * Remove a plugin entry from Claude's `installed_plugins.json` for the given instance.
+ * This file is the authoritative "what plugins are installed" record for Claude Code;
+ * our scanner reads it, so we MUST keep it in sync on uninstall.
+ */
+function removeFromClaudeInstalledPluginsJson(
+  instance: ToolInstance,
+  pluginName: string,
+  marketplace: string,
+): void {
+  if (instance.toolId !== "claude-code") return;
+  const path = join(instance.configDir, "plugins", "installed_plugins.json");
+  if (!existsSync(path)) return;
+  try {
+    const content = readFileSync(path, "utf-8");
+    const data = JSON.parse(content);
+    if (!data?.plugins || typeof data.plugins !== "object") return;
+    const key = `${pluginName}@${marketplace}`;
+    let changed = false;
+    if (key in data.plugins) {
+      delete data.plugins[key];
+      changed = true;
+    }
+    // Also remove any bare-name entries (older Claude versions)
+    if (pluginName in data.plugins) {
+      delete data.plugins[pluginName];
+      changed = true;
+    }
+    if (changed) {
+      writeFileSync(path, JSON.stringify(data, null, 2) + "\n", "utf-8");
+    }
+  } catch (error) {
+    logError(`Failed to update ${path}`, error);
+  }
 }
 
 export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
@@ -440,6 +483,8 @@ export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
   // Uninstall from all enabled instances using the same method
   for (const instance of enabledInstances) {
     removedCount += uninstallPluginItemsFromInstance(plugin.name, instance);
+    // Claude tracks installed plugins in installed_plugins.json — must clean it.
+    removeFromClaudeInstalledPluginsJson(instance, plugin.name, plugin.marketplace);
   }
 
   try {
@@ -1152,10 +1197,16 @@ function getInstalledPluginsForClaudeInstance(
   // Don't early-return — even without plugins/cache, we still need to
   // scan skills/commands/agents directories below
 
+  // Only scan cache subdirs for marketplaces that are still configured
+  const configuredMarketplaceNames = new Set(
+    parseMarketplaces().map((m) => m.name)
+  );
+
   if (existsSync(claudePluginsDir)) try {
     const marketplaceDirs = readdirSync(claudePluginsDir);
 
     for (const marketplace of marketplaceDirs) {
+      if (!configuredMarketplaceNames.has(marketplace)) continue;
       const mpDir = join(claudePluginsDir, marketplace);
 
       try {
@@ -1199,7 +1250,8 @@ function getInstalledPluginsForClaudeInstance(
           }
         });
 
-        if (subDirs.length > 0 && subDirs.every((d) => /^[a-f0-9]+$/.test(d))) {
+        const isVersionDir = (d: string) => /^[a-f0-9]+$/.test(d) || /^\d+\.\d+/.test(d) || d === "unknown";
+        if (subDirs.length > 0 && subDirs.every(isVersionDir)) {
           subDirs.sort();
           contentDir = join(pluginDir, subDirs[subDirs.length - 1]);
         }
@@ -1446,6 +1498,415 @@ export function getInstalledPluginsForInstance(
   }
 
   return plugins;
+}
+
+export interface SkillInstallation {
+  toolId: string;
+  instanceId: string;
+  instanceName: string;
+  diskPath: string;
+  /** True if this specific install's SKILL.md differs from the source-repo copy. */
+  drifted?: boolean;
+}
+
+/**
+ * Git tracking status for a path in the source repo.
+ * - clean: path is tracked and matches HEAD
+ * - modified: tracked files inside have uncommitted changes (or staged)
+ * - untracked: dir/file exists but is not in git's index at all (or has untracked content)
+ * - unknown: source repo not a git repo, or check failed
+ */
+export type GitStatus = "clean" | "modified" | "untracked" | "unknown";
+
+/**
+ * Source-repo layout for a standalone skill.
+ * - canonical: `<repo>/skills/<name>/SKILL.md` (the desired location)
+ * - legacy-plugin: `<repo>/plugins/<name>/skills/<name>/SKILL.md` (wrapped in plugin folder, no marketplace)
+ * - missing: not present in source repo
+ */
+export type SkillSourceLayout = "canonical" | "legacy-plugin" | "missing";
+
+export interface StandaloneSkill {
+  name: string;
+  /** All tool instances where this skill is installed. */
+  installations: SkillInstallation[];
+  /** First/primary install path — used as the source for diff/preview. */
+  diskPath: string;
+  /** Convenience: toolId of the first installation. */
+  toolId: string;
+  /** Convenience: instanceName of the first installation. */
+  instanceName: string;
+  instanceId: string;
+  /** Source-repo path if a matching SKILL.md exists in the configured source repo. */
+  sourcePath?: string;
+  /** Layout style of the source-repo location. */
+  sourceLayout?: SkillSourceLayout;
+  /** True if the disk copy differs (structurally) from the source-repo copy. */
+  drifted?: boolean;
+  /** Git tracking state of the source-repo path ("clean" / "modified" / "untracked" / "unknown"). */
+  gitStatus?: GitStatus;
+}
+
+
+
+/**
+ * Get git status for every path under a repo. Returns a Map keyed by path
+ * relative to the repo root. Values are git's two-character status codes.
+ * Returns `null` if the directory isn't a git repo.
+ */
+export function getRepoGitStatus(repoRoot: string): Map<string, string> | null {
+  if (!existsSync(join(repoRoot, ".git"))) return null;
+  try {
+    const output = execFileSync(
+      "git",
+      ["-C", repoRoot, "status", "--porcelain", "--ignore-submodules"],
+      { encoding: "utf-8", maxBuffer: 16 * 1024 * 1024 },
+    );
+    const result = new Map<string, string>();
+    for (const line of output.split("\n")) {
+      if (line.length < 4) continue;
+      const code = line.slice(0, 2);
+      // Porcelain format: "XY path" where X is index status, Y is worktree.
+      // Path begins at column 3 (after "XY ").
+      let path = line.slice(3);
+      // Handle renames "oldname -> newname" by taking the new name.
+      const arrow = path.indexOf(" -> ");
+      if (arrow !== -1) path = path.slice(arrow + 4);
+      // Strip optional surrounding quotes (git quotes paths with special chars).
+      if (path.startsWith('"') && path.endsWith('"')) path = path.slice(1, -1);
+      result.set(path, code);
+    }
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+/** Compute the GitStatus for a given absolute path within a repo.
+ *  Works for both files (exact match) and directories (any descendant). */
+export function gitStatusForPath(
+  repoRoot: string,
+  absolutePath: string,
+  statusMap: Map<string, string> | null,
+): GitStatus {
+  if (!statusMap) return "unknown";
+  if (!absolutePath.startsWith(repoRoot)) return "unknown";
+  // Normalize to repo-relative path (no leading slash, no trailing slash).
+  let rel = absolutePath.slice(repoRoot.length);
+  if (rel.startsWith("/")) rel = rel.slice(1);
+  if (rel.endsWith("/")) rel = rel.slice(0, -1);
+  const relPrefix = rel + "/";
+
+  let hasUntracked = false;
+  let hasModified = false;
+  for (const [path, code] of statusMap) {
+    // Three match modes:
+    // 1) Exact path (file): "assets/AGENTS.md" == "assets/AGENTS.md"
+    // 2) Descendant of rel (rel is dir): "skills/foo/SKILL.md" startsWith "skills/foo/"
+    // 3) Ancestor of rel (rel is under an untracked dir): git reports "skills/" untracked
+    //    when the whole skills/ tree is new — our rel "skills/foo" sits under it.
+    const isExact = path === rel;
+    const isDescendant = path.startsWith(relPrefix);
+    // Git uses trailing slash on dir entries in porcelain output for untracked dirs.
+    const pathAsDirPrefix = path.endsWith("/") ? path : path + "/";
+    const isAncestor = relPrefix.startsWith(pathAsDirPrefix);
+    if (!isExact && !isDescendant && !isAncestor) continue;
+    if (code.startsWith("??")) hasUntracked = true;
+    else hasModified = true;
+  }
+  if (hasUntracked) return "untracked";
+  if (hasModified) return "modified";
+  return "clean";
+}
+
+/**
+ * Return skills on disk that are NOT owned by any installed plugin.
+ * These are standalone skills installed/synced directly (e.g. by blackbook).
+ */
+export function getStandaloneSkills(): StandaloneSkill[] {
+  const { plugins: allPlugins } = getAllInstalledPlugins();
+  const configuredMarketplaceNames = new Set(parseMarketplaces().map((m) => m.name));
+
+  // Build a GLOBAL set of skill names owned by any plugin from a configured marketplace.
+  // Skills from removed marketplaces (e.g. "playbook") are NOT in this set — they're standalone.
+  const globalPluginOwnedSkills = new Set<string>();
+  // The compound-engineering plugin (https://github.com/everyinc/compound-engineering-plugin)
+  // uses a custom installer that ships MORE skills than its claude `plugin.json` declares,
+  // prefixed with `ce-` for non-Claude tools. If that plugin is installed, treat all `ce-*`
+  // skills as plugin-owned.
+  let compoundEngineeringInstalled = false;
+  for (const p of allPlugins) {
+    if (!configuredMarketplaceNames.has(p.marketplace)) continue;
+    if (p.name === "compound-engineering" && p.installed) compoundEngineeringInstalled = true;
+    for (const s of p.skills ?? []) {
+      globalPluginOwnedSkills.add(s);
+      globalPluginOwnedSkills.add(`ce-${s}`);
+    }
+  }
+
+  // Aggregate installations per skill name across all tool instances.
+  const byName = new Map<string, StandaloneSkill>();
+  const instances = getToolInstances().filter((i) => i.kind === "tool" && i.enabled);
+
+  for (const instance of instances) {
+    if (!instance.skillsSubdir) continue;
+    const skillsDir = join(instance.configDir, instance.skillsSubdir);
+    if (!existsSync(skillsDir)) continue;
+
+    try {
+      for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
+        if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+        if (entry.name.startsWith(".")) continue;
+        const skillPath = join(skillsDir, entry.name);
+        if (!existsSync(join(skillPath, "SKILL.md"))) continue;
+        if (globalPluginOwnedSkills.has(entry.name)) continue;
+        if (compoundEngineeringInstalled && entry.name.startsWith("ce-")) continue;
+
+        const installation: SkillInstallation = {
+          toolId: instance.toolId,
+          instanceId: instance.instanceId,
+          instanceName: instance.name,
+          diskPath: skillPath,
+        };
+        const existing = byName.get(entry.name);
+        if (existing) {
+          existing.installations.push(installation);
+        } else {
+          byName.set(entry.name, {
+            name: entry.name,
+            installations: [installation],
+            diskPath: skillPath,
+            toolId: instance.toolId,
+            instanceId: instance.instanceId,
+            instanceName: instance.name,
+          });
+        }
+      }
+    } catch { /* skip unreadable dirs */ }
+  }
+
+  // Attach source-repo paths (and drift state) where the skill exists in the source repo.
+  const sourceRepo = getConfigRepoPath();
+  const repoGitStatus = sourceRepo ? getRepoGitStatus(sourceRepo) : null;
+  if (sourceRepo && existsSync(sourceRepo)) {
+    for (const skill of byName.values()) {
+      skill.sourceLayout = "missing";
+      const candidates = [
+        // Standalone skill layout: source_repo/skills/<name>/SKILL.md
+        join(sourceRepo, "skills", skill.name, "SKILL.md"),
+        // Playbook plugin layout: source_repo/plugins/<name>/skills/<name>/SKILL.md
+        join(sourceRepo, "plugins", skill.name, "skills", skill.name, "SKILL.md"),
+      ];
+      for (let i = 0; i < candidates.length; i++) {
+        const candidate = candidates[i];
+        if (existsSync(candidate)) {
+          const sourceDir = dirname(candidate);
+          skill.sourcePath = sourceDir;
+          skill.sourceLayout = i === 0 ? "canonical" : "legacy-plugin";
+          // Lightweight per-install drift: compare each disk SKILL.md to the source one.
+          try {
+            const sourceSkillMd = readFileSync(candidate, "utf-8");
+            for (const inst of skill.installations) {
+              const diskSkillMd = join(inst.diskPath, "SKILL.md");
+              if (!existsSync(diskSkillMd)) { inst.drifted = true; continue; }
+              inst.drifted = readFileSync(diskSkillMd, "utf-8") !== sourceSkillMd;
+            }
+            skill.drifted = skill.installations.some((i) => i.drifted);
+          } catch { /* ignore */ }
+          // Git status for the source path — is it committed?
+          skill.gitStatus = gitStatusForPath(sourceRepo, sourceDir, repoGitStatus);
+          break;
+        }
+      }
+    }
+  }
+
+  return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// ---------------------------------------------------------------------------
+// Standalone Skill Mutations
+// ---------------------------------------------------------------------------
+
+/** Remove a single installation of a skill from one tool instance. */
+export function uninstallSkillFromInstance(
+  skill: StandaloneSkill,
+  toolId: string,
+  instanceId: string,
+): boolean {
+  const inst = skill.installations.find(
+    (i) => i.toolId === toolId && i.instanceId === instanceId,
+  );
+  if (!inst) return false;
+  try {
+    rmSync(inst.diskPath, { recursive: true, force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Remove every installation of the skill. Returns the number successfully removed. */
+export function uninstallSkillAllInstances(skill: StandaloneSkill): number {
+  let removed = 0;
+  for (const inst of skill.installations) {
+    try {
+      rmSync(inst.diskPath, { recursive: true, force: true });
+      removed += 1;
+    } catch { /* skip */ }
+  }
+  return removed;
+}
+
+/**
+ * Delete a file from EVERYWHERE: every tool's target path + the source-repo source file +
+ * the config.yaml entry. The config.yaml and source-repo edits are left uncommitted so
+ * the user can review and commit themselves.
+ */
+export function deleteFileEverywhere(file: FileStatus): {
+  ok: boolean;
+  targets: number;
+  source: boolean;
+  config: boolean;
+  error?: string;
+} {
+  let targetsRemoved = 0;
+  for (const inst of file.instances) {
+    try {
+      if (existsSync(inst.targetPath)) {
+        rmSync(inst.targetPath, { force: true });
+        targetsRemoved += 1;
+      }
+    } catch { /* skip */ }
+  }
+
+  // Source-repo file removal.
+  let sourceRemoved = false;
+  const sourcePath = file.instances[0]?.sourcePath;
+  if (sourcePath && existsSync(sourcePath)) {
+    try {
+      rmSync(sourcePath, { force: true });
+      sourceRemoved = true;
+    } catch (e) {
+      return { ok: false, targets: targetsRemoved, source: false, config: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  // Config.yaml entry removal.
+  let configRemoved = false;
+  try {
+    const { config, configPath } = loadYamlConfig();
+    const before = config.files.length;
+    config.files = config.files.filter((f) => f.name !== file.name);
+    if (config.files.length < before) {
+      saveYamlConfig(config, configPath);
+      configRemoved = true;
+    }
+  } catch (e) {
+    return { ok: false, targets: targetsRemoved, source: sourceRemoved, config: false, error: e instanceof Error ? e.message : String(e) };
+  }
+
+  return { ok: true, targets: targetsRemoved, source: sourceRemoved, config: configRemoved };
+}
+
+/**
+ * Delete a plugin from EVERYWHERE on the local machine.
+ * This is exactly what uninstallPlugin() does (uninstall from every tool + clear cache +
+ * remove manifest entries) — surfaced as a separate user-facing action for clarity and
+ * parity with the skill/file delete actions. The marketplace remote copy is untouched
+ * (we cannot delete from the marketplace).
+ */
+export async function deletePluginEverywhere(plugin: Plugin): Promise<{
+  ok: boolean;
+  tools: number;
+  cache: boolean;
+  error?: string;
+}> {
+  let toolsRemoved = 0;
+  const enabled = getEnabledToolInstances();
+  for (const instance of enabled) {
+    try {
+      toolsRemoved += uninstallPluginItemsFromInstance(plugin.name, instance);
+      removeFromClaudeInstalledPluginsJson(instance, plugin.name, plugin.marketplace);
+    } catch { /* skip */ }
+  }
+  let cacheRemoved = false;
+  try {
+    const pluginDir = safePath(getPluginsCacheDir(), plugin.marketplace, plugin.name);
+    if (existsSync(pluginDir)) {
+      rmSync(pluginDir, { recursive: true, force: true });
+      cacheRemoved = true;
+    }
+  } catch (e) {
+    return { ok: false, tools: toolsRemoved, cache: false, error: e instanceof Error ? e.message : String(e) };
+  }
+  return { ok: true, tools: toolsRemoved, cache: cacheRemoved };
+}
+
+/**
+ * Delete a skill from EVERYWHERE: every tool disk install AND the source-repo copy.
+ * The source-repo deletion is left uncommitted so the user can review and commit themselves.
+ * Returns counts of what was removed.
+ */
+export function deleteSkillEverywhere(skill: StandaloneSkill): { ok: boolean; tools: number; source: boolean; error?: string } {
+  let toolsRemoved = 0;
+  for (const inst of skill.installations) {
+    try {
+      rmSync(inst.diskPath, { recursive: true, force: true });
+      toolsRemoved += 1;
+    } catch { /* skip */ }
+  }
+  let sourceRemoved = false;
+  if (skill.sourcePath && existsSync(skill.sourcePath)) {
+    try {
+      rmSync(skill.sourcePath, { recursive: true, force: true });
+      sourceRemoved = true;
+    } catch (e) {
+      return { ok: false, tools: toolsRemoved, source: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+  return { ok: true, tools: toolsRemoved, source: sourceRemoved };
+}
+
+/** Pull the skill from a specific disk installation back to the source repo. */
+export function pullbackSkillToSource(
+  skill: StandaloneSkill,
+  fromToolId: string,
+  fromInstanceId: string,
+): boolean {
+  if (!skill.sourcePath) return false;
+  const inst = skill.installations.find(
+    (i) => i.toolId === fromToolId && i.instanceId === fromInstanceId,
+  );
+  if (!inst) return false;
+  try {
+    rmSync(skill.sourcePath, { recursive: true, force: true });
+    cpSync(inst.diskPath, skill.sourcePath, { recursive: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Copy the skill from its current first installation into a target tool instance. */
+export function installSkillToInstance(
+  skill: StandaloneSkill,
+  toolId: string,
+  instanceId: string,
+): boolean {
+  if (skill.installations.length === 0) return false;
+  const sourcePath = skill.installations[0].diskPath;
+  const target = getToolInstances().find(
+    (i) => i.toolId === toolId && i.instanceId === instanceId,
+  );
+  if (!target || !target.skillsSubdir) return false;
+  const targetDir = join(target.configDir, target.skillsSubdir, skill.name);
+  try {
+    cpSync(sourcePath, targetDir, { recursive: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function getAllInstalledPlugins(): {

@@ -7,6 +7,7 @@ import { PluginPreview } from "../components/PluginPreview.js";
 import { PiPackagePreview } from "../components/PiPackagePreview.js";
 import { FilePreview } from "../components/FilePreview.js";
 import { filesToManagedItems, pluginsToManagedItems, piPackagesToManagedItems } from "../lib/managed-item.js";
+import { getToolInstances } from "../lib/config.js";
 import type { FileStatus } from "../lib/types.js";
 
 function getRange(selectedIdx: number, totalCount: number, maxHeight: number): string {
@@ -74,7 +75,51 @@ export function InstalledTab() {
     });
   }, [files, search, sortDir]);
 
-  const filteredSkills: import("../lib/types.js").Plugin[] = [];
+  const standaloneSkills = useStore((s) => (s as any).standaloneSkills as import("../lib/install.js").StandaloneSkill[] ?? []);
+
+  const filteredSkills = useMemo(() => {
+    const lowerSearch = search.toLowerCase();
+    const base = search
+      ? standaloneSkills.filter((s) => s.name.toLowerCase().includes(lowerSearch))
+      : standaloneSkills;
+    // Convert to ManagedItem so we can reuse ItemList
+    // Tools that support skills (any enabled tool instance with a skillsSubdir).
+    const skillCapableTools = new Set(
+      getToolInstances()
+        .filter((i) => i.kind === "tool" && i.enabled && !!i.skillsSubdir)
+        .map((i) => i.toolId),
+    );
+    return base.map((s): import("../lib/managed-item.js").ManagedItem => {
+      const toolIds = s.installations.map((i) => i.toolId);
+      const uniqueTools = Array.from(new Set(toolIds));
+      // If installed in every tool that supports skills, treat as "All tools" (empty array).
+      const isEverywhere =
+        uniqueTools.length === skillCapableTools.size &&
+        uniqueTools.every((t) => skillCapableTools.has(t));
+      return {
+        name: s.name,
+        kind: "file" as const,
+        marketplace: uniqueTools.join(", "),
+        description: `Standalone skill · ${uniqueTools.join(", ")}`,
+        installed: true,
+        incomplete: false,
+        scope: "user" as const,
+        tools: isEverywhere ? [] : uniqueTools,
+        instances: s.installations.map((i) => ({
+          toolId: i.toolId,
+          instanceId: i.instanceId,
+          instanceName: i.instanceName,
+          configDir: i.diskPath,
+          status: "synced" as const,
+          sourcePath: i.diskPath,
+          targetPath: i.diskPath,
+          linesAdded: 0,
+          linesRemoved: 0,
+        })),
+        _skill: s,
+      };
+    });
+  }, [standaloneSkills, search]);
 
   const filteredPlugins = useMemo(() => {
     const lowerSearch = search.toLowerCase();
@@ -148,7 +193,6 @@ export function InstalledTab() {
   const pluginDriftMap = useStore((s) => s.pluginDriftMap);
 
   const managedFiles    = useMemo(() => filesToManagedItems(filteredFiles), [filteredFiles]);
-  const managedSkills   = useMemo(() => pluginsToManagedItems(filteredSkills), [filteredSkills]);
   const managedPlugins  = useMemo(() => {
     return filteredPlugins.map((p) => {
       const item = pluginsToManagedItems([p])[0]!;
@@ -171,8 +215,8 @@ export function InstalledTab() {
       return file ? { kind: "file" as const, file } : null;
     }
     if (selectedIndex < fileCount + skillCount) {
-      const plugin = filteredSkills[selectedIndex - fileCount];
-      return plugin ? { kind: "plugin" as const, plugin } : null;
+      // Skills are StandaloneSkill, not Plugin — no detail view yet
+      return null;
     }
     if (selectedIndex < fileCount + skillCount + pluginCount) {
       const plugin = filteredPlugins[selectedIndex - fileCount - skillCount];
@@ -200,7 +244,7 @@ export function InstalledTab() {
       </Box>
 
       {(managedFiles.length > 0 || !filesLoaded) && (
-        <Box flexDirection="column">
+        <Box flexDirection="column" flexShrink={0}>
           <Box>
             <Text color="gray">  Files </Text>
             <Text color="gray" dimColor>
@@ -217,18 +261,23 @@ export function InstalledTab() {
         </Box>
       )}
 
-      {managedSkills.length > 0 && (
-        <Box flexDirection="column" marginTop={1}>
+      {filteredSkills.length > 0 && (
+        <Box flexDirection="column" marginTop={1} flexShrink={0}>
           <Box>
             <Text color="gray">  Skills </Text>
-            <Text color="gray" dimColor>{getRange(selectedIndex >= fileCount && selectedIndex < fileCount + skillCount ? selectedIndex - fileCount : 0, managedSkills.length, 4)}</Text>
+            <Text color="gray" dimColor>{getRange(selectedIndex >= fileCount && selectedIndex < fileCount + skillCount ? selectedIndex - fileCount : 0, filteredSkills.length, 4)}</Text>
           </Box>
-          <ItemList items={managedSkills} selectedIndex={selectedIndex >= fileCount && selectedIndex < fileCount + skillCount ? selectedIndex - fileCount : -1} maxHeight={4} columns={PLUGIN_COLUMNS} />
+          <ItemList
+            items={filteredSkills}
+            selectedIndex={selectedIndex >= fileCount && selectedIndex < fileCount + skillCount ? selectedIndex - fileCount : -1}
+            maxHeight={4}
+            columns={FILE_COLUMNS}
+          />
         </Box>
       )}
 
       {(managedPlugins.length > 0 || !installedPluginsLoaded) && (
-        <Box flexDirection="column" marginTop={1}>
+        <Box flexDirection="column" marginTop={1} flexShrink={0}>
           <Box>
             <Text color="gray">  Plugins </Text>
             <Text color="gray" dimColor>
@@ -246,7 +295,7 @@ export function InstalledTab() {
       )}
 
       {(managedPiPackages.length > 0 || !piPackagesLoaded) && (
-        <Box flexDirection="column" marginTop={1}>
+        <Box flexDirection="column" marginTop={1} flexShrink={0}>
           <Box>
             <Text color="gray">  Pi Packages </Text>
             <Text color="gray" dimColor>
@@ -282,3 +331,5 @@ export function InstalledTab() {
     </Box>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────

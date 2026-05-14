@@ -23,7 +23,7 @@ export type PluginAction = ItemAction;
 
 export interface FileAction {
   label: string;
-  type: "diff" | "missing" | "sync" | "pullback" | "back" | "status";
+  type: "diff" | "missing" | "sync" | "pullback" | "back" | "status" | "delete_everywhere";
   instance?: DiffInstanceSummary | DiffInstanceRef;
   statusColor?: "green" | "yellow" | "gray" | "red" | "magenta";
   statusLabel?: string;
@@ -187,6 +187,14 @@ export function buildPluginActions(
     }
 
     actions.push({ id: "back", label: "Back to plugin list", type: "back" });
+
+    // Destructive "delete everywhere" — nukes tool installs + plugin cache + manifest entries.
+    actions.push({
+      id: "delete_everywhere",
+      label: "🗑  Delete everywhere (all tools + plugin cache + manifest)",
+      type: "delete_everywhere",
+      statusColor: "red",
+    });
   } else {
     actions.push({ id: "install", label: "Install to all tools", type: "install" });
 
@@ -289,6 +297,12 @@ export function getFileActions(file: FileStatus): FileAction[] {
   }
 
   actions.push({ label: "Back to list", type: "back" });
+
+  actions.push({
+    label: "🗑  Delete everywhere (all tools + source repo + config.yaml entry)",
+    type: "delete_everywhere",
+    statusColor: "red",
+  });
   return actions;
 }
 
@@ -314,6 +328,104 @@ export function getPiPackageActions(pkg: PiPackage): ItemAction[] {
 
 import type { ManagedItem } from "./managed-item.js";
 import { getPluginToolStatus } from "./plugin-status.js";
+import type { StandaloneSkill } from "./install.js";
+
+/**
+ * Actions for a standalone skill: per-tool sync/uninstall, plus uninstall-all.
+ */
+export function getSkillActions(skill: StandaloneSkill): ItemAction[] {
+  const actions: ItemAction[] = [];
+
+  for (const inst of skill.installations) {
+    actions.push({
+      id: `status_${inst.toolId}_${inst.instanceId}`,
+      label: inst.instanceName,
+      type: "status",
+      statusColor: "green",
+      statusLabel: "Installed",
+    });
+  }
+
+  // Pullback to source repo (one per installation) when source repo has this skill.
+  if (skill.sourcePath) {
+    for (const inst of skill.installations) {
+      actions.push({
+        id: `pullback_${inst.toolId}_${inst.instanceId}`,
+        label: `Pull to source from ${inst.instanceName}${inst.drifted ? " (drifted)" : ""}`,
+        type: "pullback",
+        instance: {
+          toolId: inst.toolId,
+          instanceId: inst.instanceId,
+          instanceName: inst.instanceName,
+          configDir: inst.diskPath,
+        },
+      });
+    }
+  }
+
+  const installedKeys = new Set(
+    skill.installations.map((i) => `${i.toolId}:${i.instanceId}`),
+  );
+  const missingInstances = getToolInstances().filter(
+    (i) =>
+      i.kind === "tool" &&
+      i.enabled &&
+      !!i.skillsSubdir &&
+      !installedKeys.has(`${i.toolId}:${i.instanceId}`),
+  );
+  for (const inst of missingInstances) {
+    actions.push({
+      id: `install_tool_${inst.toolId}_${inst.instanceId}`,
+      label: `Sync to ${inst.name}`,
+      type: "install_tool",
+      toolStatus: {
+        toolId: inst.toolId,
+        instanceId: inst.instanceId,
+        name: inst.name,
+        installed: false,
+        enabled: true,
+        supported: true,
+      },
+    });
+  }
+
+  if (skill.installations.length > 1) {
+    for (const inst of skill.installations) {
+      actions.push({
+        id: `uninstall_tool_${inst.toolId}_${inst.instanceId}`,
+        label: `Uninstall from ${inst.instanceName}`,
+        type: "uninstall_tool",
+        toolStatus: {
+          toolId: inst.toolId,
+          instanceId: inst.instanceId,
+          name: inst.instanceName,
+          installed: true,
+          enabled: true,
+          supported: true,
+        },
+      });
+    }
+  }
+
+  actions.push({
+    id: "uninstall",
+    label: skill.installations.length > 1 ? "Uninstall from all tools" : "Uninstall",
+    type: "uninstall",
+  });
+
+  actions.push({ id: "back", label: "Back to list", type: "back" });
+
+  // Destructive "delete everywhere" — placed AFTER "Back to list" so it's the last
+  // item, requiring intentional navigation to reach.
+  const sourceFragment = skill.sourcePath ? " + source repo" : "";
+  actions.push({
+    id: "delete_everywhere",
+    label: `🗑  Delete everywhere (all tools${sourceFragment})`,
+    type: "delete_everywhere",
+    statusColor: "red",
+  });
+  return actions;
+}
 
 /**
  * Build actions for any ManagedItem — routes to the kind-specific builder.
@@ -330,6 +442,9 @@ export function buildItemActions(item: ManagedItem, drift?: PluginDrift): ItemAc
   }
   if (item._piPackage) {
     return getPiPackageActions(item._piPackage);
+  }
+  if (item._skill) {
+    return getSkillActions(item._skill);
   }
   return [];
 }

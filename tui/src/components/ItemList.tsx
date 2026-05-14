@@ -48,10 +48,7 @@ function getColumnValue(item: ManagedItem, col: ColumnDef): string {
 function getTypeLabel(item: ManagedItem): string {
   switch (item.kind) {
     case "plugin":
-      if (item.hasMcp) return "MCP";
-      if (item.skills && item.skills.length > 0 && !item.commands?.length && !item.agents?.length) return "Skill";
-      if (item.skills && item.skills.length > 0) return "Plugin";
-      return "Plugin";
+      return item.hasMcp ? "MCP" : "Plugin";
     case "file":
       return "File";
     case "config":
@@ -99,6 +96,8 @@ export interface ItemFlags {
   changed: boolean;
   sourceMissing: boolean;
   hasUpdate: boolean;
+  /** "clean" / "modified" / "untracked" / "unknown" / undefined (no source tracking) */
+  gitStatus?: "clean" | "modified" | "untracked" | "unknown";
 }
 
 export function computeItemFlags(item: ManagedItem): ItemFlags {
@@ -116,8 +115,9 @@ export function computeItemFlags(item: ManagedItem): ItemFlags {
       )
     : false;
   const hasUpdate = item.hasUpdate ?? false;
+  const gitStatus = item._skill?.gitStatus ?? item._file?.gitStatus;
 
-  return { installed, incomplete, changed, sourceMissing, hasUpdate };
+  return { installed, incomplete, changed, sourceMissing, hasUpdate, gitStatus };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -162,7 +162,7 @@ export interface ItemListProps {
   emptyMessage?: string;
 }
 
-export const ItemList = React.memo(function ItemList({
+export function ItemList({
   items,
   selectedIndex,
   maxHeight = 12,
@@ -221,7 +221,7 @@ export const ItemList = React.memo(function ItemList({
       })}
     </Box>
   );
-});
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Row Rendering
@@ -307,6 +307,18 @@ function ItemRow({ item, isSelected, flags, columns, colWidths }: ItemRowProps) 
         <>
           <Text color="gray"> · </Text>
           <Text color="blue">update available</Text>
+        </>
+      )}
+      {flags.gitStatus === "untracked" && (
+        <>
+          <Text color="gray"> · </Text>
+          <Text color="red">not in git</Text>
+        </>
+      )}
+      {flags.gitStatus === "modified" && (
+        <>
+          <Text color="gray"> · </Text>
+          <Text color="yellow">uncommitted</Text>
         </>
       )}
     </Box>

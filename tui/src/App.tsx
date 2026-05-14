@@ -37,7 +37,17 @@ import { SyncTab } from "./tabs/SyncTab.js";
 import { DiscoverTab } from "./tabs/DiscoverTab.js";
 import { InstalledTab } from "./tabs/InstalledTab.js";
 import { getPluginToolStatus, togglePluginComponent } from "./lib/plugin-status.js";
-import { syncPluginInstances, uninstallPluginFromInstance } from "./lib/install.js";
+import {
+  syncPluginInstances,
+  uninstallPluginFromInstance,
+  uninstallSkillAllInstances,
+  uninstallSkillFromInstance,
+  installSkillToInstance,
+  pullbackSkillToSource,
+  deleteSkillEverywhere,
+  deletePluginEverywhere,
+  deleteFileEverywhere,
+} from "./lib/install.js";
 import { resolvePluginSourcePaths, type PluginDrift } from "./lib/plugin-drift.js";
 import { computeItemDrift } from "./lib/item-drift.js";
 import { buildFileDiffTarget } from "./lib/diff.js";
@@ -45,7 +55,7 @@ import { getToolLifecycleCommand, detectInstallMethodMismatch } from "./lib/tool
 import { getPackageManager } from "./lib/config.js";
 import { setupSourceRepository, shouldShowSourceSetupWizard } from "./lib/source-setup.js";
 import { ItemList, FILE_COLUMNS, PLUGIN_COLUMNS } from "./components/ItemList.js";
-import { ItemDetail, PluginMetadata, FileMetadata, PiPackageMetadata, type ItemAction } from "./components/ItemDetail.js";
+import { ItemDetail, PluginMetadata, FileMetadata, PiPackageMetadata, SkillMetadata, type ItemAction } from "./components/ItemDetail.js";
 import { pluginToManagedItem, fileToManagedItem, piPackageToManagedItem } from "./lib/managed-item.js";
 import type { ManagedItem } from "./lib/managed-item.js";
 import { getMarketplaceDetailActions, type MarketplaceDetailContext } from "./lib/marketplace-detail.js";
@@ -79,6 +89,7 @@ export function App() {
   // ── Data: Marketplaces & Plugins ──
   const marketplaces = useStore((s) => s.marketplaces);
   const installedPlugins = useStore((s) => s.installedPlugins);
+  const standaloneSkills = useStore((s) => s.standaloneSkills);
   const installedPluginsLoaded = useStore((s) => s.installedPluginsLoaded);
 
   // ── Data: Files ──
@@ -168,6 +179,7 @@ export function App() {
   const pluginDriftMap = useStore((s) => s.pluginDriftMap);
   const setPluginDriftMap = useStore((s) => s.setPluginDriftMap);
   const [detailFile, setDetailFile] = useState<FileStatus | null>(null);
+  const [detailSkill, setDetailSkill] = useState<import("./lib/install.js").StandaloneSkill | null>(null);
   const [detailPiMarketplace, setDetailPiMarketplace] = useState<PiMarketplace | null>(null);
   const [detailToolKey, setDetailToolKey] = useState<string | null>(null);
   const [editingToolId, setEditingToolId] = useState<string | null>(null);
@@ -594,7 +606,16 @@ export function App() {
     return Math.max(pluginWidth, fileWidth, piPkgWidth);
   }, [filteredPlugins, filteredFiles, filteredPiPackages]);
 
+  const filteredStandaloneSkills = useMemo(() => {
+    if (tab !== "installed") return [];
+    const lowerSearch = search.toLowerCase();
+    return search
+      ? standaloneSkills.filter((s) => s.name.toLowerCase().includes(lowerSearch))
+      : standaloneSkills;
+  }, [tab, standaloneSkills, search]);
+
   const fileCount = filteredFiles.length;
+  const skillCount = filteredStandaloneSkills.length;
   const pluginCount = filteredPlugins.length;
   const piPkgCount = filteredPiPackages.length;
 
@@ -604,7 +625,7 @@ export function App() {
   const piPkgSectionCount = tab === "discover" ? (piPkgCount > 0 ? 1 : 0) : piPkgCount;
 
   const libraryCount = tab === "installed"
-    ? fileCount + pluginCount + piPkgCount
+    ? fileCount + skillCount + pluginCount + piPkgCount
     : pluginSectionCount + piPkgSectionCount;
 
   // Section boundaries for Tab/Shift+Tab navigation
@@ -616,6 +637,10 @@ export function App() {
       if (fileCount > 0) {
         result.push({ id: "files", start: offset, end: offset + fileCount - 1 });
         offset += fileCount;
+      }
+      if (skillCount > 0) {
+        result.push({ id: "skills", start: offset, end: offset + skillCount - 1 });
+        offset += skillCount;
       }
       if (pluginCount > 0) {
         result.push({ id: "plugins", start: offset, end: offset + pluginCount - 1 });
@@ -636,7 +661,7 @@ export function App() {
     }
 
     return result;
-  }, [tab, fileCount, pluginCount, piPkgCount, pluginSectionCount, piPkgSectionCount]);
+  }, [tab, fileCount, skillCount, pluginCount, piPkgCount, pluginSectionCount, piPkgSectionCount]);
 
   const currentSectionInfo = useMemo(() => {
     return sections.find((s) => selectedIndex >= s.start && selectedIndex <= s.end);
@@ -755,6 +780,7 @@ export function App() {
       | { kind: "plugin"; plugin: Plugin }
       | { kind: "piPackage"; piPackage: PiPackage }
       | { kind: "file"; file: FileStatus }
+      | { kind: "skill"; skill: import("./lib/install.js").StandaloneSkill }
       | { kind: "pluginSummary" }
       | { kind: "piPackageSummary" }
       | null => {
@@ -772,19 +798,24 @@ export function App() {
         return null;
       }
 
-      // Installed tab - inline lists (order: files, plugins, piPackages)
+      // Installed tab - inline lists (visual order: files, skills, plugins, piPackages)
       if (selectedIndex < fileCount) {
         const file = filteredFiles[selectedIndex];
         return file ? { kind: "file", file } : null;
       }
 
-      if (selectedIndex < fileCount + pluginCount) {
-        const plugin = filteredPlugins[selectedIndex - fileCount];
+      if (selectedIndex < fileCount + skillCount) {
+        const skill = filteredStandaloneSkills[selectedIndex - fileCount];
+        return skill ? { kind: "skill", skill } : null;
+      }
+
+      if (selectedIndex < fileCount + skillCount + pluginCount) {
+        const plugin = filteredPlugins[selectedIndex - fileCount - skillCount];
         return plugin ? { kind: "plugin", plugin } : null;
       }
 
       const piPkg =
-        filteredPiPackages[selectedIndex - fileCount - pluginCount];
+        filteredPiPackages[selectedIndex - fileCount - skillCount - pluginCount];
       return piPkg ? { kind: "piPackage", piPackage: piPkg } : null;
     },
     [
@@ -794,6 +825,7 @@ export function App() {
       filteredFiles,
       filteredPiPackages,
       fileCount,
+      skillCount,
       pluginCount,
       piPkgCount,
       pluginSectionCount,
@@ -819,6 +851,33 @@ export function App() {
     return fileToManagedItem(detailFile);
   }, [detailFile]);
 
+  const detailSkillItem = useMemo((): ManagedItem | null => {
+    if (!detailSkill) return null;
+    const uniqueTools = Array.from(new Set(detailSkill.installations.map((i) => i.toolId)));
+    return {
+      name: detailSkill.name,
+      kind: "file" as const,
+      marketplace: uniqueTools.join(", "),
+      description: `Standalone skill`,
+      installed: true,
+      incomplete: false,
+      scope: "user" as const,
+      tools: uniqueTools,
+      instances: detailSkill.installations.map((i) => ({
+        toolId: i.toolId,
+        instanceId: i.instanceId,
+        instanceName: i.instanceName,
+        configDir: i.diskPath,
+        status: "synced" as const,
+        sourcePath: i.diskPath,
+        targetPath: i.diskPath,
+        linesAdded: 0,
+        linesRemoved: 0,
+      })),
+      _skill: detailSkill,
+    };
+  }, [detailSkill]);
+
   const detailPiPkgItem = useMemo((): ManagedItem | null => {
     if (!detailPiPackage) return null;
     return piPackageToManagedItem(detailPiPackage);
@@ -830,6 +889,9 @@ export function App() {
     if (detailFile && detailFileItem) {
       return { item: detailFileItem, actions: buildItemActions(detailFileItem), metadata: <FileMetadata item={detailFileItem} /> };
     }
+    if (detailSkill && detailSkillItem) {
+      return { item: detailSkillItem, actions: buildItemActions(detailSkillItem), metadata: <SkillMetadata item={detailSkillItem} /> };
+    }
     if (detailPlugin && detailPluginItem) {
       return { item: detailPluginItem, actions: buildItemActions(detailPluginItem, drift), metadata: <PluginMetadata item={detailPluginItem} /> };
     }
@@ -837,7 +899,7 @@ export function App() {
       return { item: detailPiPkgItem, actions: buildItemActions(detailPiPkgItem), metadata: <PiPackageMetadata item={detailPiPkgItem} /> };
     }
     return null;
-  }, [detailFile, detailFileItem, detailPlugin, detailPluginItem, detailPluginDrift, pluginDriftMap, detailPiPackage, detailPiPkgItem]);
+  }, [detailFile, detailFileItem, detailSkill, detailSkillItem, detailPlugin, detailPluginItem, detailPluginDrift, pluginDriftMap, detailPiPackage, detailPiPkgItem]);
 
   const activeMarketplaceDetail = useMemo((): { detail: MarketplaceDetailContext; actions: ReturnType<typeof getMarketplaceDetailActions> } | null => {
     if (detailMarketplace) {
@@ -882,19 +944,29 @@ export function App() {
 
   const closeDetail = () => { setActionIndex(0); };
   const handleEscape = () => {
-    if (detailPlugin) {
-      setDetailPlugin(null); setDetailPluginDrift(null);
-      setComponentManagerMode(false); closeDetail();
-    } else if (detailFile) { setDetailFile(null); closeDetail();
-    } else if (activeMarketplaceDetail) { setDetailMarketplace(null); setDetailPiMarketplace(null); closeDetail();
-    } else if (detailPiPackage) { setDetailPiPackage(null); closeDetail();
-    } else if (detailTool) { setDetailToolKey(null);
-    } else if (discoverSubView) {
+    // Any kind of item detail open? Clear ALL detail states defensively —
+    // they should never all be set simultaneously, but a stale state
+    // from a previous interaction must not block the dismissal.
+    if (detailPlugin || detailFile || detailSkill || detailPiPackage) {
+      setDetailPlugin(null);
+      setDetailPluginDrift(null);
+      setDetailFile(null);
+      setDetailSkill(null);
+      setDetailPiPackage(null);
+      setComponentManagerMode(false);
+      closeDetail();
+      return;
+    }
+    if (activeMarketplaceDetail) { setDetailMarketplace(null); setDetailPiMarketplace(null); closeDetail(); return; }
+    if (detailTool) { setDetailToolKey(null); return; }
+    if (discoverSubView) {
       if (tab === "marketplaces" && marketplaceBrowseContext) {
         setDiscoverSubView(null); setSubViewIndex(0);
         setDetailMarketplace(marketplaceBrowseContext); setMarketplaceBrowseContext(null); setSearch("");
       } else { setDiscoverSubView(null); setSubViewIndex(0); }
-    } else if (tab === "marketplaces" && marketplaceBrowseContext) {
+      return;
+    }
+    if (tab === "marketplaces" && marketplaceBrowseContext) {
       setDetailMarketplace(marketplaceBrowseContext); setMarketplaceBrowseContext(null); setSearch("");
     }
   };
@@ -946,14 +1018,28 @@ export function App() {
       return;
     }
 
-    // Installed / Discover tabs — open item detail
+    // Installed / Discover tabs — open item detail.
+    // Clear any stale detail state from a previous interaction before opening.
+    const clearOtherDetails = (keep: "plugin" | "piPackage" | "file" | "skill") => {
+      if (keep !== "plugin") { setDetailPlugin(null); setDetailPluginDrift(null); }
+      if (keep !== "file") setDetailFile(null);
+      if (keep !== "skill") setDetailSkill(null);
+      if (keep !== "piPackage") setDetailPiPackage(null);
+    };
     if (selectedLibraryItem?.kind === "plugin") {
+      clearOtherDetails("plugin");
       openPluginDetail(selectedLibraryItem.plugin);
     } else if (selectedLibraryItem?.kind === "piPackage") {
+      clearOtherDetails("piPackage");
       setDetailPiPackage(selectedLibraryItem.piPackage);
       setActionIndex(0);
     } else if (selectedLibraryItem?.kind === "file") {
+      clearOtherDetails("file");
       setDetailFile(selectedLibraryItem.file);
+      setActionIndex(0);
+    } else if (selectedLibraryItem?.kind === "skill") {
+      clearOtherDetails("skill");
+      setDetailSkill(selectedLibraryItem.skill);
       setActionIndex(0);
     } else if (selectedLibraryItem?.kind === "pluginSummary") {
       setDiscoverSubView("plugins");
@@ -1160,10 +1246,18 @@ export function App() {
   useInput((input, key) => {
     if (toolModalAction) { handleToolModalInput(input, key); return; }
 
-    // Sticky notifications (warnings/errors) are acknowledged with any key.
+    // Esc must always close the topmost overlay — it takes priority over notification
+    // dismissal so users can back out even when a notification is showing.
     const stickyNotifications = notifications.filter(
       (n) => (n.type === "warning" || n.type === "error") && !n.spinner
     );
+    if (key.escape) {
+      stickyNotifications.forEach((n) => clearNotification(n.id));
+      handleEscape();
+      return;
+    }
+
+    // Sticky notifications (warnings/errors) are acknowledged with any other key.
     if (stickyNotifications.length > 0) {
       stickyNotifications.forEach((n) => clearNotification(n.id));
       return;
@@ -1391,7 +1485,7 @@ export function App() {
     if (!action) return;
 
     await handleItemAction(item, action, {
-      closeDetail: () => { setDetailFile(null); setDetailPlugin(null); setDetailPiPackage(null); closeDetail(); },
+      closeDetail: () => { setDetailFile(null); setDetailSkill(null); setDetailPlugin(null); setDetailPiPackage(null); closeDetail(); },
       openDiffForFile,
       openMissingSummaryForFile,
       setDiffTarget: (target) => useStore.setState({ diffTarget: target }),
@@ -1407,9 +1501,114 @@ export function App() {
       installPiPackage: doInstallPiPkg,
       uninstallPiPackage: doUninstallPiPkg,
       updatePiPackage: doUpdatePiPkg,
-      repairPiPackage: doRepairPiPkg,
       refreshDetailPiPackage,
       buildPluginDiffTarget: buildPluginDiffTargetCb,
+      // Skill mutations — wrap with spinner since copies may be slow for large skills.
+      uninstallSkillAll: async (skill) => {
+        const store = useStore.getState();
+        await withSpinner(
+          `Uninstalling ${skill.name} from all tools...`,
+          async () => { uninstallSkillAllInstances(skill); },
+          store.notify, store.clearNotification,
+        );
+        await useStore.getState().loadInstalledPlugins({ silent: true });
+        setDetailSkill(null);
+        closeDetail();
+      },
+      uninstallSkillFromInstance: async (skill, toolId, instanceId) => {
+        const store = useStore.getState();
+        await withSpinner(
+          `Uninstalling ${skill.name} from ${toolId}...`,
+          async () => { uninstallSkillFromInstance(skill, toolId, instanceId); },
+          store.notify, store.clearNotification,
+        );
+        await useStore.getState().loadInstalledPlugins({ silent: true });
+      },
+      installSkillToInstance: async (skill, toolId, instanceId) => {
+        const store = useStore.getState();
+        await withSpinner(
+          `Syncing ${skill.name} to ${toolId}...`,
+          async () => { installSkillToInstance(skill, toolId, instanceId); },
+          store.notify, store.clearNotification,
+        );
+        await useStore.getState().loadInstalledPlugins({ silent: true });
+      },
+      pullbackSkillFromInstance: async (skill, toolId, instanceId) => {
+        const store = useStore.getState();
+        await withSpinner(
+          `Pulling ${skill.name} from ${toolId} to source repo...`,
+          async () => { pullbackSkillToSource(skill, toolId, instanceId); },
+          store.notify, store.clearNotification,
+        );
+        await useStore.getState().loadInstalledPlugins({ silent: true });
+      },
+      deleteSkillEverywhere: async (skill) => {
+        const store = useStore.getState();
+        await withSpinner(
+          `Deleting ${skill.name} everywhere...`,
+          async () => {
+            const result = deleteSkillEverywhere(skill);
+            if (result.ok) {
+              const parts = [`${result.tools} tool installs`];
+              if (result.source) parts.push(`source repo (uncommitted — review & commit manually)`);
+              store.notify(`Deleted ${skill.name}: ${parts.join(", ")}`, "info");
+            } else {
+              store.notify(`Delete failed: ${result.error}`, "error");
+            }
+          },
+          store.notify, store.clearNotification,
+        );
+        await useStore.getState().loadInstalledPlugins({ silent: true });
+        setDetailSkill(null);
+        closeDetail();
+      },
+      deletePluginEverywhere: async (plugin) => {
+        const store = useStore.getState();
+        await withSpinner(
+          `Deleting ${plugin.name} everywhere...`,
+          async () => {
+            const result = await deletePluginEverywhere(plugin);
+            if (result.ok) {
+              const parts = [`${result.tools} tool installs`];
+              if (result.cache) parts.push("plugin cache");
+              store.notify(`Deleted ${plugin.name}: ${parts.join(", ")}`, "info");
+            } else {
+              store.notify(`Delete failed: ${result.error}`, "error");
+            }
+          },
+          store.notify, store.clearNotification,
+        );
+        await useStore.getState().loadInstalledPlugins({ silent: true });
+        setDetailPlugin(null);
+        setDetailPluginDrift(null);
+        closeDetail();
+      },
+      deleteFileEverywhere: async (file) => {
+        const store = useStore.getState();
+        await withSpinner(
+          `Deleting ${file.name} everywhere...`,
+          async () => {
+            const result = deleteFileEverywhere(file);
+            if (result.ok) {
+              const parts = [`${result.targets} tool targets`];
+              if (result.source) parts.push("source file (uncommitted)");
+              if (result.config) parts.push("config.yaml entry");
+              store.notify(`Deleted ${file.name}: ${parts.join(", ")}`, "info");
+            } else {
+              store.notify(`Delete failed: ${result.error}`, "error");
+            }
+          },
+          store.notify, store.clearNotification,
+        );
+        await useStore.getState().loadFiles({ silent: true });
+        setDetailFile(null);
+        closeDetail();
+      },
+      refreshDetailSkill: (skill) => {
+        const refreshed = useStore.getState().standaloneSkills.find((s) => s.name === skill.name);
+        if (refreshed) setDetailSkill(refreshed);
+        else { setDetailSkill(null); closeDetail(); }
+      },
     });
   };
 
@@ -1643,7 +1842,7 @@ export function App() {
           selectedIndex={actionIndex}
         />
       ) : (
-        <Box flexDirection="column" height={(({ sync: 19, discover: 20, installed: 20 } as Record<string, number>)[tab] ?? 25)}>
+        <Box flexDirection="column" height={(({ sync: 19, discover: 20, installed: 34 } as Record<string, number>)[tab] ?? 25)}>
           {tab === "discover" && <DiscoverTab />}
 
           {tab === "installed" && <InstalledTab />}

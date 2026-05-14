@@ -11,6 +11,8 @@
 
 import React from "react";
 import { Box, Text } from "ink";
+import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { join } from "node:path";
 import type { ManagedItem, ItemInstanceStatus } from "../lib/managed-item.js";
 import type { DiffInstanceSummary, DiffInstanceRef } from "../lib/types.js";
 
@@ -32,6 +34,7 @@ export interface ItemAction {
     | "install_tool"
     | "uninstall_tool"
     | "pullback"
+    | "delete_everywhere"
     | "back";
   instance?: DiffInstanceSummary | DiffInstanceRef;
   /** For install_tool / uninstall_tool actions — the target tool instance. */
@@ -248,6 +251,7 @@ export function PluginMetadata({ item }: { item: ManagedItem }) {
 export function FileMetadata({ item }: { item: ManagedItem }) {
   const isScoped = item.tools && item.tools.length > 0;
   const toolScope = isScoped ? item.tools!.join(", ") : "All tools";
+  const gitStatus = item._file?.gitStatus;
 
   return (
     <>
@@ -260,6 +264,16 @@ export function FileMetadata({ item }: { item: ManagedItem }) {
         <Box marginBottom={1}>
           <Text color="gray">Source: </Text>
           <Text>{item.fileSource} → {item.fileTarget || item.name}</Text>
+        </Box>
+      )}
+
+      {gitStatus && (
+        <Box marginBottom={1}>
+          <Text color="gray">Git: </Text>
+          {gitStatus === "clean" && <Text color="green">✓ clean (committed)</Text>}
+          {gitStatus === "modified" && <Text color="yellow">✎ modified (uncommitted changes)</Text>}
+          {gitStatus === "untracked" && <Text color="red">⚠ untracked (not yet added to git)</Text>}
+          {gitStatus === "unknown" && <Text color="gray" dimColor>unknown</Text>}
         </Box>
       )}
     </>
@@ -322,6 +336,171 @@ export function PiPackageMetadata({ item }: { item: ManagedItem }) {
           </Box>
         )}
       </Box>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Skill metadata
+// ---------------------------------------------------------------------------
+
+/** Parse the top-level frontmatter from a SKILL.md file. Returns name/description if present. */
+function parseSkillFrontmatter(skillDir: string): { description?: string; version?: string; author?: string } {
+  const path = join(skillDir, "SKILL.md");
+  if (!existsSync(path)) return {};
+  try {
+    const content = readFileSync(path, "utf-8");
+    if (!content.startsWith("---")) return {};
+    const end = content.indexOf("\n---", 3);
+    if (end < 0) return {};
+    const block = content.slice(3, end).trim();
+    const result: { description?: string; version?: string; author?: string } = {};
+    for (const raw of block.split(/\r?\n/)) {
+      const m = raw.match(/^([a-zA-Z_-]+):\s*(.*)$/);
+      if (!m) continue;
+      const key = m[1].toLowerCase();
+      let value = m[2].trim();
+      // Strip surrounding quotes
+      if ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"'))) {
+        value = value.slice(1, -1);
+      }
+      // Unescape doubled single-quotes (YAML)
+      value = value.replace(/''/g, "'");
+      if (key === "description") result.description = value;
+      else if (key === "version") result.version = value;
+      else if (key === "author") result.author = value;
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+/** Build a short 2-level directory tree for a skill. */
+function buildSkillTree(root: string, maxEntries = 15): string[] {
+  const lines: string[] = [];
+  if (!existsSync(root)) return lines;
+  try {
+    const top = readdirSync(root, { withFileTypes: true })
+      .filter((e) => !e.name.startsWith("."))
+      .sort((a, b) => {
+        // Directories first, then files
+        if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+    for (const entry of top.slice(0, maxEntries)) {
+      if (entry.isDirectory()) {
+        lines.push(`📁 ${entry.name}/`);
+        try {
+          const child = readdirSync(join(root, entry.name), { withFileTypes: true })
+            .filter((e) => !e.name.startsWith("."))
+            .sort((a, b) => a.name.localeCompare(b.name));
+          for (const c of child.slice(0, 6)) {
+            lines.push(`   │  ${c.isDirectory() ? "📁 " + c.name + "/" : "📄 " + c.name}`);
+          }
+          if (child.length > 6) lines.push(`   │  … (+${child.length - 6} more)`);
+        } catch { /* skip */ }
+      } else {
+        lines.push(`📄 ${entry.name}`);
+      }
+    }
+    if (top.length > maxEntries) lines.push(`… (+${top.length - maxEntries} more)`);
+  } catch { /* skip */ }
+  return lines;
+}
+
+/** Skill metadata: SKILL.md description + tools where installed + file tree. */
+export function SkillMetadata({ item }: { item: ManagedItem }) {
+  const diskPath = item.instances[0]?.sourcePath ?? "";
+  const fm = parseSkillFrontmatter(diskPath);
+  const tree = buildSkillTree(diskPath);
+  const isScoped = item.tools && item.tools.length > 0;
+  const toolScope = isScoped ? item.tools!.join(", ") : "All tools";
+  const skill = item._skill;
+
+  return (
+    <>
+      {fm.description && (
+        <Box marginBottom={1} flexDirection="column">
+          <Text color="gray">Description:</Text>
+          <Text>{fm.description}</Text>
+        </Box>
+      )}
+
+      {(fm.version || fm.author) && (
+        <Box marginBottom={1}>
+          {fm.version && (<><Text color="gray">Version: </Text><Text>{fm.version}</Text></>)}
+          {fm.version && fm.author && <Text color="gray">  ·  </Text>}
+          {fm.author && (<><Text color="gray">Author: </Text><Text>{fm.author}</Text></>)}
+        </Box>
+      )}
+
+      <Box marginBottom={1}>
+        <Text color="gray">Tools: </Text>
+        <Text color={isScoped ? "magenta" : "blue"}>{toolScope}</Text>
+      </Box>
+
+      {skill?.sourcePath ? (
+        <Box marginBottom={1} flexDirection="column">
+          <Box>
+            <Text color="gray">Source repo: </Text>
+            <Text color={skill.drifted ? "yellow" : "green"}>{skill.sourcePath}</Text>
+          </Box>
+          <Box marginLeft={1}>
+            <Text color="gray">Layout: </Text>
+            {skill.sourceLayout === "canonical" && (
+              <Text color="green">✓ canonical (skills/{skill.name}/)</Text>
+            )}
+            {skill.sourceLayout === "legacy-plugin" && (
+              <Text color="yellow">⚠ legacy plugin-wrapped (plugins/{skill.name}/skills/{skill.name}/)</Text>
+            )}
+          </Box>
+          <Box marginLeft={1}>
+            <Text color="gray">Git: </Text>
+            {skill.gitStatus === "clean" && (
+              <Text color="green">✓ clean (committed)</Text>
+            )}
+            {skill.gitStatus === "modified" && (
+              <Text color="yellow">✎ modified (uncommitted changes)</Text>
+            )}
+            {skill.gitStatus === "untracked" && (
+              <Text color="red">⚠ untracked (not yet added to git)</Text>
+            )}
+            {(!skill.gitStatus || skill.gitStatus === "unknown") && (
+              <Text color="gray" dimColor>unknown (source repo isn't a git repo?)</Text>
+            )}
+          </Box>
+          {skill.drifted && (
+            <Box marginLeft={1}>
+              <Text color="yellow">⚠  Disk differs from source — pullback available</Text>
+            </Box>
+          )}
+        </Box>
+      ) : (
+        <Box marginBottom={1}>
+          <Text color="gray">Source repo: </Text>
+          <Text color="gray" dimColor>(not tracked — use "Add to source repo" to start tracking)</Text>
+        </Box>
+      )}
+
+      <Box marginBottom={1} flexDirection="column">
+        <Text color="gray">Installed at:</Text>
+        {item.instances.map((inst) => (
+          <Box key={`${inst.toolId}:${inst.instanceId}`} marginLeft={1}>
+            <Text color="cyan">{inst.toolId}</Text>
+            <Text color="gray"> → {inst.sourcePath}</Text>
+          </Box>
+        ))}
+      </Box>
+
+      {tree.length > 0 && (
+        <Box marginBottom={1} flexDirection="column">
+          <Text bold>Contents:</Text>
+          {tree.map((line, idx) => (
+            <Text key={idx} color="gray">  {line}</Text>
+          ))}
+        </Box>
+      )}
     </>
   );
 }

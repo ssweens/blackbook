@@ -102,6 +102,7 @@ export interface ManagedItem {
   _plugin?: Plugin;
   _file?: FileStatus;
   _piPackage?: PiPackage;
+  _skill?: import("./install.js").StandaloneSkill;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

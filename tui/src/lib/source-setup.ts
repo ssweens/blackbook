@@ -87,10 +87,7 @@ function importConfigFromSource(sourceConfigPath: string, sourceRepo: string): v
     changed = true;
   }
 
-  // Auto-detect marketplace.json in source repo and add if not already present
-  if (ensureSourceRepoMarketplace(config, sourceRepo)) {
-    changed = true;
-  }
+  // Source repos are for syncing files/configs, not as plugin marketplaces
 
   if (changed) {
     saveConfig(config, targetConfigPath);
@@ -176,7 +173,6 @@ function getRepoRemoteUrl(repoPath: string): string | null {
 function updateSourceRepoInConfig(sourceRepo: string): void {
   const { config, configPath } = loadConfig();
   config.settings.source_repo = sourceRepo;
-  ensureSourceRepoMarketplace(config, sourceRepo);
   saveConfig(config, configPath);
 }
 
@@ -238,10 +234,7 @@ export async function pullSourceRepo(): Promise<void> {
 
   clearSourceStatusCache();
 
-  // After pull, ensure marketplace is registered if repo has one
-  if (ensureSourceRepoMarketplace(config, repoPath)) {
-    saveConfig(config, configPath);
-  }
+  // Source repos are for syncing files/configs, not as plugin marketplaces
 }
 
 export function shouldShowSourceSetupWizard(): boolean {

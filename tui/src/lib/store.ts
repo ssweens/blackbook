@@ -69,6 +69,7 @@ import { installTool, uninstallTool, updateTool, reinstallTool, detectInstallMet
 
 import {
   getAllInstalledPlugins,
+  getStandaloneSkills,
   installPlugin,
   uninstallPlugin,
   updatePlugin,
@@ -350,6 +351,7 @@ export const useStore = create<Store>((rawSet, get) => {
   marketplaces: [],
   installedPlugins: [],
   installedPluginsLoaded: false,
+  standaloneSkills: [] as import("./install.js").StandaloneSkill[],
   files: [],
   filesLoaded: false,
   tools: getToolInstances(),
@@ -955,7 +957,11 @@ export const useStore = create<Store>((rawSet, get) => {
       const allMarketplacePlugins = enrichedMarketplaces.flatMap((m) => m.plugins);
 
       // STEP 3: Scan installed skills, passing marketplace data for grouping
-      const { plugins: installedPlugins } = getAllInstalledPlugins(allMarketplacePlugins);
+      const configuredMarketplaceNames = new Set(marketplaces.map((m) => m.name));
+      const { plugins: scannedPlugins } = getAllInstalledPlugins();
+      // Only keep plugins whose marketplace is currently configured — removes
+      // stale entries from marketplaces that have been removed from config.
+      const installedPlugins = scannedPlugins.filter((p) => configuredMarketplaceNames.has(p.marketplace));
 
       // STEP 4: Update marketplace installed counts and status
       const updatedMarketplaces = enrichedMarketplaces.map((m) => ({
@@ -1013,7 +1019,10 @@ export const useStore = create<Store>((rawSet, get) => {
     const silent = options?.silent === true;
     if (!silent) set({ installedPluginsLoaded: false });
 
-    const { plugins: installed } = getAllInstalledPlugins();
+    const { plugins: allInstalled } = getAllInstalledPlugins();
+    // Filter to only plugins from currently-configured marketplaces
+    const configuredNames = new Set(parseMarketplaces().map((m) => m.name));
+    const installed = allInstalled.filter((p) => configuredNames.has(p.marketplace));
     const marketplaces = get().marketplaces.map((m) => ({
       ...m,
       plugins: m.plugins.map((p) => ({
@@ -1053,6 +1062,7 @@ export const useStore = create<Store>((rawSet, get) => {
     set({
       installedPlugins: installedWithStatus,
       installedPluginsLoaded: true,
+      standaloneSkills: getStandaloneSkills(),
       marketplaces,
       tools: getToolInstances(),
       managedTools: getManagedToolRows(),
@@ -1341,6 +1351,18 @@ export const useStore = create<Store>((rawSet, get) => {
           if (fileStatus.instances.length > 0) {
             files.push(fileStatus);
           }
+        }
+      }
+    }
+
+    // Attach git status to each file by checking its source path in the source repo.
+    if (effectiveRepo) {
+      const { getRepoGitStatus, gitStatusForPath } = await import("./install.js");
+      const repoStatus = getRepoGitStatus(effectiveRepo);
+      for (const f of files) {
+        const firstInst = f.instances[0];
+        if (firstInst?.sourcePath) {
+          f.gitStatus = gitStatusForPath(effectiveRepo, firstInst.sourcePath, repoStatus);
         }
       }
     }

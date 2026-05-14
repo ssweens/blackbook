@@ -100,6 +100,8 @@ export interface FileStatus {
   instances: FileInstanceStatus[];
   /** "file" for general files (always shown), "config" for tool configs (gated by config_management) */
   kind: "file" | "config";
+  /** Git tracking state of the source file in the source repo. */
+  gitStatus?: "clean" | "modified" | "untracked" | "unknown";
 }
 
 export type SyncPreviewItem =
@@ -168,6 +170,7 @@ export interface AppState {
   marketplaces: Marketplace[];
   installedPlugins: Plugin[];
   installedPluginsLoaded: boolean;
+  standaloneSkills: import("./install.js").StandaloneSkill[];
   files: FileStatus[];
   filesLoaded: boolean;
   tools: ToolInstance[];
@@ -321,7 +324,7 @@ export interface PiSettings {
 }
 
 // Section navigation for Discover/Installed tabs
-export type DiscoverSection = "files" | "plugins" | "piPackages";
+export type DiscoverSection = "files" | "skills" | "plugins" | "piPackages";
 
 // Sub-view state for drilling into Plugins or Pi Packages
 export type DiscoverSubView = "plugins" | "piPackages" | null;

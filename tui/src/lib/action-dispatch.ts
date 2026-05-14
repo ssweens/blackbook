@@ -49,6 +49,18 @@ export interface DispatchCallbacks {
 
   // Plugin diff support
   buildPluginDiffTarget: (plugin: Plugin, toolId: string, instanceId: string) => Promise<DiffTarget | null>;
+
+  // Skill actions
+  uninstallSkillAll?: (skill: import("./install.js").StandaloneSkill) => Promise<void>;
+  uninstallSkillFromInstance?: (skill: import("./install.js").StandaloneSkill, toolId: string, instanceId: string) => Promise<void>;
+  installSkillToInstance?: (skill: import("./install.js").StandaloneSkill, toolId: string, instanceId: string) => Promise<void>;
+  pullbackSkillFromInstance?: (skill: import("./install.js").StandaloneSkill, toolId: string, instanceId: string) => Promise<void>;
+  deleteSkillEverywhere?: (skill: import("./install.js").StandaloneSkill) => Promise<void>;
+  refreshDetailSkill?: (skill: import("./install.js").StandaloneSkill) => void;
+
+  // Plugin / file delete-everywhere
+  deletePluginEverywhere?: (plugin: Plugin) => Promise<void>;
+  deleteFileEverywhere?: (file: FileStatus) => Promise<void>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -100,6 +112,21 @@ export async function handleItemAction(
 
     case "pullback":
       return handlePullbackAction(item, action, callbacks);
+
+    case "delete_everywhere":
+      if (item._skill && callbacks.deleteSkillEverywhere) {
+        await callbacks.deleteSkillEverywhere(item._skill);
+        return true;
+      }
+      if (item._plugin && callbacks.deletePluginEverywhere) {
+        await callbacks.deletePluginEverywhere(item._plugin);
+        return true;
+      }
+      if (item._file && callbacks.deleteFileEverywhere) {
+        await callbacks.deleteFileEverywhere(item._file);
+        return true;
+      }
+      return false;
 
     default:
       return false;
@@ -200,6 +227,10 @@ async function handleUninstallAction(
     callbacks.refreshDetailPiPackage(item._piPackage);
     return true;
   }
+  if (item._skill && callbacks.uninstallSkillAll) {
+    await callbacks.uninstallSkillAll(item._skill);
+    return true;
+  }
   return false;
 }
 
@@ -225,15 +256,23 @@ async function handleInstallToolAction(
   action: ItemAction,
   callbacks: DispatchCallbacks,
 ): Promise<boolean> {
-  if (!item._plugin) return false;
-
   const toolId = action.instance?.toolId ?? action.toolStatus?.toolId;
   const instanceId = action.instance?.instanceId ?? action.toolStatus?.instanceId;
   if (!toolId || !instanceId) return false;
 
-  await callbacks.installPluginToInstance(item._plugin, toolId, instanceId);
-  callbacks.refreshDetailPlugin(item._plugin);
-  return true;
+  if (item._plugin) {
+    await callbacks.installPluginToInstance(item._plugin, toolId, instanceId);
+    callbacks.refreshDetailPlugin(item._plugin);
+    return true;
+  }
+
+  if (item._skill && callbacks.installSkillToInstance) {
+    await callbacks.installSkillToInstance(item._skill, toolId, instanceId);
+    callbacks.refreshDetailSkill?.(item._skill);
+    return true;
+  }
+
+  return false;
 }
 
 async function handleUninstallToolAction(
@@ -241,15 +280,23 @@ async function handleUninstallToolAction(
   action: ItemAction,
   callbacks: DispatchCallbacks,
 ): Promise<boolean> {
-  if (!item._plugin) return false;
-
   const toolId = action.instance?.toolId ?? action.toolStatus?.toolId;
   const instanceId = action.instance?.instanceId ?? action.toolStatus?.instanceId;
   if (!toolId || !instanceId) return false;
 
-  await callbacks.uninstallPluginFromInstance(item._plugin, toolId, instanceId);
-  callbacks.refreshDetailPlugin(item._plugin);
-  return true;
+  if (item._plugin) {
+    await callbacks.uninstallPluginFromInstance(item._plugin, toolId, instanceId);
+    callbacks.refreshDetailPlugin(item._plugin);
+    return true;
+  }
+
+  if (item._skill && callbacks.uninstallSkillFromInstance) {
+    await callbacks.uninstallSkillFromInstance(item._skill, toolId, instanceId);
+    callbacks.refreshDetailSkill?.(item._skill);
+    return true;
+  }
+
+  return false;
 }
 
 async function handlePullbackAction(
@@ -268,6 +315,12 @@ async function handlePullbackAction(
   if (item._plugin) {
     await callbacks.pullbackPluginInstance(item._plugin, instance);
     callbacks.refreshDetailPlugin(item._plugin);
+    return true;
+  }
+
+  if (item._skill && callbacks.pullbackSkillFromInstance) {
+    await callbacks.pullbackSkillFromInstance(item._skill, instance.toolId, instance.instanceId);
+    callbacks.refreshDetailSkill?.(item._skill);
     return true;
   }
 
