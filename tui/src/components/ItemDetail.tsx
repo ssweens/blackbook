@@ -15,6 +15,7 @@ import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ManagedItem, ItemInstanceStatus } from "../lib/managed-item.js";
 import type { DiffInstanceSummary, DiffInstanceRef } from "../lib/types.js";
+import { formatSourcePath } from "../lib/source-presentation.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Unified Action Type
@@ -446,8 +447,8 @@ export function SkillMetadata({ item }: { item: ManagedItem }) {
       {skill?.sourcePath ? (
         <Box marginBottom={1} flexDirection="column">
           <Box>
-            <Text color="gray">Source repo: </Text>
-            <Text color={skill.drifted ? "yellow" : "green"}>{skill.sourcePath}</Text>
+            <Text color="gray">Source: </Text>
+            <Text color={skill.drifted ? "yellow" : "green"}>{formatSourcePath(skill.sourcePath)}</Text>
           </Box>
           <Box marginLeft={1}>
             <Text color="gray">Layout: </Text>
@@ -481,8 +482,8 @@ export function SkillMetadata({ item }: { item: ManagedItem }) {
         </Box>
       ) : (
         <Box marginBottom={1}>
-          <Text color="gray">Source repo: </Text>
-          <Text color="gray" dimColor>(not tracked — use "Add to source repo" to start tracking)</Text>
+          <Text color="gray">Source: </Text>
+          <Text color="gray" dimColor>(not tracked in source repo)</Text>
         </Box>
       )}
 

@@ -12,6 +12,7 @@ import {
   type SourceRepoStatus,
   type SourceRepoChange,
 } from "../lib/source-setup.js";
+import { getSourceRepoRemoteUrl } from "../lib/source-presentation.js";
 
 type SettingKey = keyof Settings;
 
@@ -456,12 +457,14 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
         const value = settings[item.def.key];
         const isEditing = isSelected && editing;
 
-        // For source_repo: show the git remote URL instead of the internal
-        // local path. The local path is a tool-managed cache, not user content.
+        // For source_repo: show the git remote URL via the universal helper so
+        // it renders consistently with how other views describe the source repo.
+        // The internal cache path is never shown.
         let displayValue: string;
         if (item.def.key === "source_repo") {
-          if (repoStatus?.remoteUrl) {
-            displayValue = repoStatus.remoteUrl;
+          const remote = getSourceRepoRemoteUrl();
+          if (remote) {
+            displayValue = remote;
           } else if (repoStatus?.isGitRepo) {
             displayValue = "(local repo, no remote)";
           } else {
