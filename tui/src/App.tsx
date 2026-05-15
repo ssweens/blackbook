@@ -896,7 +896,7 @@ export function App() {
         instanceId: i.instanceId,
         instanceName: i.instanceName,
         configDir: i.diskPath,
-        status: "synced" as const,
+        status: (i.drifted ? "changed" : "synced") as "changed" | "synced",
         sourcePath: i.diskPath,
         targetPath: i.diskPath,
         linesAdded: 0,

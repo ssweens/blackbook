@@ -116,7 +116,9 @@ export function InstalledTab() {
           instanceId: i.instanceId,
           instanceName: i.instanceName,
           configDir: i.diskPath,
-          status: "synced" as const,
+          // "changed" propagates to ItemFlags.changed which renders the yellow
+          // 'changed' badge on the list row.
+          status: i.drifted ? "changed" as const : "synced" as const,
           sourcePath: i.diskPath,
           targetPath: i.diskPath,
           linesAdded: 0,
