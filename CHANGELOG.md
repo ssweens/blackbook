@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0] - 2026-05-14
+
+### Added
+- **Skills as first-class artifacts** in the Library view alongside Files, Plugins, and Pi Packages.
+  - Discovery: walks each enabled tool's `skillsSubdir` AND the source repo's `<repo>/skills/**` recursively (supports nested namespaces like `skills/gbrain/<name>/`).
+  - Multi-tool aggregation: one row per skill name showing all tool instances where it's installed ("All tools" when present everywhere).
+  - Source-only skills (in source repo but not installed yet) are surfaced as "source only" with `Sync to …` actions.
+  - Filters out plugin-owned skills; recognizes the compound-engineering custom installer's `ce-*` prefix when that plugin is installed.
+- **Skill detail view** with SKILL.md frontmatter (description, version, author), source repo path, layout indicator (canonical / legacy-plugin / missing), git status, all install paths, and a compact 2-level contents tree.
+- **Full skill action menu**: per-tool sync, per-tool re-sync (for drifted), per-tool pullback, per-tool uninstall, plus bulk actions:
+  - `Sync to all N missing tools` (when only missing > 1)
+  - `Re-sync from source to all N drifted tools (overwrites disk)` (when only drifted > 1)
+  - `Sync from source to all (N missing, M drifted)` (when both)
+  - `Uninstall from all tools`
+- **Delete-everywhere action** for skills, plugins, and files (always last in action menu, red, after "Back"). Removes from every tool install + source repo / plugin cache / config.yaml entry as appropriate.
+- **Skills in the Sync tab**: new `Skill drift (N)` section alongside Tool binary updates, File drift, and Plugin drift. Bulk `y to sync` handler covers all four artifact kinds uniformly.
+- **Section headers in the Sync list** to delineate tool / file / skill / plugin items.
+- **Git status indicators** for skills and files (`✓ clean (committed)` / `✎ modified (uncommitted changes)` / `⚠ untracked (not yet added to git)`), shown in list rows AND detail metadata.
+- **Layout detection** for skills in the source repo (canonical, legacy plugin-wrapped, missing). Informational only — migrations are manual via `git mv`.
+- **Universal source-path renderer** (`lib/source-presentation.ts`) — the internal `~/.cache/blackbook/source_repos/…` path is never shown to the user. Source paths render as `<owner>/<repo> · relative/path` everywhere (Settings, detail views, etc.).
+- **"Source Repo" in Settings** now shows the git remote URL (e.g. `git@github.com:owner/playbook.git`) instead of the internal cache path.
+- **Plugin hooks detection**: hook-only plugins (like `learning-output-style`) now show their `Hooks` component and per-tool install state, courtesy of falling back to Claude's `installed_plugins.json` as the source of truth for any non-component-scannable plugin.
+
+### Changed
+- **Unified detail state**: replaced 4 per-kind detail vars (`detailPlugin`, `detailFile`, `detailSkill`, `detailPiPackage`) and 3 separate refresh functions with a single discriminated union `detail: DetailArtifact | null` in the store. `setDetail` and `refreshDetail` cover all artifact kinds; `handleEscape` and `handleEnterOnList` no longer need 4-way branching.
+- **Unified drift vocabulary**: every user-facing surface now says "drifted" (badge, status row, action label, Sync tab section, banner). Internal type identifiers (`status: "changed"`, `driftKind: "target-changed"`) are unchanged.
+- **Skill install + drift state combined**: per-instance status row in the detail view shows `Installed (synced)` (green) or `Installed (drifted)` (yellow) — single label conveys both presence and content match.
+- **Compact skill detail metadata**: long skill descriptions truncated to 240 chars; "Installed at" capped to first 4 paths with `(+N more)`; contents tree shows top-level only. Title + key info now always visible on big skills (e.g. `agentic-app-creator` with 6 install paths and 33MB of bundled refs).
+- **Section navigation includes Skills** (Tab cycles Files → Skills → Plugins → Pi Packages).
+- **Installed tab height** increased and per-section `flexShrink={0}` added so Ink no longer squishes items off-screen when content overflows.
+- **Marketplace plugin detection**: when opening a plugin from the Marketplaces tab, we now look up the merged installed version (which has scanned hooks/components from the cache) so the detail view renders the same regardless of entry point.
+
+### Fixed
+- **Plugin uninstall state** persisted as "installed" after uninstall — Claude's `installed_plugins.json` was being read but never written. `uninstallPlugin`, `uninstallPluginFromInstance`, and `deletePluginEverywhere` now clean up that file so subsequent scans reflect the new state.
+- **Esc handler priority**: pressing Esc with a sticky notification showing previously had the notification eat the keypress, requiring two Esc presses (or another key) to dismiss the detail. Esc now runs before the sticky-notification consumer.
+- **`require is not defined`** in `deleteFileEverywhere` — replaced lazy `require()` calls with static ESM imports.
+- **ESM correctness**: `repairPiPackageManager` re-export, `writeFileSync` import in install.ts.
+- **selectedLibraryItem index map** now accounts for the Skills section (previously off-by-one when selecting a plugin).
+- **`require is not defined`** in `base.ts` `atomicWriteFile` / `atomicCopyDir` — replaced with top-level fs imports.
+
+### Refactored
+- Single unified `detail` state in the store with a discriminated union (`{ kind: "plugin"|"file"|"skill"|"piPackage"; data; drift? }`). `setDetailPlugin` / `setDetailPiPackage` kept as thin mirrors for backward compatibility with tests.
+- Single `refreshDetail()` in the store; `refreshDetailPlugin` and `refreshDetailPiPackage` become thin shims (plugin shim also recomputes drift).
+- `getSkillActions` action ordering: status rows → bulk → per-tool re-sync (drifted) → per-tool sync (missing) → per-tool pullback → per-tool uninstall → bulk uninstall → back → destructive delete.
+- Drift orientation in `computeFileDetail` aligned with GitHub-style convention (local = head/`+`, source = base/`-`). Three diff tests updated to match.
+
+### Tests
+- 446/446 passing.
+- New e2e helper `openPluginDetail()` in `app.e2e.test.tsx` that sets both legacy `detailPlugin` and new unified `detail` fields; 11 fixtures migrated.
+
 ## [0.18.1] - 2026-03-11
 
 ### Fixed
