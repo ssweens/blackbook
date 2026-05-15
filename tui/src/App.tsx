@@ -43,6 +43,7 @@ import {
   uninstallSkillAllInstances,
   uninstallSkillFromInstance,
   installSkillToInstance,
+  installSkillToAllMissing,
   pullbackSkillToSource,
   deleteSkillEverywhere,
   deletePluginEverywhere,
@@ -1554,6 +1555,20 @@ export function App() {
           async () => { installSkillToInstance(skill, toolId, instanceId); },
           store.notify, store.clearNotification,
         );
+        await useStore.getState().loadInstalledPlugins({ silent: true });
+      },
+      installSkillToAll: async (skill) => {
+        const store = useStore.getState();
+        let result: { installed: number; skipped: number; failed: number } = { installed: 0, skipped: 0, failed: 0 };
+        await withSpinner(
+          `Syncing ${skill.name} to all missing tools...`,
+          async () => { result = installSkillToAllMissing(skill); },
+          store.notify, store.clearNotification,
+        );
+        const parts: string[] = [];
+        if (result.installed > 0) parts.push(`installed to ${result.installed}`);
+        if (result.failed > 0) parts.push(`${result.failed} failed`);
+        store.notify(`${skill.name}: ${parts.join(", ") || "nothing to do"}`, result.failed > 0 ? "warning" : "info");
         await useStore.getState().loadInstalledPlugins({ silent: true });
       },
       pullbackSkillFromInstance: async (skill, toolId, instanceId) => {

@@ -54,6 +54,7 @@ export interface DispatchCallbacks {
   uninstallSkillAll?: (skill: import("./install.js").StandaloneSkill) => Promise<void>;
   uninstallSkillFromInstance?: (skill: import("./install.js").StandaloneSkill, toolId: string, instanceId: string) => Promise<void>;
   installSkillToInstance?: (skill: import("./install.js").StandaloneSkill, toolId: string, instanceId: string) => Promise<void>;
+  installSkillToAll?: (skill: import("./install.js").StandaloneSkill) => Promise<void>;
   pullbackSkillFromInstance?: (skill: import("./install.js").StandaloneSkill, toolId: string, instanceId: string) => Promise<void>;
   deleteSkillEverywhere?: (skill: import("./install.js").StandaloneSkill) => Promise<void>;
   refreshDetailSkill?: (skill: import("./install.js").StandaloneSkill) => void;
@@ -208,6 +209,14 @@ async function handleInstallAction(
   if (item._piPackage) {
     await callbacks.installPiPackage(item._piPackage);
     callbacks.refreshDetailPiPackage(item._piPackage);
+    return true;
+  }
+  // Skills: bulk "sync to all missing tools" action. Iterate every supported,
+  // enabled tool instance that doesn't already have this skill installed and
+  // sync from source-repo path.
+  if (item._skill && callbacks.installSkillToAll) {
+    await callbacks.installSkillToAll(item._skill);
+    callbacks.refreshDetailSkill?.(item._skill);
     return true;
   }
   return false;

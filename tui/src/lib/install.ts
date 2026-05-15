@@ -1964,6 +1964,29 @@ export function installSkillToInstance(
   }
 }
 
+/**
+ * Install a skill to every enabled, skill-capable tool instance that doesn't
+ * already have it. Returns counts of what happened.
+ */
+export function installSkillToAllMissing(skill: StandaloneSkill): { installed: number; skipped: number; failed: number } {
+  const installedKeys = new Set(
+    skill.installations.map((i) => `${i.toolId}:${i.instanceId}`),
+  );
+  const targets = getToolInstances().filter(
+    (i) =>
+      i.kind === "tool" &&
+      i.enabled &&
+      !!i.skillsSubdir &&
+      !installedKeys.has(`${i.toolId}:${i.instanceId}`),
+  );
+  let installed = 0; let failed = 0;
+  for (const t of targets) {
+    if (installSkillToInstance(skill, t.toolId, t.instanceId)) installed += 1;
+    else failed += 1;
+  }
+  return { installed, skipped: installedKeys.size, failed };
+}
+
 export function getAllInstalledPlugins(): {
   plugins: Plugin[];
   byTool: Record<string, Plugin[]>;

@@ -373,6 +373,15 @@ export function getSkillActions(skill: StandaloneSkill): ItemAction[] {
       !!i.skillsSubdir &&
       !installedKeys.has(`${i.toolId}:${i.instanceId}`),
   );
+  // Bulk "Sync to all" — single action that fans out to every missing tool.
+  // Surfaced before the per-tool sync actions so it's the most prominent option.
+  if (missingInstances.length > 1) {
+    actions.push({
+      id: "install_all",
+      label: `Sync to all ${missingInstances.length} missing tools`,
+      type: "install",
+    });
+  }
   for (const inst of missingInstances) {
     actions.push({
       id: `install_tool_${inst.toolId}_${inst.instanceId}`,

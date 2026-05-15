@@ -402,9 +402,11 @@ function buildSkillTree(root: string, maxEntries = 8): string[] {
 /** Skill metadata: SKILL.md description + tools where installed + file tree.
  *  Compact-layout to ensure title and key info stay on-screen for big skills. */
 export function SkillMetadata({ item }: { item: ManagedItem }) {
-  const diskPath = item.instances[0]?.sourcePath ?? "";
-  const fm = parseSkillFrontmatter(diskPath);
-  const tree = buildSkillTree(diskPath);
+  // Prefer source-repo path (works even when skill isn't installed anywhere yet);
+  // fall back to the first disk installation when source isn't tracked.
+  const skillPath = item._skill?.sourcePath ?? item.instances[0]?.sourcePath ?? "";
+  const fm = parseSkillFrontmatter(skillPath);
+  const tree = buildSkillTree(skillPath);
   const isScoped = item.tools && item.tools.length > 0;
   const isInstalledAnywhere = item.instances.length > 0;
   const toolScope = !isInstalledAnywhere
