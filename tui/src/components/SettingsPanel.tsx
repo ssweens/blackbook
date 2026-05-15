@@ -35,7 +35,7 @@ const SETTINGS_DEFS: SettingDef[] = [
     key: "source_repo",
     label: "Source Repo",
     type: "text",
-    description: "Path to the source repository for config/asset files",
+    description: "Git remote URL of the source repository (the local checkout is managed automatically)",
   },
   {
     key: "backup_retention",
@@ -456,6 +456,21 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
         const value = settings[item.def.key];
         const isEditing = isSelected && editing;
 
+        // For source_repo: show the git remote URL instead of the internal
+        // local path. The local path is a tool-managed cache, not user content.
+        let displayValue: string;
+        if (item.def.key === "source_repo") {
+          if (repoStatus?.remoteUrl) {
+            displayValue = repoStatus.remoteUrl;
+          } else if (repoStatus?.isGitRepo) {
+            displayValue = "(local repo, no remote)";
+          } else {
+            displayValue = "(not configured)";
+          }
+        } else {
+          displayValue = formatValue(item.def, value);
+        }
+
         return (
           <Box key={item.def.key}>
             <Text color={isSelected ? "cyan" : "white"}>
@@ -469,7 +484,7 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
               <TextInput value={editValue} onChange={setEditValue} />
             ) : (
               <Text color={isSelected ? "yellow" : "gray"}>
-                {formatValue(item.def, value)}
+                {displayValue}
               </Text>
             )}
           </Box>

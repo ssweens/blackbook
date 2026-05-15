@@ -254,6 +254,8 @@ export interface SourceRepoChange {
 export interface SourceRepoStatus {
   isGitRepo: boolean;
   branch: string;
+  /** Git remote URL (origin) if configured, e.g. git@github.com:owner/repo.git */
+  remoteUrl?: string;
   ahead: number;
   behind: number;
   hasUpstream: boolean;
@@ -299,6 +301,17 @@ async function computeSourceRepoStatus(fetchRemote: boolean): Promise<SourceRepo
     );
     const branch = branchOut.trim();
 
+    let remoteUrl: string | undefined;
+    try {
+      const { stdout: remoteOut } = await execFileAsync(
+        "git", ["remote", "get-url", "origin"],
+        { cwd: repoPath, timeout: 5000 },
+      );
+      remoteUrl = remoteOut.trim() || undefined;
+    } catch {
+      // No origin remote configured
+    }
+
     let ahead = 0;
     let behind = 0;
     let hasUpstream = false;
@@ -337,6 +350,7 @@ async function computeSourceRepoStatus(fetchRemote: boolean): Promise<SourceRepo
     return {
       isGitRepo: true,
       branch,
+      remoteUrl,
       ahead,
       behind,
       hasUpstream,
