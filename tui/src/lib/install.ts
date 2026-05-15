@@ -1987,6 +1987,41 @@ export function installSkillToAllMissing(skill: StandaloneSkill): { installed: n
   return { installed, skipped: installedKeys.size, failed };
 }
 
+/**
+ * Sync a skill from source to every enabled, skill-capable tool instance.
+ * Covers both directions of "not in sync":
+ *   - missing installations (file absent on tool disk)
+ *   - drifted installations (file present but content differs from source)
+ * Skips installs that are already synced. Returns counts.
+ */
+export function installSkillToAllNonSynced(skill: StandaloneSkill): { installed: number; resynced: number; skipped: number; failed: number } {
+  const installedByKey = new Map(
+    skill.installations.map((i) => [`${i.toolId}:${i.instanceId}`, i]),
+  );
+  const targets = getToolInstances().filter(
+    (i) => i.kind === "tool" && i.enabled && !!i.skillsSubdir,
+  );
+  let installed = 0; let resynced = 0; let skipped = 0; let failed = 0;
+  for (const t of targets) {
+    const key = `${t.toolId}:${t.instanceId}`;
+    const existing = installedByKey.get(key);
+    if (!existing) {
+      // Missing — install fresh from source.
+      if (installSkillToInstance(skill, t.toolId, t.instanceId)) installed += 1;
+      else failed += 1;
+      continue;
+    }
+    if (existing.drifted) {
+      // Drifted — overwrite disk with source.
+      if (installSkillToInstance(skill, t.toolId, t.instanceId)) resynced += 1;
+      else failed += 1;
+      continue;
+    }
+    skipped += 1;
+  }
+  return { installed, resynced, skipped, failed };
+}
+
 export function getAllInstalledPlugins(): {
   plugins: Plugin[];
   byTool: Record<string, Plugin[]>;

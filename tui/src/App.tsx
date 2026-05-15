@@ -44,6 +44,7 @@ import {
   uninstallSkillFromInstance,
   installSkillToInstance,
   installSkillToAllMissing,
+  installSkillToAllNonSynced,
   pullbackSkillToSource,
   deleteSkillEverywhere,
   deletePluginEverywhere,
@@ -1560,14 +1561,17 @@ export function App() {
       },
       installSkillToAll: async (skill) => {
         const store = useStore.getState();
-        let result: { installed: number; skipped: number; failed: number } = { installed: 0, skipped: 0, failed: 0 };
+        // Cover missing AND drifted instances in one action. Uses installSkillToAllNonSynced
+        // which inspects each tool: install if missing, overwrite if drifted, skip if synced.
+        let result: { installed: number; resynced: number; skipped: number; failed: number } = { installed: 0, resynced: 0, skipped: 0, failed: 0 };
         await withSpinner(
-          `Syncing ${skill.name} to all missing tools...`,
-          async () => { result = installSkillToAllMissing(skill); },
+          `Syncing ${skill.name} from source to all tools...`,
+          async () => { result = installSkillToAllNonSynced(skill); },
           store.notify, store.clearNotification,
         );
         const parts: string[] = [];
         if (result.installed > 0) parts.push(`installed to ${result.installed}`);
+        if (result.resynced > 0) parts.push(`re-synced ${result.resynced}`);
         if (result.failed > 0) parts.push(`${result.failed} failed`);
         store.notify(`${skill.name}: ${parts.join(", ") || "nothing to do"}`, result.failed > 0 ? "warning" : "info");
         await useStore.getState().loadInstalledPlugins({ silent: true });

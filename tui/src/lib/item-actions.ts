@@ -350,9 +350,40 @@ export function getSkillActions(skill: StandaloneSkill): ItemAction[] {
     });
   }
 
-  // For drifted installations, offer BOTH directions of resolution:
+  // Compute who's missing and who's drifted up front so we can order actions:
+  //   1) Bulk action first (most prominent)
+  //   2) Per-tool re-sync (drifted)
+  //   3) Per-tool sync (missing)
+  //   4) Per-tool pullback
+  const installedKeys = new Set(
+    skill.installations.map((i) => `${i.toolId}:${i.instanceId}`),
+  );
+  const missingInstances = getToolInstances().filter(
+    (i) =>
+      i.kind === "tool" &&
+      i.enabled &&
+      !!i.skillsSubdir &&
+      !installedKeys.has(`${i.toolId}:${i.instanceId}`),
+  );
+  const driftedCount = skill.installations.filter((i) => i.drifted).length;
+  const missingCount = missingInstances.length;
+
+  // Bulk action: covers BOTH missing and drifted in one keystroke. Label adapts.
+  if (missingCount + driftedCount > 0 && (missingCount + driftedCount > 1 || (missingCount > 0 && driftedCount > 0))) {
+    let label: string;
+    if (missingCount > 0 && driftedCount > 0) {
+      label = `Sync from source to all (${missingCount} missing, ${driftedCount} drifted)`;
+    } else if (missingCount > 1) {
+      label = `Sync to all ${missingCount} missing tools`;
+    } else {
+      label = `Re-sync from source to all ${driftedCount} drifted tools (overwrites disk)`;
+    }
+    actions.push({ id: "install_all", label, type: "install" });
+  }
+
+  // For drifted installations, offer BOTH directions of resolution per-tool:
   //   - 'Re-sync from source' (source -> disk): overwrites disk copy
-  //   - 'Pull to source' (disk -> source): overwrites source copy
+  //   - 'Pull to source'     (disk -> source): overwrites source copy
   if (skill.sourcePath) {
     const drifted = skill.installations.filter((i) => i.drifted);
     for (const inst of drifted) {
@@ -383,26 +414,6 @@ export function getSkillActions(skill: StandaloneSkill): ItemAction[] {
         },
       });
     }
-  }
-
-  const installedKeys = new Set(
-    skill.installations.map((i) => `${i.toolId}:${i.instanceId}`),
-  );
-  const missingInstances = getToolInstances().filter(
-    (i) =>
-      i.kind === "tool" &&
-      i.enabled &&
-      !!i.skillsSubdir &&
-      !installedKeys.has(`${i.toolId}:${i.instanceId}`),
-  );
-  // Bulk "Sync to all" — single action that fans out to every missing tool.
-  // Surfaced before the per-tool sync actions so it's the most prominent option.
-  if (missingInstances.length > 1) {
-    actions.push({
-      id: "install_all",
-      label: `Sync to all ${missingInstances.length} missing tools`,
-      type: "install",
-    });
   }
   for (const inst of missingInstances) {
     actions.push({
