@@ -59,6 +59,16 @@ export const SyncList = React.memo(function SyncList({
         const key = getItemKey(item);
         const isChecked = selectedKeys.has(key);
 
+        // Emit a section header before the FIRST item of each kind.
+        // Items are already grouped by kind (tool/file/plugin) in getSyncPreview.
+        const prevItem = actualIndex > 0 ? items[actualIndex - 1] : null;
+        const isFirstOfKind = !prevItem || prevItem.kind !== item.kind;
+        const sectionLabel = item.kind === "tool"
+          ? `Tool binary updates (${items.filter((i) => i.kind === "tool").length})`
+          : item.kind === "file"
+          ? `File drift (${items.filter((i) => i.kind === "file").length})`
+          : `Plugin drift (${items.filter((i) => i.kind === "plugin").length})`;
+
         let name: string;
         let statusLabel: string;
 
@@ -88,6 +98,11 @@ export const SyncList = React.memo(function SyncList({
 
         return (
           <Box key={`${item.kind}:${key}`} flexDirection="column">
+            {isFirstOfKind && (
+              <Box marginTop={actualIndex === 0 ? 0 : 1}>
+                <Text color="gray" bold>{sectionLabel}</Text>
+              </Box>
+            )}
             <Box>
               <Text color={isSelected ? "cyan" : "white"}>{indicator} </Text>
               <Text color={isChecked ? "green" : "gray"}>[{isChecked ? "x" : " "}] </Text>
