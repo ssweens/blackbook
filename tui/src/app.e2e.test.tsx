@@ -601,9 +601,9 @@ describe("App E2E — Installed Tab", () => {
     });
     const { stdout, unmount } = render(<App />);
     try {
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("changed"), 5000);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("drifted"), 5000);
       expect(stdout.lastFrame()).toContain("test-plugin");
-      expect(stdout.lastFrame()).toContain("changed");
+      expect(stdout.lastFrame()).toContain("drifted");
     } finally {
       unmount();
     }
@@ -750,7 +750,7 @@ describe("App E2E — Plugin Detail", () => {
     try {
       await waitForFrame(stdout.lastFrame, (f) => f.includes("Changed") || f.includes("+10"), 5000);
       const frame = stdout.lastFrame()!;
-      expect(frame).toContain("Changed");
+      expect(frame).toContain("Drifted");
       expect(frame).toContain("+10");
       expect(frame).toContain("-5");
     } finally {
@@ -815,7 +815,7 @@ describe("App E2E — File Detail (component rendering)", () => {
       } as any)
     );
     const frame = lastFrame()!;
-    expect(frame).toContain("Source changed");
+    expect(frame).toContain("Source drifted");
   });
 });
 

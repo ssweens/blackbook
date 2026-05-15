@@ -190,7 +190,7 @@ describe("ItemList", () => {
     const { lastFrame } = render(
       React.createElement(ItemList, { items, selectedIndex: 0 }),
     );
-    expect(lastFrame()).toContain("changed");
+    expect(lastFrame()).toContain("drifted");
   });
 
   it("shows update available badge for pi-package", () => {

@@ -102,9 +102,9 @@ export const SyncList = React.memo(function SyncList({
 
           const parts: string[] = [];
           if (missingCount > 0) parts.push(`Missing: ${missingCount}`);
-          if (sourceChangedCount > 0) parts.push(`Source changed: ${sourceChangedCount}`);
-          if (targetChangedCount > 0) parts.push(`Target changed: ${targetChangedCount}`);
-          if (bothChangedCount > 0) parts.push(`Both changed: ${bothChangedCount}`);
+          if (sourceChangedCount > 0) parts.push(`Source drifted: ${sourceChangedCount}`);
+          if (targetChangedCount > 0) parts.push(`Target drifted: ${targetChangedCount}`);
+          if (bothChangedCount > 0) parts.push(`Both drifted: ${bothChangedCount}`);
           statusLabel = parts.join(" · ");
         }
 

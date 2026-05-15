@@ -60,19 +60,19 @@ export function SyncPreview({ item }: SyncPreviewProps) {
           )}
           {sourceChangedInstances.length > 0 && (
             <>
-              <Text color="gray">{item.missingInstances.length > 0 ? " · " : ""}Source changed: </Text>
+              <Text color="gray">{item.missingInstances.length > 0 ? " · " : ""}Source drifted: </Text>
               <Text color="yellow">{sourceChangedInstances.join(", ")}</Text>
             </>
           )}
           {targetChangedInstances.length > 0 && (
             <>
-              <Text color="gray">{(item.missingInstances.length > 0 || sourceChangedInstances.length > 0) ? " · " : ""}Target changed: </Text>
+              <Text color="gray">{(item.missingInstances.length > 0 || sourceChangedInstances.length > 0) ? " · " : ""}Target drifted: </Text>
               <Text color="magenta">{targetChangedInstances.join(", ")}</Text>
             </>
           )}
           {bothChangedInstances.length > 0 && (
             <>
-              <Text color="gray">{(item.missingInstances.length > 0 || sourceChangedInstances.length > 0 || targetChangedInstances.length > 0) ? " · " : ""}Both changed: </Text>
+              <Text color="gray">{(item.missingInstances.length > 0 || sourceChangedInstances.length > 0 || targetChangedInstances.length > 0) ? " · " : ""}Both drifted: </Text>
               <Text color="red">{bothChangedInstances.join(", ")}</Text>
             </>
           )}

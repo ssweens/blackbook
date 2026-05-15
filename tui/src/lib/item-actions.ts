@@ -105,7 +105,7 @@ export function buildPluginActions(
           toolStatus: status,
           instance: summary,
           statusColor: "yellow",
-          statusLabel: "Changed",
+          statusLabel: "Drifted",
         });
       } else {
         actions.push({
@@ -249,13 +249,13 @@ export function getFileActions(file: FileStatus): FileAction[] {
       const totalRemoved = diffTarget.files.reduce((sum, f) => sum + f.linesRemoved, 0);
       const summary: DiffInstanceSummary = { ...instance, totalAdded, totalRemoved };
 
-      let statusLabel = "Source changed";
+      let statusLabel = "Source drifted";
       let statusColor: "yellow" | "magenta" | "red" = "yellow";
       if (inst.driftKind === "target-changed") {
-        statusLabel = "Target changed";
+        statusLabel = "Target drifted";
         statusColor = "magenta";
       } else if (inst.driftKind === "both-changed") {
-        statusLabel = "Both changed";
+        statusLabel = "Both drifted";
         statusColor = "red";
       }
 

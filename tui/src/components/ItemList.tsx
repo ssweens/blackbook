@@ -298,7 +298,7 @@ function ItemRow({ item, isSelected, flags, columns, colWidths }: ItemRowProps) 
       {flags.changed && (
         <>
           <Text color="gray"> · </Text>
-          <Text color="yellow">changed</Text>
+          <Text color="yellow">drifted</Text>
         </>
       )}
       {flags.sourceMissing && (
