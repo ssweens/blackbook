@@ -139,6 +139,14 @@ export type SyncPreviewItem =
       driftedInstances: string[];
       /** When true, allow syncing instances with driftKind "both-changed" (force overwrite target with source) */
       forceBothChanged?: boolean;
+    }
+  | {
+      kind: "skill";
+      skill: import("./install.js").StandaloneSkill;
+      /** Tool instances that have the skill but with drift vs source. */
+      driftedInstances: string[];
+      /** Tool instances that are missing the skill entirely. */
+      missingInstances: string[];
     };
 
 export interface Marketplace {

@@ -15,8 +15,12 @@ export const SyncList = React.memo(function SyncList({
   selectedIndex,
   selectedKeys,
   getItemKey,
-  maxHeight = 12,
+  maxHeight = 16,
 }: SyncListProps) {
+  // Also wrap each row's outer Box in flexShrink={0} so Ink doesn't squish
+  // rows when the parent has a tight height constraint (rendering otherwise
+  // overlaps section headers with item rows). See the Installed-tab fix.
+
   const { visibleItems, startIndex, hasMore, hasPrev } = useMemo(() => {
     if (items.length <= maxHeight) {
       return { visibleItems: items, startIndex: 0, hasMore: false, hasPrev: false };
@@ -60,13 +64,15 @@ export const SyncList = React.memo(function SyncList({
         const isChecked = selectedKeys.has(key);
 
         // Emit a section header before the FIRST item of each kind.
-        // Items are already grouped by kind (tool/file/plugin) in getSyncPreview.
+        // Items are already grouped by kind (tool/file/skill/plugin) in getSyncPreview.
         const prevItem = actualIndex > 0 ? items[actualIndex - 1] : null;
         const isFirstOfKind = !prevItem || prevItem.kind !== item.kind;
         const sectionLabel = item.kind === "tool"
           ? `Tool binary updates (${items.filter((i) => i.kind === "tool").length})`
           : item.kind === "file"
           ? `File drift (${items.filter((i) => i.kind === "file").length})`
+          : item.kind === "skill"
+          ? `Skill drift (${items.filter((i) => i.kind === "skill").length})`
           : `Plugin drift (${items.filter((i) => i.kind === "plugin").length})`;
 
         let name: string;
@@ -78,6 +84,12 @@ export const SyncList = React.memo(function SyncList({
         } else if (item.kind === "tool") {
           name = item.name;
           statusLabel = `Update: v${item.installedVersion} → v${item.latestVersion}`;
+        } else if (item.kind === "skill") {
+          name = item.skill.name;
+          const parts: string[] = [];
+          if (item.missingInstances.length > 0) parts.push(`Missing: ${item.missingInstances.length}`);
+          if (item.driftedInstances.length > 0) parts.push(`Drifted: ${item.driftedInstances.length}`);
+          statusLabel = parts.join(" · ");
         } else {
           // item.kind === "file"
           name = item.file.name;
@@ -97,7 +109,7 @@ export const SyncList = React.memo(function SyncList({
         }
 
         return (
-          <Box key={`${item.kind}:${key}`} flexDirection="column">
+          <Box key={`${item.kind}:${key}`} flexDirection="column" flexShrink={0}>
             {isFirstOfKind && (
               <Box marginTop={actualIndex === 0 ? 0 : 1}>
                 <Text color="gray" bold>{sectionLabel}</Text>

@@ -426,6 +426,7 @@ export function App() {
   const getSyncItemKey = (item: import("./lib/types.js").SyncPreviewItem) => {
     if (item.kind === "plugin") return `plugin:${item.plugin.marketplace}:${item.plugin.name}`;
     if (item.kind === "tool") return `tool:${item.toolId}`;
+    if (item.kind === "skill") return `skill:${item.skill.name}`;
     return `file:${item.file.name}`;
   };
 
@@ -1880,7 +1881,7 @@ export function App() {
           selectedIndex={actionIndex}
         />
       ) : (
-        <Box flexDirection="column" height={(({ sync: 19, discover: 20, installed: 34 } as Record<string, number>)[tab] ?? 25)}>
+        <Box flexDirection="column" height={(({ sync: 30, discover: 20, installed: 34 } as Record<string, number>)[tab] ?? 25)}>
           {tab === "discover" && <DiscoverTab />}
 
           {tab === "installed" && <InstalledTab />}

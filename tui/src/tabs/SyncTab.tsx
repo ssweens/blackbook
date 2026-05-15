@@ -12,6 +12,9 @@ function getSyncItemKey(item: SyncPreviewItem): string {
   if (item.kind === "tool") {
     return `tool:${item.toolId}`;
   }
+  if (item.kind === "skill") {
+    return `skill:${item.skill.name}`;
+  }
   return `file:${item.file.name}`;
 }
 

@@ -240,6 +240,34 @@ function buildFileSyncPreview(files: FileStatus[]): SyncPreviewItem[] {
   return preview;
 }
 
+function buildSkillSyncPreview(
+  skills: import("./install.js").StandaloneSkill[],
+  toolInstances: ReturnType<typeof getToolInstances>,
+): SyncPreviewItem[] {
+  const preview: SyncPreviewItem[] = [];
+  if (!skills || skills.length === 0) return preview;
+  if (!toolInstances) return preview;
+  // Tools that support skills (enabled, have skillsSubdir).
+  const skillCapable = toolInstances.filter(
+    (i) => i.kind === "tool" && i.enabled && !!i.skillsSubdir,
+  );
+  for (const skill of skills) {
+    if (!skill.sourcePath) continue; // can't sync without a source
+    const installedKeys = new Set(
+      skill.installations.map((i) => `${i.toolId}:${i.instanceId}`),
+    );
+    const missingInstances = skillCapable
+      .filter((i) => !installedKeys.has(`${i.toolId}:${i.instanceId}`))
+      .map((i) => i.name);
+    const driftedInstances = skill.installations
+      .filter((i) => i.drifted)
+      .map((i) => i.instanceName);
+    if (missingInstances.length === 0 && driftedInstances.length === 0) continue;
+    preview.push({ kind: "skill", skill, missingInstances, driftedInstances });
+  }
+  return preview;
+}
+
 function buildToolSyncPreview(
   tools: ManagedToolRow[],
   toolDetection: Record<string, ToolDetectionResult>
@@ -1623,9 +1651,12 @@ export const useStore = create<Store>((rawSet, get) => {
 
     const files = get().files;
     const toolSync = buildToolSyncPreview(get().managedTools, get().toolDetection);
+    const standaloneSkills = get().standaloneSkills;
+    const toolInstances = getToolInstances();
     return [
       ...toolSync,
       ...buildFileSyncPreview(files),
+      ...buildSkillSyncPreview(standaloneSkills, toolInstances),
       ...buildSyncPreview(pluginsForSync),
     ];
   },
@@ -1698,6 +1729,29 @@ export const useStore = create<Store>((rawSet, get) => {
         } else {
           errors.push(`Failed to update ${item.name}`);
         }
+      } else if (item.kind === "skill") {
+        // Sync the skill to every missing+drifted tool. installSkillToInstance
+        // overwrites the disk copy with the source-repo version.
+        const { installSkillToInstance } = await import("./install.js");
+        const installedKeys = new Set(
+          item.skill.installations.map((i) => `${i.toolId}:${i.instanceId}`),
+        );
+        const toolInstances = getToolInstances().filter(
+          (i) => i.kind === "tool" && i.enabled && !!i.skillsSubdir,
+        );
+        let any = false;
+        for (const inst of toolInstances) {
+          const key = `${inst.toolId}:${inst.instanceId}`;
+          const isMissing = !installedKeys.has(key);
+          const installation = item.skill.installations.find(
+            (i) => i.toolId === inst.toolId && i.instanceId === inst.instanceId,
+          );
+          const isDrifted = installation?.drifted === true;
+          if (!isMissing && !isDrifted) continue;
+          if (installSkillToInstance(item.skill, inst.toolId, inst.instanceId)) any = true;
+          else errors.push(`Failed to sync ${item.skill.name} to ${inst.name}`);
+        }
+        if (any) syncedItems += 1;
       }
     }
 
