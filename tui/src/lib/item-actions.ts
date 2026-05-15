@@ -337,17 +337,39 @@ export function getSkillActions(skill: StandaloneSkill): ItemAction[] {
   const actions: ItemAction[] = [];
 
   for (const inst of skill.installations) {
+    // Status combines presence + drift in one label so the user sees the
+    // complete state at a glance. Yellow when drifted (still installed but
+    // out of sync with source); green when synced.
+    const isDrifted = inst.drifted === true;
     actions.push({
       id: `status_${inst.toolId}_${inst.instanceId}`,
       label: inst.instanceName,
       type: "status",
-      statusColor: "green",
-      statusLabel: "Installed",
+      statusColor: isDrifted ? "yellow" : "green",
+      statusLabel: isDrifted ? "Installed (drifted)" : "Installed (synced)",
     });
   }
 
-  // Pullback to source repo (one per installation) when source repo has this skill.
+  // For drifted installations, offer BOTH directions of resolution:
+  //   - 'Re-sync from source' (source -> disk): overwrites disk copy
+  //   - 'Pull to source' (disk -> source): overwrites source copy
   if (skill.sourcePath) {
+    const drifted = skill.installations.filter((i) => i.drifted);
+    for (const inst of drifted) {
+      actions.push({
+        id: `install_tool_${inst.toolId}_${inst.instanceId}`,
+        label: `Re-sync from source to ${inst.instanceName} (overwrites disk)`,
+        type: "install_tool",
+        toolStatus: {
+          toolId: inst.toolId,
+          instanceId: inst.instanceId,
+          name: inst.instanceName,
+          installed: true,
+          enabled: true,
+          supported: true,
+        },
+      });
+    }
     for (const inst of skill.installations) {
       actions.push({
         id: `pullback_${inst.toolId}_${inst.instanceId}`,

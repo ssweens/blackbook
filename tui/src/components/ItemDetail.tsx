@@ -476,7 +476,7 @@ export function SkillMetadata({ item }: { item: ManagedItem }) {
           </Box>
           {skill.drifted && (
             <Box marginLeft={1}>
-              <Text color="yellow">⚠  Disk differs from source — pullback available</Text>
+              <Text color="yellow">⚠  Drifted from source — use "Pull to source" to keep disk, or bulk Sync tab to overwrite disk</Text>
             </Box>
           )}
         </Box>
