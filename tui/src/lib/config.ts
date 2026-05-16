@@ -740,13 +740,7 @@ export function addMarketplace(name: string, url: string): void {
 
 export function removeMarketplace(name: string): void {
   const { config, configPath } = loadYamlConfig();
-  // Remove from user-configured marketplaces if present.
   delete config.marketplaces[name];
-  // Also disable it in case it's a Claude-discovered marketplace that lives
-  // in known_marketplaces.json (which Blackbook can't modify).
-  const disabled = new Set(config.settings.disabled_marketplaces);
-  disabled.add(name);
-  config.settings.disabled_marketplaces = Array.from(disabled);
   saveYamlConfig(config, configPath);
 }
 
