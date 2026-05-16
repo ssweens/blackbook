@@ -387,7 +387,7 @@ export async function fetchMarketplace(
     let description = p.description || "";
     let homepage = p.homepage || "";
 
-    if (marketplace.source === "claude" && repoInfo && typeof source === "string" && source.startsWith("./")) {
+    if (repoInfo && typeof source === "string" && source.startsWith("./")) {
       const [repo, branch] = repoInfo;
       const remoteMetadata = await fetchRemotePluginMetadata(repo, branch, source);
       version = remoteMetadata.version ?? version;
