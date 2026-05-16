@@ -155,7 +155,8 @@ export function useListInput({
   return useCallback((input: string, key: InputKey): boolean => {
     if (key.upArrow) {
       if (discoverSubView) {
-        setSubViewIndex((i) => Math.max(0, i - 1));
+        // DiscoverTab reads selectedIndex from the store, so write there.
+        setSelectedIndex(Math.max(0, selectedIndex - 1));
       } else {
         setSelectedIndex(Math.max(0, selectedIndex - 1));
         if (tab === "sync") setSyncArmed(false);
@@ -167,7 +168,7 @@ export function useListInput({
       if (discoverSubView) {
         const pluginList = tab === "marketplaces" ? marketplaceBrowsePlugins : filteredPlugins;
         const maxSubViewIndex = discoverSubView === "plugins" ? pluginList.length - 1 : filteredPiPackages.length - 1;
-        setSubViewIndex((i) => Math.min(maxSubViewIndex, i + 1));
+        setSelectedIndex(Math.min(maxSubViewIndex, selectedIndex + 1));
       } else {
         setSelectedIndex(Math.min(maxIndex, selectedIndex + 1));
         if (tab === "sync") setSyncArmed(false);
@@ -179,10 +180,10 @@ export function useListInput({
       if (discoverSubView) {
         if (discoverSubView === "plugins") {
           const list = tab === "marketplaces" ? marketplaceBrowsePlugins : filteredPlugins;
-          const plugin = list[subViewIndex];
+          const plugin = list[selectedIndex];
           if (plugin) onOpenPluginDetail(plugin);
         } else {
-          const pkg = filteredPiPackages[subViewIndex];
+          const pkg = filteredPiPackages[selectedIndex];
           if (pkg) {
             setDetailPiPackage(pkg);
             setActionIndex(0);
