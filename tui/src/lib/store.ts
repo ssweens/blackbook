@@ -76,6 +76,7 @@ import {
   getPluginToolStatus,
   syncPluginInstances,
   manifestPath,
+  removeClaudeMarketplace,
 } from "./install.js";
 import { invalidatePluginToolStatusCache } from "./plugin-status.js";
 import type { PluginDrift } from "./plugin-drift.js";
@@ -108,7 +109,7 @@ interface Actions {
   /** Re-resolve `detail` from current store state; close if artifact no longer exists. */
   refreshDetail: () => void;
   addMarketplace: (name: string, url: string) => void;
-  removeMarketplace: (name: string) => void;
+  removeMarketplace: (name: string) => Promise<void>;
   updateMarketplace: (name: string) => Promise<void>;
   toggleMarketplaceEnabled: (name: string) => Promise<void>;
   toggleToolEnabled: (toolId: string, instanceId: string) => Promise<void>;
@@ -1909,17 +1910,23 @@ export const useStore = create<Store>((rawSet, get) => {
       });
   },
 
-  removeMarketplace: (name) => {
+  removeMarketplace: async (name) => {
     const { notify } = get();
-    
-    // Remove from config file
+    const marketplace = get().marketplaces.find((m) => m.name === name);
+
+    // For Claude-discovered marketplaces, run the native Claude CLI command to
+    // remove it from known_marketplaces.json on every Claude instance.
+    if (marketplace?.source === "claude") {
+      await removeClaudeMarketplace(name);
+    }
+
+    // Remove from Blackbook config (no-op if it wasn't user-added).
     removeMarketplaceFromConfig(name);
-    
-    // Update state
+
     set({
       marketplaces: get().marketplaces.filter((m) => m.name !== name),
     });
-    
+
     notify(`Removed marketplace "${name}"`, "success");
   },
 

@@ -167,6 +167,20 @@ function claudeInstalledPluginId(plugin: Pick<Plugin, "name" | "marketplace" | "
   return marketplace ? `${plugin.name}@${marketplace}` : plugin.name;
 }
 
+export async function removeClaudeMarketplace(marketplaceName: string): Promise<void> {
+  validateMarketplaceName(marketplaceName);
+  const claudeInstances = getEnabledToolInstances().filter((i) => i.toolId === "claude-code");
+  for (const instance of claudeInstances) {
+    try {
+      await execFileAsync("claude", ["plugin", "marketplace", "remove", marketplaceName], {
+        env: { ...process.env, CLAUDE_CONFIG_DIR: instance.configDir },
+      });
+    } catch (error) {
+      logError(`Failed to remove marketplace ${marketplaceName} from ${instance.name}`, error);
+    }
+  }
+}
+
 async function execClaudeCommand(
   instance: ToolInstance,
   command: "install" | "uninstall" | "enable" | "disable" | "update",
