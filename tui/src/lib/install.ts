@@ -34,6 +34,10 @@ import {
 import { loadConfig as loadYamlConfig } from "./config/loader.js";
 import { saveConfig as saveYamlConfig } from "./config/writer.js";
 import { getGitHubToken, isGitHubHost } from "./github.js";
+import {
+  pluginPrefixedSkillNames,
+  isSkillNameOwnedByInstalledPlugin,
+} from "./plugin-installer-conventions.js";
 import type {
   Plugin,
   InstalledItem,
@@ -1627,20 +1631,20 @@ export function getStandaloneSkills(): StandaloneSkill[] {
   const { plugins: allPlugins } = getAllInstalledPlugins();
   const configuredMarketplaceNames = new Set(parseMarketplaces().map((m) => m.name));
 
-  // Build a GLOBAL set of skill names owned by any plugin from a configured marketplace.
-  // Skills from removed marketplaces (e.g. "playbook") are NOT in this set — they're standalone.
+  // Build a GLOBAL set of skill names owned by any plugin from a configured
+  // marketplace. Skills from removed marketplaces (e.g. "playbook") are NOT in
+  // this set — they're standalone.
+  //
+  // Plugins with custom installers may ship their components under prefixed
+  // names (e.g. compound-engineering installs `ce-<name>` on non-Claude tools).
+  // pluginPrefixedSkillNames() expands every declared skill into its bare and
+  // any prefixed forms, driven by the single mapping in
+  // plugin-installer-conventions.ts.
   const globalPluginOwnedSkills = new Set<string>();
-  // The compound-engineering plugin (https://github.com/everyinc/compound-engineering-plugin)
-  // uses a custom installer that ships MORE skills than its claude `plugin.json` declares,
-  // prefixed with `ce-` for non-Claude tools. If that plugin is installed, treat all `ce-*`
-  // skills as plugin-owned.
-  let compoundEngineeringInstalled = false;
   for (const p of allPlugins) {
     if (!configuredMarketplaceNames.has(p.marketplace)) continue;
-    if (p.name === "compound-engineering" && p.installed) compoundEngineeringInstalled = true;
-    for (const s of p.skills ?? []) {
-      globalPluginOwnedSkills.add(s);
-      globalPluginOwnedSkills.add(`ce-${s}`);
+    for (const name of pluginPrefixedSkillNames(p)) {
+      globalPluginOwnedSkills.add(name);
     }
   }
 
@@ -1660,7 +1664,7 @@ export function getStandaloneSkills(): StandaloneSkill[] {
         const skillPath = join(skillsDir, entry.name);
         if (!existsSync(join(skillPath, "SKILL.md"))) continue;
         if (globalPluginOwnedSkills.has(entry.name)) continue;
-        if (compoundEngineeringInstalled && entry.name.startsWith("ce-")) continue;
+        if (isSkillNameOwnedByInstalledPlugin(entry.name, allPlugins)) continue;
 
         const installation: SkillInstallation = {
           toolId: instance.toolId,
@@ -1726,7 +1730,7 @@ export function getStandaloneSkills(): StandaloneSkill[] {
       if (byName.has(name)) continue;
       // Skip plugin-owned and compound-engineering ce-* if applicable.
       if (globalPluginOwnedSkills.has(name)) continue;
-      if (compoundEngineeringInstalled && name.startsWith("ce-")) continue;
+      if (isSkillNameOwnedByInstalledPlugin(name, allPlugins)) continue;
       const sourceDir = dirname(skillMd);
       byName.set(name, {
         name,

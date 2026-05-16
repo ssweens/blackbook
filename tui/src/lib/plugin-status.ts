@@ -10,6 +10,7 @@ import { safePath, validatePluginMetadata, logError } from "./validation.js";
 import { loadManifest, saveManifest } from "./manifest.js";
 import { getPluginSourcePath, instanceKey, createSymlink, isSymlink } from "./plugin-helpers.js";
 import { countGetPluginToolStatus } from "./perf.js";
+import { componentNameCandidates } from "./plugin-installer-conventions.js";
 
 export interface ToolInstallStatus {
   toolId: string;
@@ -73,43 +74,32 @@ function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
     const enabled = instance.enabled;
 
     if (enabled && supported) {
-      // Some plugins use a custom installer that prefixes component names when
-      // installing to non-Claude tools (e.g. compound-engineering installs
-      // 'ce-<name>' on Pi/OpenCode while keeping bare names on Claude/Amp).
-      // Recognize the prefixed form too so plugin detection isn't fooled.
-      const componentPrefixes = plugin.name === "compound-engineering" && !isClaude
-        ? ["", "ce-"]
-        : [""];
-
-      const candidateNames = (base: string) =>
-        componentPrefixes.map((p) => `${p}${base}`);
-
-      // Check for installed components by looking at actual files/symlinks
+      // Check for installed components, accounting for any installer naming
+      // conventions the plugin uses (e.g. ce-<name> prefix on non-Claude tools
+      // for compound-engineering). See plugin-installer-conventions.ts for the
+      // single source of truth on plugin→prefix mappings.
       if (canInstallSkills && instance.skillsSubdir) {
-        for (const skill of plugin.skills) {
-          for (const name of candidateNames(skill)) {
-            const base = join(instance.configDir, instance.skillsSubdir);
-            if (existsSync(safePath(base, name))) { installed = true; break; }
+        const base = join(instance.configDir, instance.skillsSubdir);
+        outer: for (const skill of plugin.skills) {
+          for (const name of componentNameCandidates(plugin, skill, instance.toolId)) {
+            if (existsSync(safePath(base, name))) { installed = true; break outer; }
           }
-          if (installed) break;
         }
       }
       if (!installed && canInstallCommands && instance.commandsSubdir) {
-        for (const cmd of plugin.commands) {
-          for (const name of candidateNames(cmd)) {
-            const base = join(instance.configDir, instance.commandsSubdir);
-            if (existsSync(safePath(base, `${name}.md`))) { installed = true; break; }
+        const base = join(instance.configDir, instance.commandsSubdir);
+        outer: for (const cmd of plugin.commands) {
+          for (const name of componentNameCandidates(plugin, cmd, instance.toolId)) {
+            if (existsSync(safePath(base, `${name}.md`))) { installed = true; break outer; }
           }
-          if (installed) break;
         }
       }
       if (!installed && canInstallAgents && instance.agentsSubdir) {
-        for (const agent of plugin.agents) {
-          for (const name of candidateNames(agent)) {
-            const base = join(instance.configDir, instance.agentsSubdir);
-            if (existsSync(safePath(base, `${name}.md`))) { installed = true; break; }
+        const base = join(instance.configDir, instance.agentsSubdir);
+        outer: for (const agent of plugin.agents) {
+          for (const name of componentNameCandidates(plugin, agent, instance.toolId)) {
+            if (existsSync(safePath(base, `${name}.md`))) { installed = true; break outer; }
           }
-          if (installed) break;
         }
       }
 
