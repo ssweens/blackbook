@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.1] - 2026-05-15
+
+### Added
+- **Track in source repo** action for skills not yet in the source repo — copies the skill, commits, and pushes in one action.
+- **Auto-commit+push** on all pullback/track actions so the user never needs to interact with git directly.
+
+### Changed
+- **`R` refresh** now pulls the source repo (`git pull --rebase --autostash`) before reloading data. Auto-refreshes after mutations skip git.
+- **Startup** awaits source repo pull before loading any data, so new skills pushed from elsewhere are visible immediately.
+- **Source repo pull** uses `--rebase --autostash` to handle divergent branches cleanly.
+
+### Removed
+- **Layout detection** (`canonical`/`legacy-plugin`/`missing`) from skill detail view — replaced with simple "in git" or "not in git".
+- **Multi-state git status** rendering (`clean`/`modified`/`untracked`/`unknown`) from detail views and list badges — replaced with single `not in git` badge for skills without a source repo path.
+
 ## [0.20.0] - 2026-05-15
 
 ### Added
