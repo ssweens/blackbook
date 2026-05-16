@@ -72,7 +72,7 @@ describe("marketplace", () => {
           return { ok: true, json: async () => mockMarketplaceJson } as Response;
         }
         if (urlStr.endsWith("/plugins/compound-engineering/.claude-plugin/plugin.json")) {
-          return { ok: true, json: async () => ({ version: "3.8.2", description: "new metadata" }) } as Response;
+          return { ok: true, text: async () => JSON.stringify({ version: "3.8.2", description: "new metadata" }), json: async () => ({ version: "3.8.2", description: "new metadata" }) } as Response;
         }
         if (urlStr.includes("api.github.com") && urlStr.includes("/contents/plugins/compound-engineering?")) {
           return { ok: true, json: async () => [{ name: "skills", path: "plugins/compound-engineering/skills", type: "dir" }] } as Response;

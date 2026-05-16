@@ -213,9 +213,22 @@ async function fetchRemotePluginMetadata(
     const headers: Record<string, string> = {};
     const token = getGitHubToken();
     if (token) headers.Authorization = `token ${token}`;
-    const res = await fetch(metadataUrl, { headers });
-    if (!res.ok) return {};
-    const metadata = await res.json();
+    let json: string;
+    try {
+      const res = await fetch(metadataUrl, { headers });
+      if (!res.ok) return {};
+      json = await res.text();
+    } catch {
+      // Fallback to curl when Node fetch fails.
+      try {
+        const curlArgs = ["-fsSL", "--max-time", "15"];
+        if (headers.Authorization) curlArgs.push("-H", `Authorization: ${headers.Authorization}`);
+        curlArgs.push(metadataUrl);
+        const { stdout } = await execFileAsync("curl", curlArgs, { timeout: 30000 });
+        json = stdout;
+      } catch { return {}; }
+    }
+    const metadata = JSON.parse(json);
     return {
       version: typeof metadata.version === "string" ? metadata.version : undefined,
       description: typeof metadata.description === "string" ? metadata.description : undefined,
@@ -303,34 +316,53 @@ export async function fetchMarketplace(
   const forceRefresh = options?.forceRefresh ?? false;
 
   const localPath = resolveLocalMarketplacePath(marketplace.url, marketplace.isLocal);
+
   if (localPath) {
-    // Local marketplace sources are intentionally ignored. The marketplace URL
-    // itself is the prescription surface; Blackbook must not read local cloned
-    // marketplace JSON or sibling plugin directories as source of truth.
+    // Local marketplace paths are not supported. Marketplaces are remote URLs.
     return [];
   }
 
-  let data: MarketplaceJson | null = forceRefresh
-    ? null
-    : (cacheGet(cacheKey, MARKETPLACE_CACHE_TTL_SECONDS) as MarketplaceJson | null);
+  let data: MarketplaceJson | null = null;
 
-  if (!data) {
-    try {
-      const headers: Record<string, string> = {};
-      const token = getGitHubToken();
-      if (token && isGitHubHost(marketplace.url)) {
-        headers.Authorization = `token ${token}`;
+  {
+    // Remote marketplace: use HTTP cache.
+    data = forceRefresh
+      ? null
+      : (cacheGet(cacheKey, MARKETPLACE_CACHE_TTL_SECONDS) as MarketplaceJson | null);
+
+    if (!data) {
+      try {
+        const headers: Record<string, string> = {};
+        const token = getGitHubToken();
+        if (token && isGitHubHost(marketplace.url)) {
+          headers.Authorization = `token ${token}`;
+        }
+        const res = await fetch(marketplace.url, { headers });
+        if (!res.ok) {
+          console.error(`Failed to fetch marketplace ${marketplace.url}: HTTP ${res.status}`);
+          return [];
+        }
+        data = await res.json();
+        cacheSet(cacheKey, data);
+      } catch {
+        // Node's built-in fetch can fail on some network configurations where
+        // curl works fine (undici connect timeout, DNS issues, etc.). Fall back
+        // to curl as a last resort.
+        try {
+          const curlArgs = ["-fsSL", "--max-time", "30"];
+          const token = getGitHubToken();
+          if (token && isGitHubHost(marketplace.url)) {
+            curlArgs.push("-H", `Authorization: token ${token}`);
+          }
+          curlArgs.push(marketplace.url);
+          const { stdout } = await execFileAsync("curl", curlArgs, { timeout: 60000 });
+          data = JSON.parse(stdout);
+          cacheSet(cacheKey, data);
+        } catch (curlError) {
+          console.error(`Failed to fetch marketplace ${marketplace.url}: ${curlError instanceof Error ? curlError.message : String(curlError)}`);
+          return [];
+        }
       }
-      const res = await fetch(marketplace.url, { headers });
-      if (!res.ok) {
-        console.error(`Failed to fetch marketplace ${marketplace.url}: HTTP ${res.status}`);
-        return [];
-      }
-      data = await res.json();
-      cacheSet(cacheKey, data);
-    } catch (error) {
-      console.error(`Failed to fetch marketplace ${marketplace.url}: ${error instanceof Error ? error.message : String(error)}`);
-      return [];
     }
   }
 
