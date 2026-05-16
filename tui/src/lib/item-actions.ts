@@ -387,6 +387,8 @@ export function getSkillActions(skill: StandaloneSkill): ItemAction[] {
   // For drifted installations, offer BOTH directions of resolution per-tool:
   //   - 'Re-sync from source' (source -> disk): overwrites disk copy
   //   - 'Pull to source'     (disk -> source): overwrites source copy
+  // When no sourcePath exists yet, pullback doubles as "Track in source repo"
+  // — it creates the skill in the source repo for the first time.
   if (skill.sourcePath) {
     const drifted = skill.installations.filter((i) => i.drifted);
     for (const inst of drifted) {
@@ -417,6 +419,21 @@ export function getSkillActions(skill: StandaloneSkill): ItemAction[] {
         },
       });
     }
+  } else if (skill.installations.length > 0) {
+    // No source-repo path — offer "Track in source repo" which is a pullback
+    // that creates the skill in <source_repo>/skills/<name>/ for the first time.
+    const first = skill.installations[0];
+    actions.push({
+      id: `pullback_${first.toolId}_${first.instanceId}`,
+      label: "Track in source repo",
+      type: "pullback",
+      instance: {
+        toolId: first.toolId,
+        instanceId: first.instanceId,
+        instanceName: first.instanceName,
+        configDir: first.diskPath,
+      },
+    });
   }
   for (const inst of missingInstances) {
     actions.push({

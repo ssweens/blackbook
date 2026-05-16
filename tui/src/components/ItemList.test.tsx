@@ -53,6 +53,7 @@ describe("computeItemFlags", () => {
       changed: false,
       sourceMissing: false,
       hasUpdate: false,
+      notInGit: false,
     });
   });
 

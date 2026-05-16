@@ -271,7 +271,6 @@ export function PluginMetadata({ item }: { item: ManagedItem }) {
 export function FileMetadata({ item }: { item: ManagedItem }) {
   const isScoped = item.tools && item.tools.length > 0;
   const toolScope = isScoped ? item.tools!.join(", ") : "All tools";
-  const gitStatus = item._file?.gitStatus;
 
   return (
     <>
@@ -287,15 +286,7 @@ export function FileMetadata({ item }: { item: ManagedItem }) {
         </Box>
       )}
 
-      {gitStatus && (
-        <Box marginBottom={1}>
-          <Text color="gray">Git: </Text>
-          {gitStatus === "clean" && <Text color="green">✓ clean (committed)</Text>}
-          {gitStatus === "modified" && <Text color="yellow">✎ modified (uncommitted changes)</Text>}
-          {gitStatus === "untracked" && <Text color="red">⚠ untracked (not yet added to git)</Text>}
-          {gitStatus === "unknown" && <Text color="gray" dimColor>unknown</Text>}
-        </Box>
-      )}
+
     </>
   );
 }
@@ -463,48 +454,14 @@ export function SkillMetadata({ item }: { item: ManagedItem }) {
         <Text color={isScoped ? "magenta" : "blue"}>{toolScope}</Text>
       </Box>
 
-      {skill?.sourcePath ? (
-        <Box marginBottom={1} flexDirection="column">
-          <Box>
-            <Text color="gray">Source: </Text>
-            <Text color={skill.drifted ? "yellow" : "green"}>{formatSourcePath(skill.sourcePath)}</Text>
-          </Box>
-          <Box marginLeft={1}>
-            <Text color="gray">Layout: </Text>
-            {skill.sourceLayout === "canonical" && (
-              <Text color="green">✓ canonical</Text>
-            )}
-            {skill.sourceLayout === "legacy-plugin" && (
-              <Text color="yellow">⚠ legacy plugin-wrapped</Text>
-            )}
-          </Box>
-          <Box marginLeft={1}>
-            <Text color="gray">Git: </Text>
-            {skill.gitStatus === "clean" && (
-              <Text color="green">✓ clean (committed)</Text>
-            )}
-            {skill.gitStatus === "modified" && (
-              <Text color="yellow">✎ modified (uncommitted changes)</Text>
-            )}
-            {skill.gitStatus === "untracked" && (
-              <Text color="red">⚠ untracked (not yet added to git)</Text>
-            )}
-            {(!skill.gitStatus || skill.gitStatus === "unknown") && (
-              <Text color="gray" dimColor>unknown (source repo isn't a git repo?)</Text>
-            )}
-          </Box>
-          {skill.drifted && (
-            <Box marginLeft={1}>
-              <Text color="yellow">⚠  Drifted from source — use "Pull to source" to keep disk, or bulk Sync tab to overwrite disk</Text>
-            </Box>
-          )}
-        </Box>
-      ) : (
-        <Box marginBottom={1}>
-          <Text color="gray">Source: </Text>
-          <Text color="gray" dimColor>(not tracked in source repo)</Text>
-        </Box>
-      )}
+      <Box marginBottom={1}>
+        <Text color="gray">Source: </Text>
+        {skill?.sourcePath ? (
+          <Text color={skill.drifted ? "yellow" : "green"}>{formatSourcePath(skill.sourcePath)}</Text>
+        ) : (
+          <Text color="red">not in git</Text>
+        )}
+      </Box>
 
       {item.instances.length > 0 ? (
         <Box marginBottom={1} flexDirection="column">

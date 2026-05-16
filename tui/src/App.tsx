@@ -55,7 +55,7 @@ import { computeItemDrift } from "./lib/item-drift.js";
 import { buildFileDiffTarget } from "./lib/diff.js";
 import { getToolLifecycleCommand, detectInstallMethodMismatch } from "./lib/tool-lifecycle.js";
 import { getPackageManager } from "./lib/config.js";
-import { setupSourceRepository, shouldShowSourceSetupWizard } from "./lib/source-setup.js";
+import { setupSourceRepository, shouldShowSourceSetupWizard, pullSourceRepo } from "./lib/source-setup.js";
 import { ItemList, FILE_COLUMNS, PLUGIN_COLUMNS } from "./components/ItemList.js";
 import { ItemDetail, PluginMetadata, FileMetadata, PiPackageMetadata, SkillMetadata, type ItemAction } from "./components/ItemDetail.js";
 import { pluginToManagedItem, fileToManagedItem, piPackageToManagedItem } from "./lib/managed-item.js";
@@ -1295,9 +1295,9 @@ export function App() {
     // Component manager mode
     if (componentManagerMode && detailPlugin) { handleComponentManagerInput(input, key); return; }
 
-    // Manual refresh of current tab
+    // Manual refresh: git pull source repo + reload everything
     if (input === "R") {
-      void refreshTabData(tab, { force: true });
+      void pullSourceRepo().then(() => refreshTabData(tab, { force: true }));
       return;
     }
 

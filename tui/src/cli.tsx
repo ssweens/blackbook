@@ -7,7 +7,7 @@ import { patchExistsSync, mark, measure, logReport, setStartupTime } from "./lib
 
 patchExistsSync();
 mark("startup");
-initializeStore();
+await initializeStore();
 render(<App />);
 
 const startupMs = measure("startup");

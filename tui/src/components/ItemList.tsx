@@ -100,8 +100,8 @@ export interface ItemFlags {
   changed: boolean;
   sourceMissing: boolean;
   hasUpdate: boolean;
-  /** "clean" / "modified" / "untracked" / "unknown" / undefined (no source tracking) */
-  gitStatus?: "clean" | "modified" | "untracked" | "unknown";
+  /** True when a skill exists on disk but is not in the source repo. */
+  notInGit: boolean;
 }
 
 export function computeItemFlags(item: ManagedItem): ItemFlags {
@@ -119,9 +119,9 @@ export function computeItemFlags(item: ManagedItem): ItemFlags {
       )
     : false;
   const hasUpdate = item.hasUpdate ?? false;
-  const gitStatus = item._skill?.gitStatus ?? item._file?.gitStatus;
+  const notInGit = Boolean(item._skill && !item._skill.sourcePath);
 
-  return { installed, incomplete, changed, sourceMissing, hasUpdate, gitStatus };
+  return { installed, incomplete, changed, sourceMissing, hasUpdate, notInGit };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -313,16 +313,10 @@ function ItemRow({ item, isSelected, flags, columns, colWidths }: ItemRowProps) 
           <Text color="blue">update available</Text>
         </>
       )}
-      {flags.gitStatus === "untracked" && (
+      {flags.notInGit && (
         <>
           <Text color="gray"> · </Text>
           <Text color="red">not in git</Text>
-        </>
-      )}
-      {flags.gitStatus === "modified" && (
-        <>
-          <Text color="gray"> · </Text>
-          <Text color="yellow">uncommitted</Text>
         </>
       )}
     </Box>

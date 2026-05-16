@@ -2195,11 +2195,10 @@ function startFileWatchers(refresh: () => Promise<void>, notify: (message: strin
   }
 }
 
-export function initializeStore(): void {
+export async function initializeStore(): Promise<void> {
   ensureConfigExists();
-  // No dynamic background refreshes; updates are startup + manual refresh only.
-  // Check source repo for updates at launch (silently no-ops if not configured/offline)
-  void pullSourceRepo();
+  // Pull source repo before any data loads so skills/files reflect the latest.
+  await pullSourceRepo();
   // Prime source repo status cache during startup so Settings tab renders immediately.
   void primeSourceRepoStatus();
 }

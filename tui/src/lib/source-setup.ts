@@ -228,7 +228,7 @@ export async function pullSourceRepo(): Promise<void> {
   const repoPath = expandPath(sourceRepo);
   if (!existsSync(join(repoPath, ".git"))) return;
 
-  await execFileAsync("git", ["pull"], { cwd: repoPath, timeout: 120000 }).catch(() => {
+  await execFileAsync("git", ["pull", "--rebase", "--autostash"], { cwd: repoPath, timeout: 120000 }).catch(() => {
     // Offline, not a git repo, etc. — silently continue
   });
 

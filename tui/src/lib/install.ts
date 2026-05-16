@@ -1574,13 +1574,6 @@ export interface SkillInstallation {
  */
 export type GitStatus = "clean" | "modified" | "untracked" | "unknown";
 
-/**
- * Source-repo layout for a standalone skill.
- * - canonical: `<repo>/skills/<name>/SKILL.md` (the desired location)
- * - legacy-plugin: `<repo>/plugins/<name>/skills/<name>/SKILL.md` (wrapped in plugin folder, no marketplace)
- * - missing: not present in source repo
- */
-export type SkillSourceLayout = "canonical" | "legacy-plugin" | "missing";
 
 export interface StandaloneSkill {
   name: string;
@@ -1595,8 +1588,7 @@ export interface StandaloneSkill {
   instanceId: string;
   /** Source-repo path if a matching SKILL.md exists in the configured source repo. */
   sourcePath?: string;
-  /** Layout style of the source-repo location. */
-  sourceLayout?: SkillSourceLayout;
+
   /** True if the disk copy differs (structurally) from the source-repo copy. */
   drifted?: boolean;
   /** Git tracking state of the source-repo path ("clean" / "modified" / "untracked" / "unknown"). */
@@ -1786,23 +1778,16 @@ export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSki
     }
 
     for (const skill of byName.values()) {
-      skill.sourceLayout = "missing";
-      // Candidates in priority order:
-      //   0. Canonical flat: source_repo/skills/<name>/SKILL.md
-      //   1. Nested in skills/: discovered via the recursive index (e.g. skills/gbrain/<name>/)
-      //   2. Legacy plugin-wrapped: source_repo/plugins/<name>/skills/<name>/SKILL.md
+      // Find the skill in the source repo. Priority:
+      //   1. Canonical flat: source_repo/skills/<name>/SKILL.md
+      //   2. Nested in skills/: discovered via the recursive index (e.g. skills/gbrain/<name>/)
       const flat = join(sourceRepo, "skills", skill.name, "SKILL.md");
       const indexed = sourceSkillIndex.get(skill.name);
-      const legacy = join(sourceRepo, "plugins", skill.name, "skills", skill.name, "SKILL.md");
-      const candidates: Array<{ path: string; layout: SkillSourceLayout }> = [];
-      if (existsSync(flat)) candidates.push({ path: flat, layout: "canonical" });
-      else if (indexed) candidates.push({ path: indexed, layout: "canonical" });
-      if (existsSync(legacy)) candidates.push({ path: legacy, layout: "legacy-plugin" });
-      for (const { path: candidate, layout } of candidates) {
-        if (existsSync(candidate)) {
+      const candidate = existsSync(flat) ? flat : indexed;
+      if (candidate && existsSync(candidate)) {
+        {
           const sourceDir = dirname(candidate);
           skill.sourcePath = sourceDir;
-          skill.sourceLayout = layout;
           // Lightweight per-install drift: compare each disk SKILL.md to the source one.
           try {
             const sourceSkillMd = readFileSync(candidate, "utf-8");
@@ -1815,7 +1800,6 @@ export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSki
           } catch { /* ignore */ }
           // Git status for the source path — is it committed?
           skill.gitStatus = gitStatusForPath(sourceRepo, sourceDir, repoGitStatus);
-          break;
         }
       }
     }
@@ -1974,18 +1958,47 @@ export function pullbackSkillToSource(
   fromToolId: string,
   fromInstanceId: string,
 ): boolean {
-  if (!skill.sourcePath) return false;
   const inst = skill.installations.find(
     (i) => i.toolId === fromToolId && i.instanceId === fromInstanceId,
   );
   if (!inst) return false;
+
+  const sourceRepo = getConfigRepoPath();
+  let targetPath = skill.sourcePath;
+  if (!targetPath) {
+    // No source-repo path yet — create the skill in the configured source repo
+    // under skills/<name>/ (canonical layout).
+    if (!sourceRepo) return false;
+    targetPath = join(sourceRepo, "skills", skill.name);
+  }
+
   try {
-    rmSync(skill.sourcePath, { recursive: true, force: true });
-    cpSync(inst.diskPath, skill.sourcePath, { recursive: true });
-    return true;
+    mkdirSync(dirname(targetPath), { recursive: true });
+    rmSync(targetPath, { recursive: true, force: true });
+    cpSync(inst.diskPath, targetPath, { recursive: true });
   } catch {
     return false;
   }
+
+  // Auto-commit and push so the user never needs to touch git.
+  if (sourceRepo && existsSync(join(sourceRepo, ".git"))) {
+    try {
+      execFileSync("git", ["-C", sourceRepo, "add", targetPath], { encoding: "utf-8", timeout: 10000 });
+      const verb = skill.sourcePath ? "update" : "track";
+      execFileSync("git", ["-C", sourceRepo, "commit", "-m", `${verb}: ${skill.name}`], {
+        encoding: "utf-8",
+        timeout: 10000,
+      });
+      execFileSync("git", ["-C", sourceRepo, "push"], {
+        encoding: "utf-8",
+        timeout: 30000,
+      });
+    } catch {
+      // Copy succeeded even if commit/push fails.
+    }
+  }
+
+  return true;
 }
 
 /** Copy the skill from its current first installation into a target tool instance. */
