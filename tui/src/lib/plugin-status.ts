@@ -73,35 +73,43 @@ function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
     const enabled = instance.enabled;
 
     if (enabled && supported) {
+      // Some plugins use a custom installer that prefixes component names when
+      // installing to non-Claude tools (e.g. compound-engineering installs
+      // 'ce-<name>' on Pi/OpenCode while keeping bare names on Claude/Amp).
+      // Recognize the prefixed form too so plugin detection isn't fooled.
+      const componentPrefixes = plugin.name === "compound-engineering" && !isClaude
+        ? ["", "ce-"]
+        : [""];
+
+      const candidateNames = (base: string) =>
+        componentPrefixes.map((p) => `${p}${base}`);
+
       // Check for installed components by looking at actual files/symlinks
       if (canInstallSkills && instance.skillsSubdir) {
         for (const skill of plugin.skills) {
-          const base = join(instance.configDir, instance.skillsSubdir);
-          const skillPath = safePath(base, skill);
-          if (existsSync(skillPath)) {
-            installed = true;
-            break;
+          for (const name of candidateNames(skill)) {
+            const base = join(instance.configDir, instance.skillsSubdir);
+            if (existsSync(safePath(base, name))) { installed = true; break; }
           }
+          if (installed) break;
         }
       }
       if (!installed && canInstallCommands && instance.commandsSubdir) {
         for (const cmd of plugin.commands) {
-          const base = join(instance.configDir, instance.commandsSubdir);
-          const cmdPath = safePath(base, `${cmd}.md`);
-          if (existsSync(cmdPath)) {
-            installed = true;
-            break;
+          for (const name of candidateNames(cmd)) {
+            const base = join(instance.configDir, instance.commandsSubdir);
+            if (existsSync(safePath(base, `${name}.md`))) { installed = true; break; }
           }
+          if (installed) break;
         }
       }
       if (!installed && canInstallAgents && instance.agentsSubdir) {
         for (const agent of plugin.agents) {
-          const base = join(instance.configDir, instance.agentsSubdir);
-          const agentPath = safePath(base, `${agent}.md`);
-          if (existsSync(agentPath)) {
-            installed = true;
-            break;
+          for (const name of candidateNames(agent)) {
+            const base = join(instance.configDir, instance.agentsSubdir);
+            if (existsSync(safePath(base, `${name}.md`))) { installed = true; break; }
           }
+          if (installed) break;
         }
       }
 
