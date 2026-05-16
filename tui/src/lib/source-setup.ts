@@ -228,9 +228,16 @@ export async function pullSourceRepo(): Promise<void> {
   const repoPath = expandPath(sourceRepo);
   if (!existsSync(join(repoPath, ".git"))) return;
 
-  await execFileAsync("git", ["pull", "--rebase", "--autostash"], { cwd: repoPath, timeout: 120000 }).catch(() => {
+  // This is an app cache, not a user workspace. Force-reset to origin so
+  // local dirt from pullback/track operations never blocks the pull.
+  try {
+    await execFileAsync("git", ["fetch", "origin"], { cwd: repoPath, timeout: 120000 });
+    const { stdout: branch } = await execFileAsync("git", ["branch", "--show-current"], { cwd: repoPath, timeout: 5000 });
+    const ref = `origin/${branch.trim() || "main"}`;
+    await execFileAsync("git", ["reset", "--hard", ref], { cwd: repoPath, timeout: 30000 });
+  } catch {
     // Offline, not a git repo, etc. — silently continue
-  });
+  }
 
   clearSourceStatusCache();
 
@@ -472,8 +479,12 @@ export async function pullSourceRepoChanges(): Promise<{ success: boolean; error
     return { success: false, error: "Not a git repository" };
   }
 
+  // This is an app cache, not a user workspace. Force-reset to origin.
   try {
-    await execFileAsync("git", ["pull", "--rebase"], { cwd: repoPath, timeout: 30000 });
+    await execFileAsync("git", ["fetch", "origin"], { cwd: repoPath, timeout: 120000 });
+    const { stdout: branch } = await execFileAsync("git", ["branch", "--show-current"], { cwd: repoPath, timeout: 5000 });
+    const ref = `origin/${branch.trim() || "main"}`;
+    await execFileAsync("git", ["reset", "--hard", ref], { cwd: repoPath, timeout: 30000 });
     clearSourceStatusCache();
     return { success: true };
   } catch (error) {

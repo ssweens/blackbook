@@ -32,7 +32,7 @@ describe("buildMenuItems", () => {
     );
 
     const actionIds = items.filter((item) => item.kind === "action").map((item) => item.id);
-    expect(actionIds).toContain("commit_push");
+    expect(actionIds).not.toContain("commit_push");
     expect(actionIds).toContain("pull");
   });
 });

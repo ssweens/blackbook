@@ -81,10 +81,11 @@ export function buildMenuItems(repoStatus: SourceRepoStatus | null): MenuItem[] 
   }
 
   if (repoStatus?.isGitRepo) {
-    if (repoStatus.hasChanges) {
-      items.push({ kind: "action", id: "commit_push", label: "Commit & push changes" });
+    if (repoStatus.behind > 0 || repoStatus.ahead > 0 || repoStatus.hasChanges || (!repoStatus.hasUpstream && repoStatus.changes.length > 0)) {
+      items.push({ kind: "action", id: "pull", label: "Reset to origin (drop local changes)" });
+    } else {
+      items.push({ kind: "action", id: "pull", label: "Check for updates" });
     }
-    items.push({ kind: "action", id: "pull", label: "Pull latest" });
   }
 
   return items;
@@ -414,15 +415,10 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
           return;
         }
         if (item.id === "pull") {
-          if (repoStatus?.hasChanges) {
-            setActionMessage("✗ Local changes detected. Commit or stash before pulling.");
-            return;
-          }
-
-          setActionMessage("Pulling...");
+          setActionMessage("Resetting app cache...");
           pullSourceRepoChanges().then((result) => {
             if (result.success) {
-              setActionMessage("✔ Pulled latest");
+              setActionMessage("✔ Cache reset to match remote");
               refreshRepoStatus({ force: true, fetchRemote: false });
             } else {
               setActionMessage(`✗ ${result.error}`);
