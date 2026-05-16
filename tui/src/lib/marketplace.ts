@@ -7,11 +7,12 @@ import { createHash } from "crypto";
 import { fileURLToPath } from "url";
 import { getCacheDir, getPiMarketplaces, getDisabledPiMarketplaces, getPackageManager } from "./config.js";
 import { getGitHubToken, isGitHubHost } from "./github.js";
-import { expandTilde, scanPluginContents } from "./path-utils.js";
+import { expandTilde } from "./path-utils.js";
 import type { Marketplace, Plugin, PiPackage, PiMarketplace, PiSettings, PiPackageSourceType, PackageManager } from "./types.js";
 
 export const MARKETPLACE_CACHE_TTL_SECONDS = 600;
 const execFileAsync = promisify(execFile);
+const repoTreeMemoryCache = new Map<string, string[]>();
 
 function getCachePath(key: string): string {
   const hash = createHash("md5").update(key).digest("hex");
@@ -48,6 +49,11 @@ interface MarketplaceJson {
     description?: string;
     source?: string | { source: string; url?: string; repo?: string; ref?: string };
     homepage?: string;
+    version?: string;
+    skills?: unknown;
+    commands?: unknown;
+    agents?: unknown;
+    hooks?: unknown;
     lspServers?: Record<string, unknown>;
     mcpServers?: Record<string, unknown>;
   }>;
@@ -117,11 +123,6 @@ async function fetchGitHubTree(repo: string, branch: string, path: string): Prom
 async function _fetchGitHubTree(repo: string, branch: string, path: string, attempt = 1): Promise<GitHubTreeItem[]> {
   const cleanPath = path.replace(/^\.\//, "").replace(/\/$/, "");
   const apiUrl = `https://api.github.com/repos/${repo}/contents/${cleanPath}?ref=${branch}`;
-  const cacheKey = `gh-tree:${apiUrl}`;
-
-  const cached = cacheGet(cacheKey) as GitHubTreeItem[] | null;
-  if (cached) return cached;
-
   try {
     const headers: Record<string, string> = { Accept: "application/vnd.github+json" };
     const token = getGitHubToken();
@@ -152,7 +153,6 @@ async function _fetchGitHubTree(repo: string, branch: string, path: string, atte
       contentType: item.type === "dir" ? "directory" : "file",
     }));
 
-    cacheSet(cacheKey, items);
     return items;
   } catch (error) {
     return [];
@@ -202,6 +202,54 @@ function normalizeDeclaredList(value: unknown): string[] {
   return out;
 }
 
+async function fetchRemotePluginMetadata(
+  repo: string,
+  branch: string,
+  sourcePath: string,
+): Promise<{ version?: string; description?: string; homepage?: string }> {
+  const cleanPath = sourcePath.replace(/^\.\//, "").replace(/\/$/, "");
+  const metadataUrl = `https://raw.githubusercontent.com/${repo}/${branch}/${cleanPath}/.claude-plugin/plugin.json`;
+  try {
+    const headers: Record<string, string> = {};
+    const token = getGitHubToken();
+    if (token) headers.Authorization = `token ${token}`;
+    const res = await fetch(metadataUrl, { headers });
+    if (!res.ok) return {};
+    const metadata = await res.json();
+    return {
+      version: typeof metadata.version === "string" ? metadata.version : undefined,
+      description: typeof metadata.description === "string" ? metadata.description : undefined,
+      homepage: typeof metadata.homepage === "string" ? metadata.homepage : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+async function fetchRepoTreePaths(repo: string, branch: string): Promise<string[]> {
+  const key = `${repo}@${branch}`;
+  const cached = repoTreeMemoryCache.get(key);
+  if (cached) return cached;
+
+  const url = `https://codeload.github.com/${repo}/tar.gz/refs/heads/${branch}`;
+  try {
+    const { stdout } = await execFileAsync("bash", ["-lc", `curl -fsSL ${JSON.stringify(url)} | tar -tzf -`], {
+      encoding: "utf-8",
+      timeout: 60000,
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    const paths = stdout.split("\n").filter(Boolean).map((line) => {
+      const slash = line.indexOf("/");
+      return slash === -1 ? "" : line.slice(slash + 1);
+    }).filter(Boolean);
+    repoTreeMemoryCache.set(key, paths);
+    return paths;
+  } catch (error) {
+    console.error(`Failed to fetch repository tree for ${repo}@${branch}: ${error instanceof Error ? error.message : String(error)}`);
+    return [];
+  }
+}
+
 async function fetchPluginContents(
   repo: string,
   branch: string,
@@ -213,90 +261,38 @@ async function fetchPluginContents(
   hooks: string[];
   hasMcp: boolean;
 }> {
-  const cleanPath = path.replace(/^\.\//, "");
+  const cleanPath = path.replace(/^\.\//, "").replace(/\/$/, "");
+  const prefix = `${cleanPath}/`;
+  const result = { skills: [] as string[], commands: [] as string[], agents: [] as string[], hooks: [] as string[], hasMcp: false };
+  const paths = await fetchRepoTreePaths(repo, branch);
+  const add = (list: string[], value: string) => {
+    if (value && !value.includes("/") && !list.includes(value)) list.push(value);
+  };
 
-  try {
-    const items = await fetchGitHubTree(repo, branch, cleanPath);
+  for (const fullPath of paths) {
+    if (!fullPath.startsWith(prefix)) continue;
+    const rel = fullPath.slice(prefix.length);
 
-    // Collect directories that need sub-fetching
-    const subFetches: Promise<void>[] = [];
-    const result = { skills: [] as string[], commands: [] as string[], agents: [] as string[], hooks: [] as string[], hasMcp: false };
+    const skillMatch = rel.match(/^skills\/([^/]+)\/SKILL\.md$/);
+    if (skillMatch) add(result.skills, skillMatch[1]);
 
-    for (const item of items) {
-      const baseName = item.name.split("/")[0];
-      
-      if (item.contentType === "directory") {
-        if (item.name === "skills") {
-          subFetches.push(
-            fetchGitHubTree(repo, branch, item.path).then((skillItems) => {
-              result.skills = skillItems
-                .filter((s) => s.contentType === "directory")
-                .map((s) => s.name);
-            })
-          );
-        } else if (baseName === "skills" && item.name.startsWith("skills/")) {
-          const skillName = item.name.replace("skills/", "");
-          if (!skillName.includes("/")) {
-            result.skills.push(skillName);
-          }
-        } else if (item.name === "commands") {
-          subFetches.push(
-            fetchGitHubTree(repo, branch, item.path).then((cmdItems) => {
-              result.commands = cmdItems
-                .filter((c) => c.name.endsWith(".md"))
-                .map((c) => c.name.replace(/\.md$/, ""));
-            })
-          );
-        } else if (item.name === "agents") {
-          subFetches.push(
-            fetchGitHubTree(repo, branch, item.path).then((agentItems) => {
-              result.agents = agentItems
-                .filter((a) => a.name.endsWith(".md"))
-                .map((a) => a.name.replace(/\.md$/, ""));
-            })
-          );
-        } else if (item.name === "hooks") {
-          subFetches.push(
-            fetchGitHubTree(repo, branch, item.path).then((hookItems) => {
-              result.hooks = hookItems
-                .filter((h) => h.name.endsWith(".md") || h.name.endsWith(".json"))
-                .map((h) => h.name.replace(/\.(md|json)$/, ""));
-            })
-          );
-        }
-      }
-      
-      if (item.contentType === "file") {
-        if (baseName === "commands" && item.name.endsWith(".md")) {
-          const cmdName = item.name.replace("commands/", "").replace(/\.md$/, "");
-          if (!cmdName.includes("/")) {
-            result.commands.push(cmdName);
-          }
-        } else if (baseName === "agents" && item.name.endsWith(".md")) {
-          const agentName = item.name.replace("agents/", "").replace(/\.md$/, "");
-          if (!agentName.includes("/")) {
-            result.agents.push(agentName);
-          }
-        } else if (baseName === "hooks" && (item.name.endsWith(".md") || item.name.endsWith(".json"))) {
-          const hookName = item.name.replace("hooks/", "").replace(/\.(md|json)$/, "");
-          if (!hookName.includes("/")) {
-            result.hooks.push(hookName);
-          }
-        }
-      }
-      
-      if (item.name === "mcp.json" || item.name === ".mcp.json" ||
-          item.name.endsWith("/mcp.json") || item.name.endsWith("/.mcp.json")) {
-        result.hasMcp = true;
-      }
-    }
+    const commandMatch = rel.match(/^commands\/([^/]+)\.md$/);
+    if (commandMatch) add(result.commands, commandMatch[1]);
 
-    await Promise.all(subFetches);
-    return result;
-  } catch (error) {
-    console.error(`Failed to fetch plugin contents for ${repo}@${branch}/${path}: ${error instanceof Error ? error.message : String(error)}`);
-    return { skills: [], commands: [], agents: [], hooks: [], hasMcp: false };
+    const agentMatch = rel.match(/^agents\/([^/]+)\.md$/);
+    if (agentMatch) add(result.agents, agentMatch[1]);
+
+    const hookMatch = rel.match(/^hooks\/([^/]+)\.(md|json)$/);
+    if (hookMatch) add(result.hooks, hookMatch[1]);
+
+    if (rel === "mcp.json" || rel === ".mcp.json") result.hasMcp = true;
   }
+
+  result.skills.sort();
+  result.commands.sort();
+  result.agents.sort();
+  result.hooks.sort();
+  return result;
 }
 
 export async function fetchMarketplace(
@@ -306,119 +302,76 @@ export async function fetchMarketplace(
   const cacheKey = `marketplace:${marketplace.url}`;
   const forceRefresh = options?.forceRefresh ?? false;
 
-  // Local marketplaces: always read fresh from disk, never cache
   const localPath = resolveLocalMarketplacePath(marketplace.url, marketplace.isLocal);
-  let data: MarketplaceJson | null = null;
-
   if (localPath) {
-    try {
-      let targetPath = localPath;
-      if (existsSync(localPath) && statSync(localPath).isDirectory()) {
-        const candidate = join(localPath, "marketplace.json");
-        const fallback = join(localPath, ".claude-plugin", "marketplace.json");
-        if (existsSync(candidate)) {
-          targetPath = candidate;
-        } else if (existsSync(fallback)) {
-          targetPath = fallback;
-        } else {
-          console.error(`Local marketplace directory missing marketplace.json: ${localPath}`);
-          return [];
-        }
-      }
-      if (!existsSync(targetPath)) {
-        console.error(`Local marketplace path not found: ${targetPath}`);
-        return [];
-      }
-      data = JSON.parse(readFileSync(targetPath, "utf-8"));
-    } catch (error) {
-      console.error(`Failed to read local marketplace ${marketplace.url}: ${error instanceof Error ? error.message : String(error)}`);
-      return [];
-    }
-  } else {
-    // Remote marketplaces: use HTTP cache
-    data = forceRefresh
-      ? null
-      : (cacheGet(cacheKey, MARKETPLACE_CACHE_TTL_SECONDS) as MarketplaceJson | null);
+    // Local marketplace sources are intentionally ignored. The marketplace URL
+    // itself is the prescription surface; Blackbook must not read local cloned
+    // marketplace JSON or sibling plugin directories as source of truth.
+    return [];
+  }
 
-    if (!data) {
-      try {
-        const headers: Record<string, string> = {};
-        const token = getGitHubToken();
-        if (token && isGitHubHost(marketplace.url)) {
-          headers.Authorization = `token ${token}`;
-        }
-        const res = await fetch(marketplace.url, { headers });
-        if (!res.ok) {
-          console.error(`Failed to fetch marketplace ${marketplace.url}: HTTP ${res.status}`);
-          return [];
-        }
-        data = await res.json();
-        cacheSet(cacheKey, data);
-      } catch (error) {
-        console.error(`Failed to fetch marketplace ${marketplace.url}: ${error instanceof Error ? error.message : String(error)}`);
+  let data: MarketplaceJson | null = forceRefresh
+    ? null
+    : (cacheGet(cacheKey, MARKETPLACE_CACHE_TTL_SECONDS) as MarketplaceJson | null);
+
+  if (!data) {
+    try {
+      const headers: Record<string, string> = {};
+      const token = getGitHubToken();
+      if (token && isGitHubHost(marketplace.url)) {
+        headers.Authorization = `token ${token}`;
+      }
+      const res = await fetch(marketplace.url, { headers });
+      if (!res.ok) {
+        console.error(`Failed to fetch marketplace ${marketplace.url}: HTTP ${res.status}`);
         return [];
       }
+      data = await res.json();
+      cacheSet(cacheKey, data);
+    } catch (error) {
+      console.error(`Failed to fetch marketplace ${marketplace.url}: ${error instanceof Error ? error.message : String(error)}`);
+      return [];
     }
   }
 
   const repoInfo = parseGithubRepoFromUrl(marketplace.url);
-  const localMarketplacePath = resolveLocalMarketplacePath(marketplace.url, marketplace.isLocal);
 
-  // For local marketplaces, determine the base directory for resolving relative plugin sources.
-  // Plugin `source` paths (e.g. "./plugins/foo") are relative to the repo root.
-  // If marketplace.json lives under .claude-plugin/, go up to the repo root.
-  let localBaseDir: string | null = null;
-  if (localMarketplacePath) {
-    try {
-      let dir = statSync(localMarketplacePath).isDirectory()
-        ? localMarketplacePath
-        : dirname(localMarketplacePath);
-      // .claude-plugin/marketplace.json → sources are relative to repo root
-      if (basename(dir) === ".claude-plugin") {
-        dir = dirname(dir);
-      }
-      localBaseDir = dir;
-    } catch {
-      let dir = dirname(localMarketplacePath);
-      if (basename(dir) === ".claude-plugin") {
-        dir = dirname(dir);
-      }
-      localBaseDir = dir;
-    }
-  }
-
-  // Build plugins from marketplace.json — NEVER probe GitHub for contents.
-  // The marketplace.json must include skills/commands/agents/hooks metadata.
-  // Probing each plugin's GitHub repo at runtime causes 100+ API calls and
-  // immediately hits rate limits (HTTP 403/429).
-  const plugins: Plugin[] = (data?.plugins || []).map((p) => {
+  // Build plugins from the configured marketplace URL and, when the remote
+  // marketplace declares a relative plugin source, the corresponding remote
+  // source path in that same repo. Never use local marketplace JSON/checkouts.
+  const plugins: Plugin[] = await Promise.all((data?.plugins || []).map(async (p) => {
     const source = p.source || "";
+    const declaredVersion = typeof p.version === "string" ? p.version : undefined;
+    const declaresSkills = Array.isArray(p.skills);
+    const declaresCommands = Array.isArray(p.commands);
+    const declaresAgents = Array.isArray(p.agents);
+    const declaresHooks = Array.isArray(p.hooks);
+    let skills = normalizeDeclaredList(p.skills);
+    let commands = normalizeDeclaredList(p.commands);
+    let agents = normalizeDeclaredList(p.agents);
+    let hooks = normalizeDeclaredList(p.hooks);
+    let hasMcp = Object.keys(p.mcpServers ?? {}).length > 0;
+    let version = declaredVersion;
+    let description = p.description || "";
+    let homepage = p.homepage || "";
 
-    // Only scan local directories; remote marketplaces must declare contents.
-    let hasMcp = false;
-    if (localBaseDir && typeof source === "string" && source.startsWith("./")) {
-      const pluginDir = resolve(localBaseDir, source);
-      const contents = scanPluginContents(pluginDir);
-      return {
-        name: p.name || "",
-        description: p.description || "",
-        source,
-        skills: contents.skills,
-        commands: contents.commands,
-        agents: contents.agents,
-        hooks: contents.hooks,
-        hasMcp: contents.hasMcp,
-        hasLsp: Object.keys(p.lspServers ?? {}).length > 0,
-        lspServers: p.lspServers,
-        mcpServers: p.mcpServers,
-        scope: "user" as const,
-        marketplace: marketplace.name,
-        installed: false,
-        homepage: p.homepage || "",
-      };
+    if (marketplace.source === "claude" && repoInfo && typeof source === "string" && source.startsWith("./")) {
+      const [repo, branch] = repoInfo;
+      const remoteMetadata = await fetchRemotePluginMetadata(repo, branch, source);
+      version = remoteMetadata.version ?? version;
+      description = remoteMetadata.description || description;
+      homepage = remoteMetadata.homepage || homepage;
+
+      if (!declaresSkills || !declaresCommands || !declaresAgents || !declaresHooks) {
+        const remoteContents = await fetchPluginContents(repo, branch, source);
+        if (!declaresSkills) skills = remoteContents.skills;
+        if (!declaresCommands) commands = remoteContents.commands;
+        if (!declaresAgents) agents = remoteContents.agents;
+        if (!declaresHooks) hooks = remoteContents.hooks;
+        hasMcp = hasMcp || remoteContents.hasMcp;
+      }
     }
 
-    let homepage = p.homepage || "";
     if (!homepage && typeof source === "object") {
       if (source.source === "url" && source.url) homepage = source.url;
       else if (source.source === "github" && source.repo) homepage = `https://github.com/${source.repo}`;
@@ -426,13 +379,15 @@ export async function fetchMarketplace(
 
     return {
       name: p.name || "",
-      description: p.description || "",
+      description,
+      version,
+      latestVersion: version,
       source,
-      skills: normalizeDeclaredList((p as any).skills),
-      commands: normalizeDeclaredList((p as any).commands),
-      agents: normalizeDeclaredList((p as any).agents),
-      hooks: normalizeDeclaredList((p as any).hooks),
-      hasMcp: Object.keys(p.mcpServers ?? {}).length > 0,
+      skills,
+      commands,
+      agents,
+      hooks,
+      hasMcp,
       hasLsp: Object.keys(p.lspServers ?? {}).length > 0,
       lspServers: p.lspServers,
       mcpServers: p.mcpServers,
@@ -441,7 +396,7 @@ export async function fetchMarketplace(
       installed: false,
       homepage,
     };
-  });
+  }));
 
   return plugins;
 }

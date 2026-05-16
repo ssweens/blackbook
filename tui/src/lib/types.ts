@@ -51,6 +51,16 @@ export interface ItemStatus {
 export interface Plugin {
   name: string;
   marketplace: string;
+  /** Marketplace/latest plugin version when known. */
+  version?: string;
+  /** Version currently installed in a tool-native plugin manager when known. */
+  installedVersion?: string;
+  /** Latest available version when known. Defaults to `version` for marketplace rows. */
+  latestVersion?: string;
+  /** True when installedVersion is older/different than latestVersion. */
+  hasUpdate?: boolean;
+  /** Marketplace key the installed copy came from, when different from the selected/latest marketplace. */
+  installedMarketplace?: string;
   description: string;
   source: string | { source: string; url?: string; repo?: string; ref?: string };
   skills: string[];

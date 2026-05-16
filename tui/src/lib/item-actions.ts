@@ -135,7 +135,10 @@ export function buildPluginActions(
 
     // Bulk actions
     actions.push({ id: "uninstall", label: "Uninstall from all tools", type: "uninstall" });
-    actions.push({ id: "update", label: "Update now", type: "update" });
+    const updateLabel = plugin.hasUpdate && plugin.installedVersion && plugin.latestVersion
+      ? `Update ${plugin.installedVersion} → ${plugin.latestVersion}`
+      : "Update now";
+    actions.push({ id: "update", label: updateLabel, type: "update" });
 
     if (isIncomplete) {
       actions.push({ id: "install_all", label: "Install to all tools", type: "install" });

@@ -28,7 +28,25 @@
 - [x] Type check passes: `cd tui && pnpm typecheck`
 - [x] Build succeeds: `cd tui && pnpm build`
 
+## Plugin Version Awareness / Repo-Prescribed State Hotfix
+- [x] Preserve latest plugin versions from marketplace/local plugin metadata
+- [x] Read installed Claude plugin versions from `installed_plugins.json`
+- [x] Mark installed plugins outdated when installed/latest versions differ
+- [x] Surface explicit update labels such as `Update 2.27.0 → 3.8.2`
+- [x] Add tests for version detection and cross-marketplace installed-version merge
+- [x] Verify typecheck/tests/build
+- [x] Visually inspect TUI behavior
+
+## Core Use Cases To Keep Simple
+- [x] Know what plugins are installed/prescribed from configured repos/marketplaces
+- [x] Make latest-and-greatest update/add obvious and one-action
+- [x] Detect repo-prescribed additions/updates/removals, not arbitrary private installer conventions
+- [x] Surface local-only/new artifacts as easy to add intentionally
+- [x] Make remove-everywhere explicit and safe
+
 ## Review
 - Tab switching now performs no automatic network/file refresh work.
 - Startup now performs no background loading; user controls loading via `R`.
 - Repeated invalid metadata log spam is eliminated and path-like metadata is normalized.
+- Plugin classification now uses configured remote marketplace URLs plus their declared remote source paths; local marketplace JSON/checkouts are ignored.
+- Compound-engineering shows as one plugin with Pi/OpenCode/Amp synced, `Update 2.26.5 → 3.8.2`, and only non-prescribed OpenCode helper skills remain standalone.

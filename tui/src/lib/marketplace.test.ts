@@ -50,6 +50,48 @@ describe("marketplace", () => {
   }
 
   describe("fetchMarketplace", () => {
+    it("reads remote plugin metadata from the marketplace URL's declared source path", async () => {
+      const marketplace = createMockMarketplace("EveryInc");
+      marketplace.url = "https://raw.githubusercontent.com/EveryInc/compound-engineering-plugin/main/.claude-plugin/marketplace.json";
+      marketplace.source = "claude";
+      const mockMarketplaceJson = {
+        plugins: [{
+          name: "compound-engineering",
+          description: "old",
+          source: "./plugins/compound-engineering",
+          skills: ["ce-plan"],
+          commands: [],
+          agents: [],
+          hooks: [],
+        }],
+      };
+
+      vi.spyOn(global, "fetch").mockImplementation(async (url) => {
+        const urlStr = url.toString();
+        if (urlStr.endsWith("/.claude-plugin/marketplace.json")) {
+          return { ok: true, json: async () => mockMarketplaceJson } as Response;
+        }
+        if (urlStr.endsWith("/plugins/compound-engineering/.claude-plugin/plugin.json")) {
+          return { ok: true, json: async () => ({ version: "3.8.2", description: "new metadata" }) } as Response;
+        }
+        if (urlStr.includes("api.github.com") && urlStr.includes("/contents/plugins/compound-engineering?")) {
+          return { ok: true, json: async () => [{ name: "skills", path: "plugins/compound-engineering/skills", type: "dir" }] } as Response;
+        }
+        if (urlStr.includes("api.github.com") && urlStr.includes("/contents/plugins/compound-engineering/skills?")) {
+          return { ok: true, json: async () => [{ name: "ce-plan", path: "plugins/compound-engineering/skills/ce-plan", type: "dir" }] } as Response;
+        }
+        return { ok: false, status: 404, headers: new Headers() } as Response;
+      });
+
+      const plugins = await fetchMarketplace(marketplace, { forceRefresh: true });
+
+      expect(plugins).toHaveLength(1);
+      expect(plugins[0].version).toBe("3.8.2");
+      expect(plugins[0].latestVersion).toBe("3.8.2");
+      expect(plugins[0].description).toBe("new metadata");
+      expect(plugins[0].skills).toEqual(["ce-plan"]);
+    });
+
     it("only sends GitHub token to trusted GitHub hosts", async () => {
       const token = "ghp_test_token";
       const originalToken = process.env.GITHUB_TOKEN;

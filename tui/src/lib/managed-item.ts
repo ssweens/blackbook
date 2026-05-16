@@ -80,11 +80,14 @@ export interface ManagedItem {
   fileTarget?: string;     // raw target path from config
   tools?: string[];        // which tools this file targets
 
-  // ── Pi-package-specific (populated only when kind === "pi-package") ──
+  // ── Version/update metadata (plugins and Pi packages) ─────────────────
   version?: string;
-  sourceType?: "npm" | "git" | "local";
   installedVersion?: string;
+  latestVersion?: string;
   hasUpdate?: boolean;
+
+  // ── Pi-package-specific (populated only when kind === "pi-package") ──
+  sourceType?: "npm" | "git" | "local";
   installedVia?: import("./types.js").PackageManager;
   installedViaManagers?: import("./types.js").PackageManager[];
   managerMismatch?: boolean;
@@ -170,6 +173,10 @@ export function pluginToManagedItem(
     homepage: plugin.homepage,
     source: plugin.source,
     updatedAt: plugin.updatedAt,
+    version: plugin.version,
+    installedVersion: plugin.installedVersion,
+    latestVersion: plugin.latestVersion,
+    hasUpdate: plugin.hasUpdate,
     // Original reference
     _plugin: plugin,
   };

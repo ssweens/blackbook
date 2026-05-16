@@ -34,10 +34,6 @@ import {
 import { loadConfig as loadYamlConfig } from "./config/loader.js";
 import { saveConfig as saveYamlConfig } from "./config/writer.js";
 import { getGitHubToken, isGitHubHost } from "./github.js";
-import {
-  pluginPrefixedSkillNames,
-  isSkillNameOwnedByInstalledPlugin,
-} from "./plugin-installer-conventions.js";
 import type {
   Plugin,
   InstalledItem,
@@ -114,6 +110,24 @@ function extractPluginInfoFromSource(
   return null;
 }
 
+function readClaudePluginMetadata(pluginDir: string): { version?: string; description?: string; homepage?: string } {
+  for (const rel of [join(".claude-plugin", "plugin.json"), join(".claude-plugin", "manifest.json")]) {
+    const metadataPath = join(pluginDir, rel);
+    try {
+      if (!lstatSync(metadataPath).isFile()) continue;
+      const metadata = JSON.parse(readFileSync(metadataPath, "utf-8"));
+      return {
+        version: typeof metadata.version === "string" ? metadata.version : undefined,
+        description: typeof metadata.description === "string" ? metadata.description : undefined,
+        homepage: typeof metadata.homepage === "string" ? metadata.homepage : undefined,
+      };
+    } catch {
+      // Try the next supported metadata filename.
+    }
+  }
+  return {};
+}
+
 // Hash functions imported from modules/hash.ts (single source of truth)
 
 function isConfigOnlyInstance(instance: ToolInstance): boolean {
@@ -137,13 +151,29 @@ async function ensureGitAvailable(): Promise<void> {
   }
 }
 
+function validateClaudePluginId(pluginId: string): void {
+  const [name, marketplace, extra] = pluginId.split("@");
+  if (!name || extra !== undefined) throw new Error(`Invalid Claude plugin id: ${pluginId}`);
+  validatePluginName(name);
+  if (marketplace) validateMarketplaceName(marketplace);
+}
+
+function claudePluginId(plugin: Pick<Plugin, "name" | "marketplace">): string {
+  return plugin.marketplace ? `${plugin.name}@${plugin.marketplace}` : plugin.name;
+}
+
+function claudeInstalledPluginId(plugin: Pick<Plugin, "name" | "marketplace" | "installedMarketplace">): string {
+  const marketplace = plugin.installedMarketplace ?? plugin.marketplace;
+  return marketplace ? `${plugin.name}@${marketplace}` : plugin.name;
+}
+
 async function execClaudeCommand(
   instance: ToolInstance,
   command: "install" | "uninstall" | "enable" | "disable" | "update",
-  pluginName: string,
+  pluginId: string,
 ): Promise<void> {
-  validatePluginName(pluginName);
-  await execFileAsync("claude", ["plugin", command, pluginName], {
+  validateClaudePluginId(pluginId);
+  await execFileAsync("claude", ["plugin", command, pluginId], {
     env: {
       ...process.env,
       CLAUDE_CONFIG_DIR: instance.configDir,
@@ -377,7 +407,7 @@ export async function installPlugin(
   // For Claude instances, use the native CLI
   for (const instance of claudeInstances) {
     try {
-      await execClaudeCommand(instance, "install", plugin.name);
+      await execClaudeCommand(instance, "install", claudePluginId(plugin));
       result.linkedInstances[instanceKey(instance)] = 1;
     } catch (e) {
       result.errors.push(
@@ -435,7 +465,7 @@ export function uninstallPluginFromInstance(
   );
   if (!instance) return false;
   const removed = uninstallPluginItemsFromInstance(plugin.name, instance) > 0;
-  removeFromClaudeInstalledPluginsJson(instance, plugin.name, plugin.marketplace);
+  removeFromClaudeInstalledPluginsJson(instance, plugin.name, plugin.installedMarketplace ?? plugin.marketplace);
   return removed;
 }
 
@@ -488,7 +518,7 @@ export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
   for (const instance of enabledInstances) {
     removedCount += uninstallPluginItemsFromInstance(plugin.name, instance);
     // Claude tracks installed plugins in installed_plugins.json — must clean it.
-    removeFromClaudeInstalledPluginsJson(instance, plugin.name, plugin.marketplace);
+    removeFromClaudeInstalledPluginsJson(instance, plugin.name, plugin.installedMarketplace ?? plugin.marketplace);
   }
 
   try {
@@ -882,46 +912,68 @@ export async function updatePlugin(
     return result;
   }
 
-  // Uninstall from currently-installed instances first
-  for (const instance of targetInstances) {
+  const claudeInstances = targetInstances.filter((instance) => instance.toolId === "claude-code");
+  const managedInstances = targetInstances.filter((instance) => instance.toolId !== "claude-code");
+
+  // Claude-native plugins should be reinstalled through Claude's own plugin
+  // manager, using an explicit marketplace-qualified id to avoid ambiguity when
+  // the same plugin name exists in multiple marketplaces.
+  for (const instance of claudeInstances) {
+    try {
+      // Use Claude's "update" command with the marketplace key Claude already
+      // knows about (the installed marketplace), not the Blackbook-selected
+      // "newest" marketplace which Claude may not recognize.
+      await execClaudeCommand(instance, "update", claudeInstalledPluginId(plugin));
+      result.linkedInstances[instanceKey(instance)] = 1;
+    } catch (error) {
+      logError(`Claude update failed for ${plugin.name} in ${instance.name}`, error);
+      result.errors.push(
+        `Claude update failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
+    }
+  }
+
+  // Uninstall from currently-installed Blackbook-managed instances first.
+  for (const instance of managedInstances) {
     uninstallPluginItemsFromInstance(plugin.name, instance);
   }
 
-  // Clear cached plugin
-  try {
-    const pluginDir = safePath(
-      getPluginsCacheDir(),
-      plugin.marketplace,
-      plugin.name,
-    );
-    rmSync(pluginDir, { recursive: true, force: true });
-  } catch (error) {
-    logError(`Failed to remove plugin dir for ${plugin.name}`, error);
+  // Clear cached plugin copies for both the old installed marketplace and the
+  // selected latest marketplace before downloading fresh content.
+  for (const marketplace of new Set([plugin.installedMarketplace, plugin.marketplace].filter(Boolean) as string[])) {
+    try {
+      const pluginDir = safePath(getPluginsCacheDir(), marketplace, plugin.name);
+      rmSync(pluginDir, { recursive: true, force: true });
+    } catch (error) {
+      logError(`Failed to remove plugin dir for ${plugin.name}`, error);
+    }
   }
 
-  // Download fresh copy and install only to instances where plugin is already installed
-  const sourcePath = await downloadPlugin(plugin, marketplaceUrl);
+  if (managedInstances.length > 0) {
+    // Download fresh copy and install only to non-Claude instances where plugin is already installed.
+    const sourcePath = await downloadPlugin(plugin, marketplaceUrl, { force: true });
 
-  if (sourcePath) {
-    for (const instance of targetInstances) {
-      try {
-        const { count, errors } = installPluginItemsToInstance(
-          plugin.name,
-          sourcePath,
-          instance,
-          plugin.marketplace,
-        );
-        result.linkedInstances[instanceKey(instance)] = count;
-        result.errors.push(...errors);
-      } catch (error) {
-        logError(`Update failed for ${plugin.name} in ${instance.name}`, error);
-        result.errors.push(
-          `Update failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`,
-        );
+    if (sourcePath) {
+      for (const instance of managedInstances) {
+        try {
+          const { count, errors } = installPluginItemsToInstance(
+            plugin.name,
+            sourcePath,
+            instance,
+            plugin.marketplace,
+          );
+          result.linkedInstances[instanceKey(instance)] = count;
+          result.errors.push(...errors);
+        } catch (error) {
+          logError(`Update failed for ${plugin.name} in ${instance.name}`, error);
+          result.errors.push(
+            `Update failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`,
+          );
+        }
       }
+    } else {
+      result.errors.push(`Failed to download plugin update for ${plugin.name}`);
     }
-  } else {
-    result.errors.push(`Failed to download plugin update for ${plugin.name}`);
   }
 
   result.success = Object.values(result.linkedInstances).some((n) => n > 0);
@@ -1179,15 +1231,23 @@ function getInstalledPluginsForClaudeInstance(
     "plugins/installed_plugins.json",
   );
   const installedPluginKeys = new Set<string>();
+  const installedPluginRecords = new Map<string, { version?: string; installPath?: string }>();
 
   try {
     if (lstatSync(installedPluginsPath).isFile()) {
       const content = readFileSync(installedPluginsPath, "utf-8");
       const data = JSON.parse(content);
       if (data.plugins && typeof data.plugins === "object") {
-        // Keys are in format "pluginName@marketplace"
-        for (const key of Object.keys(data.plugins)) {
+        // Keys are in format "pluginName@marketplace". Values are usually arrays
+        // of install records containing version/installPath metadata.
+        for (const [key, value] of Object.entries(data.plugins)) {
           installedPluginKeys.add(key);
+          const records = Array.isArray(value) ? value : [value];
+          const first = records.find((r) => r && typeof r === "object") as Record<string, unknown> | undefined;
+          installedPluginRecords.set(key, {
+            version: typeof first?.version === "string" ? first.version : undefined,
+            installPath: typeof first?.installPath === "string" ? first.installPath : undefined,
+          });
         }
       }
     }
@@ -1261,26 +1321,18 @@ function getInstalledPluginsForClaudeInstance(
         }
 
         const { skills, commands, agents, hooks, hasMcp } = scanPluginContents(contentDir);
-        let description = "";
-
-        const manifestPath = join(
-          contentDir,
-          ".claude-plugin",
-          "manifest.json",
-        );
-        try {
-          if (lstatSync(manifestPath).isFile()) {
-            const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
-            description = manifest.description || "";
-          }
-        } catch {
-          // Ignore if manifest doesn't exist or can't be read
-        }
+        const metadata = readClaudePluginMetadata(contentDir);
+        const pluginKey = `${pluginName}@${marketplace}`;
+        const installedRecord = installedPluginRecords.get(pluginKey);
+        const installedVersion = installedRecord?.version ?? metadata.version;
 
         plugins.push({
           name: pluginName,
           marketplace,
-          description,
+          version: metadata.version,
+          installedVersion,
+          latestVersion: metadata.version,
+          description: metadata.description || "",
           source: contentDir,
           skills,
           commands,
@@ -1288,7 +1340,7 @@ function getInstalledPluginsForClaudeInstance(
           hooks,
           hasMcp,
           hasLsp: false,
-          homepage: "",
+          homepage: metadata.homepage || "",
           installed: true,
           scope: "user",
         });
@@ -1627,24 +1679,18 @@ export function gitStatusForPath(
  * Return skills on disk that are NOT owned by any installed plugin.
  * These are standalone skills installed/synced directly (e.g. by blackbook).
  */
-export function getStandaloneSkills(): StandaloneSkill[] {
-  const { plugins: allPlugins } = getAllInstalledPlugins();
+export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSkill[] {
+  const { plugins: installedPlugins } = getAllInstalledPlugins();
+  const allPlugins = prescribedPlugins ?? installedPlugins;
   const configuredMarketplaceNames = new Set(parseMarketplaces().map((m) => m.name));
 
-  // Build a GLOBAL set of skill names owned by any plugin from a configured
-  // marketplace. Skills from removed marketplaces (e.g. "playbook") are NOT in
-  // this set — they're standalone.
-  //
-  // Plugins with custom installers may ship their components under prefixed
-  // names (e.g. compound-engineering installs `ce-<name>` on non-Claude tools).
-  // pluginPrefixedSkillNames() expands every declared skill into its bare and
-  // any prefixed forms, driven by the single mapping in
-  // plugin-installer-conventions.ts.
+  // Build a GLOBAL set of skill names owned by any plugin from a configured marketplace.
+  // Skills from removed marketplaces (e.g. "playbook") are NOT in this set — they're standalone.
   const globalPluginOwnedSkills = new Set<string>();
   for (const p of allPlugins) {
     if (!configuredMarketplaceNames.has(p.marketplace)) continue;
-    for (const name of pluginPrefixedSkillNames(p)) {
-      globalPluginOwnedSkills.add(name);
+    for (const s of p.skills ?? []) {
+      globalPluginOwnedSkills.add(s);
     }
   }
 
@@ -1664,7 +1710,6 @@ export function getStandaloneSkills(): StandaloneSkill[] {
         const skillPath = join(skillsDir, entry.name);
         if (!existsSync(join(skillPath, "SKILL.md"))) continue;
         if (globalPluginOwnedSkills.has(entry.name)) continue;
-        if (isSkillNameOwnedByInstalledPlugin(entry.name, allPlugins)) continue;
 
         const installation: SkillInstallation = {
           toolId: instance.toolId,
@@ -1728,9 +1773,7 @@ export function getStandaloneSkills(): StandaloneSkill[] {
     // "Sync to <tool>" them.
     for (const [name, skillMd] of sourceSkillIndex) {
       if (byName.has(name)) continue;
-      // Skip plugin-owned and compound-engineering ce-* if applicable.
       if (globalPluginOwnedSkills.has(name)) continue;
-      if (isSkillNameOwnedByInstalledPlugin(name, allPlugins)) continue;
       const sourceDir = dirname(skillMd);
       byName.set(name, {
         name,
@@ -1884,7 +1927,7 @@ export async function deletePluginEverywhere(plugin: Plugin): Promise<{
   for (const instance of enabled) {
     try {
       toolsRemoved += uninstallPluginItemsFromInstance(plugin.name, instance);
-      removeFromClaudeInstalledPluginsJson(instance, plugin.name, plugin.marketplace);
+      removeFromClaudeInstalledPluginsJson(instance, plugin.name, plugin.installedMarketplace ?? plugin.marketplace);
     } catch { /* skip */ }
   }
   let cacheRemoved = false;

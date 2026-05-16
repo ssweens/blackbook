@@ -10,7 +10,6 @@ import { safePath, validatePluginMetadata, logError } from "./validation.js";
 import { loadManifest, saveManifest } from "./manifest.js";
 import { getPluginSourcePath, instanceKey, createSymlink, isSymlink } from "./plugin-helpers.js";
 import { countGetPluginToolStatus } from "./perf.js";
-import { componentNameCandidates } from "./plugin-installer-conventions.js";
 
 export interface ToolInstallStatus {
   toolId: string;
@@ -19,6 +18,7 @@ export interface ToolInstallStatus {
   installed: boolean;
   supported: boolean;
   enabled: boolean;
+  installedVersion?: string;
 }
 
 function isConfigOnlyInstance(instance: ToolInstance): boolean {
@@ -41,7 +41,16 @@ export function invalidatePluginToolStatusCache(): void {
 }
 
 function cacheKey(plugin: Plugin): string {
-  return `${plugin.name}:${statusCacheGeneration}`;
+  const components = [
+    plugin.marketplace,
+    plugin.installedMarketplace ?? "",
+    plugin.installedVersion ?? "",
+    plugin.latestVersion ?? plugin.version ?? "",
+    plugin.skills.join(","),
+    plugin.commands.join(","),
+    plugin.agents.join(","),
+  ].join("|");
+  return `${plugin.name}:${statusCacheGeneration}:${components}`;
 }
 
 function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
@@ -71,34 +80,41 @@ function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
                       (isClaude && (plugin.hasMcp || plugin.hasLsp || hasHooks));
 
     let installed = false;
+    let installedVersion: string | undefined;
     const enabled = instance.enabled;
 
     if (enabled && supported) {
-      // Check for installed components, accounting for any installer naming
-      // conventions the plugin uses (e.g. ce-<name> prefix on non-Claude tools
-      // for compound-engineering). See plugin-installer-conventions.ts for the
-      // single source of truth on plugin→prefix mappings.
+      // Check for installed components by looking at actual files/symlinks.
+      // This intentionally checks the component names declared by marketplace/plugin
+      // metadata only. Private installer artifacts or naming conventions from third-party
+      // tools are not treated as a Blackbook standard.
       if (canInstallSkills && instance.skillsSubdir) {
-        const base = join(instance.configDir, instance.skillsSubdir);
-        outer: for (const skill of plugin.skills) {
-          for (const name of componentNameCandidates(plugin, skill, instance.toolId)) {
-            if (existsSync(safePath(base, name))) { installed = true; break outer; }
+        for (const skill of plugin.skills) {
+          const base = join(instance.configDir, instance.skillsSubdir);
+          const skillPath = safePath(base, skill);
+          if (existsSync(skillPath)) {
+            installed = true;
+            break;
           }
         }
       }
       if (!installed && canInstallCommands && instance.commandsSubdir) {
-        const base = join(instance.configDir, instance.commandsSubdir);
-        outer: for (const cmd of plugin.commands) {
-          for (const name of componentNameCandidates(plugin, cmd, instance.toolId)) {
-            if (existsSync(safePath(base, `${name}.md`))) { installed = true; break outer; }
+        for (const cmd of plugin.commands) {
+          const base = join(instance.configDir, instance.commandsSubdir);
+          const cmdPath = safePath(base, `${cmd}.md`);
+          if (existsSync(cmdPath)) {
+            installed = true;
+            break;
           }
         }
       }
       if (!installed && canInstallAgents && instance.agentsSubdir) {
-        const base = join(instance.configDir, instance.agentsSubdir);
-        outer: for (const agent of plugin.agents) {
-          for (const name of componentNameCandidates(plugin, agent, instance.toolId)) {
-            if (existsSync(safePath(base, `${name}.md`))) { installed = true; break outer; }
+        for (const agent of plugin.agents) {
+          const base = join(instance.configDir, instance.agentsSubdir);
+          const agentPath = safePath(base, `${agent}.md`);
+          if (existsSync(agentPath)) {
+            installed = true;
+            break;
           }
         }
       }
@@ -117,6 +133,9 @@ function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
                 const pluginName = key.split("@")[0];
                 if (pluginName === plugin.name) {
                   installed = true;
+                  const records = Array.isArray(data.plugins[key]) ? data.plugins[key] : [data.plugins[key]];
+                  const first = records.find((r: unknown) => r && typeof r === "object") as Record<string, unknown> | undefined;
+                  installedVersion = typeof first?.version === "string" ? first.version : undefined;
                   break;
                 }
               }
@@ -135,6 +154,7 @@ function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
       installed,
       supported,
       enabled,
+      installedVersion,
     });
   }
 

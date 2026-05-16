@@ -133,6 +133,73 @@ function createMockTool(overrides: Partial<ToolInstance> = {}): ToolInstance {
   };
 }
 
+describe("Plugin version merge", () => {
+  beforeEach(() => {
+    useStore.setState({
+      marketplaces: [],
+      installedPlugins: [],
+      managedItems: [],
+      standaloneSkills: [],
+    });
+    vi.mocked(getToolInstances).mockReturnValue([createMockTool()]);
+    vi.mocked(getPluginToolStatus).mockReturnValue([
+      {
+        toolId: "opencode",
+        instanceId: "default",
+        name: "OC",
+        installed: true,
+        supported: true,
+        enabled: true,
+      },
+    ]);
+  });
+
+  it("marks an installed plugin outdated when a newer configured marketplace has the same plugin", async () => {
+    const installed = createMockPlugin({
+      name: "compound-engineering",
+      marketplace: "every-marketplace",
+      version: "2.27.0",
+      installedVersion: "2.27.0",
+      installed: true,
+      skills: ["frontend-design"],
+    });
+    const oldMarketplacePlugin = createMockPlugin({
+      name: "compound-engineering",
+      marketplace: "every-marketplace",
+      version: "2.27.0",
+      latestVersion: "2.27.0",
+    });
+    const newMarketplacePlugin = createMockPlugin({
+      name: "compound-engineering",
+      marketplace: "compound-engineering-plugin",
+      version: "3.0.0",
+      latestVersion: "3.0.0",
+    });
+
+    vi.mocked(getAllInstalledPlugins).mockReturnValue({
+      plugins: [installed],
+      byTool: {},
+    });
+
+    useStore.setState({
+      marketplaces: [
+        createMockMarketplace({ name: "every-marketplace", plugins: [oldMarketplacePlugin] }),
+        createMockMarketplace({ name: "compound-engineering-plugin", plugins: [newMarketplacePlugin] }),
+      ],
+    });
+
+    await useStore.getState().loadInstalledPlugins({ silent: true });
+
+    const plugin = useStore.getState().installedPlugins.find((p) => p.name === "compound-engineering");
+    expect(plugin).toBeDefined();
+    expect(plugin!.marketplace).toBe("compound-engineering-plugin");
+    expect(plugin!.installedMarketplace).toBe("every-marketplace");
+    expect(plugin!.installedVersion).toBe("2.27.0");
+    expect(plugin!.latestVersion).toBe("3.0.0");
+    expect(plugin!.hasUpdate).toBe(true);
+  });
+});
+
 describe("Store notifications", () => {
   beforeEach(() => {
     useStore.setState({

@@ -39,7 +39,7 @@ export interface ItemAction {
     | "back";
   instance?: DiffInstanceSummary | DiffInstanceRef;
   /** For install_tool / uninstall_tool actions — the target tool instance. */
-  toolStatus?: { toolId: string; instanceId: string; name: string; installed?: boolean; enabled?: boolean; supported?: boolean };
+  toolStatus?: { toolId: string; instanceId: string; name: string; installed?: boolean; enabled?: boolean; supported?: boolean; installedVersion?: string };
   statusColor?: "green" | "yellow" | "gray" | "red" | "magenta";
   statusLabel?: string;
 }
@@ -91,6 +91,7 @@ export function ItemDetail({ item, actions, selectedAction, metadata }: ItemDeta
         </Text>
         {isIncomplete && <Text color="yellow"> (incomplete)</Text>}
         {hasDrift && <Text color="yellow"> (drifted)</Text>}
+        {item.hasUpdate && <Text color="blue"> (update available)</Text>}
       </Box>
 
       {/* Kind-specific metadata */}
@@ -137,6 +138,9 @@ function ActionRow({ action, isSelected }: ActionRowProps) {
           <Text color={isSelected ? "cyan" : "gray"}>{isSelected ? "❯ " : "  "}</Text>
           <Text color={isSelected ? "white" : "gray"}>{action.label}:</Text>
           <Text color={action.statusColor || "gray"}> {action.statusLabel}</Text>
+          {action.toolStatus?.installedVersion && (
+            <Text color="gray"> ({action.toolStatus.installedVersion})</Text>
+          )}
           {action.type === "diff" && action.instance && "totalAdded" in action.instance && (
             ((action.instance as DiffInstanceSummary).totalAdded > 0 || (action.instance as DiffInstanceSummary).totalRemoved > 0) ? (
               <>
@@ -196,6 +200,21 @@ export function PluginMetadata({ item }: { item: ManagedItem }) {
         <Text color="gray">Scope: </Text>
         <Text>{item.scope}</Text>
       </Box>
+
+      {(item.installedVersion || item.latestVersion || item.version) && (
+        <Box marginBottom={1}>
+          <Text color="gray">Version: </Text>
+          {item.installedVersion && item.latestVersion && item.installedVersion !== item.latestVersion ? (
+            <>
+              <Text color="yellow">{item.installedVersion}</Text>
+              <Text color="gray"> → </Text>
+              <Text color="green">{item.latestVersion}</Text>
+            </>
+          ) : (
+            <Text>{item.installedVersion || item.latestVersion || item.version}</Text>
+          )}
+        </Box>
+      )}
 
       {item.homepage && (
         <Box marginBottom={1}>

@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0] - 2026-05-15
+
+### Added
+- **Plugin version awareness**: installed and latest plugin versions are tracked end-to-end. The Installed list shows an `update available` badge; the detail view shows `Version: 2.26.5 → 3.8.2`; the action menu offers `Update 2.26.5 → 3.8.2` instead of a generic "Update now".
+- **Remote marketplace source inspection**: for Claude-discovered marketplaces backed by GitHub repos, Blackbook fetches the plugin's `plugin.json` metadata and component tree directly from the remote repo (via tarball listing). No local marketplace clones or stale Claude checkout paths are used as source of truth.
+- **Cross-marketplace upgrade detection**: when the same plugin name exists in multiple configured marketplaces, the newest available version is selected as the upgrade target regardless of which marketplace the currently installed copy came from.
+- **Per-tool installed version in detail rows**: Claude instance status rows show the installed version from `installed_plugins.json`.
+
+### Changed
+- **Plugin update uses Claude's native `update` command** with the marketplace-qualified plugin id (`name@marketplace`), ensuring Claude's own plugin manager handles the update for Claude instances.
+- **Plugin install/uninstall uses marketplace-qualified ids** for Claude instances to avoid ambiguity when the same plugin exists in multiple marketplaces.
+- **Installed plugin detail prefers installed copy** over marketplace row when refreshing, so version/update metadata survives detail panel refreshes.
+- **Plugin component display shows latest prescribed set only** — old installed component names (e.g. bare `frontend-design`) no longer appear alongside new names (e.g. `ce-frontend-design`) in the detail view.
+- **Standalone skill ownership uses union of old + new names** internally, so deployed artifacts under either naming scheme are attributed to the plugin and don't leak into the Skills section.
+- **Local marketplace sources are ignored** — `fetchMarketplace` returns empty for local paths. The configured marketplace URL (remote) is the only prescription surface.
+- **Marketplace metadata loaded before installed classification** — if the store has no marketplace plugin data when `loadInstalledPlugins` runs, it fetches marketplaces first so version/component merge is correct on first load.
+
+### Removed
+- **Plugin installer conventions module** (`plugin-installer-conventions.ts`) — the hardcoded prefix table for compound-engineering's `ce-*` naming is deleted. Plugin ownership is now determined by the remote marketplace's declared plugin source tree.
+- **Local marketplace scanning for plugin ownership** — the code that scanned sibling plugin directories from local marketplace checkouts to attribute skills is removed.
+
+### Fixed
+- **Detail panel stale after update**: `refreshDetail` now prefers the installed plugin copy (with merged version metadata) over the bare marketplace row, so the detail view reflects the updated version immediately after an update action.
+- **Plugin status cache key** now includes marketplace, version, and component lists, preventing stale cache hits when the plugin object changes between loads.
+
 ## [0.19.0] - 2026-05-14
 
 ### Added
