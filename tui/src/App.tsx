@@ -1194,7 +1194,7 @@ export function App() {
       return true;
     }
     if (input === "r") {
-      if (selectedMarketplaceRow.kind === "plugin" && selectedMarketplaceRow.marketplace.source !== "claude") {
+      if (selectedMarketplaceRow.kind === "plugin") {
         removeMarketplace(selectedMarketplaceRow.marketplace.name);
       } else if (selectedMarketplaceRow.kind === "pi" && !selectedMarketplaceRow.marketplace.builtIn) {
         void removePiMarketplace(selectedMarketplaceRow.marketplace.name);
