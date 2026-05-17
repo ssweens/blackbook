@@ -16,8 +16,9 @@
 ## Phase 4 — Validation
 - [x] U8: Perf profiling — Lightweight measurement utility with counters for renders, store updates, fs calls, and function invocations
 
-## Hotfix — Manual-Only Performance Mode
-- [x] Disable all startup auto-loading in `App.tsx`
+## Hotfix — Controlled Refresh Performance Mode
+- [x] Keep one startup hydration refresh for the initial tab so users do not need to press `R` on boot
+- [x] Disable automatic tab-switch reloads in `App.tsx`
 - [x] Disable automatic background plugin drift scans
 - [x] Short-circuit heavy list filtering/sorting on unrelated tabs
 - [x] Normalize path-like marketplace metadata values to valid item names
@@ -63,9 +64,17 @@
 - [x] Remove `compound-docs` from active tool dirs, playbook source cache, and playbook source repo
 - [x] Refresh/verify Blackbook no longer sees stale old compound artifacts
 
+## Navigation / Reload Flicker Reduction
+- [x] Keep boot-time initial tab hydration while removing tab-mount reload effects from visible tabs
+- [x] Stop Tools tab from re-running status detection every time it is opened
+- [x] Keep existing list rows visible during refresh instead of flipping sections to loading states
+- [x] Stabilize global refresh indicator layout so it does not insert/remove lines
+- [x] Add regression coverage for tab navigation not invoking loaders
+- [x] Run typecheck/tests/build and visually verify the TUI
+
 ## Review
+- Startup hydrates the initial tab automatically so the user does not need to press `R` on boot.
 - Tab switching now performs no automatic network/file refresh work.
-- Startup now performs no background loading; user controls loading via `R`.
 - Repeated invalid metadata log spam is eliminated and path-like metadata is normalized.
 - Plugin classification now uses configured remote marketplace URLs plus their declared remote source paths; local marketplace JSON/checkouts are ignored.
 - Compound-engineering shows as one plugin with Pi/OpenCode/Amp synced, `Update 2.26.5 → 3.8.2`, and only non-prescribed OpenCode helper skills remain standalone.

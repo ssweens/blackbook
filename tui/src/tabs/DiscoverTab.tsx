@@ -24,6 +24,7 @@ export function DiscoverTab() {
   const search = useStore((s) => s.search);
   const setSearch = useStore((s) => s.setSearch);
   const selectedIndex = useStore((s) => s.selectedIndex);
+  const loading = useStore((s) => s.loading);
   const discoverSubView = useStore((s) => s.discoverSubView);
   const sortBy = useStore((s) => s.sortBy);
   const sortDir = useStore((s) => s.sortDir);
@@ -106,7 +107,7 @@ export function DiscoverTab() {
   const managedPlugins = useMemo(() => pluginsToManagedItems(filteredPlugins), [filteredPlugins]);
   const managedPiPackages = useMemo(() => piPackagesToManagedItems(filteredPiPackages), [filteredPiPackages]);
 
-  const shouldShowLoading = marketplaces.length === 0 && piPackages.length === 0;
+  const shouldShowEmpty = marketplaces.length === 0 && piPackages.length === 0;
 
   const selectedLibraryItem = useMemo(() => {
     if (discoverSubView === "plugins") return { kind: "pluginSummary" as const };
@@ -116,10 +117,12 @@ export function DiscoverTab() {
     return null;
   }, [discoverSubView, selectedIndex, filteredPlugins.length, filteredPiPackages.length]);
 
-  if (shouldShowLoading) {
+  if (shouldShowEmpty) {
     return (
       <Box marginY={1}>
-        <Text color="cyan">⠋ Loading plugins from marketplaces...</Text>
+        <Text color={loading ? "cyan" : "gray"}>
+          {loading ? "⠋ Loading plugins from marketplaces..." : "No discovery data loaded. Press R to refresh."}
+        </Text>
       </Box>
     );
   }

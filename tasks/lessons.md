@@ -1,5 +1,8 @@
 # Lessons
 
+- Do not reduce flicker by removing boot hydration; users should not have to press refresh on startup. Preserve automatic initial data load and eliminate repeated/navigation-triggered reloads instead.
+- Tab components must be presentational only; loader/detection effects in tab component mounts will re-run on every navigation because inactive tabs unmount.
+- Before launching external UI verification or screenshot automation, say exactly what will open, what will be captured, and why; otherwise normal verification can look like unexplained side effects.
 - Mutation actions that refresh store data must also refresh any open detail view inside the store action; do not rely solely on caller-side UI shims after install/update/uninstall.
 - After deleting stale plugin caches/manifests, verify both marketplace rows and `installedPlugins`; Installed tab renders `installedPlugins`, so marketplace `installed: true` alone is not enough.
 - For TUI list navigation bugs, test row marker, preview metadata, store index, and Enter-opened detail together; a fixed container height can clip rows independently from previews and create apparent skipped/repeated selections.

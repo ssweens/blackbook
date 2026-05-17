@@ -917,7 +917,7 @@ export const useStore = create<Store>((rawSet, get) => {
 
   loadPiPackages: async (options) => {
     const silent = options?.silent === true;
-    if (!silent) set({ piPackagesLoaded: false });
+    if (!silent && !get().piPackagesLoaded) set({ piPackagesLoaded: false });
 
     // Load Pi packages only when Pi is enabled in config or detected as installed.
     const tools = get().tools;
@@ -1222,7 +1222,7 @@ export const useStore = create<Store>((rawSet, get) => {
   loadInstalledPlugins: async (options) => {
     invalidatePluginToolStatusCache();
     const silent = options?.silent === true;
-    if (!silent) set({ installedPluginsLoaded: false });
+    if (!silent && !get().installedPluginsLoaded) set({ installedPluginsLoaded: false });
 
     // Installed-plugin classification depends on marketplace prescriptions
     // (latest version + component names). If the user refreshes Installed before
@@ -1277,7 +1277,7 @@ export const useStore = create<Store>((rawSet, get) => {
 
   loadFiles: async (options) => {
     const silent = options?.silent === true;
-    if (!silent) set({ filesLoaded: false });
+    if (!silent && !get().filesLoaded) set({ filesLoaded: false });
 
     // Only load files when YAML config exists
     const configPath = getYamlConfigPath();

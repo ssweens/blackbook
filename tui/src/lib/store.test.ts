@@ -14,7 +14,7 @@ import { getConfigPath as getYamlConfigPath, loadConfig as loadYamlConfig } from
 import { resolveSourcePath, expandPath as expandConfigPath } from "./config/path.js";
 import { getAllPlaybooks, resolveToolInstances, isSyncTarget } from "./config/playbooks.js";
 import { runCheck, runApply } from "./modules/orchestrator.js";
-import type { Plugin, Marketplace, ToolInstance, ManagedToolRow, ToolDetectionResult } from "./types.js";
+import type { Plugin, Marketplace, ToolInstance, ManagedToolRow, ToolDetectionResult, FileStatus } from "./types.js";
 
 // Mock config functions to avoid writing to real config file
 vi.mock("./config.js", async (importOriginal) => {
@@ -116,6 +116,17 @@ function createMockMarketplace(overrides: Partial<Marketplace> = {}): Marketplac
     autoUpdate: false,
     source: "blackbook",
     enabled: true,
+    ...overrides,
+  };
+}
+
+function createMockFile(overrides: Partial<FileStatus> = {}): FileStatus {
+  return {
+    name: "test-file",
+    source: "AGENTS.md",
+    target: "AGENTS.md",
+    kind: "file",
+    instances: [],
     ...overrides,
   };
 }
@@ -268,6 +279,64 @@ describe("Plugin version merge", () => {
     });
     expect(state.detail?.kind).toBe("plugin");
     expect(state.detail?.data).toMatchObject({ installedVersion: "3.8.2", hasUpdate: false });
+  });
+
+  it("keeps loaded plugin rows visible during a non-silent refresh", async () => {
+    const plugin = createMockPlugin({ installed: true, skills: ["ce-work"] });
+    const marketplace = createMockMarketplace({ plugins: [plugin] });
+
+    vi.mocked(getAllInstalledPlugins).mockReturnValue({
+      plugins: [plugin],
+      byTool: {},
+    });
+
+    useStore.setState({
+      marketplaces: [marketplace],
+      installedPlugins: [plugin],
+      installedPluginsLoaded: true,
+      files: [],
+      piPackages: [],
+    });
+
+    const observedLoadedValues: boolean[] = [];
+    const unsubscribe = useStore.subscribe((state) => {
+      observedLoadedValues.push(state.installedPluginsLoaded);
+    });
+
+    try {
+      await useStore.getState().loadInstalledPlugins();
+    } finally {
+      unsubscribe();
+    }
+
+    expect(observedLoadedValues).not.toContain(false);
+    expect(useStore.getState().installedPluginsLoaded).toBe(true);
+    expect(useStore.getState().installedPlugins.length).toBeGreaterThan(0);
+  });
+
+  it("keeps loaded file rows visible during a non-silent refresh", async () => {
+    vi.mocked(getYamlConfigPath).mockReturnValueOnce("");
+    const file = createMockFile();
+    useStore.setState({
+      files: [file],
+      filesLoaded: true,
+      installedPlugins: [],
+      piPackages: [],
+    });
+
+    const observedLoadedValues: boolean[] = [];
+    const unsubscribe = useStore.subscribe((state) => {
+      observedLoadedValues.push(state.filesLoaded);
+    });
+
+    try {
+      await useStore.getState().loadFiles();
+    } finally {
+      unsubscribe();
+    }
+
+    expect(observedLoadedValues).not.toContain(false);
+    expect(useStore.getState().filesLoaded).toBe(true);
   });
 
   it("marks an installed plugin outdated when a newer configured marketplace has the same plugin", async () => {

@@ -8,6 +8,7 @@
  * ## Tab Navigation
  * - [x] Arrow keys cycle through tabs
  * - [x] Tab key cycles forward
+ * - [x] Startup refreshes the initial tab once, while switching tabs does not auto-refresh data or tool detection
  *
  * ## Discover Tab
  * - [x] Shows plugin summary card
@@ -497,6 +498,85 @@ describe("App E2E — Tab Navigation", () => {
       await waitForFrame(stdout.lastFrame, (f) => f.includes("[Settings]"));
     } finally {
       unmount();
+    }
+  });
+
+  it("loads the initial tab on boot but does not auto-refresh when switching tabs", async () => {
+    const loadInstalledPlugins = vi.fn(async () => {
+      useStore.setState({ installedPlugins: [createPlugin()], installedPluginsLoaded: true });
+    });
+    const loadPiPackages = vi.fn(async () => {
+      useStore.setState({ piPackages: [createPiPackage()], piPackagesLoaded: true });
+    });
+    const loadFiles = vi.fn(async () => {
+      const files = [createFileStatus()];
+      useStore.setState({ files, filesLoaded: true });
+      return files;
+    });
+    const loadMarketplaces = vi.fn(async () => {});
+    const refreshToolDetection = vi.fn(async () => {});
+    const refreshManagedTools = vi.fn(() => {});
+    const originalActions = {
+      loadInstalledPlugins: useStore.getState().loadInstalledPlugins,
+      loadPiPackages: useStore.getState().loadPiPackages,
+      loadFiles: useStore.getState().loadFiles,
+      loadMarketplaces: useStore.getState().loadMarketplaces,
+      refreshToolDetection: useStore.getState().refreshToolDetection,
+      refreshManagedTools: useStore.getState().refreshManagedTools,
+    };
+
+    useStore.setState({
+      tab: "installed",
+      notifications: [],
+      installedPlugins: [],
+      installedPluginsLoaded: false,
+      piPackages: [],
+      piPackagesLoaded: false,
+      files: [],
+      filesLoaded: false,
+      loadInstalledPlugins,
+      loadPiPackages,
+      loadFiles,
+      loadMarketplaces,
+      refreshToolDetection,
+      refreshManagedTools,
+    });
+
+    const { stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("[Installed]") && f.includes("test-plugin"));
+      await waitForFrame(stdout.lastFrame, () => loadInstalledPlugins.mock.calls.length === 1);
+      expect(loadPiPackages).toHaveBeenCalledTimes(1);
+      expect(loadFiles).toHaveBeenCalledTimes(1);
+      expect(loadMarketplaces).not.toHaveBeenCalled();
+
+      loadInstalledPlugins.mockClear();
+      loadPiPackages.mockClear();
+      loadFiles.mockClear();
+      loadMarketplaces.mockClear();
+
+      act(() => {
+        useStore.setState({ tab: "marketplaces" });
+      });
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("[Marketplaces]"));
+      await settleInput();
+      expect(loadInstalledPlugins).not.toHaveBeenCalled();
+      expect(loadPiPackages).not.toHaveBeenCalled();
+      expect(loadFiles).not.toHaveBeenCalled();
+      expect(loadMarketplaces).not.toHaveBeenCalled();
+      expect(refreshToolDetection).not.toHaveBeenCalled();
+      expect(refreshManagedTools).not.toHaveBeenCalled();
+
+      act(() => {
+        useStore.setState({ tab: "tools" });
+      });
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("[Tools]"));
+      await settleInput();
+      expect(refreshToolDetection).not.toHaveBeenCalled();
+      expect(refreshManagedTools).not.toHaveBeenCalled();
+    } finally {
+      unmount();
+      useStore.setState(originalActions);
     }
   });
 });

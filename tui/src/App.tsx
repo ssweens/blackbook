@@ -92,11 +92,9 @@ export function App() {
   const marketplaces = useStore((s) => s.marketplaces);
   const installedPlugins = useStore((s) => s.installedPlugins);
   const standaloneSkills = useStore((s) => s.standaloneSkills);
-  const installedPluginsLoaded = useStore((s) => s.installedPluginsLoaded);
 
   // ── Data: Files ──
   const files = useStore((s) => s.files);
-  const filesLoaded = useStore((s) => s.filesLoaded);
 
   // ── Data: Tools ──
   const tools = useStore((s) => s.tools);
@@ -108,7 +106,6 @@ export function App() {
 
   // ── Data: Pi Packages ──
   const piPackages = useStore((s) => s.piPackages);
-  const piPackagesLoaded = useStore((s) => s.piPackagesLoaded);
   const piMarketplaces = useStore((s) => s.piMarketplaces);
 
   // ── Data: Managed Items (legacy bridge) ──
@@ -243,7 +240,9 @@ export function App() {
   const syncPreview = useMemo(() => getSyncPreview(), [getSyncPreview]);
   const [marketplaceBrowseContext, setMarketplaceBrowseContext] = useState<Marketplace | null>(null);
   const [tabRefreshInProgress, setTabRefreshInProgress] = useState(false);
+  const [showRefreshIndicator, setShowRefreshIndicator] = useState(false);
   const tabRefreshCounterRef = useRef(0);
+  const initialRefreshStartedRef = useRef(false);
   const lastTabRefreshRef = useRef<Record<Tab, number>>({
     sync: 0,
     tools: 0,
@@ -350,6 +349,7 @@ export function App() {
 
     tabRefreshInFlightRef.current[targetTab] = true;
     tabRefreshCounterRef.current += 1;
+    useStore.setState({ loading: true });
     setTabRefreshInProgress(true);
 
     let refreshed = false;
@@ -385,19 +385,30 @@ export function App() {
       tabRefreshCounterRef.current -= 1;
       if (tabRefreshCounterRef.current <= 0) {
         tabRefreshCounterRef.current = 0;
+        useStore.setState({ loading: false });
         setTabRefreshInProgress(false);
       }
     }
   };
 
   useEffect(() => {
-    setShowSourceSetupWizard(shouldShowSourceSetupWizard());
-  }, []);
+    const shouldShowWizard = shouldShowSourceSetupWizard();
+    setShowSourceSetupWizard(shouldShowWizard);
 
-  // Manual-only mode: do not auto-load anything on startup.
-  // User triggers loading explicitly with "R" on the current tab.
-  useEffect(() => {
-    // Intentionally empty.
+    if (shouldShowWizard || initialRefreshStartedRef.current) return;
+
+    const state = useStore.getState();
+    const initialTabAlreadyHydrated =
+      tab === "discover" ? state.marketplaces.length > 0 || state.piPackages.length > 0
+      : tab === "marketplaces" ? state.marketplaces.length > 0 || state.piMarketplaces.length > 0
+      : tab === "installed" ? state.installedPluginsLoaded || state.filesLoaded || state.piPackagesLoaded
+      : tab === "tools" ? state.managedTools.length > 0 && Object.keys(state.toolDetection).length > 0
+      : tab === "settings";
+    if (initialTabAlreadyHydrated) return;
+
+    initialRefreshStartedRef.current = true;
+    void refreshTabData(tab, { force: true });
+    // Run exactly once on boot. Tab switches after boot do not auto-refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1702,14 +1713,7 @@ export function App() {
     }
   };
 
-  const statusMessage = loading
-    ? "Loading..."
-    : `${allPlugins.length} plugins, ${piPackages.length} pi-pkgs, ${fileTotalCount} files from ${marketplaces.length} marketplaces`;
-
-  const showGlobalLoadingIndicator = loading || tabRefreshInProgress;
-  const shouldShowDiscoverLoading =
-    loading && marketplaces.length === 0 && piPackages.length === 0;
-  const shouldShowMarketplacesLoading = loading && marketplaces.length === 0 && piMarketplaces.length === 0;
+  const globalRefreshInProgress = loading || tabRefreshInProgress;
 
   const refreshTabLabel =
     tab === "discover"
@@ -1721,6 +1725,16 @@ export function App() {
           : tab === "tools"
             ? "Tools"
             : "Sync";
+
+  useEffect(() => {
+    if (!globalRefreshInProgress) {
+      setShowRefreshIndicator(false);
+      return;
+    }
+
+    const timer = setTimeout(() => setShowRefreshIndicator(true), 300);
+    return () => clearTimeout(timer);
+  }, [globalRefreshInProgress]);
 
   const handleAddMarketplace = (name: string, url: string) => {
     addMarketplace(name, url);
@@ -1817,7 +1831,7 @@ export function App() {
       <TabBar />
 
       <Box marginBottom={1}>
-        {showGlobalLoadingIndicator ? (
+        {showRefreshIndicator ? (
           <Text color="cyan">↻ {tabRefreshInProgress ? `Refreshing ${refreshTabLabel}...` : "Loading..."}</Text>
         ) : (
           <Text color="gray"> </Text>

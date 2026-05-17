@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useMemo } from "react";
 import { Box, Text } from "ink";
 import { useStore } from "../lib/store.js";
 import { MarketplaceList } from "../components/MarketplaceList.js";
@@ -7,6 +7,7 @@ import type { Tab } from "../lib/types.js";
 
 export function MarketplacesTab() {
   const selectedIndex = useStore((s) => s.selectedIndex);
+  const loading = useStore((s) => s.loading);
   const marketplaces = useStore((s) => s.marketplaces);
   const piMarketplaces = useStore((s) => s.piMarketplaces);
   const showPiFeatures = useStore((s) => {
@@ -14,25 +15,19 @@ export function MarketplacesTab() {
     const piInstalled = s.toolDetection.pi?.installed === true;
     return piEnabled || piInstalled;
   });
-  const loadMarketplaces = useStore((s) => s.loadMarketplaces);
-  const loadPiPackages = useStore((s) => s.loadPiPackages);
-
-  useEffect(() => {
-    void loadMarketplaces();
-    void loadPiPackages();
-  }, [loadMarketplaces, loadPiPackages]);
-
   const marketplaceRows = useMemo(
     () => buildMarketplaceRows(marketplaces, piMarketplaces, showPiFeatures),
     [marketplaces, piMarketplaces, showPiFeatures]
   );
 
-  const shouldShowLoading = marketplaces.length === 0 && piMarketplaces.length === 0;
+  const shouldShowEmpty = marketplaces.length === 0 && piMarketplaces.length === 0;
 
-  if (shouldShowLoading) {
+  if (shouldShowEmpty) {
     return (
       <Box marginY={1}>
-        <Text color="cyan">⠋ Loading marketplaces...</Text>
+        <Text color={loading ? "cyan" : "gray"}>
+          {loading ? "⠋ Loading marketplaces..." : "No marketplace data loaded. Press R to refresh."}
+        </Text>
       </Box>
     );
   }

@@ -40,6 +40,7 @@ export function InstalledTab() {
   const search = useStore((s) => s.search);
   const setSearch = useStore((s) => s.setSearch);
   const selectedIndex = useStore((s) => s.selectedIndex);
+  const loading = useStore((s) => s.loading);
   const sortBy = useStore((s) => s.sortBy);
   const sortDir = useStore((s) => s.sortDir);
   const files = useStore((s) => s.files);
@@ -48,16 +49,6 @@ export function InstalledTab() {
   const installedPluginsLoaded = useStore((s) => s.installedPluginsLoaded);
   const piPackages = useStore((s) => s.piPackages);
   const piPackagesLoaded = useStore((s) => s.piPackagesLoaded);
-  const loadInstalledPlugins = useStore((s) => s.loadInstalledPlugins);
-  const loadFiles = useStore((s) => s.loadFiles);
-  const loadPiPackages = useStore((s) => s.loadPiPackages);
-
-  React.useEffect(() => {
-    void loadInstalledPlugins();
-    void loadPiPackages();
-    void loadFiles();
-  }, [loadInstalledPlugins, loadPiPackages, loadFiles]);
-
   const filteredFiles = useMemo(() => {
     const q = search.trim().toLowerCase();
     const filtered = q.length === 0 ? files : files.filter((file) => {
@@ -258,13 +249,13 @@ export function InstalledTab() {
             <Text color="gray" dimColor>
               {managedFiles.length > 0
                 ? getRange(selectedIndex < fileCount ? selectedIndex : 0, managedFiles.length, 5)
-                : "(loading...)"}
+                : loading ? "(loading...)" : "(not loaded)"}
             </Text>
           </Box>
           {managedFiles.length > 0 ? (
             <ItemList items={managedFiles} selectedIndex={selectedIndex < fileCount ? selectedIndex : -1} maxHeight={5} columns={FILE_COLUMNS} />
           ) : (
-            <Box marginLeft={2}><Text color="cyan">⠋ Loading files...</Text></Box>
+            <Box marginLeft={2}><Text color={loading ? "cyan" : "gray"}>{loading ? "⠋ Loading files..." : "Press R to load files."}</Text></Box>
           )}
         </Box>
       )}
@@ -291,13 +282,13 @@ export function InstalledTab() {
             <Text color="gray" dimColor>
               {managedPlugins.length > 0
                 ? getRange(selectedIndex >= fileCount + skillCount && selectedIndex < fileCount + skillCount + pluginCount ? selectedIndex - fileCount - skillCount : 0, managedPlugins.length, 4)
-                : "(loading...)"}
+                : loading ? "(loading...)" : "(not loaded)"}
             </Text>
           </Box>
           {managedPlugins.length > 0 ? (
             <ItemList items={managedPlugins} selectedIndex={selectedIndex >= fileCount + skillCount && selectedIndex < fileCount + skillCount + pluginCount ? selectedIndex - fileCount - skillCount : -1} maxHeight={4} columns={PLUGIN_COLUMNS} />
           ) : (
-            <Box marginLeft={2}><Text color="cyan">⠋ Loading plugins...</Text></Box>
+            <Box marginLeft={2}><Text color={loading ? "cyan" : "gray"}>{loading ? "⠋ Loading plugins..." : "Press R to load plugins."}</Text></Box>
           )}
         </Box>
       )}
@@ -309,13 +300,13 @@ export function InstalledTab() {
             <Text color="gray" dimColor>
               {managedPiPackages.length > 0
                 ? getRange(selectedIndex >= fileCount + skillCount + pluginCount ? selectedIndex - fileCount - skillCount - pluginCount : 0, managedPiPackages.length, 3)
-                : "(loading...)"}
+                : loading ? "(loading...)" : "(not loaded)"}
             </Text>
           </Box>
           {managedPiPackages.length > 0 ? (
             <ItemList items={managedPiPackages} selectedIndex={selectedIndex >= fileCount + skillCount + pluginCount ? selectedIndex - fileCount - skillCount - pluginCount : -1} maxHeight={3} columns={PLUGIN_COLUMNS} />
           ) : (
-            <Box marginLeft={2}><Text color="cyan">⠋ Loading pi packages...</Text></Box>
+            <Box marginLeft={2}><Text color={loading ? "cyan" : "gray"}>{loading ? "⠋ Loading Pi packages..." : "Press R to load Pi packages."}</Text></Box>
           )}
         </Box>
       )}

@@ -3,7 +3,7 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 451
+- **Total Tests:** 454
 - **Test Files:** 40
 
 ## Critical Paths
@@ -23,7 +23,9 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Tool lifecycle core flows (registry/view/detect/command adapters)
 - [x] Tools lifecycle UI refreshes version/status after install → update → uninstall (E2E)
 - [x] Sync tab shows tool update items with installed/latest version delta (E2E)
-- [x] Tab navigation runs with manual-only refresh (no startup auto-load), avoiding cross-tab blocking
+- [x] Startup hydrates the initial tab automatically while avoiding cross-tab blocking
+- [x] Tab switching does not auto-refresh tab data, tab loaders, or Tools detection after the boot refresh (E2E)
+- [x] Non-silent refreshes preserve already-loaded plugin/file rows instead of flipping loaded flags false
 - [x] YAML config loading with zod validation
 - [x] First-launch bootstrap creates config.yaml with inferred tools and prepopulated file entries
 - [x] YAML config.local.yaml deep merge with merge-by-key semantics
