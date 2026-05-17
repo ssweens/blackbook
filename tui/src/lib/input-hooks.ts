@@ -116,14 +116,12 @@ export function useDetailInput({
 interface UseListInputParams {
   discoverSubView: "plugins" | "piPackages" | null;
   tab: Tab;
-  subViewIndex: number;
   maxIndex: number;
   selectedIndex: number;
   filteredPlugins: Plugin[];
   marketplaceBrowsePlugins: Plugin[];
   filteredPiPackages: PiPackage[];
   isOverlayOpen: boolean;
-  setSubViewIndex: (value: number | ((prev: number) => number)) => void;
   setSelectedIndex: (value: number) => void;
   setDetailPiPackage: (pkg: PiPackage) => void;
   setActionIndex: (value: number) => void;
@@ -136,14 +134,12 @@ interface UseListInputParams {
 export function useListInput({
   discoverSubView,
   tab,
-  subViewIndex,
   maxIndex,
   selectedIndex,
   filteredPlugins,
   marketplaceBrowsePlugins,
   filteredPiPackages,
   isOverlayOpen,
-  setSubViewIndex,
   setSelectedIndex,
   setDetailPiPackage,
   setActionIndex,
@@ -215,9 +211,7 @@ export function useListInput({
     setActionIndex,
     setDetailPiPackage,
     setSelectedIndex,
-    setSubViewIndex,
     setSyncArmed,
-    subViewIndex,
     tab,
   ]);
 }

@@ -3,11 +3,14 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 447
+- **Total Tests:** 451
 - **Test Files:** 40
 
 ## Critical Paths
 - [x] Plugin discovery list loads
+- [x] Discover plugin keyboard navigation preserves row/preview/detail selection mapping across scrolling, sorting, reversing, Enter, and Escape (E2E)
+- [x] Marketplace plugin rows stay installed when tool components exist even if an old installed marketplace key was removed/renamed
+- [x] Plugin update refreshes an already-open detail view with fresh installed/latest version metadata
 - [x] Plugin detail view shows actions and tool status
 - [x] Installed tab includes managed file entries with diff/missing detail access
 - [x] Plugin install/update/uninstall flow
@@ -92,6 +95,7 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Throws when mappings have no files
 
 ## User Journeys (Happy Paths)
+- [x] Discover → navigate plugin list → Enter opens the highlighted plugin, not an adjacent/stale row
 - [x] Discover → open plugin → install to all tools → remain on detail view
 - [ ] Discover → open plugin → manage components → toggle skill → disabled in config
 - [ ] Discover → open plugin → install single tool → success notification

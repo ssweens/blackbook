@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.2] - 2026-05-16
+
+### Fixed
+- Stabilized Discover plugin-list keyboard navigation so row selection, preview content, and Enter-opened detail stay in sync while scrolling, sorting, and reversing.
+- Increased Discover tab vertical space to prevent Ink clipping from hiding the selected row while the preview continued updating.
+- Claude-discovered marketplaces can now be removed from the marketplace detail view via Claude's native `claude plugin marketplace remove <name>` path.
+- Installed plugin classification now includes marketplace-prescribed plugins whose components exist on tool disks, even after stale plugin cache/manifest records are removed.
+- Plugin update actions now refresh an already-open detail view so version and update-available metadata updates immediately.
+
+### Changed
+- Removed legacy `compound-docs` from the playbook source repo and cleaned stale compound-engineering cache/tool artifacts so the current `compound-engineering-plugin` marketplace is the only prescription source.
+
+### Tests
+- Added deep Discover-tab E2E coverage for non-editing navigation, row/preview/detail mapping, sorting, reversing, and Escape behavior.
+- Added store regressions for installed-plugin classification after stale marketplace cleanup and open-detail refresh after plugin updates.
+- 451/451 passing.
+
 ## [0.20.1] - 2026-05-15
 
 ### Added

@@ -19,7 +19,7 @@ export function MarketplaceDetailView({ detail, selectedIndex }: MarketplaceDeta
       <Box marginBottom={1}>
         <Text bold>{detail.marketplace.name}</Text>
         {detail.kind === "plugin" && detail.marketplace.source === "claude" && (
-          <Text color="magenta"> (Claude - read-only)</Text>
+          <Text color="magenta"> (Claude)</Text>
         )}
         {detail.kind === "pi" && detail.marketplace.builtIn && (
           <Text color="magenta"> (built-in)</Text>

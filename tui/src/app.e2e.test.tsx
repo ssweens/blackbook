@@ -57,7 +57,7 @@
  * ## Settings Tab
  * - [x] Settings panel renders
  */
-import React from "react";
+import React, { act } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render } from "ink-testing-library";
 import { App } from "./App.js";
@@ -276,7 +276,17 @@ const clearNotifications = () => {
 /** Send a keystroke after clearing notifications. */
 const sendKey = (stdin: { write: (s: string) => void }, key: string) => {
   clearNotifications();
-  stdin.write(key);
+  act(() => {
+    stdin.write(key);
+  });
+};
+
+const settleInput = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+const expectSelectedRow = (frame: string, name: string) => {
+  const selectedRows = frame.split("\n").filter((line) => line.includes("❯"));
+  expect(selectedRows, `expected exactly one selected row in frame:\n${frame}`).toHaveLength(1);
+  expect(selectedRows[0]).toContain(name);
 };
 
 const createMarketplace = (overrides: Partial<Marketplace> = {}): Marketplace => ({
@@ -833,6 +843,150 @@ describe("App E2E — Discover Tab", () => {
     const { stdout, unmount } = render(<App />);
     try {
       await waitForFrame(stdout.lastFrame, (f) => f.includes("plugin") || f.includes("Plugin"), 5000);
+    } finally {
+      unmount();
+    }
+  });
+
+  it("scrubs Discover plugin navigation without skipped rows, repeated rows, or mismatched Enter targets", async () => {
+    const installedNames = ["bravo-installed", "delta-installed", "hotel-installed", "juliet-installed"];
+    const availableNames = [
+      "alpha-available",
+      "charlie-available",
+      "echo-available",
+      "foxtrot-available",
+      "golf-available",
+      "india-available",
+      "kilo-available",
+      "lima-available",
+      "mike-available",
+      "november-available",
+      "oscar-available",
+      "papa-available",
+      "quebec-available",
+      "zulu-available",
+    ];
+    const pluginByName = new Map<string, Plugin>();
+    const pluginFor = (name: string, installed: boolean): Plugin => {
+      const plugin = createPlugin({
+        name,
+        installed,
+        marketplace: "Test Marketplace",
+        description: `Unique detail description for ${name}`,
+        skills: [`skill-for-${name}`],
+        commands: [`cmd-for-${name}`],
+      });
+      pluginByName.set(name, plugin);
+      return plugin;
+    };
+    const plugins = [
+      ...availableNames.slice().reverse().map((name) => pluginFor(name, false)),
+      ...installedNames.slice().reverse().map((name) => pluginFor(name, true)),
+    ];
+    const expectedDefault = [
+      ...installedNames.slice().sort((a, b) => a.localeCompare(b)),
+      ...availableNames.slice().sort((a, b) => a.localeCompare(b)),
+    ];
+    const expectedNameAsc = [...installedNames, ...availableNames].sort((a, b) => a.localeCompare(b));
+    const expectedNameDesc = expectedNameAsc.slice().reverse();
+
+    useStore.setState({
+      tab: "discover",
+      selectedIndex: 0,
+      search: "",
+      sortBy: "default",
+      sortDir: "asc",
+      discoverSubView: null,
+      marketplaces: [
+        createMarketplace({
+          plugins,
+          availableCount: plugins.length,
+          installedCount: installedNames.length,
+        }),
+      ],
+      piPackages: [createPiPackage({ name: "pi-alpha", installed: false })],
+    });
+
+    const { stdout, stdin, unmount } = render(<App />);
+
+    const assertPluginListSelection = async (expectedNames: string[], index: number) => {
+      const name = expectedNames[index];
+      const plugin = pluginByName.get(name)!;
+      const frame = await waitForFrame(stdout.lastFrame, (f) =>
+        f.includes("Plugins (showing") &&
+        f.includes(`❯ ${name}`) &&
+        f.includes(plugin.skills[0]),
+      );
+      expect(useStore.getState().discoverSubView).toBe("plugins");
+      expect(useStore.getState().selectedIndex).toBe(index);
+      expectSelectedRow(frame, name);
+      return frame;
+    };
+
+    const assertEnterOpensPlugin = async (name: string) => {
+      sendKey(stdin, KEYS.enter);
+      const plugin = pluginByName.get(name)!;
+      const frame = await waitForFrame(stdout.lastFrame, (f) =>
+        f.includes(`${name} @ Test Marketplace`) &&
+        f.includes(plugin.description),
+      );
+      expect(useStore.getState().detailPlugin?.name).toBe(name);
+      expect(useStore.getState().detail?.kind).toBe("plugin");
+      expect((useStore.getState().detail?.data as Plugin).name).toBe(name);
+      return frame;
+    };
+
+    try {
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Plugins ▸") && f.includes("Pi Packages"), 5000);
+      await settleInput();
+      expect(useStore.getState().selectedIndex).toBe(0);
+
+      sendKey(stdin, KEYS.down);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Pi Packages ▸"));
+      expect(useStore.getState().selectedIndex).toBe(1);
+
+      sendKey(stdin, KEYS.up);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Plugins ▸"));
+      expect(useStore.getState().selectedIndex).toBe(0);
+
+      sendKey(stdin, KEYS.enter);
+      await assertPluginListSelection(expectedDefault, 0);
+
+      for (let index = 1; index <= 15; index += 1) {
+        sendKey(stdin, KEYS.down);
+        await assertPluginListSelection(expectedDefault, index);
+      }
+
+      for (let index = 14; index >= 10; index -= 1) {
+        sendKey(stdin, KEYS.up);
+        await assertPluginListSelection(expectedDefault, index);
+      }
+
+      await assertEnterOpensPlugin(expectedDefault[10]);
+      expect(stdout.lastFrame()).not.toContain(`Unique detail description for ${expectedDefault[9]}`);
+      expect(stdout.lastFrame()).not.toContain(`Unique detail description for ${expectedDefault[11]}`);
+
+      sendKey(stdin, KEYS.escape);
+      await assertPluginListSelection(expectedDefault, 10);
+
+      sendKey(stdin, "s");
+      await assertPluginListSelection(expectedNameAsc, 10);
+      await assertEnterOpensPlugin(expectedNameAsc[10]);
+
+      sendKey(stdin, KEYS.escape);
+      await assertPluginListSelection(expectedNameAsc, 10);
+
+      sendKey(stdin, "r");
+      await assertPluginListSelection(expectedNameDesc, 10);
+      await assertEnterOpensPlugin(expectedNameDesc[10]);
+
+      sendKey(stdin, KEYS.escape);
+      await assertPluginListSelection(expectedNameDesc, 10);
+
+      sendKey(stdin, KEYS.escape);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Plugins ▸") && !f.includes("Plugins (showing"));
+      expect(useStore.getState().discoverSubView).toBeNull();
+      expect(useStore.getState().selectedIndex).toBe(0);
     } finally {
       unmount();
     }

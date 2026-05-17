@@ -241,7 +241,6 @@ export function App() {
   const toggleSyncSelection = useStore((s) => s.toggleSyncSelection);
   const [searchFocused, setSearchFocused] = useState(false);
   const syncPreview = useMemo(() => getSyncPreview(), [getSyncPreview]);
-  const [subViewIndex, setSubViewIndex] = useState(0);
   const [marketplaceBrowseContext, setMarketplaceBrowseContext] = useState<Marketplace | null>(null);
   const [tabRefreshInProgress, setTabRefreshInProgress] = useState(false);
   const tabRefreshCounterRef = useRef(0);
@@ -705,6 +704,13 @@ export function App() {
   }, [tab, marketplaceRows, selectedIndex]);
 
   const maxIndex = useMemo(() => {
+    if (discoverSubView === "plugins") {
+      const plugins = tab === "marketplaces" ? marketplaceBrowsePlugins : filteredPlugins;
+      return Math.max(0, plugins.length - 1);
+    }
+    if (discoverSubView === "piPackages") {
+      return Math.max(0, filteredPiPackages.length - 1);
+    }
     if (tab === "marketplaces") {
       return Math.max(0, marketplaceRows.length - 1);
     }
@@ -715,7 +721,7 @@ export function App() {
       return Math.max(0, syncPreview.length - 1);
     }
     return Math.max(0, libraryCount - 1);
-  }, [tab, marketplaceRows, managedTools, syncPreview, libraryCount]);
+  }, [discoverSubView, tab, marketplaceBrowsePlugins, filteredPlugins, filteredPiPackages, marketplaceRows, managedTools, syncPreview, libraryCount]);
 
   useEffect(() => {
     if (selectedIndex > maxIndex) {
@@ -988,9 +994,9 @@ export function App() {
     if (detailTool) { setDetailToolKey(null); return; }
     if (discoverSubView) {
       if (tab === "marketplaces" && marketplaceBrowseContext) {
-        setDiscoverSubView(null); setSubViewIndex(0);
+        setDiscoverSubView(null); setSelectedIndex(0);
         setDetailMarketplace(marketplaceBrowseContext); setMarketplaceBrowseContext(null); setSearch("");
-      } else { setDiscoverSubView(null); setSubViewIndex(0); }
+      } else { setDiscoverSubView(null); setSelectedIndex(0); }
       return;
     }
     if (tab === "marketplaces" && marketplaceBrowseContext) {
@@ -1060,10 +1066,10 @@ export function App() {
       setActionIndex(0);
     } else if (selectedLibraryItem?.kind === "pluginSummary") {
       setDiscoverSubView("plugins");
-      setSubViewIndex(0);
+      setSelectedIndex(0);
     } else if (selectedLibraryItem?.kind === "piPackageSummary") {
       setDiscoverSubView("piPackages");
-      setSubViewIndex(0);
+      setSelectedIndex(0);
     }
   };
 
@@ -1114,12 +1120,13 @@ export function App() {
 
     // Sub-views: toggle install/uninstall
     if (discoverSubView === "plugins") {
-      const plugin = filteredPlugins[subViewIndex];
+      const list = tab === "marketplaces" ? marketplaceBrowsePlugins : filteredPlugins;
+      const plugin = list[selectedIndex];
       if (plugin) toggleInstall(plugin);
       return;
     }
     if (discoverSubView === "piPackages") {
-      const pkg = filteredPiPackages[subViewIndex];
+      const pkg = filteredPiPackages[selectedIndex];
       if (pkg) toggleInstallPiPkg(pkg);
       return;
     }
@@ -1252,14 +1259,12 @@ export function App() {
   const handleListInput = useListInput({
     discoverSubView,
     tab,
-    subViewIndex,
     maxIndex,
     selectedIndex,
     filteredPlugins,
     marketplaceBrowsePlugins,
     filteredPiPackages,
     isOverlayOpen,
-    setSubViewIndex,
     setSelectedIndex,
     setDetailPiPackage: (pkg) => { void setDetailPiPackage(pkg); },
     setActionIndex,
@@ -1666,11 +1671,11 @@ export function App() {
         if (detail.kind === "plugin") {
           setMarketplaceBrowseContext(detail.marketplace);
           setDiscoverSubView("plugins");
-          setSubViewIndex(0);
+          setSelectedIndex(0);
           setSearch(detail.marketplace.name);
         } else {
           setDiscoverSubView("piPackages");
-          setSubViewIndex(0);
+          setSelectedIndex(0);
           setTab("discover");
         }
         setDetailMarketplace(null);
@@ -1683,7 +1688,7 @@ export function App() {
         break;
       case "remove":
         if (detail.kind === "plugin") {
-          removeMarketplace(detail.marketplace.name);
+          void removeMarketplace(detail.marketplace.name);
           setDetailMarketplace(null);
         } else {
           void removePiMarketplace(detail.marketplace.name);
@@ -1885,7 +1890,7 @@ export function App() {
           selectedIndex={actionIndex}
         />
       ) : (
-        <Box flexDirection="column" height={(({ sync: 30, discover: 20, installed: 34 } as Record<string, number>)[tab] ?? 25)}>
+        <Box flexDirection="column" height={(({ sync: 30, discover: 30, installed: 34 } as Record<string, number>)[tab] ?? 25)}>
           {tab === "discover" && <DiscoverTab />}
 
           {tab === "installed" && <InstalledTab />}

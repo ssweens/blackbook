@@ -8,6 +8,7 @@ import {
   getAllInstalledPlugins,
   getPluginToolStatus,
   syncPluginInstances,
+  updatePlugin,
 } from "./install.js";
 import { getConfigPath as getYamlConfigPath, loadConfig as loadYamlConfig } from "./config/loader.js";
 import { resolveSourcePath, expandPath as expandConfigPath } from "./config/path.js";
@@ -36,6 +37,7 @@ vi.mock("./install.js", async (importOriginal) => {
     getAllInstalledPlugins: vi.fn(),
     getPluginToolStatus: vi.fn(),
     syncPluginInstances: vi.fn(),
+    updatePlugin: vi.fn(),
   };
 });
 
@@ -152,6 +154,120 @@ describe("Plugin version merge", () => {
         enabled: true,
       },
     ]);
+  });
+
+  it("marks a marketplace plugin installed when tool status finds its components even if the old marketplace key is gone", async () => {
+    const staleInstalledRecord = createMockPlugin({
+      name: "compound-engineering",
+      marketplace: "every-marketplace",
+      installed: true,
+      skills: ["ce-work"],
+    });
+    const marketplacePlugin = createMockPlugin({
+      name: "compound-engineering",
+      marketplace: "compound-engineering-plugin",
+      version: "3.8.2",
+      latestVersion: "3.8.2",
+      skills: ["ce-work"],
+    });
+
+    vi.mocked(getAllInstalledPlugins).mockReturnValue({
+      plugins: [staleInstalledRecord],
+      byTool: {},
+    });
+    vi.mocked(getPluginToolStatus).mockReturnValue([
+      {
+        toolId: "opencode",
+        instanceId: "default",
+        name: "OC",
+        installed: true,
+        supported: true,
+        enabled: true,
+      },
+    ]);
+
+    useStore.setState({
+      marketplaces: [
+        createMockMarketplace({ name: "compound-engineering-plugin", plugins: [marketplacePlugin] }),
+      ],
+    });
+
+    await useStore.getState().loadInstalledPlugins({ silent: true });
+
+    const plugin = useStore.getState().marketplaces[0].plugins[0];
+    expect(plugin.installed).toBe(true);
+    expect(plugin.incomplete).toBe(false);
+    expect(useStore.getState().marketplaces[0].installedCount).toBe(1);
+
+    const installedPlugin = useStore.getState().installedPlugins.find((p) => p.name === "compound-engineering");
+    expect(installedPlugin).toBeDefined();
+    expect(installedPlugin).toMatchObject({
+      marketplace: "compound-engineering-plugin",
+      installed: true,
+      incomplete: false,
+    });
+  });
+
+  it("refreshes the open plugin detail after updating plugin version metadata", async () => {
+    const oldPlugin = createMockPlugin({
+      name: "compound-engineering",
+      marketplace: "compound-engineering-plugin",
+      version: "3.8.2",
+      installedVersion: "3.7.3",
+      latestVersion: "3.8.2",
+      installed: true,
+      hasUpdate: true,
+      skills: ["ce-work"],
+    });
+    const refreshedPlugin = createMockPlugin({
+      ...oldPlugin,
+      installedVersion: "3.8.2",
+      hasUpdate: false,
+    });
+    const marketplace = createMockMarketplace({
+      name: "compound-engineering-plugin",
+      url: "https://example.com/marketplace.json",
+      plugins: [refreshedPlugin],
+    });
+
+    vi.mocked(updatePlugin).mockResolvedValue({
+      success: true,
+      linkedInstances: { "opencode:default": 1 },
+      skippedInstances: [],
+      errors: [],
+    });
+
+    const originalRefreshAll = useStore.getState().refreshAll;
+    useStore.setState({
+      marketplaces: [marketplace],
+      installedPlugins: [oldPlugin],
+      detailPlugin: oldPlugin,
+      detail: { kind: "plugin", data: oldPlugin },
+      tools: [createMockTool()],
+      refreshAll: async () => {
+        useStore.setState({
+          marketplaces: [marketplace],
+          installedPlugins: [refreshedPlugin],
+          tools: [createMockTool()],
+        });
+      },
+    });
+
+    try {
+      await useStore.getState().updatePlugin(oldPlugin);
+    } finally {
+      useStore.setState({ refreshAll: originalRefreshAll });
+    }
+
+    const state = useStore.getState();
+    expect(state.detailPlugin).toMatchObject({
+      name: "compound-engineering",
+      installedVersion: "3.8.2",
+      latestVersion: "3.8.2",
+      hasUpdate: false,
+    });
+    expect(state.detail?.kind).toBe("plugin");
+    expect(state.detail?.data).toMatchObject({ installedVersion: "3.8.2", hasUpdate: false });
   });
 
   it("marks an installed plugin outdated when a newer configured marketplace has the same plugin", async () => {

@@ -28,9 +28,11 @@ export function getMarketplaceDetailActions(detail: MarketplaceDetailContext): M
       { type: "browse", label: `Browse plugins (${m.plugins.length})` },
       { type: "update", label: `Update marketplace (last updated ${formatDate(m.updatedAt)})` },
     ];
-    if (m.source !== "claude") {
-      actions.push({ type: "remove", label: "Remove marketplace", tone: "danger" });
-    }
+    actions.push({
+      type: "remove",
+      label: m.source === "claude" ? "Remove marketplace from Claude" : "Remove marketplace",
+      tone: "danger",
+    });
     return actions;
   }
 

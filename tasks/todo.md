@@ -44,6 +44,25 @@
 - [x] Surface local-only/new artifacts as easy to add intentionally
 - [x] Make remove-everywhere explicit and safe
 
+## Discover Navigation Regression Deep Dive
+- [x] Add deep E2E coverage for Discover tab non-editing navigation
+- [x] Scrub dashboard → plugin list → row navigation → detail mapping → escape/back behavior
+- [x] Verify list selection, preview, and Enter target stay in sync across enough rows to catch repeats/skips
+- [x] Run typecheck/tests and visually verify Discover navigation
+
+## Compound Engineering Installed Status Regression
+- [x] Mark marketplace plugins installed from actual tool component status, even when an old installed marketplace key was removed/renamed
+- [x] Keep marketplace installed counts derived from plugin rows after status enrichment
+- [x] Add store regression coverage for stale installed marketplace key + present tool components
+- [x] Refresh open plugin detail after successful update so version/update metadata changes immediately
+
+## Manual Cleanup — Legacy Compound Engineering Artifacts
+- [x] Inventory stale compound-engineering marketplace/cache/tool artifacts on disk
+- [x] Remove old legacy marketplace/plugin/cache records without touching current `compound-engineering-plugin` v3.8.2 sources
+- [x] Remove legacy standalone skill/agent artifacts only when clearly owned by old compound-engineering installs
+- [x] Remove `compound-docs` from active tool dirs, playbook source cache, and playbook source repo
+- [x] Refresh/verify Blackbook no longer sees stale old compound artifacts
+
 ## Review
 - Tab switching now performs no automatic network/file refresh work.
 - Startup now performs no background loading; user controls loading via `R`.

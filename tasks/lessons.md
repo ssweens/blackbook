@@ -1,5 +1,9 @@
 # Lessons
 
+- Mutation actions that refresh store data must also refresh any open detail view inside the store action; do not rely solely on caller-side UI shims after install/update/uninstall.
+- After deleting stale plugin caches/manifests, verify both marketplace rows and `installedPlugins`; Installed tab renders `installedPlugins`, so marketplace `installed: true` alone is not enough.
+- For TUI list navigation bugs, test row marker, preview metadata, store index, and Enter-opened detail together; a fixed container height can clip rows independently from previews and create apparent skipped/repeated selections.
+- When fixing a user-reported unavailable action, trace every UI entry point (list shortcut, detail view action builder, action dispatcher, backend effect) before claiming it works; stale detail presenters can keep showing disabled/read-only behavior even after shortcut paths are fixed.
 - Do not turn a third-party plugin's private installer behavior (prefixes, ad-hoc manifests, generated layout) into a Blackbook convention or generic standard. First inspect the plugin's actual source, then decide whether Blackbook should rely only on declared marketplace metadata / Blackbook-owned install records, or explicitly model the artifact as externally managed.
 - When a user says an action "did nothing," verify the exact UI action path and result handling before assuming a backend install path mismatch.
 - For Installed-tab per-tool plugin syncs, handle standalone component sources (e.g., a direct skill directory with `SKILL.md`) in addition to package-root layouts.

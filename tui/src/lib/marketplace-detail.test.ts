@@ -53,11 +53,12 @@ describe("getMarketplaceDetailActions", () => {
     expect(actions[2].tone).toBe("danger");
   });
 
-  it("omits remove for read-only Claude marketplace", () => {
+  it("returns native Claude remove action for Claude marketplaces", () => {
     const detail: MarketplaceDetailContext = { kind: "plugin", marketplace: createPluginMarketplace("claude") };
     const actions = getMarketplaceDetailActions(detail);
 
-    expect(actions.map((a) => a.type)).toEqual(["browse", "update"]);
+    expect(actions.map((a) => a.type)).toEqual(["browse", "update", "remove"]);
+    expect(actions[2]).toMatchObject({ label: "Remove marketplace from Claude", tone: "danger" });
   });
 
   it("returns browse/back for built-in pi marketplace", () => {

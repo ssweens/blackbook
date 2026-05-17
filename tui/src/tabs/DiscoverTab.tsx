@@ -24,15 +24,12 @@ export function DiscoverTab() {
   const search = useStore((s) => s.search);
   const setSearch = useStore((s) => s.setSearch);
   const selectedIndex = useStore((s) => s.selectedIndex);
-  const setSelectedIndex = useStore((s) => s.setSelectedIndex);
   const discoverSubView = useStore((s) => s.discoverSubView);
-  const setDiscoverSubView = useStore((s) => s.setDiscoverSubView);
   const sortBy = useStore((s) => s.sortBy);
   const sortDir = useStore((s) => s.sortDir);
   const marketplaces = useStore((s) => s.marketplaces);
-  const installedPlugins = useStore((s) => s.installedPlugins);
   const piPackages = useStore((s) => s.piPackages);
-  const subViewIndex = useStore((s) => s.selectedIndex); // re-use selectedIndex for sub-view
+  const subViewIndex = selectedIndex;
 
   const allPlugins = useMemo(() => marketplaces.flatMap((m) => m.plugins), [marketplaces]);
 

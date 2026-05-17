@@ -226,14 +226,83 @@ function newestMarketplacePluginFor(scannedPlugin: Plugin, marketplacePlugins: P
 }
 
 function getInstallStatus(plugin: Plugin, installedAny: boolean): InstallStatus {
-  if (!installedAny) return { installed: false, incomplete: false };
-
   const statuses = getPluginToolStatus(plugin);
   const supportedEnabled = statuses.filter((status) => status.enabled && status.supported);
   if (supportedEnabled.length === 0) return { installed: false, incomplete: false };
 
+  const installedByToolStatus = supportedEnabled.some((status) => status.installed);
+  if (!installedAny && !installedByToolStatus) return { installed: false, incomplete: false };
+
   const incomplete = supportedEnabled.some((status) => !status.installed);
   return { installed: true, incomplete };
+}
+
+function mergeInstalledPluginMetadata(scannedPlugin: Plugin, allMarketplacePlugins: Plugin[]): Plugin {
+  const marketplacePlugin = newestMarketplacePluginFor(scannedPlugin, allMarketplacePlugins);
+  if (marketplacePlugin) {
+    const installedVersion = scannedPlugin.installedVersion ?? scannedPlugin.version;
+    const latestVersion = marketplacePlugin.latestVersion ?? marketplacePlugin.version;
+    const status = getInstallStatus(marketplacePlugin, true);
+    return {
+      ...marketplacePlugin,
+      skills: marketplacePlugin.skills.length > 0 ? marketplacePlugin.skills : scannedPlugin.skills,
+      commands: marketplacePlugin.commands.length > 0 ? marketplacePlugin.commands : scannedPlugin.commands,
+      agents: marketplacePlugin.agents.length > 0 ? marketplacePlugin.agents : scannedPlugin.agents,
+      hooks: marketplacePlugin.hooks.length > 0 ? marketplacePlugin.hooks : scannedPlugin.hooks,
+      hasMcp: marketplacePlugin.hasMcp || scannedPlugin.hasMcp,
+      installed: true,
+      incomplete: status.incomplete,
+      installedVersion,
+      latestVersion,
+      version: latestVersion ?? marketplacePlugin.version,
+      hasUpdate: hasPluginUpdate(installedVersion, latestVersion),
+      installedMarketplace: scannedPlugin.marketplace,
+    };
+  }
+
+  const status = getInstallStatus(scannedPlugin, true);
+  return {
+    ...scannedPlugin,
+    installed: true,
+    incomplete: status.incomplete,
+    latestVersion: scannedPlugin.latestVersion ?? scannedPlugin.version,
+    hasUpdate: hasPluginUpdate(scannedPlugin.installedVersion, scannedPlugin.latestVersion ?? scannedPlugin.version),
+  };
+}
+
+function buildInstalledPlugins(scannedPlugins: Plugin[], allMarketplacePlugins: Plugin[]): Plugin[] {
+  const result: Plugin[] = [];
+  const seenNames = new Set<string>();
+
+  for (const scannedPlugin of scannedPlugins) {
+    const merged = mergeInstalledPluginMetadata(scannedPlugin, allMarketplacePlugins);
+    result.push(merged);
+    seenNames.add(merged.name);
+  }
+
+  const marketplaceCandidates = [...allMarketplacePlugins].sort((a, b) => {
+    const nameCmp = a.name.localeCompare(b.name);
+    if (nameCmp !== 0) return nameCmp;
+    return compareVersions(b.latestVersion ?? b.version, a.latestVersion ?? a.version);
+  });
+
+  for (const marketplacePlugin of marketplaceCandidates) {
+    if (seenNames.has(marketplacePlugin.name)) continue;
+    const status = getInstallStatus(marketplacePlugin, false);
+    if (!status.installed) continue;
+    const latestVersion = marketplacePlugin.latestVersion ?? marketplacePlugin.version;
+    result.push({
+      ...marketplacePlugin,
+      installed: true,
+      incomplete: status.incomplete,
+      latestVersion,
+      version: latestVersion ?? marketplacePlugin.version,
+      hasUpdate: hasPluginUpdate(marketplacePlugin.installedVersion, latestVersion),
+    });
+    seenNames.add(marketplacePlugin.name);
+  }
+
+  return result;
 }
 
 function composeManagedItems(
@@ -1120,52 +1189,21 @@ export const useStore = create<Store>((rawSet, get) => {
       const installedPlugins = scannedPlugins.filter((p) => configuredMarketplaceNames.has(p.marketplace));
 
       // STEP 4: Update marketplace installed counts and status
-      const updatedMarketplaces = enrichedMarketplaces.map((m) => ({
-        ...m,
-        plugins: m.plugins.map((p) => ({
+      const updatedMarketplaces = enrichedMarketplaces.map((m) => {
+        const pluginsWithStatus = m.plugins.map((p) => ({
           ...p,
           ...getInstallStatus(p, installedPlugins.some((ip) => ip.name === p.name)),
-        })),
-        installedCount: m.plugins.filter((p) =>
-          installedPlugins.some((ip) => ip.name === p.name)
-        ).length,
-      }));
-
-      // STEP 5: Merge marketplace metadata with scanned plugins
-      const installedWithStatus = installedPlugins.map((scannedPlugin) => {
-        const marketplacePlugin = newestMarketplacePluginFor(scannedPlugin, allMarketplacePlugins);
-        if (marketplacePlugin) {
-          // Merge marketplace metadata with actually-installed components.
-          const installedVersion = scannedPlugin.installedVersion ?? scannedPlugin.version;
-          const latestVersion = marketplacePlugin.latestVersion ?? marketplacePlugin.version;
-          const status = getInstallStatus(marketplacePlugin, true);
-          return {
-            ...marketplacePlugin,
-            // Show latest marketplace components only for display. Ownership
-            // (standalone-skill filtering) uses the union separately below.
-            skills: marketplacePlugin.skills.length > 0 ? marketplacePlugin.skills : scannedPlugin.skills,
-            commands: marketplacePlugin.commands.length > 0 ? marketplacePlugin.commands : scannedPlugin.commands,
-            agents: marketplacePlugin.agents.length > 0 ? marketplacePlugin.agents : scannedPlugin.agents,
-            hooks: marketplacePlugin.hooks.length > 0 ? marketplacePlugin.hooks : scannedPlugin.hooks,
-            hasMcp: marketplacePlugin.hasMcp || scannedPlugin.hasMcp,
-            installed: true,
-            incomplete: status.incomplete,
-            installedVersion,
-            latestVersion,
-            version: latestVersion ?? marketplacePlugin.version,
-            hasUpdate: hasPluginUpdate(installedVersion, latestVersion),
-            installedMarketplace: scannedPlugin.marketplace,
-          };
-        }
-        const status = getInstallStatus(scannedPlugin, true);
+        }));
         return {
-          ...scannedPlugin,
-          installed: true,
-          incomplete: status.incomplete,
-          latestVersion: scannedPlugin.latestVersion ?? scannedPlugin.version,
-          hasUpdate: hasPluginUpdate(scannedPlugin.installedVersion, scannedPlugin.latestVersion ?? scannedPlugin.version),
+          ...m,
+          plugins: pluginsWithStatus,
+          installedCount: pluginsWithStatus.filter((p) => p.installed).length,
         };
       });
+
+      // STEP 5: Build installed plugin list from both scanned install records
+      // and marketplace-prescribed plugins whose components are present on disk.
+      const installedWithStatus = buildInstalledPlugins(installedPlugins, allMarketplacePlugins);
 
       const state = get();
       set({
@@ -1202,54 +1240,19 @@ export const useStore = create<Store>((rawSet, get) => {
       (get().marketplaces.length > 0 ? get().marketplaces : parseMarketplaces()).map((m) => m.name),
     );
     const installed = allInstalled.filter((p) => configuredNames.has(p.marketplace));
-    const marketplaces = get().marketplaces.map((m) => ({
-      ...m,
-      plugins: m.plugins.map((p) => ({
+    const marketplaces = get().marketplaces.map((m) => {
+      const pluginsWithStatus = m.plugins.map((p) => ({
         ...p,
         ...getInstallStatus(p, installed.some((ip) => ip.name === p.name)),
-      })),
-    }));
-    // Replace scanned plugin with marketplace plugin entirely when available
-    // Scanned plugins only tell us "something is installed" - for all metadata
-    // (marketplace, description), use marketplace plugin.
-    // But use scanned skills/commands/agents to show what's actually installed on disk.
-    const allMarketplacePlugins = marketplaces.flatMap((m) => m.plugins);
-    const installedWithStatus = installed.map((scannedPlugin) => {
-      const marketplacePlugin = newestMarketplacePluginFor(scannedPlugin, allMarketplacePlugins);
-      if (marketplacePlugin) {
-        // Merge marketplace metadata with actually-installed components.
-        // If the same plugin name exists in multiple configured marketplaces,
-        // use the newest known marketplace version while keeping the installed
-        // marketplace/version for update visibility.
-        const installedVersion = scannedPlugin.installedVersion ?? scannedPlugin.version;
-        const latestVersion = marketplacePlugin.latestVersion ?? marketplacePlugin.version;
-        const status = getInstallStatus(marketplacePlugin, true);
-        return {
-          ...marketplacePlugin,
-          // Show latest marketplace components only for display.
-          skills: marketplacePlugin.skills.length > 0 ? marketplacePlugin.skills : scannedPlugin.skills,
-          commands: marketplacePlugin.commands.length > 0 ? marketplacePlugin.commands : scannedPlugin.commands,
-          agents: marketplacePlugin.agents.length > 0 ? marketplacePlugin.agents : scannedPlugin.agents,
-          hooks: marketplacePlugin.hooks.length > 0 ? marketplacePlugin.hooks : scannedPlugin.hooks,
-          hasMcp: marketplacePlugin.hasMcp || scannedPlugin.hasMcp,
-          installed: true,
-          incomplete: status.incomplete,
-          installedVersion,
-          latestVersion,
-          version: latestVersion ?? marketplacePlugin.version,
-          hasUpdate: hasPluginUpdate(installedVersion, latestVersion),
-          installedMarketplace: scannedPlugin.marketplace,
-        };
-      }
-      const status = getInstallStatus(scannedPlugin, true);
+      }));
       return {
-        ...scannedPlugin,
-        installed: true,
-        incomplete: status.incomplete,
-        latestVersion: scannedPlugin.latestVersion ?? scannedPlugin.version,
-        hasUpdate: hasPluginUpdate(scannedPlugin.installedVersion, scannedPlugin.latestVersion ?? scannedPlugin.version),
+        ...m,
+        plugins: pluginsWithStatus,
+        installedCount: pluginsWithStatus.filter((p) => p.installed).length,
       };
     });
+    const allMarketplacePlugins = marketplaces.flatMap((m) => m.plugins);
+    const installedWithStatus = buildInstalledPlugins(installed, allMarketplacePlugins);
 
     // For standalone-skill ownership, build a combined set from BOTH old installed
     // names and latest marketplace names so deployed artifacts under either naming
@@ -1653,6 +1656,7 @@ export const useStore = create<Store>((rawSet, get) => {
     
     if (result.success) {
       await get().refreshAll({ silent: true });
+      get().refreshDetail();
       
       const parts: string[] = [];
       const toolList = get().tools;
@@ -1914,20 +1918,27 @@ export const useStore = create<Store>((rawSet, get) => {
     const { notify } = get();
     const marketplace = get().marketplaces.find((m) => m.name === name);
 
-    // For Claude-discovered marketplaces, run the native Claude CLI command to
-    // remove it from known_marketplaces.json on every Claude instance.
-    if (marketplace?.source === "claude") {
-      await removeClaudeMarketplace(name);
+    try {
+      // For Claude-discovered marketplaces, run the native Claude CLI command to
+      // remove it from known_marketplaces.json on every Claude instance.
+      if (marketplace?.source === "claude") {
+        await removeClaudeMarketplace(name);
+      }
+
+      // Remove from Blackbook config (no-op if it wasn't user-added).
+      removeMarketplaceFromConfig(name);
+
+      set({
+        marketplaces: get().marketplaces.filter((m) => m.name !== name),
+      });
+
+      notify(`Removed marketplace "${name}"`, "success");
+    } catch (error) {
+      notify(
+        `Failed to remove marketplace "${name}": ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
     }
-
-    // Remove from Blackbook config (no-op if it wasn't user-added).
-    removeMarketplaceFromConfig(name);
-
-    set({
-      marketplaces: get().marketplaces.filter((m) => m.name !== name),
-    });
-
-    notify(`Removed marketplace "${name}"`, "success");
   },
 
   updateMarketplace: async (name) => {
@@ -1941,22 +1952,20 @@ export const useStore = create<Store>((rawSet, get) => {
       const installedPlugins = get().installedPlugins;
 
       set({
-        marketplaces: get().marketplaces.map((m) =>
-          m.name === name
-            ? {
-                ...m,
-                plugins: plugins.map((p) => ({
-                  ...p,
-                  installed: installedPlugins.some((ip) => ip.name === p.name),
-                })),
-                availableCount: plugins.length,
-                installedCount: plugins.filter((p) =>
-                  installedPlugins.some((ip) => ip.name === p.name)
-                ).length,
-                updatedAt: new Date(),
-              }
-            : m
-        ),
+        marketplaces: get().marketplaces.map((m) => {
+          if (m.name !== name) return m;
+          const pluginsWithStatus = plugins.map((p) => ({
+            ...p,
+            ...getInstallStatus(p, installedPlugins.some((ip) => ip.name === p.name)),
+          }));
+          return {
+            ...m,
+            plugins: pluginsWithStatus,
+            availableCount: plugins.length,
+            installedCount: pluginsWithStatus.filter((p) => p.installed).length,
+            updatedAt: new Date(),
+          };
+        }),
       });
 
       notify(`Updated marketplace \"${name}\" (${plugins.length} plugin${plugins.length === 1 ? "" : "s"})`, "success");
