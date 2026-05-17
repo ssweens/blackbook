@@ -100,6 +100,7 @@ export interface ManagedItem {
   author?: string;
   license?: string;
   repository?: string;
+  prescriptionStatus?: import("./types.js").Plugin["prescriptionStatus"];
 
   // ── Original reference (for passing to existing functions) ───────────
   _plugin?: Plugin;
@@ -177,6 +178,7 @@ export function pluginToManagedItem(
     installedVersion: plugin.installedVersion,
     latestVersion: plugin.latestVersion,
     hasUpdate: plugin.hasUpdate,
+    prescriptionStatus: plugin.prescriptionStatus,
     // Original reference
     _plugin: plugin,
   };

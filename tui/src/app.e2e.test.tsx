@@ -14,6 +14,7 @@
  * - [x] Shows plugin summary card
  * - [x] Enter on summary opens plugin sub-view list
  * - [x] Escape from sub-view returns to summary
+ * - [x] In-git Pi packages appear in the Discover Pi Packages sub-view
  * - [x] Enter on plugin in sub-view opens detail
  * - [x] Plugin detail shows name, description, actions
  * - [x] Escape from detail returns to list
@@ -923,6 +924,32 @@ describe("App E2E — Discover Tab", () => {
     const { stdout, unmount } = render(<App />);
     try {
       await waitForFrame(stdout.lastFrame, (f) => f.includes("plugin") || f.includes("Plugin"), 5000);
+    } finally {
+      unmount();
+    }
+  });
+
+  it("shows in-git Pi packages in the Discover Pi Packages sub-view", async () => {
+    useStore.setState({
+      tab: "discover",
+      discoverSubView: "piPackages",
+      selectedIndex: 0,
+      marketplaces: [],
+      piPackages: [createPiPackage({
+        name: "pi-subagents",
+        source: "npm:pi-subagents",
+        installed: false,
+        recommended: true,
+      })],
+    });
+
+    const { stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) =>
+        f.includes("Pi Packages") &&
+        f.includes("pi-subagents") &&
+        f.includes("in git"),
+      );
     } finally {
       unmount();
     }

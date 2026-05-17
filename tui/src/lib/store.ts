@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { existsSync, lstatSync, statSync, watch } from "fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, watch, writeFileSync } from "fs";
+import { dirname, join } from "path";
 
 /**
  * Yield to the event loop so Ink can process keyboard input between
@@ -25,12 +26,13 @@ import type {
   MissingSummary,
   PiPackage,
   PiMarketplace,
+  PiPackageSpec,
   DiscoverSection,
   DiscoverSubView,
   ManagedToolRow,
   ToolDetectionResult,
 } from "./types.js";
-import { fetchMarketplace, loadAllPiMarketplaces, getAllPiPackages, loadPiSettings, isPackageInstalled, fetchNpmPackageDetails, getGlobalPiPackageInstallInfo } from "./marketplace.js";
+import { fetchMarketplace, loadAllPiMarketplaces, getAllPiPackages, loadPiSettings, isPackageInstalled, fetchNpmPackageDetails, getGlobalPiPackageInstallInfo, getSourceType } from "./marketplace.js";
 import { installPiPackage, removePiPackage, updatePiPackage, repairPiPackageManager } from "./pi-install.js";
 import {
   parseMarketplaces,
@@ -52,6 +54,7 @@ import {
   getAssetsRepoPath,
 } from "./config.js";
 import { loadConfig as loadYamlConfig, getConfigPath as getYamlConfigPath } from "./config/loader.js";
+import { saveConfig as saveYamlConfig } from "./config/writer.js";
 import { resolveSourcePath, expandPath as expandConfigPath } from "./config/path.js";
 import { pullSourceRepo, primeSourceRepoStatus, clearSourceStatusCache } from "./source-setup.js";
 import { getAllPlaybooks, resolveToolInstances, isSyncTarget } from "./config/playbooks.js";
@@ -102,6 +105,7 @@ interface Actions {
   installPlugin: (plugin: Plugin) => Promise<boolean>;
   uninstallPlugin: (plugin: Plugin) => Promise<boolean>;
   updatePlugin: (plugin: Plugin) => Promise<boolean>;
+  trackPluginInSource: (plugin: Plugin) => Promise<boolean>;
   setDetailPlugin: (plugin: Plugin | null) => void;
   setDetailMarketplace: (marketplace: Marketplace | null) => void;
   /** Unified detail setter. Replaces setDetailPlugin/etc. */
@@ -124,6 +128,7 @@ interface Actions {
   uninstallPiPackage: (pkg: PiPackage) => Promise<boolean>;
   updatePiPackage: (pkg: PiPackage) => Promise<boolean>;
   repairPiPackage: (pkg: PiPackage) => Promise<boolean>;
+  trackPiPackageInSource: (pkg: PiPackage) => Promise<boolean>;
   setDetailPiPackage: (pkg: PiPackage | null) => Promise<void>;
   togglePiMarketplaceEnabled: (name: string) => Promise<void>;
   addPiMarketplace: (name: string, source: string) => Promise<void>;
@@ -237,7 +242,11 @@ function getInstallStatus(plugin: Plugin, installedAny: boolean): InstallStatus 
   return { installed: true, incomplete };
 }
 
-function mergeInstalledPluginMetadata(scannedPlugin: Plugin, allMarketplacePlugins: Plugin[]): Plugin {
+function mergeInstalledPluginMetadata(
+  scannedPlugin: Plugin,
+  allMarketplacePlugins: Plugin[],
+  configuredMarketplaceNames: Set<string>,
+): Plugin {
   const marketplacePlugin = newestMarketplacePluginFor(scannedPlugin, allMarketplacePlugins);
   if (marketplacePlugin) {
     const installedVersion = scannedPlugin.installedVersion ?? scannedPlugin.version;
@@ -257,25 +266,32 @@ function mergeInstalledPluginMetadata(scannedPlugin: Plugin, allMarketplacePlugi
       version: latestVersion ?? marketplacePlugin.version,
       hasUpdate: hasPluginUpdate(installedVersion, latestVersion),
       installedMarketplace: scannedPlugin.marketplace,
+      prescriptionStatus: "in-git",
     };
   }
 
   const status = getInstallStatus(scannedPlugin, true);
+  const marketplaceStillConfigured = configuredMarketplaceNames.has(scannedPlugin.marketplace);
   return {
     ...scannedPlugin,
     installed: true,
     incomplete: status.incomplete,
     latestVersion: scannedPlugin.latestVersion ?? scannedPlugin.version,
     hasUpdate: hasPluginUpdate(scannedPlugin.installedVersion, scannedPlugin.latestVersion ?? scannedPlugin.version),
+    prescriptionStatus: marketplaceStillConfigured ? "no-longer-in-marketplace" : "marketplace-removed",
   };
 }
 
-function buildInstalledPlugins(scannedPlugins: Plugin[], allMarketplacePlugins: Plugin[]): Plugin[] {
+function buildInstalledPlugins(
+  scannedPlugins: Plugin[],
+  allMarketplacePlugins: Plugin[],
+  configuredMarketplaceNames: Set<string>,
+): Plugin[] {
   const result: Plugin[] = [];
   const seenNames = new Set<string>();
 
   for (const scannedPlugin of scannedPlugins) {
-    const merged = mergeInstalledPluginMetadata(scannedPlugin, allMarketplacePlugins);
+    const merged = mergeInstalledPluginMetadata(scannedPlugin, allMarketplacePlugins, configuredMarketplaceNames);
     result.push(merged);
     seenNames.add(merged.name);
   }
@@ -298,6 +314,7 @@ function buildInstalledPlugins(scannedPlugins: Plugin[], allMarketplacePlugins: 
       latestVersion,
       version: latestVersion ?? marketplacePlugin.version,
       hasUpdate: hasPluginUpdate(marketplacePlugin.installedVersion, latestVersion),
+      prescriptionStatus: "in-git",
     });
     seenNames.add(marketplacePlugin.name);
   }
@@ -315,6 +332,107 @@ function composeManagedItems(
     ...filesToManagedItems(files),
     ...piPackagesToManagedItems(piPackages),
   ];
+}
+
+function loadDesiredPiPackageSpecs(): PiPackageSpec[] {
+  const result = loadYamlConfig();
+  if (result.errors.length > 0) return [];
+  return result.config.pi_packages;
+}
+
+function inferPackageNameFromSource(source: string): string {
+  const trimmed = source.trim().replace(/\/$/, "");
+  if (trimmed.startsWith("npm:")) return trimmed.slice(4);
+  if (trimmed.startsWith("git:")) return inferPackageNameFromSource(trimmed.slice(4));
+  const withoutGit = trimmed.replace(/\.git$/, "");
+  const match = withoutGit.match(/([^/@:]+\/[^/@:]+|[^/@:]+)$/);
+  return match ? match[1] : trimmed;
+}
+
+function ensurePluginJson(pluginDir: string, plugin: Plugin): void {
+  const pluginJsonPath = join(pluginDir, ".claude-plugin", "plugin.json");
+  if (existsSync(pluginJsonPath)) return;
+  mkdirSync(dirname(pluginJsonPath), { recursive: true });
+  writeFileSync(pluginJsonPath, JSON.stringify({
+    name: plugin.name,
+    description: plugin.description,
+    version: plugin.installedVersion ?? plugin.version ?? "1.0.0",
+    skills: plugin.skills,
+    commands: plugin.commands,
+    agents: plugin.agents,
+  }, null, 2));
+}
+
+function upsertSourceRepoMarketplacePlugin(sourceRepo: string, plugin: Plugin): void {
+  const marketplacePath = join(sourceRepo, ".claude-plugin", "marketplace.json");
+  mkdirSync(dirname(marketplacePath), { recursive: true });
+
+  let marketplace: Record<string, unknown> = {
+    name: "playbook",
+    plugins: [],
+  };
+  if (existsSync(marketplacePath)) {
+    try {
+      marketplace = JSON.parse(readFileSync(marketplacePath, "utf-8"));
+    } catch {
+      marketplace = { name: "playbook", plugins: [] };
+    }
+  }
+
+  const plugins = Array.isArray(marketplace.plugins) ? marketplace.plugins as Array<Record<string, unknown>> : [];
+  const entry = {
+    name: plugin.name,
+    description: plugin.description,
+    version: plugin.installedVersion ?? plugin.version ?? "1.0.0",
+    source: `./plugins/${plugin.name}`,
+  };
+  const existingIndex = plugins.findIndex((p) => p.name === plugin.name);
+  if (existingIndex >= 0) plugins[existingIndex] = { ...plugins[existingIndex], ...entry };
+  else plugins.push(entry);
+  marketplace.plugins = plugins;
+
+  writeFileSync(marketplacePath, JSON.stringify(marketplace, null, 2) + "\n");
+}
+
+async function createPiPackageFromSpec(
+  spec: PiPackageSpec,
+  preferredManager: ReturnType<typeof getPackageManager>,
+  settings: ReturnType<typeof loadPiSettings>,
+  installInfo: ReturnType<typeof getGlobalPiPackageInstallInfo>,
+): Promise<PiPackage> {
+  const source = spec.source;
+  const sourceType = getSourceType(source);
+  const installed = isPackageInstalled(source, settings);
+  const npmName = source.startsWith("npm:") ? source.slice(4) : null;
+  const detected = npmName ? installInfo.get(npmName) : undefined;
+  const details = npmName ? await fetchNpmPackageDetails(npmName) : null;
+  const latestVersion = details?.version ?? "0.0.0";
+  const installedVersion = detected?.version ?? undefined;
+
+  return {
+    name: spec.name ?? details?.name ?? (npmName ?? inferPackageNameFromSource(source)),
+    description: spec.description ?? details?.description ?? "Repo-prescribed Pi package",
+    version: latestVersion,
+    source,
+    sourceType,
+    marketplace: spec.marketplace ?? (sourceType === "npm" ? "npm" : "source repo"),
+    installed,
+    recommended: true,
+    installedVersion,
+    hasUpdate: Boolean(installed && installedVersion && installedVersion !== latestVersion),
+    installedVia: detected?.via,
+    installedViaManagers: detected?.viaManagers,
+    managerMismatch: Boolean(installed && detected?.managerMismatch),
+    preferredManager,
+    extensions: details?.extensions ?? [],
+    skills: details?.skills ?? [],
+    prompts: details?.prompts ?? [],
+    themes: details?.themes ?? [],
+    homepage: details?.homepage,
+    repository: details?.repository,
+    author: details?.author,
+    license: details?.license,
+  };
 }
 
 
@@ -380,6 +498,12 @@ function buildSkillSyncPreview(
     preview.push({ kind: "skill", skill, missingInstances, driftedInstances });
   }
   return preview;
+}
+
+function buildPiPackageSyncPreview(packages: PiPackage[]): SyncPreviewItem[] {
+  return packages
+    .filter((pkg) => pkg.recommended && !pkg.installed)
+    .map((pkg) => ({ kind: "piPackage" as const, piPackage: pkg }));
 }
 
 function buildToolSyncPreview(
@@ -939,11 +1063,35 @@ export const useStore = create<Store>((rawSet, get) => {
       const preferredManager = getPackageManager();
       let packages: PiPackage[] = getAllPiPackages(marketplaces).map((pkg) => ({ ...pkg, preferredManager }));
 
-      // Add installed npm packages that aren't in any marketplace
       const settings = loadPiSettings();
-      const existingSources = new Set(packages.map((p) => p.source.toLowerCase()));
       const installInfo = getGlobalPiPackageInstallInfo();
+      const desiredSpecs = loadDesiredPiPackageSpecs();
+      const desiredBySource = new Map(desiredSpecs.map((spec) => [spec.source.toLowerCase(), spec]));
 
+      packages = packages.map((pkg) => {
+        const desired = desiredBySource.get(pkg.source.toLowerCase());
+        if (!desired) return pkg;
+        return {
+          ...pkg,
+          name: desired.name ?? pkg.name,
+          description: desired.description ?? pkg.description,
+          marketplace: desired.marketplace ?? pkg.marketplace,
+          recommended: true,
+        };
+      });
+
+      const existingSources = new Set(packages.map((p) => p.source.toLowerCase()));
+
+      // Add repo-prescribed packages that aren't in any marketplace or local scan.
+      for (const spec of desiredSpecs) {
+        const normalizedSource = spec.source.toLowerCase();
+        if (existingSources.has(normalizedSource)) continue;
+        const pkg = await createPiPackageFromSpec(spec, preferredManager, settings, installInfo);
+        packages.push(pkg);
+        existingSources.add(normalizedSource);
+      }
+
+      // Add installed npm packages that aren't in any marketplace or desired list.
       for (const source of settings.packages) {
         if (existingSources.has(source.toLowerCase())) continue;
         if (!source.startsWith("npm:")) continue;
@@ -1064,6 +1212,39 @@ export const useStore = create<Store>((rawSet, get) => {
     return false;
   },
 
+  trackPiPackageInSource: async (pkg) => {
+    const { notify } = get();
+    const result = loadYamlConfig();
+    if (result.errors.length > 0) {
+      notify(`Config load failed: ${result.errors[0].message}`, "error");
+      return false;
+    }
+
+    const exists = result.config.pi_packages.some((entry) => entry.source.toLowerCase() === pkg.source.toLowerCase());
+    if (exists) {
+      notify(`${pkg.name} is already in git`, "info");
+      return true;
+    }
+
+    saveYamlConfig({
+      ...result.config,
+      pi_packages: [
+        ...result.config.pi_packages,
+        {
+          source: pkg.source,
+          name: pkg.name,
+          description: pkg.description || undefined,
+          marketplace: pkg.marketplace || undefined,
+        },
+      ],
+    }, result.configPath);
+
+    await get().loadPiPackages({ silent: true });
+    get().refreshDetail();
+    notify(`Tracked ${pkg.name} in source repo`, "success");
+    return true;
+  },
+
   repairPiPackage: async (pkg) => {
     const { notify, clearNotification } = get();
     const preferred = getPackageManager();
@@ -1181,18 +1362,18 @@ export const useStore = create<Store>((rawSet, get) => {
       // STEP 2: Extract all marketplace plugins for skill matching
       const allMarketplacePlugins = enrichedMarketplaces.flatMap((m) => m.plugins);
 
-      // STEP 3: Scan installed skills, passing marketplace data for grouping
+      // STEP 3: Scan installed plugins. Keep entries from removed marketplaces
+      // so the UX can show them as orphaned instead of leaking their components
+      // into standalone skills without explanation.
       const configuredMarketplaceNames = new Set(marketplaces.map((m) => m.name));
       const { plugins: scannedPlugins } = getAllInstalledPlugins();
-      // Only keep plugins whose marketplace is currently configured — removes
-      // stale entries from marketplaces that have been removed from config.
-      const installedPlugins = scannedPlugins.filter((p) => configuredMarketplaceNames.has(p.marketplace));
+      const configuredInstalledPlugins = scannedPlugins.filter((p) => configuredMarketplaceNames.has(p.marketplace));
 
       // STEP 4: Update marketplace installed counts and status
       const updatedMarketplaces = enrichedMarketplaces.map((m) => {
         const pluginsWithStatus = m.plugins.map((p) => ({
           ...p,
-          ...getInstallStatus(p, installedPlugins.some((ip) => ip.name === p.name)),
+          ...getInstallStatus(p, configuredInstalledPlugins.some((ip) => ip.name === p.name)),
         }));
         return {
           ...m,
@@ -1203,7 +1384,7 @@ export const useStore = create<Store>((rawSet, get) => {
 
       // STEP 5: Build installed plugin list from both scanned install records
       // and marketplace-prescribed plugins whose components are present on disk.
-      const installedWithStatus = buildInstalledPlugins(installedPlugins, allMarketplacePlugins);
+      const installedWithStatus = buildInstalledPlugins(scannedPlugins, allMarketplacePlugins, configuredMarketplaceNames);
 
       const state = get();
       set({
@@ -1233,17 +1414,17 @@ export const useStore = create<Store>((rawSet, get) => {
     }
 
     const { plugins: allInstalled } = getAllInstalledPlugins();
-    // Filter to only plugins from currently-loaded/configured marketplaces. Prefer
-    // store state when present so a marketplace refresh and an installed-plugin
-    // refresh operate over the same marketplace set.
+    // Prefer store state when present so a marketplace refresh and an installed-plugin
+    // refresh operate over the same marketplace set. Keep orphaned installed plugins
+    // in the installed list with explicit status badges.
     const configuredNames = new Set(
       (get().marketplaces.length > 0 ? get().marketplaces : parseMarketplaces()).map((m) => m.name),
     );
-    const installed = allInstalled.filter((p) => configuredNames.has(p.marketplace));
+    const configuredInstalled = allInstalled.filter((p) => configuredNames.has(p.marketplace));
     const marketplaces = get().marketplaces.map((m) => {
       const pluginsWithStatus = m.plugins.map((p) => ({
         ...p,
-        ...getInstallStatus(p, installed.some((ip) => ip.name === p.name)),
+        ...getInstallStatus(p, configuredInstalled.some((ip) => ip.name === p.name)),
       }));
       return {
         ...m,
@@ -1252,7 +1433,7 @@ export const useStore = create<Store>((rawSet, get) => {
       };
     });
     const allMarketplacePlugins = marketplaces.flatMap((m) => m.plugins);
-    const installedWithStatus = buildInstalledPlugins(installed, allMarketplacePlugins);
+    const installedWithStatus = buildInstalledPlugins(allInstalled, allMarketplacePlugins, configuredNames);
 
     // For standalone-skill ownership, build a combined set from BOTH old installed
     // names and latest marketplace names so deployed artifacts under either naming
@@ -1684,6 +1865,36 @@ export const useStore = create<Store>((rawSet, get) => {
     return result.success;
   },
 
+  trackPluginInSource: async (plugin) => {
+    const { notify } = get();
+    const sourceRepo = getConfigRepoPath();
+    if (!sourceRepo) {
+      notify("No source repo configured.", "error");
+      return false;
+    }
+    if (typeof plugin.source !== "string" || !existsSync(plugin.source)) {
+      notify(`No recoverable source found for ${plugin.name}.`, "error");
+      return false;
+    }
+
+    const destDir = join(sourceRepo, "plugins", plugin.name);
+    try {
+      if (existsSync(destDir)) rmSync(destDir, { recursive: true, force: true });
+      mkdirSync(dirname(destDir), { recursive: true });
+      cpSync(plugin.source, destDir, { recursive: true });
+      ensurePluginJson(destDir, plugin);
+      upsertSourceRepoMarketplacePlugin(sourceRepo, plugin);
+    } catch (error) {
+      notify(`Failed to track ${plugin.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
+      return false;
+    }
+
+    await get().refreshAll({ silent: true });
+    get().refreshDetail();
+    notify(`Tracked ${plugin.name} in source repo`, "success");
+    return true;
+  },
+
   toggleToolEnabled: async (toolId, instanceId) => {
     invalidatePluginToolStatusCache();
     const { notify } = get();
@@ -1750,6 +1961,7 @@ export const useStore = create<Store>((rawSet, get) => {
       ...toolSync,
       ...buildFileSyncPreview(files),
       ...buildSkillSyncPreview(standaloneSkills, toolInstances),
+      ...buildPiPackageSyncPreview(get().piPackages),
       ...buildSyncPreview(pluginsForSync),
     ];
   },
@@ -1815,6 +2027,13 @@ export const useStore = create<Store>((rawSet, get) => {
             if (step.apply?.error) errors.push(step.apply.error);
           }
         }
+      } else if (item.kind === "piPackage") {
+        const success = await get().installPiPackage(item.piPackage);
+        if (success) {
+          syncedItems += 1;
+        } else {
+          errors.push(`Failed to install ${item.piPackage.name}`);
+        }
       } else if (item.kind === "tool") {
         const success = await get().updateToolAction(item.toolId);
         if (success) {
@@ -1859,11 +2078,15 @@ export const useStore = create<Store>((rawSet, get) => {
     // Don't do a full refreshAll which is slow
     const hadFiles = items.some((item) => item.kind === "file");
     const hadPlugins = items.some((item) => item.kind === "plugin");
+    const hadPiPackages = items.some((item) => item.kind === "piPackage");
     if (hadFiles) {
       void get().loadFiles({ silent: true });
     }
     if (hadPlugins) {
       void get().loadInstalledPlugins({ silent: true });
+    }
+    if (hadPiPackages) {
+      void get().loadPiPackages({ silent: true });
     }
   },
 

@@ -102,6 +102,14 @@ export interface ItemFlags {
   hasUpdate: boolean;
   /** True when a skill exists on disk but is not in the source repo. */
   notInGit: boolean;
+  /** True when a package is prescribed by config/source repo but not yet installed. */
+  recommended: boolean;
+  /** True when an installed artifact is local-only and not prescribed by repo/config. */
+  notInGitArtifact: boolean;
+  /** True when an installed plugin's marketplace is still configured but no longer lists it. */
+  noLongerInMarketplace: boolean;
+  /** True when an installed plugin belongs to a marketplace no longer configured. */
+  marketplaceRemoved: boolean;
 }
 
 export function computeItemFlags(item: ManagedItem): ItemFlags {
@@ -120,8 +128,15 @@ export function computeItemFlags(item: ManagedItem): ItemFlags {
     : false;
   const hasUpdate = item.hasUpdate ?? false;
   const notInGit = Boolean(item._skill && !item._skill.sourcePath);
+  const recommended = Boolean(item._piPackage?.recommended);
+  const notInGitArtifact = Boolean(
+    (item._piPackage && item.installed && !item._piPackage.recommended) ||
+    (item._plugin && item.installed && item._plugin.prescriptionStatus === "no-longer-in-marketplace"),
+  );
+  const noLongerInMarketplace = Boolean(item._plugin?.prescriptionStatus === "no-longer-in-marketplace");
+  const marketplaceRemoved = Boolean(item._plugin?.prescriptionStatus === "marketplace-removed");
 
-  return { installed, incomplete, changed, sourceMissing, hasUpdate, notInGit };
+  return { installed, incomplete, changed, sourceMissing, hasUpdate, notInGit, recommended, notInGitArtifact, noLongerInMarketplace, marketplaceRemoved };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -317,6 +332,30 @@ function ItemRow({ item, isSelected, flags, columns, colWidths }: ItemRowProps) 
         <>
           <Text color="gray"> · </Text>
           <Text color="red">not in git</Text>
+        </>
+      )}
+      {flags.recommended && (
+        <>
+          <Text color="gray"> · </Text>
+          <Text color="magenta">in git</Text>
+        </>
+      )}
+      {flags.notInGitArtifact && (
+        <>
+          <Text color="gray"> · </Text>
+          <Text color="red">not in git</Text>
+        </>
+      )}
+      {flags.noLongerInMarketplace && (
+        <>
+          <Text color="gray"> · </Text>
+          <Text color="yellow">no longer in marketplace</Text>
+        </>
+      )}
+      {flags.marketplaceRemoved && (
+        <>
+          <Text color="gray"> · </Text>
+          <Text color="yellow">marketplace removed</Text>
         </>
       )}
     </Box>

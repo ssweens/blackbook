@@ -134,6 +134,9 @@ export function buildPluginActions(
     }
 
     // Bulk actions
+    if (plugin.prescriptionStatus === "no-longer-in-marketplace" || plugin.prescriptionStatus === "marketplace-removed") {
+      actions.push({ id: "track", label: "Track in source repo", type: "track" });
+    }
     actions.push({ id: "uninstall", label: "Uninstall from all tools", type: "uninstall" });
     const updateLabel = plugin.hasUpdate && plugin.installedVersion && plugin.latestVersion
       ? `Update ${plugin.installedVersion} → ${plugin.latestVersion}`
@@ -316,6 +319,7 @@ export function getFileActions(file: FileStatus): FileAction[] {
 export function getPiPackageActions(pkg: PiPackage): ItemAction[] {
   const actions: ItemAction[] = [];
   if (pkg.installed) {
+    if (!pkg.recommended) actions.push({ id: "track", label: "Track in source repo", type: "track" });
     if (pkg.hasUpdate) actions.push({ id: "update", label: "Update", type: "update" });
     actions.push({ id: "uninstall", label: "Uninstall", type: "uninstall" });
   } else {

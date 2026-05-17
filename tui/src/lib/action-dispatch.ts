@@ -32,6 +32,7 @@ export interface DispatchCallbacks {
   installPlugin: (plugin: Plugin) => Promise<boolean>;
   uninstallPlugin: (plugin: Plugin) => Promise<boolean>;
   updatePlugin: (plugin: Plugin) => Promise<boolean>;
+  trackPluginInSource?: (plugin: Plugin) => Promise<boolean>;
   installPluginToInstance: (plugin: Plugin, toolId: string, instanceId: string) => Promise<void>;
   uninstallPluginFromInstance: (plugin: Plugin, toolId: string, instanceId: string) => Promise<void>;
   refreshDetailPlugin: (plugin: Plugin) => void;
@@ -45,6 +46,7 @@ export interface DispatchCallbacks {
   installPiPackage: (pkg: PiPackage) => Promise<boolean>;
   uninstallPiPackage: (pkg: PiPackage) => Promise<boolean>;
   updatePiPackage: (pkg: PiPackage) => Promise<boolean>;
+  trackPiPackageInSource?: (pkg: PiPackage) => Promise<boolean>;
   refreshDetailPiPackage: (pkg: PiPackage) => void;
 
   // Plugin diff support
@@ -113,6 +115,19 @@ export async function handleItemAction(
 
     case "pullback":
       return handlePullbackAction(item, action, callbacks);
+
+    case "track":
+      if (item._piPackage && callbacks.trackPiPackageInSource) {
+        await callbacks.trackPiPackageInSource(item._piPackage);
+        callbacks.refreshDetailPiPackage(item._piPackage);
+        return true;
+      }
+      if (item._plugin && callbacks.trackPluginInSource) {
+        await callbacks.trackPluginInSource(item._plugin);
+        callbacks.refreshDetailPlugin(item._plugin);
+        return true;
+      }
+      return false;
 
     case "delete_everywhere":
       if (item._skill && callbacks.deleteSkillEverywhere) {

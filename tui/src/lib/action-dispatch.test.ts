@@ -88,6 +88,7 @@ function createCallbacks(): DispatchCallbacks {
     installPlugin: vi.fn().mockResolvedValue(true),
     uninstallPlugin: vi.fn().mockResolvedValue(true),
     updatePlugin: vi.fn().mockResolvedValue(true),
+    trackPluginInSource: vi.fn().mockResolvedValue(true),
     installPluginToInstance: vi.fn().mockResolvedValue(undefined),
     uninstallPluginFromInstance: vi.fn().mockResolvedValue(undefined),
     refreshDetailPlugin: vi.fn(),
@@ -97,6 +98,7 @@ function createCallbacks(): DispatchCallbacks {
     installPiPackage: vi.fn().mockResolvedValue(true),
     uninstallPiPackage: vi.fn().mockResolvedValue(true),
     updatePiPackage: vi.fn().mockResolvedValue(true),
+    trackPiPackageInSource: vi.fn().mockResolvedValue(true),
     refreshDetailPiPackage: vi.fn(),
     buildPluginDiffTarget: vi.fn().mockResolvedValue(null),
   };
@@ -209,6 +211,26 @@ describe("handleItemAction", () => {
     const result = await handleItemAction(item, action, callbacks);
     expect(result).toBe(true);
     expect(callbacks.installPiPackage).toHaveBeenCalledWith(pkg);
+    expect(callbacks.refreshDetailPiPackage).toHaveBeenCalledWith(pkg);
+  });
+
+  it("track plugin calls trackPluginInSource + refresh", async () => {
+    const plugin = createPlugin();
+    const item = createItem({ _plugin: plugin });
+    const action: ItemAction = { id: "track", label: "Track in source repo", type: "track" };
+    const result = await handleItemAction(item, action, callbacks);
+    expect(result).toBe(true);
+    expect(callbacks.trackPluginInSource).toHaveBeenCalledWith(plugin);
+    expect(callbacks.refreshDetailPlugin).toHaveBeenCalledWith(plugin);
+  });
+
+  it("track pi-package calls trackPiPackageInSource + refresh", async () => {
+    const pkg = createPiPackage();
+    const item = createItem({ _piPackage: pkg });
+    const action: ItemAction = { id: "track", label: "Track in source repo", type: "track" };
+    const result = await handleItemAction(item, action, callbacks);
+    expect(result).toBe(true);
+    expect(callbacks.trackPiPackageInSource).toHaveBeenCalledWith(pkg);
     expect(callbacks.refreshDetailPiPackage).toHaveBeenCalledWith(pkg);
   });
 

@@ -104,6 +104,25 @@ export function SyncPreview({ item }: SyncPreviewProps) {
     );
   }
 
+  if (item.kind === "piPackage") {
+    return (
+      <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="gray" paddingX={1} height={5}>
+        <Box>
+          <Text color="gray">Pi package: </Text>
+          <Text color="white">{item.piPackage.name}</Text>
+        </Box>
+        <Box>
+          <Text color="gray">Source: </Text>
+          <Text color="cyan">{item.piPackage.source}</Text>
+        </Box>
+        <Box>
+          <Text color="gray">Status: </Text>
+          <Text color="yellow">In git but not installed</Text>
+        </Box>
+      </Box>
+    );
+  }
+
   // Default to plugin preview
   return (
     <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="gray" paddingX={1} height={5}>

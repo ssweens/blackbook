@@ -15,6 +15,9 @@ function getSyncItemKey(item: SyncPreviewItem): string {
   if (item.kind === "skill") {
     return `skill:${item.skill.name}`;
   }
+  if (item.kind === "piPackage") {
+    return `piPackage:${item.piPackage.source}`;
+  }
   return `file:${item.file.name}`;
 }
 
@@ -31,10 +34,11 @@ export function SyncTab() {
   const files = useStore((s) => s.files);
   const installedPlugins = useStore((s) => s.installedPlugins);
   const marketplaces = useStore((s) => s.marketplaces);
+  const piPackages = useStore((s) => s.piPackages);
 
   const syncPreview = useMemo(
     () => getSyncPreview(),
-    [getSyncPreview, managedTools, toolDetection, files, installedPlugins, marketplaces]
+    [getSyncPreview, managedTools, toolDetection, files, installedPlugins, marketplaces, piPackages]
   );
   const selectedKeys = useMemo(() => new Set(syncSelection), [syncSelection]);
 

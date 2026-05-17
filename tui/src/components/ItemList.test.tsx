@@ -54,6 +54,10 @@ describe("computeItemFlags", () => {
       sourceMissing: false,
       hasUpdate: false,
       notInGit: false,
+      recommended: false,
+      notInGitArtifact: false,
+      noLongerInMarketplace: false,
+      marketplaceRemoved: false,
     });
   });
 
@@ -77,6 +81,94 @@ describe("computeItemFlags", () => {
   it("detects hasUpdate for pi-package", () => {
     const flags = computeItemFlags(createItem({ kind: "pi-package", hasUpdate: true }));
     expect(flags.hasUpdate).toBe(true);
+  });
+
+  it("detects installed local-only pi-package as not in git", () => {
+    const flags = computeItemFlags(createItem({
+      kind: "pi-package",
+      installed: true,
+      _piPackage: {
+        name: "pi-local-only",
+        description: "Local only",
+        version: "1.0.0",
+        source: "npm:pi-local-only",
+        sourceType: "npm",
+        marketplace: "npm",
+        installed: true,
+        extensions: [],
+        skills: [],
+        prompts: [],
+        themes: [],
+      },
+    }));
+    expect(flags.notInGitArtifact).toBe(true);
+  });
+
+  it("detects orphaned plugin marketplace states", () => {
+    const noLonger = computeItemFlags(createItem({
+      installed: true,
+      _plugin: {
+        name: "legacy-plugin",
+        marketplace: "playbook",
+        description: "Legacy plugin",
+        source: "./plugins/legacy-plugin",
+        skills: [],
+        commands: [],
+        agents: [],
+        hooks: [],
+        hasMcp: false,
+        hasLsp: false,
+        homepage: "",
+        installed: true,
+        scope: "user",
+        prescriptionStatus: "no-longer-in-marketplace",
+      },
+    }));
+    expect(noLonger.notInGitArtifact).toBe(true);
+    expect(noLonger.noLongerInMarketplace).toBe(true);
+
+    const removed = computeItemFlags(createItem({
+      installed: true,
+      _plugin: {
+        name: "orphan-plugin",
+        marketplace: "old-marketplace",
+        description: "Orphan plugin",
+        source: "./plugins/orphan-plugin",
+        skills: [],
+        commands: [],
+        agents: [],
+        hooks: [],
+        hasMcp: false,
+        hasLsp: false,
+        homepage: "",
+        installed: true,
+        scope: "user",
+        prescriptionStatus: "marketplace-removed",
+      },
+    }));
+    expect(removed.marketplaceRemoved).toBe(true);
+  });
+
+  it("detects recommended missing pi-package", () => {
+    const flags = computeItemFlags(createItem({
+      kind: "pi-package",
+      installed: false,
+      _piPackage: {
+        name: "pi-subagents",
+        description: "Subagents",
+        version: "1.0.0",
+        source: "npm:pi-subagents",
+        sourceType: "npm",
+        marketplace: "npm",
+        installed: false,
+        recommended: true,
+        extensions: [],
+        skills: [],
+        prompts: [],
+        themes: [],
+      },
+    }));
+    expect(flags.recommended).toBe(true);
   });
 
   it("detects source missing from _file instance messages", () => {

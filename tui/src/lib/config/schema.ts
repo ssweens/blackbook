@@ -71,6 +71,24 @@ export const PluginComponentSchema = z.object({
 export type PluginComponentConfig = z.infer<typeof PluginComponentSchema>;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Desired Pi packages
+// These are repo-prescribed package sources Blackbook should show even when not
+// installed on the current machine.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const PiPackageEntrySchema = z.union([
+  z.string().min(1).transform((source) => ({ source })),
+  z.object({
+    source: z.string().min(1),
+    name: z.string().min(1).optional(),
+    description: z.string().optional(),
+    marketplace: z.string().optional(),
+  }),
+]);
+
+export type PiPackageEntry = z.infer<typeof PiPackageEntrySchema>;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Top-level config schema
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -86,6 +104,7 @@ export const ConfigSchema = z.object({
   files: z.array(FileEntrySchema).default([]),
   configs: z.array(ConfigEntrySchema).default([]),
   plugins: z.record(z.string(), z.record(z.string(), PluginComponentSchema)).default({}),
+  pi_packages: z.array(PiPackageEntrySchema).default([]),
 });
 
 export type BlackbookConfig = z.infer<typeof ConfigSchema>;

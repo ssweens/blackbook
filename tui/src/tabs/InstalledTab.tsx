@@ -146,7 +146,7 @@ export function InstalledTab() {
 
   const filteredPiPackages = useMemo(() => {
     const lowerSearch = search.toLowerCase();
-    const base = piPackages.filter((p) => p.installed);
+    const base = piPackages.filter((p) => p.installed || p.recommended);
     const filtered = search
       ? base.filter(
           (p) =>

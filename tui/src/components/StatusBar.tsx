@@ -9,9 +9,14 @@ export function StatusBar() {
   const tools = useStore((s) => s.tools);
   // Use primitive selectors to avoid new object references on every store change
   const marketplacesCount = useStore((s) => s.marketplaces.length);
-  const pluginsCount = useStore((s) =>
-    s.marketplaces.reduce((sum, m) => sum + m.plugins.length, 0)
-  );
+  const pluginsCount = useStore((s) => {
+    const keys = new Set<string>();
+    for (const marketplace of s.marketplaces) {
+      for (const plugin of marketplace.plugins) keys.add(`${plugin.marketplace}:${plugin.name}`);
+    }
+    for (const plugin of s.installedPlugins) keys.add(`${plugin.marketplace}:${plugin.name}`);
+    return keys.size;
+  });
   const piPackagesCount = useStore((s) => s.piPackages.length);
   const filesCount = useStore((s) => s.files.length);
 

@@ -26,6 +26,7 @@ export function saveConfig(config: BlackbookConfig, configPath?: string): void {
     doc.set("files", config.files);
     doc.set("configs", config.configs);
     doc.set("plugins", config.plugins);
+    doc.set("pi_packages", config.pi_packages);
 
     content = doc.toString();
   } else {
@@ -61,6 +62,10 @@ function serializeConfig(config: BlackbookConfig): string {
 
   if (Object.keys(config.plugins).length > 0) {
     obj.plugins = config.plugins;
+  }
+
+  if (config.pi_packages.length > 0) {
+    obj.pi_packages = config.pi_packages;
   }
 
   return stringify(obj, {

@@ -1294,7 +1294,9 @@ function getInstalledPluginsForClaudeInstance(
     const marketplaceDirs = readdirSync(claudePluginsDir);
 
     for (const marketplace of marketplaceDirs) {
-      if (!configuredMarketplaceNames.has(marketplace)) continue;
+      const marketplaceConfigured = configuredMarketplaceNames.has(marketplace);
+      const hasInstalledRecordForMarketplace = [...installedPluginKeys].some((key) => key.endsWith(`@${marketplace}`));
+      if (!marketplaceConfigured && !hasInstalledRecordForMarketplace) continue;
       const mpDir = join(claudePluginsDir, marketplace);
 
       try {
@@ -1704,7 +1706,8 @@ export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSki
   // Skills from removed marketplaces (e.g. "playbook") are NOT in this set — they're standalone.
   const globalPluginOwnedSkills = new Set<string>();
   for (const p of allPlugins) {
-    if (!configuredMarketplaceNames.has(p.marketplace)) continue;
+    const isKnownPlugin = configuredMarketplaceNames.has(p.marketplace) || p.prescriptionStatus === "marketplace-removed";
+    if (!isKnownPlugin) continue;
     for (const s of p.skills ?? []) {
       globalPluginOwnedSkills.add(s);
     }

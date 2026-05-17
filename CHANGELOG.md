@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.4] - 2026-05-17
+
+### Added
+- `pi_packages` config entries now prescribe desired Pi packages from the synced Blackbook config/source repo, so in-git packages appear in Discover, Installed, and Sync even before they are locally installed.
+- Installed local-only Pi packages can be tracked back into `pi_packages` with a `Track in source repo` action.
+- Recoverable installed plugins that are no longer prescribed can be tracked back into the source repo marketplace with `Track in source repo`.
+
+### Changed
+- Installed local-only Pi packages now show `not in git`, and installed plugins whose marketplace prescription disappeared now show `no longer in marketplace` or `marketplace removed` instead of silently blending into installed state.
+
 ## [0.20.3] - 2026-05-16
 
 ### Fixed

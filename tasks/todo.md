@@ -64,6 +64,32 @@
 - [x] Remove `compound-docs` from active tool dirs, playbook source cache, and playbook source repo
 - [x] Refresh/verify Blackbook no longer sees stale old compound artifacts
 
+## Marketplace Orphan and Not-in-Git Follow-up
+- [x] Badge installed Pi packages that are local-only as `not in git`
+- [x] Badge installed plugins whose configured marketplace no longer prescribes them as `no longer in marketplace`
+- [x] Preserve plugin-level rows for installed plugins from removed/unconfigured marketplaces and badge them as `marketplace removed`
+- [x] Add `Track in source repo` action for local-only Pi packages by writing `pi_packages`
+- [x] Add `Track in source repo` action for recoverable orphan plugins by copying to the source repo marketplace
+- [x] Wire action dispatch/store refresh/tests/docs
+
+Review:
+- Installed local-only Pi packages now show `not in git`; installed plugin rows now distinguish `no longer in marketplace` vs `marketplace removed`.
+- `Track in source repo` is available for local-only Pi packages and recoverable orphan plugins.
+- Full gates pass: `pnpm typecheck`, `pnpm test` (466/466), `pnpm build`.
+- Visually verified Installed badges (`marketplace removed`, Pi `not in git`) and Pi detail `Track in source repo` in Terminal.app screenshots.
+
+## Repo-Prescribed Plugins and Pi Packages
+- [x] Add repo/config schema support for desired Pi package sources
+- [x] Merge desired Pi packages with marketplace/local install detection so missing in-git packages show on other machines
+- [x] Surface desired Pi packages in Discover/Installed/Sync UX like source-only skills/files
+- [x] Add tests for in-git Pi package visible when not locally installed
+- [x] Update README/coverage/changelog and run quality gates
+
+Review:
+- Added `pi_packages` config prescriptions and seeded the playbook config with portable npm Pi package sources from local Pi settings.
+- Verified `pnpm typecheck`, `pnpm test` (457/457), and `pnpm build` pass.
+- Visually verified the Sync tab in Terminal.app shows `pi-subagents · In git · Not installed` with detail preview from a temp config.
+
 ## Navigation / Reload Flicker Reduction
 - [x] Keep boot-time initial tab hydration while removing tab-mount reload effects from visible tabs
 - [x] Stop Tools tab from re-running status detection every time it is opened

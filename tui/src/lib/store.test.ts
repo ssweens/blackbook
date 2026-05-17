@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync } from "fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { useStore } from "./store.js";
-import { getToolInstances, updateToolInstanceConfig, getEnabledToolInstances } from "./config.js";
+import { getToolInstances, updateToolInstanceConfig, getEnabledToolInstances, getConfigRepoPath } from "./config.js";
 import {
   getAllInstalledPlugins,
   getPluginToolStatus,
@@ -11,6 +11,15 @@ import {
   updatePlugin,
 } from "./install.js";
 import { getConfigPath as getYamlConfigPath, loadConfig as loadYamlConfig } from "./config/loader.js";
+import { saveConfig as saveYamlConfig } from "./config/writer.js";
+import {
+  loadAllPiMarketplaces,
+  getAllPiPackages,
+  loadPiSettings,
+  isPackageInstalled,
+  fetchNpmPackageDetails,
+  getGlobalPiPackageInstallInfo,
+} from "./marketplace.js";
 import { resolveSourcePath, expandPath as expandConfigPath } from "./config/path.js";
 import { getAllPlaybooks, resolveToolInstances, isSyncTarget } from "./config/playbooks.js";
 import { runCheck, runApply } from "./modules/orchestrator.js";
@@ -27,6 +36,8 @@ vi.mock("./config.js", async (importOriginal) => {
     getToolInstances: vi.fn(),
     updateToolInstanceConfig: vi.fn(),
     getEnabledToolInstances: vi.fn(),
+    getConfigRepoPath: vi.fn(),
+    getPackageManager: vi.fn().mockReturnValue("npm"),
   };
 });
 
@@ -46,6 +57,12 @@ vi.mock("./marketplace.js", async (importOriginal) => {
   return {
     ...actual,
     fetchMarketplace: vi.fn().mockResolvedValue([]),
+    loadAllPiMarketplaces: vi.fn().mockResolvedValue([]),
+    getAllPiPackages: vi.fn((marketplaces: any[]) => marketplaces.flatMap((m) => m.packages ?? [])),
+    loadPiSettings: vi.fn().mockReturnValue({ packages: [] }),
+    isPackageInstalled: vi.fn().mockReturnValue(false),
+    fetchNpmPackageDetails: vi.fn().mockResolvedValue(null),
+    getGlobalPiPackageInstallInfo: vi.fn().mockReturnValue(new Map()),
   };
 });
 
@@ -54,7 +71,15 @@ vi.mock("./config/loader.js", async (importOriginal) => {
   return {
     ...actual,
     getConfigPath: vi.fn().mockReturnValue("/tmp/blackbook/config.yaml"),
-    loadConfig: vi.fn().mockReturnValue({ config: { files: [], settings: {}, tools: {}, plugins: {}, configs: [] }, configPath: "/tmp/blackbook/config.yaml", errors: [] }),
+    loadConfig: vi.fn().mockReturnValue({ config: { files: [], settings: {}, tools: {}, plugins: {}, configs: [], pi_packages: [] }, configPath: "/tmp/blackbook/config.yaml", errors: [] }),
+  };
+});
+
+vi.mock("./config/writer.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./config/writer.js")>();
+  return {
+    ...actual,
+    saveConfig: vi.fn(),
   };
 });
 
@@ -155,6 +180,7 @@ describe("Plugin version merge", () => {
       standaloneSkills: [],
     });
     vi.mocked(getToolInstances).mockReturnValue([createMockTool()]);
+    vi.mocked(getConfigRepoPath).mockReturnValue(null);
     vi.mocked(getPluginToolStatus).mockReturnValue([
       {
         toolId: "opencode",
@@ -337,6 +363,85 @@ describe("Plugin version merge", () => {
 
     expect(observedLoadedValues).not.toContain(false);
     expect(useStore.getState().filesLoaded).toBe(true);
+  });
+
+  it("marks installed plugins as no longer in marketplace when the configured marketplace stops listing them", async () => {
+    const installed = createMockPlugin({
+      name: "legacy-plugin",
+      marketplace: "playbook",
+      installed: true,
+      skills: ["legacy-skill"],
+    });
+
+    vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [installed], byTool: {} });
+    useStore.setState({
+      marketplaces: [createMockMarketplace({ name: "playbook", plugins: [createMockPlugin({ name: "other-plugin", marketplace: "playbook" })] })],
+    });
+
+    await useStore.getState().loadInstalledPlugins({ silent: true });
+
+    expect(useStore.getState().installedPlugins[0]).toMatchObject({
+      name: "legacy-plugin",
+      marketplace: "playbook",
+      prescriptionStatus: "no-longer-in-marketplace",
+    });
+  });
+
+  it("keeps installed plugins from removed marketplaces and marks them orphaned", async () => {
+    const installed = createMockPlugin({
+      name: "orphan-plugin",
+      marketplace: "old-marketplace",
+      installed: true,
+      skills: ["orphan-skill"],
+    });
+
+    vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [installed], byTool: {} });
+    useStore.setState({
+      marketplaces: [createMockMarketplace({ name: "playbook", plugins: [createMockPlugin({ name: "other-plugin", marketplace: "playbook" })] })],
+    });
+
+    await useStore.getState().loadInstalledPlugins({ silent: true });
+
+    expect(useStore.getState().installedPlugins[0]).toMatchObject({
+      name: "orphan-plugin",
+      marketplace: "old-marketplace",
+      prescriptionStatus: "marketplace-removed",
+    });
+  });
+
+  it("tracks a recoverable orphan plugin into the source repo marketplace", async () => {
+    const sourceRepo = mkdtempSync(join(tmpdir(), "blackbook-plugin-track-repo-"));
+    const pluginSource = mkdtempSync(join(tmpdir(), "blackbook-plugin-track-src-"));
+    mkdirSync(join(pluginSource, "skills", "tracked-skill"), { recursive: true });
+    writeFileSync(join(pluginSource, "skills", "tracked-skill", "SKILL.md"), "---\nname: tracked-skill\n---\n");
+
+    vi.mocked(getConfigRepoPath).mockReturnValue(sourceRepo);
+    const plugin = createMockPlugin({
+      name: "tracked-plugin",
+      marketplace: "old-marketplace",
+      source: pluginSource,
+      description: "Tracked plugin",
+      version: "1.2.3",
+      installed: true,
+      prescriptionStatus: "marketplace-removed",
+      skills: ["tracked-skill"],
+    });
+
+    try {
+      const ok = await useStore.getState().trackPluginInSource(plugin);
+      expect(ok).toBe(true);
+      expect(existsSync(join(sourceRepo, "plugins", "tracked-plugin", "skills", "tracked-skill", "SKILL.md"))).toBe(true);
+      expect(existsSync(join(sourceRepo, "plugins", "tracked-plugin", ".claude-plugin", "plugin.json"))).toBe(true);
+      const marketplace = JSON.parse(readFileSync(join(sourceRepo, ".claude-plugin", "marketplace.json"), "utf-8"));
+      expect(marketplace.plugins).toContainEqual(expect.objectContaining({
+        name: "tracked-plugin",
+        source: "./plugins/tracked-plugin",
+        version: "1.2.3",
+      }));
+    } finally {
+      rmSync(sourceRepo, { recursive: true, force: true });
+      rmSync(pluginSource, { recursive: true, force: true });
+    }
   });
 
   it("marks an installed plugin outdated when a newer configured marketplace has the same plugin", async () => {
@@ -1155,5 +1260,160 @@ describe("Store syncTools with file items", () => {
     const { notifications } = useStore.getState();
     const errorNote = notifications.find((n) => n.type === "error");
     expect(errorNote?.message).toContain("bad config");
+  });
+});
+
+describe("Repo-prescribed Pi packages", () => {
+  beforeEach(() => {
+    useStore.setState({
+      tools: [{ toolId: "pi", instanceId: "default", name: "Pi", configDir: "/tmp/pi", enabled: true, kind: "tool" } as any],
+      toolDetection: {},
+      piPackages: [],
+      piPackagesLoaded: false,
+      piMarketplaces: [],
+      installedPlugins: [],
+      files: [],
+      managedItems: [],
+      managedTools: [],
+      standaloneSkills: [],
+    });
+    vi.mocked(loadYamlConfig).mockReset();
+    vi.mocked(loadAllPiMarketplaces).mockReset();
+    vi.mocked(getAllPiPackages).mockReset();
+    vi.mocked(loadPiSettings).mockReset();
+    vi.mocked(isPackageInstalled).mockReset();
+    vi.mocked(fetchNpmPackageDetails).mockReset();
+    vi.mocked(getGlobalPiPackageInstallInfo).mockReset();
+    vi.mocked(saveYamlConfig).mockReset();
+    vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [], byTool: {} });
+
+    vi.mocked(loadAllPiMarketplaces).mockResolvedValue([]);
+    vi.mocked(getAllPiPackages).mockReturnValue([]);
+    vi.mocked(loadPiSettings).mockReturnValue({ packages: [] });
+    vi.mocked(isPackageInstalled).mockReturnValue(false);
+    vi.mocked(getGlobalPiPackageInstallInfo).mockReturnValue(new Map());
+  });
+
+  it("loads desired Pi packages from config even when not installed locally", async () => {
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: {
+        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+        marketplaces: {},
+        tools: {},
+        files: [],
+        configs: [],
+        plugins: {},
+        pi_packages: [{ source: "npm:pi-subagents", description: "Team subagent package" }],
+      },
+      configPath: "/tmp/blackbook/config.yaml",
+      errors: [],
+    });
+    vi.mocked(fetchNpmPackageDetails).mockResolvedValue({
+      name: "pi-subagents",
+      description: "Subagent tools",
+      version: "1.2.3",
+      source: "npm:pi-subagents",
+      sourceType: "npm",
+      marketplace: "npm",
+      installed: false,
+      extensions: ["subagent"],
+      skills: [],
+      prompts: [],
+      themes: [],
+    } as any);
+
+    await useStore.getState().loadPiPackages();
+
+    const packages = useStore.getState().piPackages;
+    expect(packages).toHaveLength(1);
+    expect(packages[0]).toMatchObject({
+      name: "pi-subagents",
+      source: "npm:pi-subagents",
+      installed: false,
+      recommended: true,
+      description: "Team subagent package",
+    });
+
+    const preview = useStore.getState().getSyncPreview();
+    expect(preview).toEqual([
+      { kind: "piPackage", piPackage: packages[0] },
+    ]);
+  });
+
+  it("tracks an installed local-only Pi package by adding it to pi_packages", async () => {
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: {
+        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+        marketplaces: {},
+        tools: {},
+        files: [],
+        configs: [],
+        plugins: {},
+        pi_packages: [],
+      },
+      configPath: "/tmp/blackbook/config.yaml",
+      errors: [],
+    });
+
+    const pkg = {
+      name: "pi-local-only",
+      description: "Local only package",
+      version: "1.0.0",
+      source: "npm:pi-local-only",
+      sourceType: "npm" as const,
+      marketplace: "npm",
+      installed: true,
+      extensions: [],
+      skills: [],
+      prompts: [],
+      themes: [],
+    };
+
+    await useStore.getState().trackPiPackageInSource(pkg);
+
+    expect(saveYamlConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pi_packages: [expect.objectContaining({ source: "npm:pi-local-only", name: "pi-local-only" })],
+      }),
+      "/tmp/blackbook/config.yaml",
+    );
+  });
+
+  it("marks marketplace packages as recommended when their source is prescribed", async () => {
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: {
+        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+        marketplaces: {},
+        tools: {},
+        files: [],
+        configs: [],
+        plugins: {},
+        pi_packages: [{ source: "npm:pi-ask-user", name: "Ask User" }],
+      },
+      configPath: "/tmp/blackbook/config.yaml",
+      errors: [],
+    });
+    vi.mocked(loadAllPiMarketplaces).mockResolvedValue([{ name: "npm", source: "npm", sourceType: "npm", enabled: true, builtIn: true, packages: [{
+      name: "pi-ask-user",
+      description: "Ask user",
+      version: "2.0.0",
+      source: "npm:pi-ask-user",
+      sourceType: "npm",
+      marketplace: "npm",
+      installed: false,
+      extensions: [],
+      skills: [],
+      prompts: [],
+      themes: [],
+    }] } as any]);
+    vi.mocked(getAllPiPackages).mockImplementation((marketplaces: any[]) => marketplaces.flatMap((m) => m.packages ?? []));
+
+    await useStore.getState().loadPiPackages();
+
+    expect(useStore.getState().piPackages[0]).toMatchObject({
+      name: "Ask User",
+      source: "npm:pi-ask-user",
+      recommended: true,
+    });
   });
 });

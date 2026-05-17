@@ -35,6 +35,7 @@ export interface ItemAction {
     | "install_tool"
     | "uninstall_tool"
     | "pullback"
+    | "track"
     | "delete_everywhere"
     | "back";
   instance?: DiffInstanceSummary | DiffInstanceRef;
@@ -182,6 +183,7 @@ function getActionColor(type: ItemAction["type"]): string {
     case "update":
       return "cyan";
     case "pullback":
+    case "track":
       return "cyan";
     default:
       return "white";

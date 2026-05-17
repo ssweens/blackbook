@@ -61,6 +61,8 @@ export interface Plugin {
   hasUpdate?: boolean;
   /** Marketplace key the installed copy came from, when different from the selected/latest marketplace. */
   installedMarketplace?: string;
+  /** Whether the installed plugin is still prescribed by configured repo/marketplace data. */
+  prescriptionStatus?: "in-git" | "no-longer-in-marketplace" | "marketplace-removed";
   description: string;
   source: string | { source: string; url?: string; repo?: string; ref?: string };
   skills: string[];
@@ -157,6 +159,10 @@ export type SyncPreviewItem =
       driftedInstances: string[];
       /** Tool instances that are missing the skill entirely. */
       missingInstances: string[];
+    }
+  | {
+      kind: "piPackage";
+      piPackage: PiPackage;
     };
 
 export interface Marketplace {
@@ -324,6 +330,8 @@ export interface PiPackage {
   sourceType: PiPackageSourceType;
   marketplace: string;      // marketplace name (e.g., "npm", "playbook")
   installed: boolean;
+  /** True when this package is prescribed by Blackbook config/source repo, even if not installed locally. */
+  recommended?: boolean;
   installedVersion?: string;
   hasUpdate?: boolean;
   installedVia?: PackageManager;
@@ -357,6 +365,13 @@ export interface PiMarketplace {
 
 export interface PiSettings {
   packages: string[];       // installed package sources
+}
+
+export interface PiPackageSpec {
+  source: string;
+  name?: string;
+  description?: string;
+  marketplace?: string;
 }
 
 // Section navigation for Discover/Installed tabs

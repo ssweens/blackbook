@@ -173,6 +173,7 @@ export function App() {
   const doInstall = useStore((s) => s.installPlugin);
   const doUninstall = useStore((s) => s.uninstallPlugin);
   const doUpdate = useStore((s) => s.updatePlugin);
+  const doTrackPlugin = useStore((s) => s.trackPluginInSource);
   const updateMarketplace = useStore((s) => s.updateMarketplace);
   const toggleMarketplaceEnabled = useStore((s) => s.toggleMarketplaceEnabled);
   const removeMarketplace = useStore((s) => s.removeMarketplace);
@@ -193,6 +194,7 @@ export function App() {
   const doUninstallPiPkg = useStore((s) => s.uninstallPiPackage);
   const doUpdatePiPkg = useStore((s) => s.updatePiPackage);
   const doRepairPiPkg = useStore((s) => s.repairPiPackage);
+  const doTrackPiPkg = useStore((s) => s.trackPiPackageInSource);
   const togglePiMarketplaceEnabled = useStore((s) => s.togglePiMarketplaceEnabled);
   const addPiMarketplace = useStore((s) => s.addPiMarketplace);
   const removePiMarketplace = useStore((s) => s.removePiMarketplace);
@@ -438,6 +440,7 @@ export function App() {
     if (item.kind === "plugin") return `plugin:${item.plugin.marketplace}:${item.plugin.name}`;
     if (item.kind === "tool") return `tool:${item.toolId}`;
     if (item.kind === "skill") return `skill:${item.skill.name}`;
+    if (item.kind === "piPackage") return `piPackage:${item.piPackage.source}`;
     return `file:${item.file.name}`;
   };
 
@@ -1534,6 +1537,7 @@ export function App() {
       installPlugin: doInstall,
       uninstallPlugin: doUninstall,
       updatePlugin: doUpdate,
+      trackPluginInSource: doTrackPlugin,
       installPluginToInstance: installPluginToInstanceCb,
       uninstallPluginFromInstance: uninstallPluginFromInstanceCb,
       refreshDetailPlugin,
@@ -1543,6 +1547,7 @@ export function App() {
       installPiPackage: doInstallPiPkg,
       uninstallPiPackage: doUninstallPiPkg,
       updatePiPackage: doUpdatePiPkg,
+      trackPiPackageInSource: doTrackPiPkg,
       refreshDetailPiPackage,
       buildPluginDiffTarget: buildPluginDiffTargetCb,
       // Skill mutations — wrap with spinner since copies may be slow for large skills.

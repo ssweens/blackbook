@@ -638,6 +638,7 @@ function buildInitialYamlConfig(): BlackbookConfig {
     files: buildInitialYamlFiles(tools),
     configs: [],
     plugins: {},
+    pi_packages: [],
   };
 }
 
