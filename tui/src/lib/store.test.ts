@@ -20,6 +20,7 @@ import {
   fetchNpmPackageDetails,
   getGlobalPiPackageInstallInfo,
 } from "./marketplace.js";
+import { installPiPackage, removePiPackage, repairPiPackageManager, updatePiPackage } from "./pi-install.js";
 import { resolveSourcePath, expandPath as expandConfigPath } from "./config/path.js";
 import { getAllPlaybooks, resolveToolInstances, isSyncTarget } from "./config/playbooks.js";
 import { runCheck, runApply } from "./modules/orchestrator.js";
@@ -65,6 +66,13 @@ vi.mock("./marketplace.js", async (importOriginal) => {
     getGlobalPiPackageInstallInfo: vi.fn().mockReturnValue(new Map()),
   };
 });
+
+vi.mock("./pi-install.js", () => ({
+  installPiPackage: vi.fn().mockResolvedValue({ success: true }),
+  removePiPackage: vi.fn().mockResolvedValue({ success: true }),
+  repairPiPackageManager: vi.fn().mockResolvedValue({ success: true }),
+  updatePiPackage: vi.fn().mockResolvedValue({ success: true }),
+}));
 
 vi.mock("./config/loader.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./config/loader.js")>();
@@ -1285,6 +1293,10 @@ describe("Repo-prescribed Pi packages", () => {
     vi.mocked(fetchNpmPackageDetails).mockReset();
     vi.mocked(getGlobalPiPackageInstallInfo).mockReset();
     vi.mocked(saveYamlConfig).mockReset();
+    vi.mocked(installPiPackage).mockReset();
+    vi.mocked(removePiPackage).mockReset();
+    vi.mocked(repairPiPackageManager).mockReset();
+    vi.mocked(updatePiPackage).mockReset();
     vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [], byTool: {} });
 
     vi.mocked(loadAllPiMarketplaces).mockResolvedValue([]);
@@ -1292,6 +1304,10 @@ describe("Repo-prescribed Pi packages", () => {
     vi.mocked(loadPiSettings).mockReturnValue({ packages: [] });
     vi.mocked(isPackageInstalled).mockReturnValue(false);
     vi.mocked(getGlobalPiPackageInstallInfo).mockReturnValue(new Map());
+    vi.mocked(installPiPackage).mockResolvedValue({ success: true });
+    vi.mocked(removePiPackage).mockResolvedValue({ success: true });
+    vi.mocked(repairPiPackageManager).mockResolvedValue({ success: true });
+    vi.mocked(updatePiPackage).mockResolvedValue({ success: true });
   });
 
   it("loads desired Pi packages from config even when not installed locally", async () => {
@@ -1377,6 +1393,73 @@ describe("Repo-prescribed Pi packages", () => {
       }),
       "/tmp/blackbook/config.yaml",
     );
+  });
+
+  it("deletes a Pi package everywhere by uninstalling locally and removing its pi_packages prescription", async () => {
+    const sourceRepo = mkdtempSync(join(tmpdir(), "blackbook-source-repo-"));
+    const sourceConfigPath = join(sourceRepo, "config", "blackbook", "config.yaml");
+    mkdirSync(join(sourceRepo, "config", "blackbook"), { recursive: true });
+    writeFileSync(sourceConfigPath, "pi_packages: []\n");
+
+    const localConfig = {
+      settings: { source_repo: sourceRepo, package_manager: "npm" as const, backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+      marketplaces: {},
+      tools: {},
+      files: [],
+      configs: [],
+      plugins: {},
+      pi_packages: [
+        { source: "npm:pi-delete-me", name: "Delete Me" },
+        { source: "npm:pi-keep-me", name: "Keep Me" },
+      ],
+    };
+    const sourceConfig = {
+      ...localConfig,
+      pi_packages: [
+        { source: "npm:pi-delete-me", name: "Delete Me" },
+        { source: "npm:pi-source-only", name: "Source Only" },
+      ],
+    };
+    vi.mocked(loadYamlConfig).mockImplementation((configPath?: string) => ({
+      config: configPath === sourceConfigPath ? sourceConfig : localConfig,
+      configPath: configPath ?? "/tmp/blackbook/config.yaml",
+      errors: [],
+    }));
+
+    const pkg = {
+      name: "pi-delete-me",
+      description: "Delete me",
+      version: "1.0.0",
+      source: "npm:pi-delete-me",
+      sourceType: "npm" as const,
+      marketplace: "npm",
+      installed: true,
+      recommended: true,
+      extensions: [],
+      skills: [],
+      prompts: [],
+      themes: [],
+    };
+
+    useStore.setState({ detail: { kind: "piPackage", data: pkg }, detailPiPackage: pkg });
+
+    await expect(useStore.getState().deletePiPackageEverywhere(pkg)).resolves.toBe(true);
+
+    expect(removePiPackage).toHaveBeenCalledWith(pkg);
+    expect(saveYamlConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pi_packages: [expect.objectContaining({ source: "npm:pi-keep-me" })],
+      }),
+      "/tmp/blackbook/config.yaml",
+    );
+    expect(saveYamlConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pi_packages: [expect.objectContaining({ source: "npm:pi-source-only" })],
+      }),
+      sourceConfigPath,
+    );
+    expect(useStore.getState().detail).toBeNull();
+    expect(useStore.getState().detailPiPackage).toBeNull();
   });
 
   it("marks marketplace packages as recommended when their source is prescribed", async () => {

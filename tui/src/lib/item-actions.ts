@@ -326,6 +326,16 @@ export function getPiPackageActions(pkg: PiPackage): ItemAction[] {
     actions.push({ id: "install", label: "Install", type: "install" });
   }
   actions.push({ id: "back", label: "Back to list", type: "back" });
+
+  if (pkg.installed || pkg.recommended) {
+    actions.push({
+      id: "delete_everywhere",
+      label: "🗑  Delete everywhere (local install + config.yaml prescription)",
+      type: "delete_everywhere",
+      statusColor: "red",
+    });
+  }
+
   return actions;
 }
 

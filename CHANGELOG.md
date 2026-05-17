@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.6] - 2026-05-17
+
+### Added
+- Pi packages now have a destructive `Delete everywhere` action that removes the local/global package install and deletes the matching `pi_packages` prescription from both the active config and the source repo Blackbook config when present, matching the complete-delete workflows for files, skills, and plugins.
+
 ## [0.20.5] - 2026-05-17
 
 ### Fixed

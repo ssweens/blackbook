@@ -129,6 +129,7 @@ interface Actions {
   updatePiPackage: (pkg: PiPackage) => Promise<boolean>;
   repairPiPackage: (pkg: PiPackage) => Promise<boolean>;
   trackPiPackageInSource: (pkg: PiPackage) => Promise<boolean>;
+  deletePiPackageEverywhere: (pkg: PiPackage) => Promise<boolean>;
   setDetailPiPackage: (pkg: PiPackage | null) => Promise<void>;
   togglePiMarketplaceEnabled: (name: string) => Promise<void>;
   addPiMarketplace: (name: string, source: string) => Promise<void>;
@@ -338,6 +339,18 @@ function loadDesiredPiPackageSpecs(): PiPackageSpec[] {
   const result = loadYamlConfig();
   if (result.errors.length > 0) return [];
   return result.config.pi_packages;
+}
+
+function getSourceRepoBlackbookConfigPath(config: ReturnType<typeof loadYamlConfig>["config"]): string | null {
+  const sourceRepo = config.settings.source_repo;
+  if (!sourceRepo) return null;
+  return join(expandConfigPath(sourceRepo), "config", "blackbook", "config.yaml");
+}
+
+function removePiPackageSpec(source: string, specs: PiPackageSpec[]): { specs: PiPackageSpec[]; removed: boolean } {
+  const sourceKey = source.toLowerCase();
+  const specsAfterDelete = specs.filter((entry) => entry.source.toLowerCase() !== sourceKey);
+  return { specs: specsAfterDelete, removed: specsAfterDelete.length < specs.length };
 }
 
 function inferPackageNameFromSource(source: string): string {
@@ -1167,6 +1180,70 @@ export const useStore = create<Store>((rawSet, get) => {
       notify(`Failed to uninstall ${pkg.name}: ${result.error}`, "error");
     } catch (error) { notify(`Error uninstalling ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error"); }
     return false;
+  },
+
+  deletePiPackageEverywhere: async (pkg) => {
+    const { notify, clearNotification } = get();
+    try {
+      const configResult = loadYamlConfig();
+      if (configResult.errors.length > 0) {
+        notify(`Config load failed: ${configResult.errors[0].message}`, "error");
+        return false;
+      }
+
+      const localDelete = removePiPackageSpec(pkg.source, configResult.config.pi_packages);
+      const sourceConfigPath = getSourceRepoBlackbookConfigPath(configResult.config);
+      const shouldUpdateSourceConfig = Boolean(
+        sourceConfigPath &&
+        sourceConfigPath !== configResult.configPath &&
+        existsSync(sourceConfigPath),
+      );
+      const sourceConfigResult = shouldUpdateSourceConfig ? loadYamlConfig(sourceConfigPath!) : null;
+      if (sourceConfigResult && sourceConfigResult.errors.length > 0) {
+        notify(`Source config load failed: ${sourceConfigResult.errors[0].message}`, "error");
+        return false;
+      }
+      const sourceDelete = sourceConfigResult
+        ? removePiPackageSpec(pkg.source, sourceConfigResult.config.pi_packages)
+        : { specs: [], removed: false };
+
+      let localRemoved = false;
+      if (pkg.installed) {
+        const result = await withSpinner(`Deleting ${pkg.name} everywhere...`, () => removePiPackage(pkg), notify, clearNotification);
+        if (!result.success) {
+          notify(`Delete failed for ${pkg.name}: ${result.error}`, "error");
+          return false;
+        }
+        localRemoved = true;
+      }
+
+      if (localDelete.removed) {
+        saveYamlConfig({
+          ...configResult.config,
+          pi_packages: localDelete.specs,
+        }, configResult.configPath);
+      }
+
+      if (sourceConfigResult && sourceDelete.removed) {
+        saveYamlConfig({
+          ...sourceConfigResult.config,
+          pi_packages: sourceDelete.specs,
+        }, sourceConfigResult.configPath);
+      }
+
+      await get().loadPiPackages({ silent: true });
+      set({ detail: null, detailPiPackage: null });
+
+      const parts: string[] = [];
+      if (localRemoved) parts.push("local install");
+      if (localDelete.removed) parts.push("config.yaml prescription");
+      if (sourceDelete.removed) parts.push("source repo config");
+      notify(`Deleted ${pkg.name}: ${parts.join(", ") || "nothing to remove"}`, "info");
+      return true;
+    } catch (error) {
+      notify(`Delete failed for ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
+      return false;
+    }
   },
 
   updatePiPackage: async (pkg) => {

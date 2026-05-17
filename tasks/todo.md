@@ -78,6 +78,19 @@ Review:
 - Full gates pass: `pnpm typecheck`, `pnpm test` (466/466), `pnpm build`.
 - Visually verified Installed badges (`marketplace removed`, Pi `not in git`) and Pi detail `Track in source repo` in Terminal.app screenshots.
 
+## Pi Package Complete Delete Follow-up
+- [x] Add Pi package `Delete everywhere` action matching file/skill/plugin destructive flows
+- [x] Remove local/global package install and delete matching `pi_packages` prescription from config
+- [x] Refresh/close detail after delete and add regression coverage
+- [x] Visually verify the destructive action appears in the TUI
+- [x] Run quality gates and update docs/changelog
+
+Review:
+- Pi package detail now shows `🗑  Delete everywhere (local install + config.yaml prescription)` after Back, matching the destructive-action placement used by other artifact types.
+- Delete removes the local/global package when installed and removes the matching `pi_packages` entry from both the active config and source-repo Blackbook config when present, so in-git prescriptions do not reappear after refresh.
+- Verified via tmux capture: `/tmp/blackbook-pi-delete-tmux-3-65923/capture.txt`.
+- Verified `pnpm typecheck`, `pnpm test` (472/472), and `pnpm build`.
+
 ## Pi Package Uninstall Hotfix
 - [x] Reproduce/trace why `pi remove npm:...` fails for globally detected Pi packages
 - [x] Fix uninstall to remove packages from the actual detected package manager(s), even when absent from Pi settings

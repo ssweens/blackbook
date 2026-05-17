@@ -195,6 +195,7 @@ export function App() {
   const doUpdatePiPkg = useStore((s) => s.updatePiPackage);
   const doRepairPiPkg = useStore((s) => s.repairPiPackage);
   const doTrackPiPkg = useStore((s) => s.trackPiPackageInSource);
+  const doDeletePiPkg = useStore((s) => s.deletePiPackageEverywhere);
   const togglePiMarketplaceEnabled = useStore((s) => s.togglePiMarketplaceEnabled);
   const addPiMarketplace = useStore((s) => s.addPiMarketplace);
   const removePiMarketplace = useStore((s) => s.removePiMarketplace);
@@ -1548,6 +1549,7 @@ export function App() {
       uninstallPiPackage: doUninstallPiPkg,
       updatePiPackage: doUpdatePiPkg,
       trackPiPackageInSource: doTrackPiPkg,
+      deletePiPackageEverywhere: doDeletePiPkg,
       refreshDetailPiPackage,
       buildPluginDiffTarget: buildPluginDiffTargetCb,
       // Skill mutations — wrap with spinner since copies may be slow for large skills.

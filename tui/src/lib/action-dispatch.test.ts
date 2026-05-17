@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { handleItemAction, type DispatchCallbacks } from "./action-dispatch.js";
+import { getPiPackageActions } from "./item-actions.js";
 import type { ManagedItem } from "./managed-item.js";
 import type { ItemAction } from "../components/ItemDetail.js";
 import type { Plugin, FileStatus, PiPackage, DiffInstanceRef } from "./types.js";
@@ -99,6 +100,7 @@ function createCallbacks(): DispatchCallbacks {
     uninstallPiPackage: vi.fn().mockResolvedValue(true),
     updatePiPackage: vi.fn().mockResolvedValue(true),
     trackPiPackageInSource: vi.fn().mockResolvedValue(true),
+    deletePiPackageEverywhere: vi.fn().mockResolvedValue(true),
     refreshDetailPiPackage: vi.fn(),
     buildPluginDiffTarget: vi.fn().mockResolvedValue(null),
   };
@@ -232,6 +234,21 @@ describe("handleItemAction", () => {
     expect(result).toBe(true);
     expect(callbacks.trackPiPackageInSource).toHaveBeenCalledWith(pkg);
     expect(callbacks.refreshDetailPiPackage).toHaveBeenCalledWith(pkg);
+  });
+
+  it("pi-package actions include destructive delete after Back", () => {
+    const actions = getPiPackageActions(createPiPackage());
+    expect(actions.at(-2)).toMatchObject({ id: "back", type: "back" });
+    expect(actions.at(-1)).toMatchObject({ id: "delete_everywhere", type: "delete_everywhere", statusColor: "red" });
+  });
+
+  it("delete_everywhere on pi-package calls deletePiPackageEverywhere", async () => {
+    const pkg = createPiPackage();
+    const item = createItem({ _piPackage: pkg });
+    const action: ItemAction = { id: "delete_everywhere", label: "Delete everywhere", type: "delete_everywhere" };
+    const result = await handleItemAction(item, action, callbacks);
+    expect(result).toBe(true);
+    expect(callbacks.deletePiPackageEverywhere).toHaveBeenCalledWith(pkg);
   });
 
   // ── uninstall ────────────────────────────────────────────────────────

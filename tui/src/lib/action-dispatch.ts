@@ -47,6 +47,7 @@ export interface DispatchCallbacks {
   uninstallPiPackage: (pkg: PiPackage) => Promise<boolean>;
   updatePiPackage: (pkg: PiPackage) => Promise<boolean>;
   trackPiPackageInSource?: (pkg: PiPackage) => Promise<boolean>;
+  deletePiPackageEverywhere?: (pkg: PiPackage) => Promise<boolean>;
   refreshDetailPiPackage: (pkg: PiPackage) => void;
 
   // Plugin diff support
@@ -140,6 +141,10 @@ export async function handleItemAction(
       }
       if (item._file && callbacks.deleteFileEverywhere) {
         await callbacks.deleteFileEverywhere(item._file);
+        return true;
+      }
+      if (item._piPackage && callbacks.deletePiPackageEverywhere) {
+        await callbacks.deletePiPackageEverywhere(item._piPackage);
         return true;
       }
       return false;
