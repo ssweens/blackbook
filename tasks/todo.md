@@ -78,6 +78,17 @@ Review:
 - Full gates pass: `pnpm typecheck`, `pnpm test` (466/466), `pnpm build`.
 - Visually verified Installed badges (`marketplace removed`, Pi `not in git`) and Pi detail `Track in source repo` in Terminal.app screenshots.
 
+## Pi Package Uninstall Hotfix
+- [x] Reproduce/trace why `pi remove npm:...` fails for globally detected Pi packages
+- [x] Fix uninstall to remove packages from the actual detected package manager(s), even when absent from Pi settings
+- [x] Add regression tests for local-only/mismatched-manager Pi package removal
+- [x] Run quality gates and update docs/changelog if needed
+
+Review:
+- Root cause: Blackbook marked globally detected Pi packages as installed even when Pi settings did not contain the source; `pi remove npm:...` then failed with `No matching package found`, and mismatched Bun/pnpm installs could survive a successful Pi remove.
+- Fix: npm Pi package removal now runs `pi remove`, then scans actual global package manager installs and removes any remaining package via Bun/npm/pnpm before reporting success.
+- Verified `pnpm typecheck`, `pnpm test` (469/469), and `pnpm build`.
+
 ## Repo-Prescribed Plugins and Pi Packages
 - [x] Add repo/config schema support for desired Pi package sources
 - [x] Merge desired Pi packages with marketplace/local install detection so missing in-git packages show on other machines

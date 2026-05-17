@@ -3,8 +3,8 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 466
-- **Test Files:** 40
+- **Total Tests:** 469
+- **Test Files:** 41
 
 ## Critical Paths
 - [x] Plugin discovery list loads
@@ -57,6 +57,8 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Pi package source type detection (`getSourceType`)
 - [x] Pi local marketplace scanning (`scanLocalMarketplace`)
 - [x] Repo-prescribed `pi_packages` merge with marketplace/local package state
+- [x] Pi package uninstall falls back to the detected global package manager when Pi settings has no matching package
+- [x] Pi package uninstall cleans up mismatched global package manager installs after `pi remove`
 - [x] Local-only Pi package tracking writes `pi_packages` back to YAML config
 - [x] Recoverable orphan plugin tracking copies plugin contents into the source repo marketplace
 - [x] Tool lifecycle registry + managed tool rows (synthetic default rows)
@@ -128,6 +130,7 @@ This project tracks coverage by critical user journeys and system boundaries.
 
 ## User Journeys (Problem Paths)
 - [x] Install failure surfaces error notification without leaving detail view
+- [x] Local-only Pi package uninstall succeeds when `pi remove npm:...` reports no matching Pi settings package
 - [ ] Update failure surfaces error notification with context
 - [ ] Install with no enabled tools shows error notification
 - [x] Sync with no drift/missing shows "All enabled instances are in sync"

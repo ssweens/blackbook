@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.5] - 2026-05-17
+
+### Fixed
+- Pi package uninstall now removes npm packages from the globally detected package manager even when the package is installed locally but absent from Pi settings, fixing `No matching package found for npm:...` failures for packages such as `pi-powerline-footer`.
+- Pi package uninstall now cleans up mismatched global package manager installs after `pi remove` succeeds, so packages do not remain installed via Bun/pnpm when Pi used another manager.
+
 ## [0.20.4] - 2026-05-17
 
 ### Added
