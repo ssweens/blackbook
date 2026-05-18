@@ -62,6 +62,12 @@ export interface DispatchCallbacks {
   deleteSkillEverywhere?: (skill: import("./install.js").StandaloneSkill) => Promise<void>;
   refreshDetailSkill?: (skill: import("./install.js").StandaloneSkill) => void;
 
+  // Namespace actions
+  syncNamespace?: (ns: import("./install.js").NamespaceGroup) => Promise<void>;
+  resyncNamespace?: (ns: import("./install.js").NamespaceGroup) => Promise<void>;
+  deleteNamespaceEverywhere?: (ns: import("./install.js").NamespaceGroup) => Promise<void>;
+  refreshDetailNamespace?: (ns: import("./install.js").NamespaceGroup) => void;
+
   // Plugin / file delete-everywhere
   deletePluginEverywhere?: (plugin: Plugin) => Promise<void>;
   deleteFileEverywhere?: (file: FileStatus) => Promise<void>;
@@ -97,6 +103,19 @@ export async function handleItemAction(
       return handleMissingAction(item, action, callbacks);
 
     case "sync":
+      if (item._namespace) {
+        if (action.id === "sync_missing" && callbacks.syncNamespace) {
+          await callbacks.syncNamespace(item._namespace);
+          callbacks.refreshDetailNamespace?.(item._namespace);
+          return true;
+        }
+        if (action.id === "resync_drifted" && callbacks.resyncNamespace) {
+          await callbacks.resyncNamespace(item._namespace);
+          callbacks.refreshDetailNamespace?.(item._namespace);
+          return true;
+        }
+        return false;
+      }
       return handleSyncAction(item, callbacks);
 
     case "install":
@@ -131,6 +150,10 @@ export async function handleItemAction(
       return false;
 
     case "delete_everywhere":
+      if (item._namespace && callbacks.deleteNamespaceEverywhere) {
+        await callbacks.deleteNamespaceEverywhere(item._namespace);
+        return true;
+      }
       if (item._skill && callbacks.deleteSkillEverywhere) {
         await callbacks.deleteSkillEverywhere(item._skill);
         return true;

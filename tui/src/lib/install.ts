@@ -1719,6 +1719,22 @@ export interface StandaloneSkill {
   gitStatus?: GitStatus;
 }
 
+/** Aggregate of all skills under a single namespace. */
+export interface NamespaceGroup {
+  name: string;
+  skills: StandaloneSkill[];
+  /** Unique toolIds where any skill in this namespace is installed. */
+  toolIds: string[];
+  /** Total installations across all skills. */
+  totalInstallations: number;
+  /** Number of skills missing from at least one enabled tool. */
+  missingCount: number;
+  /** Number of skills with drifted installations. */
+  driftedCount: number;
+  /** Number of skills not tracked in source repo. */
+  notInGitCount: number;
+}
+
 
 
 /**
@@ -1989,6 +2005,54 @@ export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSki
   }
 
   return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Group standalone skills by their namespace. Skills without a namespace are excluded. */
+export function groupSkillsByNamespace(skills: StandaloneSkill[]): NamespaceGroup[] {
+  const byNs = new Map<string, StandaloneSkill[]>();
+  for (const skill of skills) {
+    if (!skill.namespace) continue;
+    const list = byNs.get(skill.namespace) ?? [];
+    list.push(skill);
+    byNs.set(skill.namespace, list);
+  }
+
+  const skillCapableTools = new Set(
+    getToolInstances()
+      .filter((i) => i.kind === "tool" && i.enabled && !!i.skillsSubdir)
+      .map((i) => i.toolId),
+  );
+
+  return Array.from(byNs.entries())
+    .map(([name, nsSkills]) => {
+      const allToolIds = new Set<string>();
+      let totalInstallations = 0;
+      let missingCount = 0;
+      let driftedCount = 0;
+      let notInGitCount = 0;
+
+      for (const skill of nsSkills) {
+        for (const inst of skill.installations) {
+          allToolIds.add(inst.toolId);
+          totalInstallations++;
+        }
+        const installedTools = new Set(skill.installations.map((i) => i.toolId));
+        if (installedTools.size < skillCapableTools.size) missingCount++;
+        if (skill.drifted) driftedCount++;
+        if (!skill.sourcePath) notInGitCount++;
+      }
+
+      return {
+        name,
+        skills: nsSkills,
+        toolIds: Array.from(allToolIds),
+        totalInstallations,
+        missingCount,
+        driftedCount,
+        notInGitCount,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // ---------------------------------------------------------------------------
@@ -2263,6 +2327,43 @@ export function installSkillToAllNonSynced(skill: StandaloneSkill): { installed:
     skipped += 1;
   }
   return { installed, resynced, skipped, failed };
+}
+
+// ── Namespace bulk operations ─────────────────────────────────────────────
+
+/** Sync all skills in a namespace that are missing from at least one enabled tool. */
+export function syncNamespaceToAllMissing(group: NamespaceGroup): { installed: number; failed: number } {
+  let installed = 0; let failed = 0;
+  for (const skill of group.skills) {
+    const result = installSkillToAllMissing(skill);
+    installed += result.installed;
+    failed += result.failed;
+  }
+  return { installed, failed };
+}
+
+/** Re-sync all drifted skills in a namespace across all tools. */
+export function resyncNamespaceDrifted(group: NamespaceGroup): { resynced: number; failed: number } {
+  let resynced = 0; let failed = 0;
+  for (const skill of group.skills) {
+    if (!skill.drifted) continue;
+    const result = installSkillToAllNonSynced(skill);
+    resynced += result.resynced;
+    failed += result.failed;
+  }
+  return { resynced, failed };
+}
+
+/** Delete every skill in a namespace from all tool disks and source repo. */
+export function deleteNamespaceEverywhere(group: NamespaceGroup): { deleted: number; errors: string[] } {
+  const errors: string[] = [];
+  let deleted = 0;
+  for (const skill of group.skills) {
+    const result = deleteSkillEverywhere(skill);
+    if (result.ok) deleted += 1;
+    if (result.error) errors.push(result.error);
+  }
+  return { deleted, errors };
 }
 
 export function getAllInstalledPlugins(): {

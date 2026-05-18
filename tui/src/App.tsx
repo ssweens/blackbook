@@ -49,6 +49,10 @@ import {
   deleteSkillEverywhere,
   deletePluginEverywhere,
   deleteFileEverywhere,
+  groupSkillsByNamespace,
+  syncNamespaceToAllMissing,
+  resyncNamespaceDrifted,
+  deleteNamespaceEverywhere,
 } from "./lib/install.js";
 import { resolvePluginSourcePaths, type PluginDrift } from "./lib/plugin-drift.js";
 import { computeItemDrift } from "./lib/item-drift.js";
@@ -57,7 +61,7 @@ import { getToolLifecycleCommand, detectInstallMethodMismatch } from "./lib/tool
 import { getPackageManager } from "./lib/config.js";
 import { setupSourceRepository, shouldShowSourceSetupWizard, pullSourceRepo } from "./lib/source-setup.js";
 import { ItemList, FILE_COLUMNS, PLUGIN_COLUMNS } from "./components/ItemList.js";
-import { ItemDetail, PluginMetadata, FileMetadata, PiPackageMetadata, SkillMetadata, type ItemAction } from "./components/ItemDetail.js";
+import { ItemDetail, PluginMetadata, FileMetadata, PiPackageMetadata, SkillMetadata, NamespaceMetadata, type ItemAction } from "./components/ItemDetail.js";
 import { pluginToManagedItem, fileToManagedItem, piPackageToManagedItem } from "./lib/managed-item.js";
 import type { ManagedItem } from "./lib/managed-item.js";
 import { getMarketplaceDetailActions, type MarketplaceDetailContext } from "./lib/marketplace-detail.js";
@@ -122,12 +126,14 @@ export function App() {
   const detailPlugin = detail?.kind === "plugin" ? detail.data : null;
   const detailFile = detail?.kind === "file" ? detail.data : null;
   const detailSkill = detail?.kind === "skill" ? detail.data : null;
+  const detailNamespace = detail?.kind === "namespace" ? detail.data : null;
   const detailPiPackage = detail?.kind === "piPackage" ? detail.data : null;
   const detailPluginDrift = detail?.kind === "plugin" ? (detail.drift ?? null) : null;
   // Setters that delegate to the unified setDetail.
   const setDetailPlugin = (p: Plugin | null) => setDetail(p ? { kind: "plugin", data: p, drift: detailPluginDrift ?? undefined } : null);
   const setDetailFile = (f: FileStatus | null) => setDetail(f ? { kind: "file", data: f } : null);
   const setDetailSkill = (s: import("./lib/install.js").StandaloneSkill | null) => setDetail(s ? { kind: "skill", data: s } : null);
+  const setDetailNamespace = (ns: import("./lib/install.js").NamespaceGroup | null) => setDetail(ns ? { kind: "namespace", data: ns } : null);
   const setDetailPluginDrift = (drift: PluginDrift | null) => {
     if (detail?.kind !== "plugin") return;
     setDetail({ kind: "plugin", data: detail.data, drift: drift ?? undefined });
@@ -647,16 +653,23 @@ export function App() {
     return Math.max(pluginWidth, fileWidth, piPkgWidth);
   }, [filteredPlugins, filteredFiles, filteredPiPackages]);
 
-  const filteredStandaloneSkills = useMemo(() => {
-    if (tab !== "installed") return [];
+  const { namespacedSkills, standaloneOnlySkills } = useMemo(() => {
+    if (tab !== "installed") return { namespacedSkills: [] as import("./lib/install.js").StandaloneSkill[], standaloneOnlySkills: [] as import("./lib/install.js").StandaloneSkill[] };
     const lowerSearch = search.toLowerCase();
-    return search
-      ? standaloneSkills.filter((s) => s.name.toLowerCase().includes(lowerSearch))
+    const filtered = search
+      ? standaloneSkills.filter((s) => s.name.toLowerCase().includes(lowerSearch) || (s.namespace && s.namespace.toLowerCase().includes(lowerSearch)))
       : standaloneSkills;
+    return {
+      namespacedSkills: filtered.filter((s) => s.namespace),
+      standaloneOnlySkills: filtered.filter((s) => !s.namespace),
+    };
   }, [tab, standaloneSkills, search]);
 
+  const namespaceGroups = useMemo(() => groupSkillsByNamespace(namespacedSkills), [namespacedSkills]);
+
   const fileCount = filteredFiles.length;
-  const skillCount = filteredStandaloneSkills.length;
+  const namespaceCount = namespaceGroups.length;
+  const skillCount = standaloneOnlySkills.length;
   const pluginCount = filteredPlugins.length;
   const piPkgCount = filteredPiPackages.length;
 
@@ -666,7 +679,7 @@ export function App() {
   const piPkgSectionCount = tab === "discover" ? (piPkgCount > 0 ? 1 : 0) : piPkgCount;
 
   const libraryCount = tab === "installed"
-    ? fileCount + skillCount + pluginCount + piPkgCount
+    ? fileCount + namespaceCount + skillCount + pluginCount + piPkgCount
     : pluginSectionCount + piPkgSectionCount;
 
   // Section boundaries for Tab/Shift+Tab navigation
@@ -678,6 +691,10 @@ export function App() {
       if (fileCount > 0) {
         result.push({ id: "files", start: offset, end: offset + fileCount - 1 });
         offset += fileCount;
+      }
+      if (namespaceCount > 0) {
+        result.push({ id: "skills", start: offset, end: offset + namespaceCount - 1 });
+        offset += namespaceCount;
       }
       if (skillCount > 0) {
         result.push({ id: "skills", start: offset, end: offset + skillCount - 1 });
@@ -702,7 +719,7 @@ export function App() {
     }
 
     return result;
-  }, [tab, fileCount, skillCount, pluginCount, piPkgCount, pluginSectionCount, piPkgSectionCount]);
+  }, [tab, fileCount, namespaceCount, skillCount, pluginCount, piPkgCount, pluginSectionCount, piPkgSectionCount]);
 
   const currentSectionInfo = useMemo(() => {
     return sections.find((s) => selectedIndex >= s.start && selectedIndex <= s.end);
@@ -829,6 +846,7 @@ export function App() {
       | { kind: "piPackage"; piPackage: PiPackage }
       | { kind: "file"; file: FileStatus }
       | { kind: "skill"; skill: import("./lib/install.js").StandaloneSkill }
+      | { kind: "namespace"; namespace: import("./lib/install.js").NamespaceGroup }
       | { kind: "pluginSummary" }
       | { kind: "piPackageSummary" }
       | null => {
@@ -846,24 +864,29 @@ export function App() {
         return null;
       }
 
-      // Installed tab - inline lists (visual order: files, skills, plugins, piPackages)
+      // Installed tab - inline lists (visual order: files, namespaces, skills, plugins, piPackages)
       if (selectedIndex < fileCount) {
         const file = filteredFiles[selectedIndex];
         return file ? { kind: "file", file } : null;
       }
 
-      if (selectedIndex < fileCount + skillCount) {
-        const skill = filteredStandaloneSkills[selectedIndex - fileCount];
+      if (selectedIndex < fileCount + namespaceCount) {
+        const ns = namespaceGroups[selectedIndex - fileCount];
+        return ns ? { kind: "namespace", namespace: ns } : null;
+      }
+
+      if (selectedIndex < fileCount + namespaceCount + skillCount) {
+        const skill = standaloneOnlySkills[selectedIndex - fileCount - namespaceCount];
         return skill ? { kind: "skill", skill } : null;
       }
 
-      if (selectedIndex < fileCount + skillCount + pluginCount) {
-        const plugin = filteredPlugins[selectedIndex - fileCount - skillCount];
+      if (selectedIndex < fileCount + namespaceCount + skillCount + pluginCount) {
+        const plugin = filteredPlugins[selectedIndex - fileCount - namespaceCount - skillCount];
         return plugin ? { kind: "plugin", plugin } : null;
       }
 
       const piPkg =
-        filteredPiPackages[selectedIndex - fileCount - skillCount - pluginCount];
+        filteredPiPackages[selectedIndex - fileCount - namespaceCount - skillCount - pluginCount];
       return piPkg ? { kind: "piPackage", piPackage: piPkg } : null;
     },
     [
@@ -873,11 +896,14 @@ export function App() {
       filteredFiles,
       filteredPiPackages,
       fileCount,
+      namespaceCount,
       skillCount,
       pluginCount,
       piPkgCount,
       pluginSectionCount,
       piPkgSectionCount,
+      namespaceGroups,
+      standaloneOnlySkills,
     ]
   );
 
@@ -933,6 +959,34 @@ export function App() {
     return piPackageToManagedItem(detailPiPackage);
   }, [detailPiPackage]);
 
+  const detailNamespaceItem = useMemo((): ManagedItem | null => {
+    if (!detailNamespace) return null;
+    const ns = detailNamespace;
+    const isInstalled = ns.totalInstallations > 0;
+    return {
+      name: ns.name,
+      kind: "namespace" as const,
+      marketplace: ns.toolIds.join(", "),
+      description: `${ns.skills.length} skill${ns.skills.length === 1 ? "" : "s"} · ${ns.toolIds.join(", ")}`,
+      installed: isInstalled,
+      incomplete: ns.missingCount > 0,
+      scope: "user" as const,
+      tools: ns.toolIds,
+      instances: ns.toolIds.map((toolId) => ({
+        toolId,
+        instanceId: "default",
+        instanceName: toolId,
+        configDir: "",
+        status: "synced" as const,
+        sourcePath: null,
+        targetPath: null,
+        linesAdded: 0,
+        linesRemoved: 0,
+      })),
+      _namespace: ns,
+    };
+  }, [detailNamespace]);
+
   /** Active detail context — the currently-open entity + its actions + metadata node. */
   /**
    * Active detail — single switch on the unified `detail` union.
@@ -959,8 +1013,12 @@ export function App() {
         if (!detailPiPkgItem) return null;
         return { item: detailPiPkgItem, actions: buildItemActions(detailPiPkgItem), metadata: <PiPackageMetadata item={detailPiPkgItem} /> };
       }
+      case "namespace": {
+        if (!detailNamespaceItem) return null;
+        return { item: detailNamespaceItem, actions: buildItemActions(detailNamespaceItem), metadata: <NamespaceMetadata item={detailNamespaceItem} /> };
+      }
     }
-  }, [detail, detailFileItem, detailSkillItem, detailPluginItem, detailPiPkgItem, pluginDriftMap]);
+  }, [detail, detailFileItem, detailSkillItem, detailPluginItem, detailPiPkgItem, detailNamespaceItem, pluginDriftMap]);
 
   const activeMarketplaceDetail = useMemo((): { detail: MarketplaceDetailContext; actions: ReturnType<typeof getMarketplaceDetailActions> } | null => {
     if (detailMarketplace) {
@@ -1079,6 +1137,9 @@ export function App() {
       setActionIndex(0);
     } else if (selectedLibraryItem?.kind === "skill") {
       setDetail({ kind: "skill", data: selectedLibraryItem.skill });
+      setActionIndex(0);
+    } else if (selectedLibraryItem?.kind === "namespace") {
+      setDetail({ kind: "namespace", data: selectedLibraryItem.namespace });
       setActionIndex(0);
     } else if (selectedLibraryItem?.kind === "pluginSummary") {
       setDiscoverSubView("plugins");
@@ -1627,6 +1688,41 @@ export function App() {
         );
         await useStore.getState().loadInstalledPlugins({ silent: true });
         setDetailSkill(null);
+        closeDetail();
+      },
+      // Namespace bulk operations
+      syncNamespace: async (ns) => {
+        const store = useStore.getState();
+        await withSpinner(
+          `Syncing missing skills in ${ns.name}...`,
+          async () => { syncNamespaceToAllMissing(ns); },
+          store.notify, store.clearNotification,
+        );
+        await useStore.getState().loadInstalledPlugins({ silent: true });
+      },
+      resyncNamespace: async (ns) => {
+        const store = useStore.getState();
+        await withSpinner(
+          `Re-syncing drifted skills in ${ns.name}...`,
+          async () => { resyncNamespaceDrifted(ns); },
+          store.notify, store.clearNotification,
+        );
+        await useStore.getState().loadInstalledPlugins({ silent: true });
+      },
+      deleteNamespaceEverywhere: async (ns) => {
+        const store = useStore.getState();
+        await withSpinner(
+          `Deleting all skills in ${ns.name}...`,
+          async () => {
+            const result = deleteNamespaceEverywhere(ns);
+            const parts: string[] = [`${result.deleted} skills deleted`];
+            if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
+            store.notify(`Deleted ${ns.name}: ${parts.join(", ")}`, result.errors.length > 0 ? "warning" : "info");
+          },
+          store.notify, store.clearNotification,
+        );
+        await useStore.getState().loadInstalledPlugins({ silent: true });
+        setDetailNamespace(null);
         closeDetail();
       },
       deletePluginEverywhere: async (plugin) => {

@@ -131,6 +131,7 @@ export type DetailArtifact =
   | { kind: "plugin"; data: Plugin; drift?: import("./plugin-drift.js").PluginDrift }
   | { kind: "file"; data: FileStatus }
   | { kind: "skill"; data: import("./install.js").StandaloneSkill }
+  | { kind: "namespace"; data: import("./install.js").NamespaceGroup }
   | { kind: "piPackage"; data: PiPackage };
 
 export type SyncPreviewItem =

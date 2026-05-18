@@ -504,6 +504,50 @@ export function getSkillActions(skill: StandaloneSkill): ItemAction[] {
 }
 
 /**
+ * Actions for a namespace group: bulk sync, re-sync, delete.
+ */
+export function getNamespaceActions(ns: import("./install.js").NamespaceGroup): ItemAction[] {
+  const actions: ItemAction[] = [];
+
+  for (const inst of ns.toolIds) {
+    actions.push({
+      id: `status_${inst}`,
+      label: inst,
+      type: "status",
+      statusColor: "green",
+      statusLabel: "Enabled",
+    });
+  }
+
+  if (ns.missingCount > 0) {
+    actions.push({
+      id: "sync_missing",
+      label: `Sync all ${ns.missingCount} missing skill${ns.missingCount === 1 ? "" : "s"}`,
+      type: "sync",
+    });
+  }
+
+  if (ns.driftedCount > 0) {
+    actions.push({
+      id: "resync_drifted",
+      label: `Re-sync all ${ns.driftedCount} drifted skill${ns.driftedCount === 1 ? "" : "s"} (overwrites disk)`,
+      type: "sync",
+    });
+  }
+
+  actions.push({ id: "back", label: "Back to list", type: "back" });
+
+  actions.push({
+    id: "delete_everywhere",
+    label: `🗑  Delete all ${ns.skills.length} skills in ${ns.name}`,
+    type: "delete_everywhere",
+    statusColor: "red",
+  });
+
+  return actions;
+}
+
+/**
  * Build actions for any ManagedItem — routes to the kind-specific builder.
  * Pass drift for plugin items to get per-instance diff status.
  */
@@ -521,6 +565,9 @@ export function buildItemActions(item: ManagedItem, drift?: PluginDrift): ItemAc
   }
   if (item._skill) {
     return getSkillActions(item._skill);
+  }
+  if (item._namespace) {
+    return getNamespaceActions(item._namespace);
   }
   return [];
 }

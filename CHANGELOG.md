@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.2] - 2026-05-17
+
+### Added
+- **Namespace-level bulk operations** for skill namespaces in the Installed tab.
+  - Namespaced skills are now grouped into collapsible namespace rows (e.g. `ssmp`) showing skill count, tool scope, missing/drifted counts, and a truncated skill list.
+  - Press `Enter` on a namespace row to open a detail view with bulk actions:
+    - `Sync all N missing skills` — installs every missing skill in the namespace to all enabled tools.
+    - `Re-sync all N drifted skills (overwrites disk)` — overwrites drifted installs for every skill in the namespace.
+    - `Delete all N skills in <namespace>` — destructive bulk delete everywhere (tool installs + source repo) for the entire namespace.
+  - New `NamespaceGroup` type in `install.ts` with `groupSkillsByNamespace()`, `syncNamespaceToAllMissing()`, `resyncNamespaceDrifted()`, and `deleteNamespaceEverywhere()`.
+  - `ManagedItem` extended with `_namespace` field; `ItemKind` now includes `"namespace"`.
+  - `ItemDetail.tsx` now renders `NamespaceMetadata` with summary stats and skill list.
+  - `action-dispatch.ts` handles namespace-specific `sync` (via `syncNamespace`/`resyncNamespace` callbacks) and `delete_everywhere` (via `deleteNamespaceEverywhere`).
+
+### Fixed
+- Replaced dynamic `require()` calls in `InstalledTab.tsx` with static ESM imports to prevent `require is not defined` crash in the built distribution.
+
 ## [0.21.1] - 2026-05-17
 
 ### Changed
@@ -635,7 +652,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Symlink handling for plugin assets
 
-[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.21.2...HEAD
+[0.21.2]: https://github.com/ssweens/blackbook/compare/v0.21.1...v0.21.2
+[0.21.1]: https://github.com/ssweens/blackbook/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/ssweens/blackbook/compare/v0.20.6...v0.21.0
 [0.20.6]: https://github.com/ssweens/blackbook/compare/v0.20.5...v0.20.6
 [0.20.5]: https://github.com/ssweens/blackbook/compare/v0.20.4...v0.20.5

@@ -498,3 +498,58 @@ export function SkillMetadata({ item }: { item: ManagedItem }) {
     </>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Namespace metadata
+// ---------------------------------------------------------------------------
+
+/** Namespace metadata: skill count, missing count, drifted count, tools. */
+export function NamespaceMetadata({ item }: { item: ManagedItem }) {
+  const ns = item._namespace;
+  if (!ns) return null;
+
+  return (
+    <>
+      <Box marginBottom={1}>
+        <Text color="gray">Skills: </Text>
+        <Text>{ns.skills.length}</Text>
+      </Box>
+
+      <Box marginBottom={1}>
+        <Text color="gray">Tools: </Text>
+        <Text color="magenta">{ns.toolIds.join(", ")}</Text>
+      </Box>
+
+      {ns.missingCount > 0 && (
+        <Box marginBottom={1}>
+          <Text color="gray">Missing: </Text>
+          <Text color="yellow">{ns.missingCount} skill{ns.missingCount === 1 ? "" : "s"} not on all tools</Text>
+        </Box>
+      )}
+
+      {ns.driftedCount > 0 && (
+        <Box marginBottom={1}>
+          <Text color="gray">Drifted: </Text>
+          <Text color="yellow">{ns.driftedCount} skill{ns.driftedCount === 1 ? "" : "s"} out of sync</Text>
+        </Box>
+      )}
+
+      {ns.notInGitCount > 0 && (
+        <Box marginBottom={1}>
+          <Text color="gray">Not in git: </Text>
+          <Text color="red">{ns.notInGitCount} skill{ns.notInGitCount === 1 ? "" : "s"}</Text>
+        </Box>
+      )}
+
+      <Box marginBottom={1} flexDirection="column">
+        <Text bold>Skills in namespace:</Text>
+        {ns.skills.slice(0, 8).map((skill) => (
+          <Text key={skill.name} color="gray">  {skill.namespace}/{skill.name}</Text>
+        ))}
+        {ns.skills.length > 8 && (
+          <Text color="gray" dimColor>  … (+{ns.skills.length - 8} more)</Text>
+        )}
+      </Box>
+    </>
+  );
+}

@@ -1,46 +1,30 @@
-# Plan: Namespaced Plugin Component Install for Non-Claude Tools
+# Plan: Namespace-Level Skill Bulk Operations (Option A)
 
-## Context
-Claude is the exception: it handles plugins natively via `plugin.json` and its own plugin cache. All other tools (Pi, OpenCode, Codex, Amp) support recursive skill discovery, so plugin-owned skills/commands/agents should be installed under a plugin namespace directory:
-- **Before (flat):** `~/.pi/agent/skills/midi-drum-production/SKILL.md`
-- **After (namespaced):** `~/.pi/agent/skills/music-production/midi-drum-production/SKILL.md`
+## Changes
 
-## Changes Required
+### 1. Data Model
+- [x] `tui/src/lib/install.ts`: Add `NamespaceGroup` interface + `groupSkillsByNamespace()`, `syncNamespaceToAllMissing()`, `resyncNamespaceDrifted()`, `deleteNamespaceEverywhere()`
+- [x] `tui/src/lib/managed-item.ts`: Add `kind: "namespace"` to `ItemKind`, add `_namespace` to `ManagedItem`
+- [x] `tui/src/lib/types.ts`: Add `"namespace"` to `DetailArtifact` union
 
-### 1. Playbook Schema
-- [x] Add `plugin_flat_install: z.boolean().default(false)` to `PlaybookSchema`
-- [x] Set `plugin_flat_install: true` in `claude-code.yaml`
+### 2. Install Tab UI
+- [x] `tui/src/tabs/InstalledTab.tsx`: Split skills into namespaced vs standalone, render namespace groups as first-class rows
 
-### 2. Type Definitions
-- [x] Add `pluginFlatInstall: boolean` to `ToolTarget` interface
-- [x] Add `pluginFlatInstall: boolean` to `ToolInstance` interface
+### 3. Detail View
+- [x] `tui/src/components/ItemDetail.tsx`: Add `NamespaceMetadata` component
+- [x] `tui/src/App.tsx`: Wire `detailNamespace`, `detailNamespaceItem`, `setDetailNamespace`, namespace in `activeDetail`
 
-### 3. Config Builder
-- [x] `buildToolDefinitions()`: read `pb.plugin_flat_install` into `pluginFlatInstall`
-- [x] `getToolInstances()`: pass `pluginFlatInstall` through to instances
+### 4. Actions
+- [x] `tui/src/lib/item-actions.ts`: Add `getNamespaceActions()` with sync missing, resync drifted, delete everywhere
+- [x] `tui/src/lib/action-dispatch.ts`: Handle namespace `sync` and `delete_everywhere` actions
+- [x] `tui/src/App.tsx`: Wire `syncNamespace`, `resyncNamespace`, `deleteNamespaceEverywhere` callbacks in `handleEntityAction`
 
-### 4. Install Logic (`tui/src/lib/install.ts`)
-- [x] `installPluginItemsToInstance()`: for `!pluginFlatInstall`, install to `<skillsDir>/<pluginName>/<skill>/`
-- [x] `togglePluginComponent()`: use namespaced dest for non-flat tools
-- [x] `getStandaloneSkills()`: recursively scan skills dir for non-flat tools
-- [x] Component scanning (~line 1440): recursively scan for non-flat tools
-- [x] `linkPluginToInstance()`: use namespaced dest for non-flat tools
+### 5. Build / Test
+- [x] `pnpm typecheck` → clean
+- [x] `pnpm test` → 472/472 passing
+- [x] `pnpm build` → clean
+- [x] TUI smoke test → boots without crash
 
-### 5. Plugin Status (`tui/src/lib/plugin-status.ts`)
-- [x] `getPluginToolStatus()`: check both flat and namespaced paths for installed detection
-- [x] `togglePluginComponent()`: use namespaced dest for non-flat tools
-
-### 6. Tests
-- [x] Update `install.integration.test.ts` for namespaced paths
-- [x] Update `install.test.ts` mock tools
-- [x] Update `store.test.ts` mock tools
-- [x] Update `app.e2e.test.tsx` mock tools
-- [x] Update `managed-item.test.ts` mock tools
-- [x] Run full test suite: `pnpm test` → 472/472, `pnpm typecheck`, `pnpm build`
-
-### 7. Verification
-- [x] TUI smoke test with tmux capture — boots correctly
-
-## Version
-- [x] Bump to `0.21.0`
+### 6. Version
+- [x] Bump to `0.21.2`
 - [x] Update `CHANGELOG.md`
