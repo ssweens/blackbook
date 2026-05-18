@@ -16,3 +16,5 @@
 - For package updates, don't stop at warning users; provide a first-class repair action when install-method mismatch is detectable.
 - If tab navigation still feels laggy after render optimizations, assume hidden background work is the culprit: remove startup auto-loads and expensive global effects before tuning smaller re-render details.
 - Treat marketplace manifest metadata as untrusted shape-wise: normalize path-like entries (e.g. `./.claude/skills/foo`) before validation to avoid throw/catch hot paths and repeated error noise.
+- For Blackbook TUI visual verification, prefer tmux capture sessions over iTerm/Terminal automation unless the user explicitly asks for GUI screenshots; tmux is deterministic, scriptable, and avoids focus/window mistakes.
+- Do not infer Claude Code skill discovery from files merely existing under `~/.claude/skills`; verify with Claude debug/skill resolution. Claude currently loads only direct child skill directories from the user skills dir, while deeper nested `SKILL.md` files are ignored.

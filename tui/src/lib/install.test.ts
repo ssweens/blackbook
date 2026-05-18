@@ -58,6 +58,7 @@ function createMockTool(overrides: Partial<ToolInstance> = {}): ToolInstance {
     agentsSubdir: "agents",
     enabled: true,
     kind: "tool",
+    pluginFlatInstall: false,
     ...overrides,
   };
 }

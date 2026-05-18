@@ -45,6 +45,7 @@ export const PlaybookSchema = z.object({
   config_files: z.array(ConfigFileSchema).default([]),
   syncable: z.boolean().default(true),
   lifecycle: LifecycleSchema.optional(),
+  plugin_flat_install: z.boolean().default(false),
 });
 
 export type Playbook = z.infer<typeof PlaybookSchema>;

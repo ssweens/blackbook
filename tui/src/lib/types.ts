@@ -6,6 +6,7 @@ export interface ToolTarget {
   commandsSubdir: string | null;
   agentsSubdir: string | null;
   kind: "tool" | "self";
+  pluginFlatInstall: boolean;
 }
 
 export interface ToolInstance {
@@ -18,6 +19,7 @@ export interface ToolInstance {
   agentsSubdir: string | null;
   enabled: boolean;
   kind: "tool" | "self";
+  pluginFlatInstall: boolean;
 }
 
 export type PackageManager = "npm" | "bun" | "pnpm";

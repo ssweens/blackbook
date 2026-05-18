@@ -27,6 +27,7 @@ function buildToolDefinitions(): Record<string, ToolTarget> {
       commandsSubdir: pb.components.commands?.install_dir?.replace(/\/$/, "") ?? null,
       agentsSubdir: pb.components.agents?.install_dir?.replace(/\/$/, "") ?? null,
       kind: pb.kind,
+      pluginFlatInstall: pb.plugin_flat_install ?? false,
     };
   }
   return result;
@@ -778,6 +779,7 @@ export function getToolInstances(): ToolInstance[] {
           agentsSubdir: tool.agentsSubdir,
           enabled: true,
           kind: tool.kind,
+          pluginFlatInstall: tool.pluginFlatInstall,
         });
         continue;
       }
@@ -805,6 +807,7 @@ export function getToolInstances(): ToolInstance[] {
         agentsSubdir: tool.agentsSubdir,
         enabled,
         kind: tool.kind,
+        pluginFlatInstall: tool.pluginFlatInstall,
       });
     });
   }

@@ -1,130 +1,46 @@
-# TUI Performance Refactor
+# Plan: Namespaced Plugin Component Install for Non-Claude Tools
 
-## Phase 1 — Foundation
-- [x] U1: Zustand selectors — Replace bare `useStore()` with selector-based subscriptions
-- [x] U4: Batch tool detection — Accumulate results, single `set()` update
+## Context
+Claude is the exception: it handles plugins natively via `plugin.json` and its own plugin cache. All other tools (Pi, OpenCode, Codex, Amp) support recursive skill discovery, so plugin-owned skills/commands/agents should be installed under a plugin namespace directory:
+- **Before (flat):** `~/.pi/agent/skills/midi-drum-production/SKILL.md`
+- **After (namespaced):** `~/.pi/agent/skills/music-production/midi-drum-production/SKILL.md`
 
-## Phase 2 — Data
-- [x] U2: Store-level memoization — Move derived state from App.tsx useMemo into store
-- [x] U7: Cache plugin tool status — Memoize `getPluginToolStatus()` to eliminate fs calls
+## Changes Required
 
-## Phase 3 — Structure
-- [x] U3: Extract tab components — Split App.tsx into tab-specific components
-- [x] U5: Lazy tab loading — Only fetch data for visible tabs
-- [x] U6: React.memo on lists — Wrap list components to skip unnecessary re-renders
+### 1. Playbook Schema
+- [x] Add `plugin_flat_install: z.boolean().default(false)` to `PlaybookSchema`
+- [x] Set `plugin_flat_install: true` in `claude-code.yaml`
 
-## Phase 4 — Validation
-- [x] U8: Perf profiling — Lightweight measurement utility with counters for renders, store updates, fs calls, and function invocations
+### 2. Type Definitions
+- [x] Add `pluginFlatInstall: boolean` to `ToolTarget` interface
+- [x] Add `pluginFlatInstall: boolean` to `ToolInstance` interface
 
-## Hotfix — Controlled Refresh Performance Mode
-- [x] Keep one startup hydration refresh for the initial tab so users do not need to press `R` on boot
-- [x] Disable automatic tab-switch reloads in `App.tsx`
-- [x] Disable automatic background plugin drift scans
-- [x] Short-circuit heavy list filtering/sorting on unrelated tabs
-- [x] Normalize path-like marketplace metadata values to valid item names
-- [x] Deduplicate repeated validation error logs
+### 3. Config Builder
+- [x] `buildToolDefinitions()`: read `pb.plugin_flat_install` into `pluginFlatInstall`
+- [x] `getToolInstances()`: pass `pluginFlatInstall` through to instances
 
-## Quality Gates
-- [x] All tests pass: `cd tui && pnpm test`
-- [x] Type check passes: `cd tui && pnpm typecheck`
-- [x] Build succeeds: `cd tui && pnpm build`
+### 4. Install Logic (`tui/src/lib/install.ts`)
+- [x] `installPluginItemsToInstance()`: for `!pluginFlatInstall`, install to `<skillsDir>/<pluginName>/<skill>/`
+- [x] `togglePluginComponent()`: use namespaced dest for non-flat tools
+- [x] `getStandaloneSkills()`: recursively scan skills dir for non-flat tools
+- [x] Component scanning (~line 1440): recursively scan for non-flat tools
+- [x] `linkPluginToInstance()`: use namespaced dest for non-flat tools
 
-## Plugin Version Awareness / Repo-Prescribed State Hotfix
-- [x] Preserve latest plugin versions from marketplace/local plugin metadata
-- [x] Read installed Claude plugin versions from `installed_plugins.json`
-- [x] Mark installed plugins outdated when installed/latest versions differ
-- [x] Surface explicit update labels such as `Update 2.27.0 → 3.8.2`
-- [x] Add tests for version detection and cross-marketplace installed-version merge
-- [x] Verify typecheck/tests/build
-- [x] Visually inspect TUI behavior
+### 5. Plugin Status (`tui/src/lib/plugin-status.ts`)
+- [x] `getPluginToolStatus()`: check both flat and namespaced paths for installed detection
+- [x] `togglePluginComponent()`: use namespaced dest for non-flat tools
 
-## Core Use Cases To Keep Simple
-- [x] Know what plugins are installed/prescribed from configured repos/marketplaces
-- [x] Make latest-and-greatest update/add obvious and one-action
-- [x] Detect repo-prescribed additions/updates/removals, not arbitrary private installer conventions
-- [x] Surface local-only/new artifacts as easy to add intentionally
-- [x] Make remove-everywhere explicit and safe
+### 6. Tests
+- [x] Update `install.integration.test.ts` for namespaced paths
+- [x] Update `install.test.ts` mock tools
+- [x] Update `store.test.ts` mock tools
+- [x] Update `app.e2e.test.tsx` mock tools
+- [x] Update `managed-item.test.ts` mock tools
+- [x] Run full test suite: `pnpm test` → 472/472, `pnpm typecheck`, `pnpm build`
 
-## Discover Navigation Regression Deep Dive
-- [x] Add deep E2E coverage for Discover tab non-editing navigation
-- [x] Scrub dashboard → plugin list → row navigation → detail mapping → escape/back behavior
-- [x] Verify list selection, preview, and Enter target stay in sync across enough rows to catch repeats/skips
-- [x] Run typecheck/tests and visually verify Discover navigation
+### 7. Verification
+- [x] TUI smoke test with tmux capture — boots correctly
 
-## Compound Engineering Installed Status Regression
-- [x] Mark marketplace plugins installed from actual tool component status, even when an old installed marketplace key was removed/renamed
-- [x] Keep marketplace installed counts derived from plugin rows after status enrichment
-- [x] Add store regression coverage for stale installed marketplace key + present tool components
-- [x] Refresh open plugin detail after successful update so version/update metadata changes immediately
-
-## Manual Cleanup — Legacy Compound Engineering Artifacts
-- [x] Inventory stale compound-engineering marketplace/cache/tool artifacts on disk
-- [x] Remove old legacy marketplace/plugin/cache records without touching current `compound-engineering-plugin` v3.8.2 sources
-- [x] Remove legacy standalone skill/agent artifacts only when clearly owned by old compound-engineering installs
-- [x] Remove `compound-docs` from active tool dirs, playbook source cache, and playbook source repo
-- [x] Refresh/verify Blackbook no longer sees stale old compound artifacts
-
-## Marketplace Orphan and Not-in-Git Follow-up
-- [x] Badge installed Pi packages that are local-only as `not in git`
-- [x] Badge installed plugins whose configured marketplace no longer prescribes them as `no longer in marketplace`
-- [x] Preserve plugin-level rows for installed plugins from removed/unconfigured marketplaces and badge them as `marketplace removed`
-- [x] Add `Track in source repo` action for local-only Pi packages by writing `pi_packages`
-- [x] Add `Track in source repo` action for recoverable orphan plugins by copying to the source repo marketplace
-- [x] Wire action dispatch/store refresh/tests/docs
-
-Review:
-- Installed local-only Pi packages now show `not in git`; installed plugin rows now distinguish `no longer in marketplace` vs `marketplace removed`.
-- `Track in source repo` is available for local-only Pi packages and recoverable orphan plugins.
-- Full gates pass: `pnpm typecheck`, `pnpm test` (466/466), `pnpm build`.
-- Visually verified Installed badges (`marketplace removed`, Pi `not in git`) and Pi detail `Track in source repo` in Terminal.app screenshots.
-
-## Pi Package Complete Delete Follow-up
-- [x] Add Pi package `Delete everywhere` action matching file/skill/plugin destructive flows
-- [x] Remove local/global package install and delete matching `pi_packages` prescription from config
-- [x] Refresh/close detail after delete and add regression coverage
-- [x] Visually verify the destructive action appears in the TUI
-- [x] Run quality gates and update docs/changelog
-
-Review:
-- Pi package detail now shows `🗑  Delete everywhere (local install + config.yaml prescription)` after Back, matching the destructive-action placement used by other artifact types.
-- Delete removes the local/global package when installed and removes the matching `pi_packages` entry from both the active config and source-repo Blackbook config when present, so in-git prescriptions do not reappear after refresh.
-- Verified via tmux capture: `/tmp/blackbook-pi-delete-tmux-3-65923/capture.txt`.
-- Verified `pnpm typecheck`, `pnpm test` (472/472), and `pnpm build`.
-
-## Pi Package Uninstall Hotfix
-- [x] Reproduce/trace why `pi remove npm:...` fails for globally detected Pi packages
-- [x] Fix uninstall to remove packages from the actual detected package manager(s), even when absent from Pi settings
-- [x] Add regression tests for local-only/mismatched-manager Pi package removal
-- [x] Run quality gates and update docs/changelog if needed
-
-Review:
-- Root cause: Blackbook marked globally detected Pi packages as installed even when Pi settings did not contain the source; `pi remove npm:...` then failed with `No matching package found`, and mismatched Bun/pnpm installs could survive a successful Pi remove.
-- Fix: npm Pi package removal now runs `pi remove`, then scans actual global package manager installs and removes any remaining package via Bun/npm/pnpm before reporting success.
-- Verified `pnpm typecheck`, `pnpm test` (469/469), and `pnpm build`.
-
-## Repo-Prescribed Plugins and Pi Packages
-- [x] Add repo/config schema support for desired Pi package sources
-- [x] Merge desired Pi packages with marketplace/local install detection so missing in-git packages show on other machines
-- [x] Surface desired Pi packages in Discover/Installed/Sync UX like source-only skills/files
-- [x] Add tests for in-git Pi package visible when not locally installed
-- [x] Update README/coverage/changelog and run quality gates
-
-Review:
-- Added `pi_packages` config prescriptions and seeded the playbook config with portable npm Pi package sources from local Pi settings.
-- Verified `pnpm typecheck`, `pnpm test` (457/457), and `pnpm build` pass.
-- Visually verified the Sync tab in Terminal.app shows `pi-subagents · In git · Not installed` with detail preview from a temp config.
-
-## Navigation / Reload Flicker Reduction
-- [x] Keep boot-time initial tab hydration while removing tab-mount reload effects from visible tabs
-- [x] Stop Tools tab from re-running status detection every time it is opened
-- [x] Keep existing list rows visible during refresh instead of flipping sections to loading states
-- [x] Stabilize global refresh indicator layout so it does not insert/remove lines
-- [x] Add regression coverage for tab navigation not invoking loaders
-- [x] Run typecheck/tests/build and visually verify the TUI
-
-## Review
-- Startup hydrates the initial tab automatically so the user does not need to press `R` on boot.
-- Tab switching now performs no automatic network/file refresh work.
-- Repeated invalid metadata log spam is eliminated and path-like metadata is normalized.
-- Plugin classification now uses configured remote marketplace URLs plus their declared remote source paths; local marketplace JSON/checkouts are ignored.
-- Compound-engineering shows as one plugin with Pi/OpenCode/Amp synced, `Update 2.26.5 → 3.8.2`, and only non-prescribed OpenCode helper skills remain standalone.
+## Version
+- [x] Bump to `0.21.0`
+- [x] Update `CHANGELOG.md`

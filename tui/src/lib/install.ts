@@ -694,7 +694,9 @@ function installPluginItemsToInstance(
           const src = safePath(skillsDir, entry);
           if (existsSync(join(src, "SKILL.md"))) {
             if (componentConfig?.disabledSkills.includes(entry)) continue;
-            const baseDest = join(instance.configDir, instance.skillsSubdir);
+            const baseDest = instance.pluginFlatInstall
+              ? join(instance.configDir, instance.skillsSubdir)
+              : join(instance.configDir, instance.skillsSubdir, pluginName);
             const dest = safePath(baseDest, entry);
             installItem("skill", entry, src, dest);
           }
@@ -710,7 +712,9 @@ function installPluginItemsToInstance(
             const name = entry.replace(/\.md$/, "");
             if (componentConfig?.disabledCommands.includes(name)) continue;
             const src = safePath(commandsDir, entry);
-            const baseDest = join(instance.configDir, instance.commandsSubdir);
+            const baseDest = instance.pluginFlatInstall
+              ? join(instance.configDir, instance.commandsSubdir)
+              : join(instance.configDir, instance.commandsSubdir, pluginName);
             const dest = safePath(baseDest, entry);
             installItem("command", name, src, dest);
           }
@@ -726,7 +730,9 @@ function installPluginItemsToInstance(
             const name = entry.replace(/\.md$/, "");
             if (componentConfig?.disabledAgents.includes(name)) continue;
             const src = safePath(agentsDir, entry);
-            const baseDest = join(instance.configDir, instance.agentsSubdir);
+            const baseDest = instance.pluginFlatInstall
+              ? join(instance.configDir, instance.agentsSubdir)
+              : join(instance.configDir, instance.agentsSubdir, pluginName);
             const dest = safePath(baseDest, entry);
             installItem("agent", name, src, dest);
           }
@@ -1045,7 +1051,9 @@ export function linkPluginToInstance(
     if (!existsSync(source)) continue;
 
     if (instance.skillsSubdir) {
-      const baseTarget = join(instance.configDir, instance.skillsSubdir);
+      const baseTarget = instance.pluginFlatInstall
+        ? join(instance.configDir, instance.skillsSubdir)
+        : join(instance.configDir, instance.skillsSubdir, plugin.name);
       const target = safePath(baseTarget, skill);
       const result = createSymlink(source, target, plugin.name, "skill", skill);
       if (result.success) {
@@ -1053,7 +1061,9 @@ export function linkPluginToInstance(
           kind: "skill",
           name: skill,
           source,
-          dest: join(instance.skillsSubdir, skill),
+          dest: instance.pluginFlatInstall
+            ? join(instance.skillsSubdir, skill)
+            : join(instance.skillsSubdir, plugin.name, skill),
           backup: null,
           owner: plugin.name,
           previous: null,
@@ -1072,7 +1082,9 @@ export function linkPluginToInstance(
     if (!existsSync(source)) continue;
 
     if (instance.commandsSubdir) {
-      const baseTarget = join(instance.configDir, instance.commandsSubdir);
+      const baseTarget = instance.pluginFlatInstall
+        ? join(instance.configDir, instance.commandsSubdir)
+        : join(instance.configDir, instance.commandsSubdir, plugin.name);
       const target = safePath(baseTarget, `${cmd}.md`);
       const result = createSymlink(source, target, plugin.name, "command", cmd);
       if (result.success) {
@@ -1080,7 +1092,9 @@ export function linkPluginToInstance(
           kind: "command",
           name: cmd,
           source,
-          dest: join(instance.commandsSubdir, `${cmd}.md`),
+          dest: instance.pluginFlatInstall
+            ? join(instance.commandsSubdir, `${cmd}.md`)
+            : join(instance.commandsSubdir, plugin.name, `${cmd}.md`),
           backup: null,
           owner: plugin.name,
           previous: null,
@@ -1099,7 +1113,9 @@ export function linkPluginToInstance(
     if (!existsSync(source)) continue;
 
     if (instance.agentsSubdir) {
-      const baseTarget = join(instance.configDir, instance.agentsSubdir);
+      const baseTarget = instance.pluginFlatInstall
+        ? join(instance.configDir, instance.agentsSubdir)
+        : join(instance.configDir, instance.agentsSubdir, plugin.name);
       const target = safePath(baseTarget, `${agent}.md`);
       const result = createSymlink(source, target, plugin.name, "agent", agent);
       if (result.success) {
@@ -1107,7 +1123,9 @@ export function linkPluginToInstance(
           kind: "agent",
           name: agent,
           source,
-          dest: join(instance.agentsSubdir, `${agent}.md`),
+          dest: instance.pluginFlatInstall
+            ? join(instance.agentsSubdir, `${agent}.md`)
+            : join(instance.agentsSubdir, plugin.name, `${agent}.md`),
           backup: null,
           owner: plugin.name,
           previous: null,
@@ -1171,7 +1189,9 @@ export function togglePluginComponent(
       if (!subdir) continue;
 
       const suffix = kind === "skill" ? componentName : `${componentName}.md`;
-      const destPath = join(instance.configDir, subdir, suffix);
+      const destPath = instance.pluginFlatInstall
+        ? join(instance.configDir, subdir, suffix)
+        : join(instance.configDir, subdir, plugin.name, suffix);
 
       try {
         if (existsSync(destPath) || isSymlink(destPath)) {
@@ -1219,7 +1239,12 @@ export function togglePluginComponent(
       const src = join(sourcePath, `${kind}s`, suffix);
       if (!existsSync(src)) continue;
 
-      const dest = join(instance.configDir, subdir, suffix);
+      const dest = instance.pluginFlatInstall
+        ? join(instance.configDir, subdir, suffix)
+        : join(instance.configDir, subdir, plugin.name, suffix);
+      const destRel = instance.pluginFlatInstall
+        ? join(subdir, suffix)
+        : join(subdir, plugin.name, suffix);
 
       if (!manifest.tools[key]) {
         manifest.tools[key] = { items: {} };
@@ -1231,7 +1256,7 @@ export function togglePluginComponent(
           kind,
           name: componentName,
           source: src,
-          dest: join(subdir, suffix),
+          dest: destRel,
           backup: null,
           owner: plugin.name,
           previous: null,
@@ -1442,18 +1467,45 @@ export function getInstalledPluginsForInstance(
     const skillsDir = join(instance.configDir, instance.skillsSubdir);
     try {
       if (lstatSync(skillsDir).isDirectory()) {
-        for (const item of readdirSync(skillsDir)) {
-          const itemPath = join(skillsDir, item);
-          try {
-            const stat = lstatSync(itemPath);
-            if (stat.isDirectory() || stat.isSymbolicLink()) {
-              if (existsSync(join(itemPath, "SKILL.md"))) {
-                const source = getSource(itemPath);
-                components.push({ type: "skill", name: item, source });
+        if (instance.pluginFlatInstall) {
+          for (const item of readdirSync(skillsDir)) {
+            const itemPath = join(skillsDir, item);
+            try {
+              const stat = lstatSync(itemPath);
+              if (stat.isDirectory() || stat.isSymbolicLink()) {
+                if (existsSync(join(itemPath, "SKILL.md"))) {
+                  const source = getSource(itemPath);
+                  components.push({ type: "skill", name: item, source });
+                }
               }
+            } catch (error) {
+              logError(`Failed to stat skill entry ${itemPath}`, error);
             }
-          } catch (error) {
-            logError(`Failed to stat skill entry ${itemPath}`, error);
+          }
+        } else {
+          // Namespaced: skills/<plugin>/<skill>/SKILL.md
+          for (const pluginDirName of readdirSync(skillsDir)) {
+            const pluginDir = join(skillsDir, pluginDirName);
+            try {
+              const pluginStat = lstatSync(pluginDir);
+              if (!pluginStat.isDirectory() && !pluginStat.isSymbolicLink()) continue;
+              for (const skillName of readdirSync(pluginDir)) {
+                const skillPath = join(pluginDir, skillName);
+                try {
+                  const stat = lstatSync(skillPath);
+                  if (stat.isDirectory() || stat.isSymbolicLink()) {
+                    if (existsSync(join(skillPath, "SKILL.md"))) {
+                      const source = getSource(skillPath);
+                      components.push({ type: "skill", name: skillName, source });
+                    }
+                  }
+                } catch (error) {
+                  logError(`Failed to stat skill entry ${skillPath}`, error);
+                }
+              }
+            } catch (error) {
+              logError(`Failed to stat plugin dir ${pluginDir}`, error);
+            }
           }
         }
       }
@@ -1467,12 +1519,33 @@ export function getInstalledPluginsForInstance(
     const commandsDir = join(instance.configDir, instance.commandsSubdir);
     try {
       if (lstatSync(commandsDir).isDirectory()) {
-        for (const item of readdirSync(commandsDir)) {
-          if (item.endsWith(".md")) {
-            const name = item.replace(/\.md$/, "");
-            const itemPath = join(commandsDir, item);
-            const source = getSource(itemPath);
-            components.push({ type: "command", name, source });
+        if (instance.pluginFlatInstall) {
+          for (const item of readdirSync(commandsDir)) {
+            if (item.endsWith(".md")) {
+              const name = item.replace(/\.md$/, "");
+              const itemPath = join(commandsDir, item);
+              const source = getSource(itemPath);
+              components.push({ type: "command", name, source });
+            }
+          }
+        } else {
+          // Namespaced: commands/<plugin>/<command>.md
+          for (const pluginDirName of readdirSync(commandsDir)) {
+            const pluginDir = join(commandsDir, pluginDirName);
+            try {
+              const pluginStat = lstatSync(pluginDir);
+              if (!pluginStat.isDirectory() && !pluginStat.isSymbolicLink()) continue;
+              for (const item of readdirSync(pluginDir)) {
+                if (item.endsWith(".md")) {
+                  const name = item.replace(/\.md$/, "");
+                  const itemPath = join(pluginDir, item);
+                  const source = getSource(itemPath);
+                  components.push({ type: "command", name, source });
+                }
+              }
+            } catch (error) {
+              logError(`Failed to stat plugin dir ${pluginDir}`, error);
+            }
           }
         }
       }
@@ -1486,12 +1559,33 @@ export function getInstalledPluginsForInstance(
     const agentsDir = join(instance.configDir, instance.agentsSubdir);
     try {
       if (lstatSync(agentsDir).isDirectory()) {
-        for (const item of readdirSync(agentsDir)) {
-          if (item.endsWith(".md")) {
-            const name = item.replace(/\.md$/, "");
-            const itemPath = join(agentsDir, item);
-            const source = getSource(itemPath);
-            components.push({ type: "agent", name, source });
+        if (instance.pluginFlatInstall) {
+          for (const item of readdirSync(agentsDir)) {
+            if (item.endsWith(".md")) {
+              const name = item.replace(/\.md$/, "");
+              const itemPath = join(agentsDir, item);
+              const source = getSource(itemPath);
+              components.push({ type: "agent", name, source });
+            }
+          }
+        } else {
+          // Namespaced: agents/<plugin>/<agent>.md
+          for (const pluginDirName of readdirSync(agentsDir)) {
+            const pluginDir = join(agentsDir, pluginDirName);
+            try {
+              const pluginStat = lstatSync(pluginDir);
+              if (!pluginStat.isDirectory() && !pluginStat.isSymbolicLink()) continue;
+              for (const item of readdirSync(pluginDir)) {
+                if (item.endsWith(".md")) {
+                  const name = item.replace(/\.md$/, "");
+                  const itemPath = join(pluginDir, item);
+                  const source = getSource(itemPath);
+                  components.push({ type: "agent", name, source });
+                }
+              }
+            } catch (error) {
+              logError(`Failed to stat plugin dir ${pluginDir}`, error);
+            }
           }
         }
       }
@@ -1723,31 +1817,67 @@ export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSki
     if (!existsSync(skillsDir)) continue;
 
     try {
-      for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
-        if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-        if (entry.name.startsWith(".")) continue;
-        const skillPath = join(skillsDir, entry.name);
-        if (!existsSync(join(skillPath, "SKILL.md"))) continue;
-        if (globalPluginOwnedSkills.has(entry.name)) continue;
+      if (instance.pluginFlatInstall) {
+        for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
+          if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+          if (entry.name.startsWith(".")) continue;
+          const skillPath = join(skillsDir, entry.name);
+          if (!existsSync(join(skillPath, "SKILL.md"))) continue;
+          if (globalPluginOwnedSkills.has(entry.name)) continue;
 
-        const installation: SkillInstallation = {
-          toolId: instance.toolId,
-          instanceId: instance.instanceId,
-          instanceName: instance.name,
-          diskPath: skillPath,
-        };
-        const existing = byName.get(entry.name);
-        if (existing) {
-          existing.installations.push(installation);
-        } else {
-          byName.set(entry.name, {
-            name: entry.name,
-            installations: [installation],
-            diskPath: skillPath,
+          const installation: SkillInstallation = {
             toolId: instance.toolId,
             instanceId: instance.instanceId,
             instanceName: instance.name,
-          });
+            diskPath: skillPath,
+          };
+          const existing = byName.get(entry.name);
+          if (existing) {
+            existing.installations.push(installation);
+          } else {
+            byName.set(entry.name, {
+              name: entry.name,
+              installations: [installation],
+              diskPath: skillPath,
+              toolId: instance.toolId,
+              instanceId: instance.instanceId,
+              instanceName: instance.name,
+            });
+          }
+        }
+      } else {
+        // Namespaced layout: skills/<plugin>/<skill>/SKILL.md
+        for (const pluginEntry of readdirSync(skillsDir, { withFileTypes: true })) {
+          if (!pluginEntry.isDirectory() && !pluginEntry.isSymbolicLink()) continue;
+          if (pluginEntry.name.startsWith(".")) continue;
+          const pluginDir = join(skillsDir, pluginEntry.name);
+          for (const skillEntry of readdirSync(pluginDir, { withFileTypes: true })) {
+            if (!skillEntry.isDirectory() && !skillEntry.isSymbolicLink()) continue;
+            if (skillEntry.name.startsWith(".")) continue;
+            const skillPath = join(pluginDir, skillEntry.name);
+            if (!existsSync(join(skillPath, "SKILL.md"))) continue;
+            if (globalPluginOwnedSkills.has(skillEntry.name)) continue;
+
+            const installation: SkillInstallation = {
+              toolId: instance.toolId,
+              instanceId: instance.instanceId,
+              instanceName: instance.name,
+              diskPath: skillPath,
+            };
+            const existing = byName.get(skillEntry.name);
+            if (existing) {
+              existing.installations.push(installation);
+            } else {
+              byName.set(skillEntry.name, {
+                name: skillEntry.name,
+                installations: [installation],
+                diskPath: skillPath,
+                toolId: instance.toolId,
+                instanceId: instance.instanceId,
+                instanceName: instance.name,
+              });
+            }
+          }
         }
       }
     } catch { /* skip unreadable dirs */ }
@@ -1759,8 +1889,9 @@ export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSki
   if (sourceRepo && existsSync(sourceRepo)) {
     // Index every SKILL.md under <repo>/skills/** so we can map a tool-disk skill
     // name to its source path even when the source repo groups skills in subdirs
-    // (e.g. skills/gbrain/<name>/SKILL.md). Tool disks always have a flat layout,
-    // but the source repo can use namespaced subdirs for organization.
+    // (e.g. skills/gbrain/<name>/SKILL.md). Claude uses a flat layout for user
+    // skills; other tools use namespaced plugin directories. The source repo can
+    // use namespaced subdirs for organization.
     // Also use this index to surface skills that exist in the source repo but
     // aren't yet installed on any tool — those still show up in the Skills section
     // with an empty installations[] so the user can sync them from source.

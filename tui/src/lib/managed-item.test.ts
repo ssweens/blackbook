@@ -139,6 +139,7 @@ describe("pluginToManagedItem", () => {
         agentsSubdir: null,
         enabled: true,
         kind: "tool",
+        pluginFlatInstall: true,
       },
     ]);
     vi.mocked(getPluginToolStatus).mockReturnValue([

@@ -401,6 +401,7 @@ const createToolInstances = (): ToolInstance[] => [
     commandsSubdir: "commands",
     agentsSubdir: "agents",
     kind: "tool" as const,
+    pluginFlatInstall: true,
   },
   {
     toolId: "opencode",
@@ -412,6 +413,7 @@ const createToolInstances = (): ToolInstance[] => [
     commandsSubdir: "commands",
     agentsSubdir: "agents",
     kind: "tool" as const,
+    pluginFlatInstall: false,
   },
 ];
 

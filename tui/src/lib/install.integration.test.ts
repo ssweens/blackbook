@@ -146,28 +146,57 @@ function cleanupAllTestArtifacts(): void {
   const instances = getToolInstances();
   for (const instance of instances) {
     if (instance.skillsSubdir) {
-      const skillPath = join(instance.configDir, instance.skillsSubdir, TEST_SKILL_NAME);
-      rmSync(skillPath, { recursive: true, force: true });
-      rmSync(`${skillPath}.bak`, { recursive: true, force: true });
-      for (let i = 1; i <= 30; i++) {
-        rmSync(`${skillPath}.bak.${i}`, { recursive: true, force: true });
+      // Flat paths (legacy) and namespaced paths
+      const flatSkillPath = join(instance.configDir, instance.skillsSubdir, TEST_SKILL_NAME);
+      const nsSkillPath = join(instance.configDir, instance.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
+      for (const skillPath of [flatSkillPath, nsSkillPath]) {
+        rmSync(skillPath, { recursive: true, force: true });
+        rmSync(`${skillPath}.bak`, { recursive: true, force: true });
+        for (let i = 1; i <= 30; i++) {
+          rmSync(`${skillPath}.bak.${i}`, { recursive: true, force: true });
+        }
       }
+      // Also clean up plugin namespace dir if empty
+      const nsPluginDir = join(instance.configDir, instance.skillsSubdir, TEST_PLUGIN_NAME);
+      try {
+        if (existsSync(nsPluginDir) && readdirSync(nsPluginDir).length === 0) {
+          rmSync(nsPluginDir, { recursive: true, force: true });
+        }
+      } catch { /* ignore */ }
     }
     if (instance.commandsSubdir) {
-      const cmdPath = join(instance.configDir, instance.commandsSubdir, `${TEST_COMMAND_NAME}.md`);
-      rmSync(cmdPath, { force: true });
-      rmSync(`${cmdPath}.bak`, { force: true });
-      for (let i = 1; i <= 30; i++) {
-        rmSync(`${cmdPath}.bak.${i}`, { force: true });
+      const flatCmdPath = join(instance.configDir, instance.commandsSubdir, `${TEST_COMMAND_NAME}.md`);
+      const nsCmdPath = join(instance.configDir, instance.commandsSubdir, TEST_PLUGIN_NAME, `${TEST_COMMAND_NAME}.md`);
+      for (const cmdPath of [flatCmdPath, nsCmdPath]) {
+        rmSync(cmdPath, { force: true });
+        rmSync(`${cmdPath}.bak`, { force: true });
+        for (let i = 1; i <= 30; i++) {
+          rmSync(`${cmdPath}.bak.${i}`, { force: true });
+        }
       }
+      const nsPluginDir = join(instance.configDir, instance.commandsSubdir, TEST_PLUGIN_NAME);
+      try {
+        if (existsSync(nsPluginDir) && readdirSync(nsPluginDir).length === 0) {
+          rmSync(nsPluginDir, { recursive: true, force: true });
+        }
+      } catch { /* ignore */ }
     }
     if (instance.agentsSubdir) {
-      const agentPath = join(instance.configDir, instance.agentsSubdir, `${TEST_AGENT_NAME}.md`);
-      rmSync(agentPath, { force: true });
-      rmSync(`${agentPath}.bak`, { force: true });
-      for (let i = 1; i <= 30; i++) {
-        rmSync(`${agentPath}.bak.${i}`, { force: true });
+      const flatAgentPath = join(instance.configDir, instance.agentsSubdir, `${TEST_AGENT_NAME}.md`);
+      const nsAgentPath = join(instance.configDir, instance.agentsSubdir, TEST_PLUGIN_NAME, `${TEST_AGENT_NAME}.md`);
+      for (const agentPath of [flatAgentPath, nsAgentPath]) {
+        rmSync(agentPath, { force: true });
+        rmSync(`${agentPath}.bak`, { force: true });
+        for (let i = 1; i <= 30; i++) {
+          rmSync(`${agentPath}.bak.${i}`, { force: true });
+        }
       }
+      const nsPluginDir = join(instance.configDir, instance.agentsSubdir, TEST_PLUGIN_NAME);
+      try {
+        if (existsSync(nsPluginDir) && readdirSync(nsPluginDir).length === 0) {
+          rmSync(nsPluginDir, { recursive: true, force: true });
+        }
+      } catch { /* ignore */ }
     }
   }
 
@@ -245,7 +274,9 @@ describe("enablePlugin", () => {
     for (const toolId of ["opencode", "amp-code", "openai-codex"]) {
       const instance = getInstance(toolId);
       if (instance.skillsSubdir) {
-        const skillPath = join(instance.configDir, instance.skillsSubdir, TEST_SKILL_NAME);
+        const skillPath = instance.pluginFlatInstall
+          ? join(instance.configDir, instance.skillsSubdir, TEST_SKILL_NAME)
+          : join(instance.configDir, instance.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
         expect(existsSync(skillPath), `skill should exist for ${toolId}`).toBe(true);
         expect(existsSync(join(skillPath, "SKILL.md"))).toBe(true);
 
@@ -267,7 +298,9 @@ describe("enablePlugin", () => {
 
     const opencode = getInstance("opencode");
     if (opencode.skillsSubdir) {
-      const skillPath = join(opencode.configDir, opencode.skillsSubdir, TEST_SKILL_NAME);
+      const skillPath = opencode.pluginFlatInstall
+        ? join(opencode.configDir, opencode.skillsSubdir, TEST_SKILL_NAME)
+        : join(opencode.configDir, opencode.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
       expect(existsSync(skillPath)).toBe(false);
     }
   });
@@ -281,7 +314,9 @@ describe("enablePlugin", () => {
     for (const toolId of ["opencode", "amp-code"]) {
       const instance = getInstance(toolId);
       if (instance.commandsSubdir) {
-        const cmdPath = join(instance.configDir, instance.commandsSubdir, `${TEST_COMMAND_NAME}.md`);
+        const cmdPath = instance.pluginFlatInstall
+          ? join(instance.configDir, instance.commandsSubdir, `${TEST_COMMAND_NAME}.md`)
+          : join(instance.configDir, instance.commandsSubdir, TEST_PLUGIN_NAME, `${TEST_COMMAND_NAME}.md`);
         expect(existsSync(cmdPath), `command should exist for ${toolId}`).toBe(true);
 
         const content = readFileSync(cmdPath, "utf-8");
@@ -302,7 +337,9 @@ describe("enablePlugin", () => {
     for (const toolId of ["opencode", "amp-code"]) {
       const instance = getInstance(toolId);
       if (instance.agentsSubdir) {
-        const agentPath = join(instance.configDir, instance.agentsSubdir, `${TEST_AGENT_NAME}.md`);
+        const agentPath = instance.pluginFlatInstall
+          ? join(instance.configDir, instance.agentsSubdir, `${TEST_AGENT_NAME}.md`)
+          : join(instance.configDir, instance.agentsSubdir, TEST_PLUGIN_NAME, `${TEST_AGENT_NAME}.md`);
         expect(existsSync(agentPath), `agent should exist for ${toolId}`).toBe(true);
 
         const content = readFileSync(agentPath, "utf-8");
@@ -381,16 +418,16 @@ describe("updatePlugin", () => {
     writeFileSync(join(pluginSourceDir, "skills", skillName, "SKILL.md"), "# Updated Skill");
 
     const pi = getInstance("pi");
-    const piSkillDir = join(pi.configDir, pi.skillsSubdir!, skillName);
+    const piSkillDir = join(pi.configDir, pi.skillsSubdir!, pluginName, skillName);
     mkdirSync(piSkillDir, { recursive: true });
     writeFileSync(join(piSkillDir, "SKILL.md"), "# Old Skill");
 
     const opencode = getInstance("opencode");
     const amp = getInstance("amp-code");
     const codex = getInstance("openai-codex");
-    const opencodeSkillDir = join(opencode.configDir, opencode.skillsSubdir!, skillName);
-    const ampSkillDir = join(amp.configDir, amp.skillsSubdir!, skillName);
-    const codexSkillDir = join(codex.configDir, codex.skillsSubdir!, skillName);
+    const opencodeSkillDir = join(opencode.configDir, opencode.skillsSubdir!, pluginName, skillName);
+    const ampSkillDir = join(amp.configDir, amp.skillsSubdir!, pluginName, skillName);
+    const codexSkillDir = join(codex.configDir, codex.skillsSubdir!, pluginName, skillName);
     rmSync(opencodeSkillDir, { recursive: true, force: true });
     rmSync(ampSkillDir, { recursive: true, force: true });
     rmSync(codexSkillDir, { recursive: true, force: true });
@@ -427,7 +464,7 @@ describe("updatePlugin", () => {
 });
 
 describe("backup and rollback behavior", () => {
-  it("restores the latest backup on uninstall with a single backup per item", async () => {
+  it("installs same-named skills from different plugins independently", async () => {
     const skillName = "shared-skill";
     const pluginAName = "backup-plugin-a";
     const pluginBName = "backup-plugin-b";
@@ -436,28 +473,28 @@ describe("backup and rollback behavior", () => {
     createPluginInCache(pluginBName, skillName, undefined, "Plugin B");
 
     const instance = getInstance("opencode");
-    const skillPath = join(instance.configDir, instance.skillsSubdir!, skillName);
-    mkdirSync(skillPath, { recursive: true });
-    writeFileSync(join(skillPath, "SKILL.md"), "original");
+    const skillPathA = join(instance.configDir, instance.skillsSubdir!, pluginAName, skillName);
+    const skillPathB = join(instance.configDir, instance.skillsSubdir!, pluginBName, skillName);
 
     const pluginA = createPluginWithName(pluginAName, skillName);
     const pluginB = createPluginWithName(pluginBName, skillName);
 
     const resultA = await enablePlugin(pluginA);
     expect(resultA.success).toBe(true);
-    expect(readFileSync(join(skillPath, "SKILL.md"), "utf-8")).toContain("Plugin A");
-
-    const backupPath = join(getCacheDir(), "backups", "skill", skillName);
-    expect(existsSync(backupPath)).toBe(true);
+    expect(readFileSync(join(skillPathA, "SKILL.md"), "utf-8")).toContain("Plugin A");
 
     const resultB = await enablePlugin(pluginB);
     expect(resultB.success).toBe(true);
-    expect(readFileSync(join(skillPath, "SKILL.md"), "utf-8")).toContain("Plugin B");
+    expect(readFileSync(join(skillPathB, "SKILL.md"), "utf-8")).toContain("Plugin B");
 
-    expect(existsSync(backupPath)).toBe(true);
+    // Both skills should coexist
+    expect(existsSync(skillPathA)).toBe(true);
+    expect(existsSync(skillPathB)).toBe(true);
 
     await uninstallPlugin(pluginB);
-    expect(readFileSync(join(skillPath, "SKILL.md"), "utf-8")).toContain("Plugin A");
+    // Plugin A's skill should remain after uninstalling B
+    expect(existsSync(skillPathA)).toBe(true);
+    expect(existsSync(skillPathB)).toBe(false);
   });
 
   it("rolls back partial installs when a later step fails", async () => {
@@ -470,7 +507,7 @@ describe("backup and rollback behavior", () => {
     chmodSync(commandsDir, 0o000);
 
     const instance = getInstance("opencode");
-    const skillPath = join(instance.configDir, instance.skillsSubdir!, skillName);
+    const skillPath = join(instance.configDir, instance.skillsSubdir!, pluginName, skillName);
     mkdirSync(skillPath, { recursive: true });
     writeFileSync(join(skillPath, "SKILL.md"), "original");
 
@@ -515,7 +552,7 @@ describe("plugin completeness across instances", () => {
 
     const plugin = createTestPlugin();
     if (primary.skillsSubdir) {
-      const skillPath = join(primary.configDir, primary.skillsSubdir, TEST_SKILL_NAME);
+      const skillPath = join(primary.configDir, primary.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
       mkdirSync(skillPath, { recursive: true });
       writeFileSync(join(skillPath, "SKILL.md"), "# Test Skill");
     }
@@ -541,7 +578,7 @@ describe("plugin completeness across instances", () => {
 
     const plugin = createTestPlugin();
     if (primary.skillsSubdir) {
-      const skillPath = join(primary.configDir, primary.skillsSubdir, TEST_SKILL_NAME);
+      const skillPath = join(primary.configDir, primary.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
       mkdirSync(skillPath, { recursive: true });
       writeFileSync(join(skillPath, "SKILL.md"), "# Test Skill");
     }
@@ -570,7 +607,9 @@ describe("disablePlugin", () => {
     for (const toolId of ["opencode", "amp-code", "openai-codex"]) {
       const instance = getInstance(toolId);
       if (instance.skillsSubdir) {
-        const skillPath = join(instance.configDir, instance.skillsSubdir, TEST_SKILL_NAME);
+        const skillPath = instance.pluginFlatInstall
+          ? join(instance.configDir, instance.skillsSubdir, TEST_SKILL_NAME)
+          : join(instance.configDir, instance.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
         expect(existsSync(skillPath)).toBe(true);
       }
     }
@@ -582,7 +621,9 @@ describe("disablePlugin", () => {
     for (const toolId of ["opencode", "amp-code", "openai-codex"]) {
       const instance = getInstance(toolId);
       if (instance.skillsSubdir) {
-        const skillPath = join(instance.configDir, instance.skillsSubdir, TEST_SKILL_NAME);
+        const skillPath = instance.pluginFlatInstall
+          ? join(instance.configDir, instance.skillsSubdir, TEST_SKILL_NAME)
+          : join(instance.configDir, instance.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
         expect(existsSync(skillPath), `skill should be removed for ${toolId}`).toBe(false);
       }
     }
@@ -600,7 +641,9 @@ describe("disablePlugin", () => {
     for (const toolId of ["opencode", "amp-code"]) {
       const instance = getInstance(toolId);
       if (instance.commandsSubdir) {
-        const cmdPath = join(instance.configDir, instance.commandsSubdir, `${TEST_COMMAND_NAME}.md`);
+        const cmdPath = instance.pluginFlatInstall
+          ? join(instance.configDir, instance.commandsSubdir, `${TEST_COMMAND_NAME}.md`)
+          : join(instance.configDir, instance.commandsSubdir, TEST_PLUGIN_NAME, `${TEST_COMMAND_NAME}.md`);
         expect(existsSync(cmdPath)).toBe(false);
       }
     }
@@ -654,7 +697,7 @@ describe("backup and restore", () => {
 
   it("backs up existing skill directory before overwriting", async () => {
     const instance = getInstance("opencode");
-    const skillPath = join(instance.configDir, instance.skillsSubdir!, TEST_SKILL_NAME);
+    const skillPath = join(instance.configDir, instance.skillsSubdir!, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
 
     mkdirSync(skillPath, { recursive: true });
     writeFileSync(join(skillPath, "SKILL.md"), "# Original Content\n\nExisting user skill.");
@@ -680,9 +723,9 @@ describe("backup and restore", () => {
 
   it("backs up existing command file before overwriting", async () => {
     const instance = getInstance("opencode");
-    const cmdPath = join(instance.configDir, instance.commandsSubdir!, `${TEST_COMMAND_NAME}.md`);
+    const cmdPath = join(instance.configDir, instance.commandsSubdir!, TEST_PLUGIN_NAME, `${TEST_COMMAND_NAME}.md`);
 
-    mkdirSync(join(instance.configDir, instance.commandsSubdir!), { recursive: true });
+    mkdirSync(join(instance.configDir, instance.commandsSubdir!, TEST_PLUGIN_NAME), { recursive: true });
     writeFileSync(cmdPath, "# Original Command\n\nExisting user command.");
 
     createTestPluginInCache();
@@ -702,7 +745,7 @@ describe("backup and restore", () => {
 
   it("restores backup when disabling", async () => {
     const instance = getInstance("opencode");
-    const skillPath = join(instance.configDir, instance.skillsSubdir!, TEST_SKILL_NAME);
+    const skillPath = join(instance.configDir, instance.skillsSubdir!, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
 
     mkdirSync(skillPath, { recursive: true });
     writeFileSync(join(skillPath, "SKILL.md"), "# Original Content\n\nExisting user skill.");
@@ -739,7 +782,7 @@ describe("backup and restore", () => {
 
   it("overwrites existing backup (single backup per item)", async () => {
     const instance = getInstance("opencode");
-    const skillPath = join(instance.configDir, instance.skillsSubdir!, TEST_SKILL_NAME);
+    const skillPath = join(instance.configDir, instance.skillsSubdir!, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
     const backupPath = join(getCacheDir(), "backups", "skill", TEST_SKILL_NAME);
 
     mkdirSync(skillPath, { recursive: true });
@@ -798,6 +841,7 @@ describe("getInstalledPluginsForInstance", () => {
       commandsSubdir: null,
       agentsSubdir: null, kind: "tool" as const,
       enabled: true,
+      pluginFlatInstall: false,
     });
     expect(plugins).toEqual([]);
   });
@@ -949,7 +993,7 @@ describe("syncPluginInstances", () => {
     };
 
     const piInstance = getInstance("pi");
-    const targetDir = join(piInstance.configDir, piInstance.skillsSubdir!, skillName);
+    const targetDir = join(piInstance.configDir, piInstance.skillsSubdir!, pluginName, skillName);
     rmSync(targetDir, { recursive: true, force: true });
 
     const result = await syncPluginInstances(plugin, marketplaceDir, [
@@ -1002,7 +1046,7 @@ describe("syncPluginInstances", () => {
     };
 
     const piInstance = getInstance("pi");
-    const targetDir = join(piInstance.configDir, piInstance.skillsSubdir!, skillName);
+    const targetDir = join(piInstance.configDir, piInstance.skillsSubdir!, pluginName, skillName);
     rmSync(targetDir, { recursive: true, force: true });
 
     const result = await syncPluginInstances(plugin, marketplaceJsonPath, [
@@ -1043,8 +1087,8 @@ describe("syncPluginInstances", () => {
     };
 
     const piInstance = getInstance("pi");
-    const target = join(piInstance.configDir, piInstance.skillsSubdir!, TEST_SKILL_NAME, "SKILL.md");
-    rmSync(join(piInstance.configDir, piInstance.skillsSubdir!, TEST_SKILL_NAME), { recursive: true, force: true });
+    const target = join(piInstance.configDir, piInstance.skillsSubdir!, TEST_SKILL_NAME, TEST_SKILL_NAME, "SKILL.md");
+    rmSync(join(piInstance.configDir, piInstance.skillsSubdir!, TEST_SKILL_NAME, TEST_SKILL_NAME), { recursive: true, force: true });
 
     const result = await syncPluginInstances(plugin, undefined, [
       {

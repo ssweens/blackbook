@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-05-17
+
+### Added
+- **Namespaced plugin component install for non-Claude tools**. Plugin-owned skills, commands, and agents are now installed under a plugin namespace directory for all tools except Claude Code:
+  - **Before (flat):** `~/.pi/agent/skills/midi-drum-production/SKILL.md`
+  - **After (namespaced):** `~/.pi/agent/skills/music-production/midi-drum-production/SKILL.md`
+- New playbook schema field `plugin_flat_install` (default `false`). Set to `true` for Claude Code, which handles plugins natively via its own plugin cache and `plugin.json`.
+- `ToolTarget` and `ToolInstance` now carry `pluginFlatInstall: boolean` so install, scan, toggle, and status logic can branch correctly.
+
+### Changed
+- `installPluginItemsToInstance`, `linkPluginToInstance`, `togglePluginComponent`, `getPluginToolStatus`, and component scanning now use namespaced destination paths (`<skillsDir>/<pluginName>/<skillName>/`) for non-flat tools.
+- `getStandaloneSkills` recursively scans the skills directory for non-flat tools to discover nested plugin-owned skills.
+- Plugin skill discovery on non-Claude tool disks now descends into `<pluginName>/` subdirectories.
+- Integration tests updated to reflect namespaced paths; the "shared-skill" conflict test is replaced with an independence test since same-named skills from different plugins no longer collide on disk.
+
+### Fixed
+- Claude Code user skills that were nested under category folders (e.g. `~/.claude/skills/music-production/...`) were silently ignored by Claude. Blackbook now correctly installs Claude plugin skills through Claude's native plugin system (flat), while installing the same plugin's skills namespaced for Pi/OpenCode/Codex/Amp.
+
 ## [0.20.6] - 2026-05-17
 
 ### Added
@@ -611,7 +629,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Symlink handling for plugin assets
 
-[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/ssweens/blackbook/compare/v0.20.6...v0.21.0
+[0.20.6]: https://github.com/ssweens/blackbook/compare/v0.20.5...v0.20.6
+[0.20.5]: https://github.com/ssweens/blackbook/compare/v0.20.4...v0.20.5
+[0.20.4]: https://github.com/ssweens/blackbook/compare/v0.20.3...v0.20.4
+[0.20.3]: https://github.com/ssweens/blackbook/compare/v0.20.2...v0.20.3
+[0.20.2]: https://github.com/ssweens/blackbook/compare/v0.20.1...v0.20.2
+[0.20.1]: https://github.com/ssweens/blackbook/compare/v0.20.0...v0.20.1
+[0.20.0]: https://github.com/ssweens/blackbook/compare/v0.19.0...v0.20.0
+[0.19.0]: https://github.com/ssweens/blackbook/compare/v0.18.1...v0.19.0
+[0.18.1]: https://github.com/ssweens/blackbook/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/ssweens/blackbook/compare/v0.17.2...v0.18.0
 [0.17.2]: https://github.com/ssweens/blackbook/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/ssweens/blackbook/compare/v0.17.0...v0.17.1

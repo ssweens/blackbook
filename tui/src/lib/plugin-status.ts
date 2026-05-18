@@ -90,9 +90,9 @@ function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
       // tools are not treated as a Blackbook standard.
       if (canInstallSkills && instance.skillsSubdir) {
         for (const skill of plugin.skills) {
-          const base = join(instance.configDir, instance.skillsSubdir);
-          const skillPath = safePath(base, skill);
-          if (existsSync(skillPath)) {
+          const flatPath = join(instance.configDir, instance.skillsSubdir, skill);
+          const nsPath = join(instance.configDir, instance.skillsSubdir, plugin.name, skill);
+          if (existsSync(flatPath) || existsSync(nsPath)) {
             installed = true;
             break;
           }
@@ -100,9 +100,9 @@ function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
       }
       if (!installed && canInstallCommands && instance.commandsSubdir) {
         for (const cmd of plugin.commands) {
-          const base = join(instance.configDir, instance.commandsSubdir);
-          const cmdPath = safePath(base, `${cmd}.md`);
-          if (existsSync(cmdPath)) {
+          const flatPath = join(instance.configDir, instance.commandsSubdir, `${cmd}.md`);
+          const nsPath = join(instance.configDir, instance.commandsSubdir, plugin.name, `${cmd}.md`);
+          if (existsSync(flatPath) || existsSync(nsPath)) {
             installed = true;
             break;
           }
@@ -110,9 +110,9 @@ function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
       }
       if (!installed && canInstallAgents && instance.agentsSubdir) {
         for (const agent of plugin.agents) {
-          const base = join(instance.configDir, instance.agentsSubdir);
-          const agentPath = safePath(base, `${agent}.md`);
-          if (existsSync(agentPath)) {
+          const flatPath = join(instance.configDir, instance.agentsSubdir, `${agent}.md`);
+          const nsPath = join(instance.configDir, instance.agentsSubdir, plugin.name, `${agent}.md`);
+          if (existsSync(flatPath) || existsSync(nsPath)) {
             installed = true;
             break;
           }
@@ -203,7 +203,9 @@ export function togglePluginComponent(
       if (!subdir) continue;
 
       const suffix = kind === "skill" ? componentName : `${componentName}.md`;
-      const destPath = join(instance.configDir, subdir, suffix);
+      const destPath = instance.pluginFlatInstall
+        ? join(instance.configDir, subdir, suffix)
+        : join(instance.configDir, subdir, plugin.name, suffix);
 
       try {
         if (existsSync(destPath) || isSymlink(destPath)) {
@@ -245,7 +247,12 @@ export function togglePluginComponent(
       const src = join(sourcePath, `${kind}s`, suffix);
       if (!existsSync(src)) continue;
 
-      const dest = join(instance.configDir, subdir, suffix);
+      const dest = instance.pluginFlatInstall
+        ? join(instance.configDir, subdir, suffix)
+        : join(instance.configDir, subdir, plugin.name, suffix);
+      const destRel = instance.pluginFlatInstall
+        ? join(subdir, suffix)
+        : join(subdir, plugin.name, suffix);
 
       if (!manifest.tools[key]) {
         manifest.tools[key] = { items: {} };
@@ -257,7 +264,7 @@ export function togglePluginComponent(
           kind,
           name: componentName,
           source: src,
-          dest: join(subdir, suffix),
+          dest: destRel,
           backup: null,
           owner: plugin.name,
           previous: null,
