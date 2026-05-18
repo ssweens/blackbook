@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `ManagedItem` extended with `_namespace` field; `ItemKind` now includes `"namespace"`.
   - `ItemDetail.tsx` now renders `NamespaceMetadata` with summary stats and skill list.
   - `action-dispatch.ts` handles namespace-specific `sync` (via `syncNamespace`/`resyncNamespace` callbacks) and `delete_everywhere` (via `deleteNamespaceEverywhere`).
+- **Individual skill selection from namespace detail** — each skill in a namespace is now listed as a selectable action row. Press `Enter` on a skill to open its individual detail view with full per-tool actions (sync, uninstall, pullback, etc.).
+- **Per-tool namespace uninstall** — namespace detail now offers `Uninstall all from <tool>` for each tool where the namespace is installed, removing every skill in that namespace from a single tool instance.
+- **`Uninstall from all tools`** namespace action — removes every skill in the namespace from all tools (non-destructive; source repo untouched).
+- **Missing namespace-level functions** in `install.ts`: `uninstallNamespaceAll()`, `uninstallNamespaceFromInstance()`, and `pullbackNamespaceToSource()` for complete namespace skill suite coverage.
 
 ### Fixed
 - Replaced dynamic `require()` calls in `InstalledTab.tsx` with static ESM imports to prevent `require is not defined` crash in the built distribution.

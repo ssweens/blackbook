@@ -2366,6 +2366,51 @@ export function deleteNamespaceEverywhere(group: NamespaceGroup): { deleted: num
   return { deleted, errors };
 }
 
+/** Uninstall every skill in a namespace from all tools (does NOT delete source). */
+export function uninstallNamespaceAll(group: NamespaceGroup): { uninstalled: number; errors: string[] } {
+  const errors: string[] = [];
+  let uninstalled = 0;
+  for (const skill of group.skills) {
+    try {
+      uninstallSkillAllInstances(skill);
+      uninstalled += 1;
+    } catch (e) {
+      errors.push(`${skill.name}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { uninstalled, errors };
+}
+
+/** Uninstall every skill in a namespace from a single tool instance. */
+export function uninstallNamespaceFromInstance(group: NamespaceGroup, toolId: string, instanceId: string): { uninstalled: number; errors: string[] } {
+  const errors: string[] = [];
+  let uninstalled = 0;
+  for (const skill of group.skills) {
+    try {
+      uninstallSkillFromInstance(skill, toolId, instanceId);
+      uninstalled += 1;
+    } catch (e) {
+      errors.push(`${skill.name} from ${toolId}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { uninstalled, errors };
+}
+
+/** Pull back every skill in a namespace from a single tool instance to source. */
+export function pullbackNamespaceToSource(group: NamespaceGroup, toolId: string, instanceId: string): { pulled: number; errors: string[] } {
+  const errors: string[] = [];
+  let pulled = 0;
+  for (const skill of group.skills) {
+    try {
+      pullbackSkillToSource(skill, toolId, instanceId);
+      pulled += 1;
+    } catch (e) {
+      errors.push(`${skill.name} from ${toolId}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { pulled, errors };
+}
+
 export function getAllInstalledPlugins(): {
   plugins: Plugin[];
   byTool: Record<string, Plugin[]>;

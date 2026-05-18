@@ -53,6 +53,9 @@ import {
   syncNamespaceToAllMissing,
   resyncNamespaceDrifted,
   deleteNamespaceEverywhere,
+  uninstallNamespaceAll,
+  uninstallNamespaceFromInstance,
+  pullbackNamespaceToSource,
 } from "./lib/install.js";
 import { resolvePluginSourcePaths, type PluginDrift } from "./lib/plugin-drift.js";
 import { computeItemDrift } from "./lib/item-drift.js";
@@ -1724,6 +1727,52 @@ export function App() {
         await useStore.getState().loadInstalledPlugins({ silent: true });
         setDetailNamespace(null);
         closeDetail();
+      },
+      uninstallNamespaceAll: async (ns) => {
+        const store = useStore.getState();
+        await withSpinner(
+          `Uninstalling all skills in ${ns.name}...`,
+          async () => {
+            const result = uninstallNamespaceAll(ns);
+            const parts: string[] = [`${result.uninstalled} uninstalled`];
+            if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
+            store.notify(`Uninstalled ${ns.name}: ${parts.join(", ")}`, result.errors.length > 0 ? "warning" : "info");
+          },
+          store.notify, store.clearNotification,
+        );
+        await useStore.getState().loadInstalledPlugins({ silent: true });
+      },
+      uninstallNamespaceFromInstance: async (ns, toolId, instanceId) => {
+        const store = useStore.getState();
+        await withSpinner(
+          `Uninstalling ${ns.name} from ${toolId}...`,
+          async () => {
+            const result = uninstallNamespaceFromInstance(ns, toolId, instanceId);
+            const parts: string[] = [`${result.uninstalled} uninstalled`];
+            if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
+            store.notify(`Uninstalled ${ns.name} from ${toolId}: ${parts.join(", ")}`, result.errors.length > 0 ? "warning" : "info");
+          },
+          store.notify, store.clearNotification,
+        );
+        await useStore.getState().loadInstalledPlugins({ silent: true });
+      },
+      pullbackNamespaceFromInstance: async (ns, toolId, instanceId) => {
+        const store = useStore.getState();
+        await withSpinner(
+          `Pulling back ${ns.name} from ${toolId}...`,
+          async () => {
+            const result = pullbackNamespaceToSource(ns, toolId, instanceId);
+            const parts: string[] = [`${result.pulled} pulled back`];
+            if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
+            store.notify(`Pulled back ${ns.name} from ${toolId}: ${parts.join(", ")}`, result.errors.length > 0 ? "warning" : "info");
+          },
+          store.notify, store.clearNotification,
+        );
+        await useStore.getState().loadInstalledPlugins({ silent: true });
+      },
+      openSkillDetail: (skill) => {
+        setDetail({ kind: "skill", data: skill });
+        setActionIndex(0);
       },
       deletePluginEverywhere: async (plugin) => {
         const store = useStore.getState();

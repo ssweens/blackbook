@@ -37,6 +37,7 @@ export interface ItemAction {
     | "pullback"
     | "track"
     | "delete_everywhere"
+    | "open_skill"
     | "back";
   instance?: DiffInstanceSummary | DiffInstanceRef;
   /** For install_tool / uninstall_tool actions — the target tool instance. */

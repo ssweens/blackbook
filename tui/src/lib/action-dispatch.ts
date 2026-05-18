@@ -66,6 +66,10 @@ export interface DispatchCallbacks {
   syncNamespace?: (ns: import("./install.js").NamespaceGroup) => Promise<void>;
   resyncNamespace?: (ns: import("./install.js").NamespaceGroup) => Promise<void>;
   deleteNamespaceEverywhere?: (ns: import("./install.js").NamespaceGroup) => Promise<void>;
+  uninstallNamespaceAll?: (ns: import("./install.js").NamespaceGroup) => Promise<void>;
+  uninstallNamespaceFromInstance?: (ns: import("./install.js").NamespaceGroup, toolId: string, instanceId: string) => Promise<void>;
+  pullbackNamespaceFromInstance?: (ns: import("./install.js").NamespaceGroup, toolId: string, instanceId: string) => Promise<void>;
+  openSkillDetail?: (skill: import("./install.js").StandaloneSkill) => void;
   refreshDetailNamespace?: (ns: import("./install.js").NamespaceGroup) => void;
 
   // Plugin / file delete-everywhere
@@ -120,6 +124,16 @@ export async function handleItemAction(
 
     case "install":
       return handleInstallAction(item, callbacks);
+
+    case "open_skill":
+      if (item._namespace && callbacks.openSkillDetail) {
+        const skill = item._namespace.skills.find((s) => s.name === action.id);
+        if (skill) {
+          callbacks.openSkillDetail(skill);
+          return true;
+        }
+      }
+      return false;
 
     case "uninstall":
       return handleUninstallAction(item, callbacks);
@@ -269,6 +283,11 @@ async function handleUninstallAction(
   item: ManagedItem,
   callbacks: DispatchCallbacks,
 ): Promise<boolean> {
+  if (item._namespace && callbacks.uninstallNamespaceAll) {
+    await callbacks.uninstallNamespaceAll(item._namespace);
+    callbacks.refreshDetailNamespace?.(item._namespace);
+    return true;
+  }
   if (item._plugin) {
     await callbacks.uninstallPlugin(item._plugin);
     callbacks.refreshDetailPlugin(item._plugin);
@@ -336,6 +355,12 @@ async function handleUninstallToolAction(
   const instanceId = action.instance?.instanceId ?? action.toolStatus?.instanceId;
   if (!toolId || !instanceId) return false;
 
+  if (item._namespace && callbacks.uninstallNamespaceFromInstance) {
+    await callbacks.uninstallNamespaceFromInstance(item._namespace, toolId, instanceId);
+    callbacks.refreshDetailNamespace?.(item._namespace);
+    return true;
+  }
+
   if (item._plugin) {
     await callbacks.uninstallPluginFromInstance(item._plugin, toolId, instanceId);
     callbacks.refreshDetailPlugin(item._plugin);
@@ -358,6 +383,12 @@ async function handlePullbackAction(
 ): Promise<boolean> {
   if (!action.instance) return false;
   const instance = action.instance as DiffInstanceRef;
+
+  if (item._namespace && callbacks.pullbackNamespaceFromInstance) {
+    await callbacks.pullbackNamespaceFromInstance(item._namespace, instance.toolId, instance.instanceId);
+    callbacks.refreshDetailNamespace?.(item._namespace);
+    return true;
+  }
 
   if (item._file) {
     await callbacks.pullbackFileInstance(item._file, instance);

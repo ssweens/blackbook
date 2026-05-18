@@ -535,6 +535,42 @@ export function getNamespaceActions(ns: import("./install.js").NamespaceGroup): 
     });
   }
 
+  // Individual skills — pick one to drill into its detail view
+  actions.push({ id: "_skills_header", label: `Skills in ${ns.name}:`, type: "status", statusLabel: "" });
+  for (const skill of ns.skills) {
+    const display = skill.namespace ? `${skill.namespace}/${skill.name}` : skill.name;
+    const toolCount = skill.installations.length;
+    const label = toolCount > 0 ? `${display}  (${toolCount} tool${toolCount === 1 ? "" : "s"})` : `${display}  (not installed)`;
+    actions.push({
+      id: skill.name,
+      label,
+      type: "open_skill",
+    });
+  }
+
+  // Per-tool bulk uninstalls (only for tools that have something installed)
+  for (const toolId of ns.toolIds) {
+    const installedCount = ns.skills.filter((s) => s.installations.some((i) => i.toolId === toolId)).length;
+    if (installedCount > 0) {
+      actions.push({
+        id: `uninstall_${toolId}`,
+        label: `Uninstall all from ${toolId}`,
+        type: "uninstall_tool",
+        instance: { toolId, instanceId: "default", instanceName: toolId, configDir: "" },
+      });
+    }
+  }
+
+  // Uninstall from all tools
+  const anyInstalled = ns.skills.some((s) => s.installations.length > 0);
+  if (anyInstalled) {
+    actions.push({
+      id: "uninstall_all",
+      label: "Uninstall from all tools",
+      type: "uninstall",
+    });
+  }
+
   actions.push({ id: "back", label: "Back to list", type: "back" });
 
   actions.push({
