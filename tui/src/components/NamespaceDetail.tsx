@@ -302,6 +302,59 @@ export function buildTreeNodes(
 
   nodes.push({ type: "separator", depth: 0, key: "sep_namespace_actions" });
 
+  // Per-tool sync: install missing + resync drifted for each tool
+  const allTools = getToolInstances().filter((t) => t.kind === "tool" && t.enabled && !!t.skillsSubdir);
+  for (const tool of allTools) {
+    const missingInTool = ns.skills.filter((s) => !s.installations.some((i) => i.toolId === tool.toolId));
+    const driftedInTool = ns.skills.filter((s) => s.installations.some((i) => i.toolId === tool.toolId && i.drifted));
+    const total = missingInTool.length + driftedInTool.length;
+    if (total > 0) {
+      const parts: string[] = [];
+      if (missingInTool.length > 0) parts.push(`${missingInTool.length} missing`);
+      if (driftedInTool.length > 0) parts.push(`${driftedInTool.length} drifted`);
+      nodes.push({
+        type: "action",
+        action: {
+          id: `sync_ns_${tool.toolId}_${tool.instanceId}`,
+          label: `Sync all to ${tool.name} (${parts.join(", ")})`,
+          type: "install_tool",
+          toolStatus: { toolId: tool.toolId, instanceId: tool.instanceId, name: tool.name, installed: true, enabled: true, supported: true },
+        },
+        depth: 0,
+        key: `ns_sync_${tool.toolId}_${tool.instanceId}`,
+      });
+    }
+  }
+
+  // Per-tool pullback: pull all drifted skills back to source from each tool
+  for (const tool of allTools) {
+    const installed = ns.skills.filter((s) => s.installations.some((i) => i.toolId === tool.toolId));
+    if (installed.length > 0) {
+      nodes.push({
+        type: "action",
+        action: {
+          id: `pullback_ns_${tool.toolId}_${tool.instanceId}`,
+          label: `Pull all to source from ${tool.name}`,
+          type: "pullback",
+          instance: { toolId: tool.toolId, instanceId: tool.instanceId, instanceName: tool.name, configDir: tool.configDir },
+        },
+        depth: 0,
+        key: `ns_pullback_${tool.toolId}_${tool.instanceId}`,
+      });
+    }
+  }
+
+  // Track all not-in-git skills
+  if (ns.notInGitCount > 0) {
+    nodes.push({
+      type: "action",
+      action: { id: "track_all", label: `Track ${ns.notInGitCount} not-in-git skills in source repo`, type: "track" },
+      depth: 0,
+      key: "ns_track_all",
+    });
+  }
+
+  // Per-tool uninstall
   for (const toolId of ns.toolIds) {
     const installedCount = ns.skills.filter((s) => s.installations.some((i) => i.toolId === toolId)).length;
     if (installedCount > 0) {

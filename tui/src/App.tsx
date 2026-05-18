@@ -1749,6 +1749,68 @@ export function App() {
         }
         break;
       }
+      case "install_tool": {
+        // Per-tool namespace sync — install missing + resync drifted for one tool
+        const ts = action.toolStatus;
+        if (ts) {
+          await withSpinner(
+            `Syncing ${ns.name} to ${ts.name}...`,
+            async () => {
+              // Install missing skills
+              for (const skill of ns.skills) {
+                const isInstalled = skill.installations.some((i) => i.toolId === ts.toolId);
+                if (!isInstalled) {
+                  installSkillToInstance(skill, ts.toolId, ts.instanceId);
+                }
+              }
+              // Re-sync drifted
+              for (const skill of ns.skills) {
+                const inst = skill.installations.find((i) => i.toolId === ts.toolId && i.drifted);
+                if (inst) {
+                  installSkillToInstance(skill, ts.toolId, ts.instanceId);
+                }
+              }
+            },
+            store.notify, store.clearNotification,
+          );
+        }
+        break;
+      }
+      case "pullback": {
+        // Per-tool namespace pullback — pull all skills from one tool to source
+        const inst = action.instance;
+        if (inst) {
+          await withSpinner(
+            `Pulling ${ns.name} to source from ${inst.instanceName}...`,
+            async () => {
+              const result = pullbackNamespaceToSource(ns, inst.toolId, inst.instanceId);
+              const parts: string[] = [`${result.pulled} pulled back`];
+              if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
+              store.notify(`Pulled ${ns.name}: ${parts.join(", ")}`, result.errors.length > 0 ? "warning" : "info");
+            },
+            store.notify, store.clearNotification,
+          );
+        }
+        break;
+      }
+      case "track": {
+        // Bulk track all not-in-git skills
+        const notInGit = ns.skills.filter((s) => !s.sourcePath && s.installations.length > 0);
+        if (notInGit.length > 0) {
+          await withSpinner(
+            `Tracking ${notInGit.length} skills in source repo...`,
+            async () => {
+              for (const skill of notInGit) {
+                const first = skill.installations[0];
+                pullbackSkillToSource(skill, first.toolId, first.instanceId);
+              }
+              store.notify(`Tracked ${notInGit.length} skills in source repo`, "info");
+            },
+            store.notify, store.clearNotification,
+          );
+        }
+        break;
+      }
       case "uninstall_tool": {
         const inst = action.instance;
         if (inst) {
