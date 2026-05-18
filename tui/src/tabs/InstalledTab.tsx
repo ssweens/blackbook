@@ -93,8 +93,9 @@ export function InstalledTab() {
       const scopeLabel = isInstalled
         ? uniqueTools.join(", ")
         : "source only";
+      const displayName = s.namespace ? `${s.namespace}/${s.name}` : s.name;
       return {
-        name: s.name,
+        name: displayName,
         kind: "file" as const,
         marketplace: scopeLabel,
         description: `Standalone skill · ${scopeLabel}`,

@@ -903,8 +903,9 @@ export function App() {
     if (!detailSkill) return null;
     const uniqueTools = Array.from(new Set(detailSkill.installations.map((i) => i.toolId)));
     const isInstalled = detailSkill.installations.length > 0;
+    const displayName = detailSkill.namespace ? `${detailSkill.namespace}/${detailSkill.name}` : detailSkill.name;
     return {
-      name: detailSkill.name,
+      name: displayName,
       kind: "file" as const,
       marketplace: isInstalled ? uniqueTools.join(", ") : "source only",
       description: `Standalone skill`,

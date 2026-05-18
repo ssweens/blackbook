@@ -1681,6 +1681,8 @@ export interface SkillInstallation {
   instanceId: string;
   instanceName: string;
   diskPath: string;
+  /** Plugin namespace for namespaced installs (e.g. "ssmp"). */
+  namespace?: string;
   /** True if this specific install's SKILL.md differs from the source-repo copy. */
   drifted?: boolean;
 }
@@ -1697,6 +1699,8 @@ export type GitStatus = "clean" | "modified" | "untracked" | "unknown";
 
 export interface StandaloneSkill {
   name: string;
+  /** Plugin namespace for namespaced installs (e.g. "ssmp"). */
+  namespace?: string;
   /** All tool instances where this skill is installed. */
   installations: SkillInstallation[];
   /** First/primary install path — used as the source for diff/preview. */
@@ -1863,13 +1867,18 @@ export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSki
               instanceId: instance.instanceId,
               instanceName: instance.name,
               diskPath: skillPath,
+              namespace: pluginEntry.name,
             };
             const existing = byName.get(skillEntry.name);
             if (existing) {
               existing.installations.push(installation);
+              if (pluginEntry.name && !existing.namespace) {
+                existing.namespace = pluginEntry.name;
+              }
             } else {
               byName.set(skillEntry.name, {
                 name: skillEntry.name,
+                namespace: pluginEntry.name,
                 installations: [installation],
                 diskPath: skillPath,
                 toolId: instance.toolId,
@@ -1925,10 +1934,18 @@ export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSki
       if (byName.has(name)) continue;
       if (globalPluginOwnedSkills.has(name)) continue;
       const sourceDir = dirname(skillMd);
+      // Derive namespace from source path: .../skills/<namespace>/<name>/SKILL.md
+      let namespace: string | undefined;
+      const relToSkills = sourceDir.slice(skillsRoot.length + 1); // e.g. "ssmp/agentic-audio-sensory-system"
+      const parts = relToSkills.split("/");
+      if (parts.length >= 2) {
+        namespace = parts[0];
+      }
       byName.set(name, {
         name,
+        namespace,
         installations: [],
-        diskPath: sourceDir,   // use source path as the canonical disk reference
+        diskPath: sourceDir,
         toolId: "",
         instanceId: "",
         instanceName: "",
@@ -1946,6 +1963,14 @@ export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSki
         {
           const sourceDir = dirname(candidate);
           skill.sourcePath = sourceDir;
+          // Derive namespace from source path if not already set from disk scan
+          if (!skill.namespace) {
+            const relToSkills = sourceDir.slice(skillsRoot.length + 1);
+            const parts = relToSkills.split("/");
+            if (parts.length >= 2) {
+              skill.namespace = parts[0];
+            }
+          }
           // Lightweight per-install drift: compare each disk SKILL.md to the source one.
           try {
             const sourceSkillMd = readFileSync(candidate, "utf-8");

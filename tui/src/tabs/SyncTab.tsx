@@ -13,7 +13,8 @@ function getSyncItemKey(item: SyncPreviewItem): string {
     return `tool:${item.toolId}`;
   }
   if (item.kind === "skill") {
-    return `skill:${item.skill.name}`;
+    const ns = item.skill.namespace;
+    return `skill:${ns ? `${ns}/` : ""}${item.skill.name}`;
   }
   if (item.kind === "piPackage") {
     return `piPackage:${item.piPackage.source}`;

@@ -82,11 +82,12 @@ export function SyncPreview({ item }: SyncPreviewProps) {
   }
 
   if (item.kind === "skill") {
+    const displayName = item.skill.namespace ? `${item.skill.namespace}/${item.skill.name}` : item.skill.name;
     return (
       <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="gray" paddingX={1} height={5}>
         <Box>
           <Text color="gray">Skill: </Text>
-          <Text color="white">{item.skill.name}</Text>
+          <Text color="white">{displayName}</Text>
         </Box>
         {item.missingInstances.length > 0 && (
           <Box>

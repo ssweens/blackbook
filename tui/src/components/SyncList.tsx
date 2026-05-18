@@ -87,7 +87,7 @@ export const SyncList = React.memo(function SyncList({
           name = item.name;
           statusLabel = `Update: v${item.installedVersion} → v${item.latestVersion}`;
         } else if (item.kind === "skill") {
-          name = item.skill.name;
+          name = item.skill.namespace ? `${item.skill.namespace}/${item.skill.name}` : item.skill.name;
           const parts: string[] = [];
           if (item.missingInstances.length > 0) parts.push(`Missing: ${item.missingInstances.length}`);
           if (item.driftedInstances.length > 0) parts.push(`Drifted: ${item.driftedInstances.length}`);
