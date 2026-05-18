@@ -302,11 +302,11 @@ export function buildTreeNodes(
 
   nodes.push({ type: "separator", depth: 0, key: "sep_namespace_actions" });
 
-  // Per-tool sync: install missing + resync drifted for each tool
+  // Per-tool sync: install missing + resync drifted for each tool instance
   const allTools = getToolInstances().filter((t) => t.kind === "tool" && t.enabled && !!t.skillsSubdir);
   for (const tool of allTools) {
-    const missingInTool = ns.skills.filter((s) => !s.installations.some((i) => i.toolId === tool.toolId));
-    const driftedInTool = ns.skills.filter((s) => s.installations.some((i) => i.toolId === tool.toolId && i.drifted));
+    const missingInTool = ns.skills.filter((s) => !s.installations.some((i) => i.toolId === tool.toolId && i.instanceId === tool.instanceId));
+    const driftedInTool = ns.skills.filter((s) => s.installations.some((i) => i.toolId === tool.toolId && i.instanceId === tool.instanceId && i.drifted));
     const total = missingInTool.length + driftedInTool.length;
     if (total > 0) {
       const parts: string[] = [];
@@ -326,9 +326,9 @@ export function buildTreeNodes(
     }
   }
 
-  // Per-tool pullback: pull all drifted skills back to source from each tool
+  // Per-tool pullback: pull all skills back to source from each tool instance
   for (const tool of allTools) {
-    const installed = ns.skills.filter((s) => s.installations.some((i) => i.toolId === tool.toolId));
+    const installed = ns.skills.filter((s) => s.installations.some((i) => i.toolId === tool.toolId && i.instanceId === tool.instanceId));
     if (installed.length > 0) {
       nodes.push({
         type: "action",
@@ -354,20 +354,31 @@ export function buildTreeNodes(
     });
   }
 
-  // Per-tool uninstall
-  for (const toolId of ns.toolIds) {
-    const installedCount = ns.skills.filter((s) => s.installations.some((i) => i.toolId === toolId)).length;
+  // Per-tool uninstall — one row per unique (toolId, instanceId) pair
+  const installedInstanceKeys = new Set<string>();
+  for (const skill of ns.skills) {
+    for (const inst of skill.installations) {
+      installedInstanceKeys.add(`${inst.toolId}:${inst.instanceId}`);
+    }
+  }
+  for (const key of installedInstanceKeys) {
+    const [toolId, instanceId] = key.split(":");
+    const installedCount = ns.skills.filter((s) =>
+      s.installations.some((i) => i.toolId === toolId && i.instanceId === instanceId),
+    ).length;
     if (installedCount > 0) {
+      const instanceName =
+        ns.skills.flatMap((s) => s.installations).find((i) => i.toolId === toolId && i.instanceId === instanceId)?.instanceName ?? toolId;
       nodes.push({
         type: "action",
         action: {
-          id: `uninstall_ns_${toolId}`,
-          label: `Uninstall all ${installedCount} skills from ${toolId}`,
+          id: `uninstall_ns_${toolId}_${instanceId}`,
+          label: `Uninstall all ${installedCount} skills from ${instanceName}`,
           type: "uninstall_tool",
-          instance: { toolId, instanceId: "default", instanceName: toolId, configDir: "" },
+          instance: { toolId, instanceId, instanceName, configDir: "" },
         },
         depth: 0,
-        key: `ns_uninstall_${toolId}`,
+        key: `ns_uninstall_${toolId}_${instanceId}`,
       });
     }
   }
