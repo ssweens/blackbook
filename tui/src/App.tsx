@@ -65,6 +65,7 @@ import { getPackageManager } from "./lib/config.js";
 import { setupSourceRepository, shouldShowSourceSetupWizard, pullSourceRepo } from "./lib/source-setup.js";
 import { ItemList, FILE_COLUMNS, PLUGIN_COLUMNS } from "./components/ItemList.js";
 import { ItemDetail, PluginMetadata, FileMetadata, PiPackageMetadata, SkillMetadata, NamespaceMetadata, type ItemAction } from "./components/ItemDetail.js";
+import { NamespaceDetail, buildTreeNodes, buildSkillNodes, type TreeNode } from "./components/NamespaceDetail.js";
 import { pluginToManagedItem, fileToManagedItem, piPackageToManagedItem } from "./lib/managed-item.js";
 import type { ManagedItem } from "./lib/managed-item.js";
 import { getMarketplaceDetailActions, type MarketplaceDetailContext } from "./lib/marketplace-detail.js";
@@ -210,6 +211,7 @@ export function App() {
   const removePiMarketplace = useStore((s) => s.removePiMarketplace);
 
   const [actionIndex, setActionIndex] = useState(0);
+  const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set());
   const [componentManagerMode, setComponentManagerMode] = useState(false);
   const [componentIndex, setComponentIndex] = useState(0);
   // detailPluginDrift / detailFile / detailSkill are now derived from `detail` above.
@@ -1035,6 +1037,20 @@ export function App() {
     return null;
   }, [detailMarketplace, detailPiMarketplace]);
 
+  // Namespace tree nodes — used for expandable tree rendering and cursor bounds
+  const namespaceTreeNodes = useMemo((): TreeNode[] => {
+    if (detail?.kind !== "namespace" || !detailNamespace) return [];
+    const skillNodes = buildSkillNodes(detailNamespace);
+    return buildTreeNodes(detailNamespace, skillNodes, expandedSkills);
+  }, [detail, detailNamespace, expandedSkills]);
+
+  // Clamp actionIndex when namespace tree nodes change (expand/collapse changes node count)
+  React.useEffect(() => {
+    if (detail?.kind === "namespace" && namespaceTreeNodes.length > 0) {
+      setActionIndex((i) => Math.min(i, namespaceTreeNodes.length - 1));
+    }
+  }, [namespaceTreeNodes.length, detail?.kind]);
+
   // Thin shims around the unified store.refreshDetail() for plugins (which need drift
   // recomputed) and piPackages (which need the legacy mirror updated).
   const refreshDetailPlugin = (plugin: Plugin) => {
@@ -1058,7 +1074,7 @@ export function App() {
 
   // ── Extracted input handlers ───────────────────────────────────────────
 
-  const closeDetail = () => { setActionIndex(0); };
+  const closeDetail = () => { setActionIndex(0); setExpandedSkills(new Set()); };
   const handleEscape = () => {
     // Any kind of item detail open? Close it via the unified setter.
     if (detail) {
@@ -1427,6 +1443,59 @@ export function App() {
     }
 
     if (handleDiffInput(input, key)) return;
+
+    // Namespace tree: handle right/enter (expand), left (collapse) for skill-header nodes
+    if (detail?.kind === "namespace" && namespaceTreeNodes.length > 0) {
+      const node = namespaceTreeNodes[actionIndex];
+      if (node) {
+        if ((key.rightArrow || key.return) && node.type === "skill-header") {
+          // Toggle expand
+          const skillName = node.skill!.name;
+          setExpandedSkills((prev) => {
+            const next = new Set(prev);
+            if (next.has(skillName)) next.delete(skillName); else next.add(skillName);
+            return next;
+          });
+          return;
+        }
+        if (key.leftArrow && node.type === "skill-header" && node.expanded) {
+          setExpandedSkills((prev) => { const next = new Set(prev); next.delete(node.skill!.name); return next; });
+          return;
+        }
+        if (key.leftArrow && node.type === "skill-tool") {
+          // Jump to parent skill-header
+          const parentIdx = namespaceTreeNodes.findIndex((n, i) => i < actionIndex && n.type === "skill-header" && n.skill?.name === node.skill?.name);
+          if (parentIdx >= 0) setActionIndex(parentIdx);
+          return;
+        }
+        // Right arrow on expanded skill-header: enter it (expand was already done)
+        if (key.rightArrow && node.type === "skill-header" && node.expanded) {
+          // Move cursor to first child
+          const childIdx = actionIndex + 1;
+          if (childIdx < namespaceTreeNodes.length) setActionIndex(childIdx);
+          return;
+        }
+        // Enter on action nodes: dispatch
+        if (key.return && node.type === "action" && node.action) {
+          void handleNamespaceTreeAction(node);
+          return;
+        }
+        // Enter on skill-tool status rows: no-op (informational)
+        if (key.return && node.type === "skill-tool") return;
+      }
+      // Up/down for namespace tree
+      if (key.upArrow) {
+        setActionIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setActionIndex((i) => Math.min(namespaceTreeNodes.length - 1, i + 1));
+        return;
+      }
+      // Don't fall through to handleDetailInput
+      return;
+    }
+
     if (handleDetailInput(input, key)) return;
     if (handleListInput(input, key)) return;
 
@@ -1586,6 +1655,150 @@ export function App() {
 
     await useStore.getState().refreshAll({ silent: true });
     return copied > 0;
+  };
+
+  // Handle actions from the namespace tree — routes per-skill and namespace-level ops
+  const handleNamespaceTreeAction = async (node: TreeNode) => {
+    const action = node.action;
+    const skill = node.skill;
+    if (!action) return;
+
+    // Skill-level actions need the StandaloneSkill object
+    if (skill && node.depth > 0) {
+      const store = useStore.getState();
+      switch (action.type) {
+        case "install_tool": {
+          const ts = action.toolStatus;
+          if (ts) {
+            await withSpinner(
+              `Syncing ${skill.name} to ${ts.name}...`,
+              async () => { installSkillToInstance(skill, ts.toolId, ts.instanceId); },
+              store.notify, store.clearNotification,
+            );
+          }
+          break;
+        }
+        case "uninstall_tool": {
+          const ts = action.toolStatus;
+          if (ts) {
+            await withSpinner(
+              `Uninstalling ${skill.name} from ${ts.name}...`,
+              async () => { uninstallSkillFromInstance(skill, ts.toolId, ts.instanceId); },
+              store.notify, store.clearNotification,
+            );
+          }
+          break;
+        }
+        case "uninstall": {
+          await withSpinner(
+            `Uninstalling ${skill.name} from all tools...`,
+            async () => { uninstallSkillAllInstances(skill); },
+            store.notify, store.clearNotification,
+          );
+          break;
+        }
+        case "pullback": {
+          const inst = action.instance;
+          if (inst) {
+            await withSpinner(
+              `Pulling ${skill.name} to source...`,
+              async () => { pullbackSkillToSource(skill, inst.toolId, inst.instanceId); },
+              store.notify, store.clearNotification,
+            );
+          }
+          break;
+        }
+        case "delete_everywhere": {
+          await withSpinner(
+            `Deleting ${skill.name} everywhere...`,
+            async () => { deleteSkillEverywhere(skill); },
+            store.notify, store.clearNotification,
+          );
+          break;
+        }
+      }
+      await useStore.getState().loadInstalledPlugins({ silent: true });
+      // Refresh the namespace detail
+      if (detail?.kind === "namespace") {
+        const ns = detail.data;
+        const updated = groupSkillsByNamespace(useStore.getState().standaloneSkills).find((n) => n.name === ns.name);
+        if (updated) setDetail({ kind: "namespace", data: updated });
+      }
+      return;
+    }
+
+    // Namespace-level actions (depth 0)
+    const ns = detailNamespace;
+    if (!ns) return;
+    const store = useStore.getState();
+    switch (action.type) {
+      case "sync": {
+        if (action.id === "sync_missing") {
+          await withSpinner(
+            `Syncing missing skills in ${ns.name}...`,
+            async () => { syncNamespaceToAllMissing(ns); },
+            store.notify, store.clearNotification,
+          );
+        } else {
+          await withSpinner(
+            `Re-syncing drifted skills in ${ns.name}...`,
+            async () => { resyncNamespaceDrifted(ns); },
+            store.notify, store.clearNotification,
+          );
+        }
+        break;
+      }
+      case "uninstall_tool": {
+        const inst = action.instance;
+        if (inst) {
+          await withSpinner(
+            `Uninstalling ${ns.name} from ${inst.toolId}...`,
+            async () => { uninstallNamespaceFromInstance(ns, inst.toolId, inst.instanceId); },
+            store.notify, store.clearNotification,
+          );
+        }
+        break;
+      }
+      case "uninstall": {
+        await withSpinner(
+          `Uninstalling all skills in ${ns.name}...`,
+          async () => {
+            const result = uninstallNamespaceAll(ns);
+            const parts: string[] = [`${result.uninstalled} uninstalled`];
+            if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
+            store.notify(`Uninstalled ${ns.name}: ${parts.join(", ")}`, result.errors.length > 0 ? "warning" : "info");
+          },
+          store.notify, store.clearNotification,
+        );
+        break;
+      }
+      case "back": {
+        setDetailNamespace(null);
+        closeDetail();
+        return;
+      }
+      case "delete_everywhere": {
+        await withSpinner(
+          `Deleting all skills in ${ns.name}...`,
+          async () => {
+            const result = deleteNamespaceEverywhere(ns);
+            const parts: string[] = [`${result.deleted} skills deleted`];
+            if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
+            store.notify(`Deleted ${ns.name}: ${parts.join(", ")}`, result.errors.length > 0 ? "warning" : "info");
+          },
+          store.notify, store.clearNotification,
+        );
+        setDetailNamespace(null);
+        closeDetail();
+        return;
+      }
+    }
+    await useStore.getState().loadInstalledPlugins({ silent: true });
+    // Refresh namespace detail
+    if (detail?.kind === "namespace") {
+      const updated = groupSkillsByNamespace(useStore.getState().standaloneSkills).find((n) => n.name === ns.name);
+      if (updated) setDetail({ kind: "namespace", data: updated });
+    }
   };
 
   // Unified action handler for file, plugin, and pi-package detail views
@@ -2045,12 +2258,20 @@ export function App() {
           selectedIndex={componentIndex}
         />
       ) : activeDetail && !componentManagerMode ? (
-        <ItemDetail
-          item={activeDetail.item}
-          selectedAction={actionIndex}
-          actions={activeDetail.actions}
-          metadata={activeDetail.metadata}
-        />
+        detail?.kind === "namespace" && detailNamespace ? (
+          <NamespaceDetail
+            item={activeDetail.item}
+            selectedAction={actionIndex}
+            expandedSkills={expandedSkills}
+          />
+        ) : (
+          <ItemDetail
+            item={activeDetail.item}
+            selectedAction={actionIndex}
+            actions={activeDetail.actions}
+            metadata={activeDetail.metadata}
+          />
+        )
       ) : activeMarketplaceDetail ? (
         <MarketplaceDetailView
           detail={activeMarketplaceDetail.detail}

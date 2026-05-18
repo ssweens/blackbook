@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.3] - 2026-05-17
+
+### Added
+- **Expandable tree view for namespace skill detail** — namespace detail now renders an interactive two-level tree instead of a flat action list:
+  - **▶/▼ skill rows**: press `→` or `Enter` on a skill row to expand it, revealing per-tool status rows and actions. Press `←` to collapse.
+  - **Per-tool status rows**: expanded skills show `└─ Claude: Synced`, `└─ OpenCode: Missing`, etc. for each tool instance.
+  - **Per-tool actions**: expanded skills expose `Sync to <tool>`, `Re-sync to <tool> (overwrites disk)`, `Pull to source from <tool>`, `Uninstall from <tool>`, `Uninstall from all tools`, and `Delete everywhere` for each individual skill.
+  - **Navigation**: `↑`/`↓` move cursor through the tree (including expanded nodes); `←` on a tool row jumps to parent skill.
+- New `NamespaceDetail` component (`components/NamespaceDetail.tsx`) with `buildSkillNodes()` and `buildTreeNodes()` helpers that compute a flat renderable tree from a `NamespaceGroup`.
+- Namespace tree input handling in `App.tsx` via `handleNamespaceTreeAction()` — routes per-skill mutations (install, uninstall, pullback, delete) and namespace-level bulk operations (sync, resync, delete everywhere) through spinner-wrapped callbacks.
+
+### Changed
+- Namespace detail view no longer uses the flat `ItemDetail` + `buildItemActions` path. Instead, it renders `NamespaceDetail` with its own tree navigation and cursor management.
+- `expandedSkills` state added to `App.tsx` to track which skills in the namespace tree are expanded. Cleared on detail close.
+- `actionIndex` is automatically clamped when the tree expands/collapses to prevent out-of-bounds cursor.
+
+### Removed
+- Old flat namespace action list (skill rows as `open_skill` actions, namespace-level uninstall actions) replaced by the tree view. The `open_skill` action type remains in the `ItemAction` union for potential future use.
+
 ## [0.21.2] - 2026-05-17
 
 ### Added
@@ -656,7 +675,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Symlink handling for plugin assets
 
-[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.21.2...HEAD
+[Unreleased]: https://github.com/ssweens/blackbook/compare/v0.21.3...HEAD
+[0.21.3]: https://github.com/ssweens/blackbook/compare/v0.21.2...v0.21.3
 [0.21.2]: https://github.com/ssweens/blackbook/compare/v0.21.1...v0.21.2
 [0.21.1]: https://github.com/ssweens/blackbook/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/ssweens/blackbook/compare/v0.20.6...v0.21.0
