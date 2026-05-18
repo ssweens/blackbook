@@ -1423,12 +1423,13 @@ export function App() {
       }
     }
 
-    // Left/Right arrows for main tab navigation (blocked when overlays are open)
-    if (key.rightArrow && !isOverlayOpen) {
-      const idx = TABS.indexOf(tab); setTab(TABS[(idx + 1) % TABS.length]); return;
-    }
-    if (key.leftArrow && !isOverlayOpen) {
-      const idx = TABS.indexOf(tab); setTab(TABS[(idx - 1 + TABS.length) % TABS.length]); return;
+    // Number keys 1-6 for tab navigation
+    if (!isOverlayOpen) {
+      const tabIdx = parseInt(input, 10);
+      if (tabIdx >= 1 && tabIdx <= TABS.length) {
+        setTab(TABS[tabIdx - 1]);
+        return;
+      }
     }
 
     // Settings tab: SettingsPanel handles its own input (up/down/enter/esc)

@@ -1,14 +1,13 @@
 /**
  * NamespaceDetail — expandable tree view for skill namespaces
  *
- * Renders a two-level expandable tree:
- *   ▶ skill-name (3 tools, 1 drifted)
- *   └─ per-tool rows when expanded (synced/drifted/missing + actions)
- *
- * Top-level namespace actions (sync all, resync, delete) sit above the tree.
+ * Renders a two-level expandable tree inside a fixed-height scrollable
+ * viewport so that:
+ *   - Ink never leaves ghost lines on expand/collapse (fixed height clears)
+ *   - Long namespaces don't push the footer off-screen (windowing)
  */
 
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useMemo } from "react";
 import { Box, Text } from "ink";
 import type { NamespaceGroup, StandaloneSkill, SkillInstallation } from "../lib/install.js";
 import type { ItemAction } from "./ItemDetail.js";
@@ -31,24 +30,19 @@ export interface SkillNode {
 
 export interface TreeNode {
   type: "action" | "skill-header" | "skill-tool" | "separator";
-  /** Action items carry an ItemAction for dispatch. */
   action?: ItemAction;
-  /** Skill-header and skill-tool nodes carry the skill. */
   skill?: StandaloneSkill;
-  /** Skill-tool nodes carry the tool info. */
   toolInfo?: { toolId: string; instanceId: string; instanceName: string; configDir: string };
-  /** Tool status label. */
   toolStatusLabel?: string;
   toolStatusColor?: string;
-  /** Depth for indentation (0 = top, 1 = skill, 2 = tool). */
   depth: number;
-  /** Whether this row is expandable. */
   expandable?: boolean;
-  /** Whether this row is currently expanded. */
   expanded?: boolean;
-  /** Unique key for React. */
   key: string;
 }
+
+/** Fixed viewport height for the tree region. Keeps the footer always visible. */
+const TREE_VIEWPORT = 28;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Build flat renderable rows from expanded/collapsed state
@@ -122,20 +116,12 @@ export function buildTreeNodes(
     });
   }
 
-  // Separator
   nodes.push({ type: "separator", depth: 0, key: "sep_skills_header" });
 
   // ── Skill rows (expandable) ──
 
   for (const sn of skillNodes) {
     const expanded = expandedSkills.has(sn.skill.name);
-
-    // Skill header row
-    const statusIcon = sn.status === "all-synced" ? "✓"
-      : sn.status === "has-drift" ? "⚡"
-      : sn.status === "not-installed" ? "○"
-      : sn.status === "mixed" ? "⚠"
-      : "·";
 
     const statusColor = sn.status === "all-synced" ? "green"
       : sn.status === "has-drift" ? "yellow"
@@ -150,7 +136,6 @@ export function buildTreeNodes(
       expandable: true,
       expanded,
       key: `skill_${sn.skill.name}`,
-      // Store metadata for the skill header renderer
       action: {
         id: sn.skill.name,
         label: sn.displayName,
@@ -160,9 +145,8 @@ export function buildTreeNodes(
       },
     });
 
-    // If expanded, show per-tool rows + actions
     if (expanded) {
-      // Per-tool status rows
+      // Per-tool status rows (installed)
       for (const inst of sn.installations) {
         const isDrifted = inst.drifted === true;
         nodes.push({
@@ -178,7 +162,7 @@ export function buildTreeNodes(
             label: inst.instanceName,
             type: "status",
             statusColor: isDrifted ? "yellow" : "green",
-            statusLabel: isDrifted ? "Installed (drifted)" : "Installed (synced)",
+            statusLabel: isDrifted ? "Drifted" : "Synced",
           },
         });
       }
@@ -204,11 +188,10 @@ export function buildTreeNodes(
         });
       }
 
-      // Per-tool actions for this skill
+      // Per-skill actions
       const hasDrifted = sn.installations.some((i) => i.drifted);
       const hasMissing = sn.missingTools.length > 0;
 
-      // Sync to missing tools
       if (hasMissing) {
         for (const tool of sn.missingTools) {
           nodes.push({
@@ -221,12 +204,11 @@ export function buildTreeNodes(
             },
             skill: sn.skill,
             depth: 1,
-            key: `action_sync_${sn.skill.name}_${tool.toolId}`,
+            key: `action_sync_${sn.skill.name}_${tool.toolId}_${tool.instanceId}`,
           });
         }
       }
 
-      // Re-sync drifted
       if (hasDrifted) {
         for (const inst of sn.installations.filter((i) => i.drifted)) {
           nodes.push({
@@ -239,12 +221,11 @@ export function buildTreeNodes(
             },
             skill: sn.skill,
             depth: 1,
-            key: `action_resync_${sn.skill.name}_${inst.toolId}`,
+            key: `action_resync_${sn.skill.name}_${inst.toolId}_${inst.instanceId}`,
           });
         }
       }
 
-      // Pullback (if source exists)
       if (sn.skill.sourcePath) {
         for (const inst of sn.installations) {
           nodes.push({
@@ -257,11 +238,10 @@ export function buildTreeNodes(
             },
             skill: sn.skill,
             depth: 1,
-            key: `action_pullback_${sn.skill.name}_${inst.toolId}`,
+            key: `action_pullback_${sn.skill.name}_${inst.toolId}_${inst.instanceId}`,
           });
         }
       } else if (sn.installations.length > 0) {
-        // No source — offer track
         const first = sn.installations[0];
         nodes.push({
           type: "action",
@@ -277,7 +257,6 @@ export function buildTreeNodes(
         });
       }
 
-      // Per-tool uninstall
       for (const inst of sn.installations) {
         nodes.push({
           type: "action",
@@ -289,26 +268,20 @@ export function buildTreeNodes(
           },
           skill: sn.skill,
           depth: 1,
-          key: `action_uninstall_${sn.skill.name}_${inst.toolId}`,
+          key: `action_uninstall_${sn.skill.name}_${inst.toolId}_${inst.instanceId}`,
         });
       }
 
-      // Uninstall all
       if (sn.installations.length > 0) {
         nodes.push({
           type: "action",
-          action: {
-            id: `uninstall_${sn.skill.name}`,
-            label: "Uninstall from all tools",
-            type: "uninstall",
-          },
+          action: { id: `uninstall_${sn.skill.name}`, label: "Uninstall from all tools", type: "uninstall" },
           skill: sn.skill,
           depth: 1,
           key: `action_uninstall_all_${sn.skill.name}`,
         });
       }
 
-      // Delete everywhere
       const srcFragment = sn.skill.sourcePath ? " + source repo" : "";
       nodes.push({
         type: "action",
@@ -329,7 +302,6 @@ export function buildTreeNodes(
 
   nodes.push({ type: "separator", depth: 0, key: "sep_namespace_actions" });
 
-  // Per-tool namespace uninstalls
   for (const toolId of ns.toolIds) {
     const installedCount = ns.skills.filter((s) => s.installations.some((i) => i.toolId === toolId)).length;
     if (installedCount > 0) {
@@ -380,6 +352,24 @@ export function buildTreeNodes(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Viewport windowing — only render visible rows inside the fixed-height box
+// ─────────────────────────────────────────────────────────────────────────────
+
+function getVisibleRange(totalNodes: number, cursor: number, viewport: number): { start: number; end: number; contentViewport: number } {
+  if (totalNodes <= viewport) return { start: 0, end: totalNodes, contentViewport: viewport };
+  // Reserve 1 line for "↑ N more above" and 1 for "↓ N more below"
+  const contentViewport = viewport - 2;
+  const pad = 2;
+  let start = Math.max(0, cursor - pad);
+  let end = start + contentViewport;
+  if (end > totalNodes) {
+    end = totalNodes;
+    start = Math.max(0, end - contentViewport);
+  }
+  return { start, end, contentViewport };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -396,16 +386,23 @@ export function NamespaceDetail({ item, selectedAction, expandedSkills }: Namesp
   const skillNodes = useMemo(() => buildSkillNodes(ns), [ns]);
   const nodes = useMemo(() => buildTreeNodes(ns, skillNodes, expandedSkills), [ns, skillNodes, expandedSkills]);
 
+  // Windowing: only render the visible slice
+  const { start, end, contentViewport } = getVisibleRange(nodes.length, selectedAction, TREE_VIEWPORT);
+  const visibleNodes = nodes.slice(start, end);
+
+  const hasAbove = start > 0;
+  const hasBelow = end < nodes.length;
+
   return (
     <Box flexDirection="column">
       {/* Header */}
-      <Box marginBottom={1}>
+      <Box>
         <Text bold>{item.name}</Text>
         <Text color="gray"> ({ns.skills.length} skills)</Text>
       </Box>
 
       {/* Status */}
-      <Box marginBottom={1}>
+      <Box>
         <Text color="gray">Tools: </Text>
         <Text color="magenta">{ns.toolIds.join(", ")}</Text>
         {ns.missingCount > 0 && <Text color="yellow"> · {ns.missingCount} missing</Text>}
@@ -413,20 +410,25 @@ export function NamespaceDetail({ item, selectedAction, expandedSkills }: Namesp
         {ns.notInGitCount > 0 && <Text color="red"> · {ns.notInGitCount} not in git</Text>}
       </Box>
 
-      {/* Tree */}
+      {/* Tree with scrollable viewport */}
       <Box flexDirection="column" marginTop={1}>
-        {nodes.map((node, i) => (
-          <TreeRow
-            key={node.key}
-            node={node}
-            isSelected={i === selectedAction}
-          />
-        ))}
+        {hasAbove && <Text color="gray">{"  ↑ "}{start}{" more above"}</Text>}
+        {visibleNodes.map((node, vi) => {
+          const globalIdx = start + vi;
+          return (
+            <TreeRow
+              key={node.key}
+              node={node}
+              isSelected={globalIdx === selectedAction}
+            />
+          );
+        })}
+        {hasBelow && <Text color="gray">{"  ↓ "}{nodes.length - end}{" more below"}</Text>}
       </Box>
 
       {/* Footer */}
-      <Box marginTop={1}>
-        <Text color="gray">→/Enter expand skill · ← collapse · Esc back</Text>
+      <Box>
+        <Text color="gray">→/Enter expand · ← collapse · Esc back{nodes.length > TREE_VIEWPORT ? " · ↑↓ scroll" : ""}</Text>
       </Box>
     </Box>
   );
@@ -446,34 +448,23 @@ function TreeRow({ node, isSelected }: TreeRowProps) {
   const cursor = isSelected ? "❯ " : "  ";
   const selColor = isSelected ? "cyan" : "gray";
 
-  // Separator
   if (node.type === "separator") {
-    return (
-      <Box>
-        <Text color="gray">{indent}──</Text>
-      </Box>
-    );
+    return <Text color="gray">{indent}──</Text>;
   }
 
-  // Skill header (expandable)
   if (node.type === "skill-header") {
-    const expanded = node.expanded;
-    const arrow = expanded ? "▼" : "▶";
+    const arrow = node.expanded ? "▼" : "▶";
     const action = node.action!;
-
     return (
       <Box>
         <Text color={selColor}>{cursor}{indent}</Text>
         <Text color={isSelected ? "white" : "gray"}>{arrow} </Text>
-        <Text bold={isSelected} color={isSelected ? "white" : "gray"}>
-          {action.label}
-        </Text>
+        <Text bold={isSelected} color={isSelected ? "white" : "gray"}>{action.label}</Text>
         <Text color={action.statusColor || "gray"}> {action.statusLabel}</Text>
       </Box>
     );
   }
 
-  // Per-tool status row
   if (node.type === "skill-tool") {
     const action = node.action!;
     return (
@@ -486,18 +477,13 @@ function TreeRow({ node, isSelected }: TreeRowProps) {
     );
   }
 
-  // Action row
   if (node.type === "action" && node.action) {
     const action = node.action;
     const color = getActionColor(action.type);
-    const hasTopMargin = action.type === "uninstall" || action.type === "sync" || action.type === "delete_everywhere";
-
     return (
-      <Box marginTop={hasTopMargin ? 1 : 0}>
+      <Box>
         <Text color={selColor}>{cursor}{indent}</Text>
-        <Text bold={isSelected} color={isSelected ? color : "gray"}>
-          {action.label}
-        </Text>
+        <Text bold={isSelected} color={isSelected ? color : "gray"}>{action.label}</Text>
       </Box>
     );
   }

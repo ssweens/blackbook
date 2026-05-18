@@ -33,7 +33,7 @@ export function TabBar() {
           {i < TABS.length - 1 && <Text>  </Text>}
         </React.Fragment>
       ))}
-      <Text color="gray">  (←/→ or tab to cycle)</Text>
+      <Text color="gray">  (1-6 or tab to switch)</Text>
     </Box>
   );
 }
