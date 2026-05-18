@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Multi-instance tool support in namespace tree** — uninstall, sync, and pullback actions now correctly distinguish between multiple instances of the same tool (e.g. `Claude` vs `Claude (Learning)` both using `claude-code` toolId).
+  - Uninstall loop now iterates unique `(toolId, instanceId)` pairs from skill installations.
+  - Sync and pullback count calculations now check both `toolId` **and** `instanceId`.
+  - Action labels now show instance names (`Claude`, `Claude (Learning)`) instead of generic toolIds.
+  - Fixed React key collisions that were causing Ink `at ink-box` errors and ghost lines.
+
 ## [0.21.3] - 2026-05-17
 
 ### Added

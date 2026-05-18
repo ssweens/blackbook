@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useRef } from "react";
+import React, { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { join, dirname } from "path";
 import { existsSync, lstatSync, rmSync, cpSync, copyFileSync, mkdirSync } from "fs";
 import { Box, Text, useInput, useApp } from "ink";
@@ -1658,15 +1658,32 @@ export function App() {
     return copied > 0;
   };
 
+  const refreshDetailNamespace = useCallback(() => {
+    const state = useStore.getState();
+    if (detail?.kind !== "namespace" || !detailNamespace) return;
+
+    const freshSkills = state.standaloneSkills;
+    const updated = groupSkillsByNamespace(freshSkills).find((n) => n.name === detailNamespace.name);
+    if (updated) {
+      setDetail({ kind: "namespace", data: updated });
+      setDetailNamespace(updated);
+    } else {
+      // Namespace no longer exists (fully deleted)
+      setDetailNamespace(null);
+      closeDetail();
+    }
+  }, [detail, detailNamespace, setDetail, setDetailNamespace, closeDetail]);
+
   // Handle actions from the namespace tree — routes per-skill and namespace-level ops
   const handleNamespaceTreeAction = async (node: TreeNode) => {
     const action = node.action;
     const skill = node.skill;
     if (!action) return;
 
+    const store = useStore.getState();
+
     // Skill-level actions need the StandaloneSkill object
     if (skill && node.depth > 0) {
-      const store = useStore.getState();
       switch (action.type) {
         case "install_tool": {
           const ts = action.toolStatus;
@@ -1719,19 +1736,13 @@ export function App() {
         }
       }
       await useStore.getState().loadInstalledPlugins({ silent: true });
-      // Refresh the namespace detail
-      if (detail?.kind === "namespace") {
-        const ns = detail.data;
-        const updated = groupSkillsByNamespace(useStore.getState().standaloneSkills).find((n) => n.name === ns.name);
-        if (updated) setDetail({ kind: "namespace", data: updated });
-      }
+      refreshDetailNamespace();
       return;
     }
 
     // Namespace-level actions (depth 0)
     const ns = detailNamespace;
     if (!ns) return;
-    const store = useStore.getState();
     switch (action.type) {
       case "sync": {
         if (action.id === "sync_missing") {
@@ -1756,16 +1767,23 @@ export function App() {
           await withSpinner(
             `Syncing ${ns.name} to ${ts.name}...`,
             async () => {
-              // Install missing skills
-              for (const skill of ns.skills) {
-                const isInstalled = skill.installations.some((i) => i.toolId === ts.toolId);
+              // Use fresh skills from store (not the stale ns closure)
+              const freshSkills = useStore.getState().standaloneSkills.filter(
+                (s) => s.namespace === ns.name
+              );
+              for (const skill of freshSkills) {
+                const isInstalled = skill.installations.some(
+                  (i) => i.toolId === ts.toolId && i.instanceId === ts.instanceId
+                );
                 if (!isInstalled) {
                   installSkillToInstance(skill, ts.toolId, ts.instanceId);
                 }
               }
               // Re-sync drifted
-              for (const skill of ns.skills) {
-                const inst = skill.installations.find((i) => i.toolId === ts.toolId && i.drifted);
+              for (const skill of freshSkills) {
+                const inst = skill.installations.find(
+                  (i) => i.toolId === ts.toolId && i.instanceId === ts.instanceId && i.drifted
+                );
                 if (inst) {
                   installSkillToInstance(skill, ts.toolId, ts.instanceId);
                 }
@@ -1815,7 +1833,7 @@ export function App() {
         const inst = action.instance;
         if (inst) {
           await withSpinner(
-            `Uninstalling ${ns.name} from ${inst.toolId}...`,
+            `Uninstalling ${ns.name} from ${inst.instanceName}...`,
             async () => { uninstallNamespaceFromInstance(ns, inst.toolId, inst.instanceId); },
             store.notify, store.clearNotification,
           );
@@ -1857,11 +1875,7 @@ export function App() {
       }
     }
     await useStore.getState().loadInstalledPlugins({ silent: true });
-    // Refresh namespace detail
-    if (detail?.kind === "namespace") {
-      const updated = groupSkillsByNamespace(useStore.getState().standaloneSkills).find((n) => n.name === ns.name);
-      if (updated) setDetail({ kind: "namespace", data: updated });
-    }
+    refreshDetailNamespace();
   };
 
   // Unified action handler for file, plugin, and pi-package detail views
