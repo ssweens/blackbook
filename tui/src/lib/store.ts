@@ -81,7 +81,6 @@ import {
   manifestPath,
   removeClaudeMarketplace,
   groupSkillsByNamespace,
-  migrateLegacyStandaloneSkillLayout,
 } from "./install.js";
 import { invalidatePluginToolStatusCache } from "./plugin-status.js";
 import type { PluginDrift } from "./plugin-drift.js";
@@ -1529,10 +1528,6 @@ export const useStore = create<Store>((rawSet, get) => {
       if (!mp) return p;
       return { ...p, skills: uniqueStrings(p.skills, mp.skills) };
     });
-
-    // One-way compatibility migration: move legacy flat standalone skill installs
-    // to namespaced layout for non-flat tools when source namespace is known.
-    migrateLegacyStandaloneSkillLayout();
 
     const state = get();
     set({
