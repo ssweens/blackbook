@@ -27,9 +27,14 @@ import {
   getPluginsCacheDir,
   getPluginToolStatus,
   syncPluginInstances,
+  getStandaloneSkills,
+  installSkillToInstance,
+  migrateLegacyStandaloneSkillLayout,
 } from "./install.js";
 import { invalidatePluginToolStatusCache } from "./plugin-status.js";
 import { getCacheDir, getToolInstances, updateToolInstanceConfig, TOOL_IDS } from "./config.js";
+import { getConfigPath as getYamlConfigPath, loadConfig as loadYamlConfig } from "./config/loader.js";
+import { saveConfig as saveYamlConfig } from "./config/writer.js";
 import type { Plugin, ToolInstance } from "./types.js";
 
 const TEST_PLUGIN_NAME = "blackbook-test-plugin";
@@ -1104,6 +1109,102 @@ describe("syncPluginInstances", () => {
     expect(result.success).toBe(true);
     expect(result.syncedInstances[`pi:${piInstance.instanceId}`]).toBeGreaterThan(0);
     expect(existsSync(target)).toBe(true);
+  });
+});
+
+describe("standalone skill scanning compatibility", () => {
+  function configureSourceRepoWithSsmpSkill(skillName: string): string {
+    const sourceRepo = join(TEST_ROOT, "source-repo");
+    const sourceSkillDir = join(sourceRepo, "skills", "ssmp", skillName);
+    mkdirSync(sourceSkillDir, { recursive: true });
+    writeFileSync(join(sourceSkillDir, "SKILL.md"), `# ${skillName}\n\nsource copy\n`);
+
+    const configPath = getYamlConfigPath();
+    const loaded = loadYamlConfig(configPath);
+    expect(loaded.errors).toEqual([]);
+    saveYamlConfig(
+      {
+        ...loaded.config,
+        settings: {
+          ...loaded.config.settings,
+          source_repo: sourceRepo,
+        },
+      },
+      configPath,
+    );
+    return sourceRepo;
+  }
+
+  it("detects flat Pi skills on disk and maps them to ssmp namespace via source_repo", () => {
+    const skillName = "ambient-texture-drones";
+    configureSourceRepoWithSsmpSkill(skillName);
+
+    const piInstance = getInstance("pi");
+    expect(piInstance.skillsSubdir).toBeTruthy();
+    expect(piInstance.pluginFlatInstall).toBe(false);
+
+    const flatSkillDir = join(piInstance.configDir, piInstance.skillsSubdir!, skillName);
+    mkdirSync(flatSkillDir, { recursive: true });
+    writeFileSync(join(flatSkillDir, "SKILL.md"), "# ambient-texture-drones\n\nsource copy\n");
+
+    const skills = getStandaloneSkills([]);
+    const found = skills.find((s) => s.name === skillName);
+
+    expect(found).toBeDefined();
+    expect(found?.namespace).toBe("ssmp");
+    expect(found?.installations.length).toBeGreaterThan(0);
+    expect(
+      found?.installations.some(
+        (i) => i.toolId === "pi" && i.instanceId === piInstance.instanceId,
+      ),
+    ).toBe(true);
+  });
+
+  it("installs standalone skills to namespaced paths on non-flat tools", () => {
+    const skillName = "midi-drum-production";
+    const sourceRepo = configureSourceRepoWithSsmpSkill(skillName);
+    const sourceSkillDir = join(sourceRepo, "skills", "ssmp", skillName);
+
+    const piInstance = getInstance("pi");
+    const skill = {
+      name: skillName,
+      namespace: "ssmp",
+      installations: [],
+      diskPath: sourceSkillDir,
+      toolId: "",
+      instanceId: "",
+      instanceName: "",
+      sourcePath: sourceSkillDir,
+    } as any;
+
+    const ok = installSkillToInstance(skill, "pi", piInstance.instanceId);
+    expect(ok).toBe(true);
+
+    const namespacedPath = join(piInstance.configDir, piInstance.skillsSubdir!, "ssmp", skillName, "SKILL.md");
+    const flatPath = join(piInstance.configDir, piInstance.skillsSubdir!, skillName, "SKILL.md");
+
+    expect(existsSync(namespacedPath)).toBe(true);
+    expect(existsSync(flatPath)).toBe(false);
+  });
+
+  it("migrates legacy flat standalone skills to namespaced paths", () => {
+    const skillName = "ambient-texture-drones";
+    configureSourceRepoWithSsmpSkill(skillName);
+
+    const piInstance = getInstance("pi");
+    const flatSkillDir = join(piInstance.configDir, piInstance.skillsSubdir!, skillName);
+    const namespacedSkillDir = join(piInstance.configDir, piInstance.skillsSubdir!, "ssmp", skillName);
+
+    mkdirSync(flatSkillDir, { recursive: true });
+    writeFileSync(join(flatSkillDir, "SKILL.md"), "# ambient-texture-drones\n\nlegacy flat\n");
+    expect(existsSync(join(flatSkillDir, "SKILL.md"))).toBe(true);
+
+    const result = migrateLegacyStandaloneSkillLayout();
+    expect(result.moved).toBeGreaterThan(0);
+    expect(result.errors).toHaveLength(0);
+
+    expect(existsSync(join(namespacedSkillDir, "SKILL.md"))).toBe(true);
+    expect(existsSync(flatSkillDir)).toBe(false);
   });
 });
 

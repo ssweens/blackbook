@@ -492,7 +492,7 @@ export function NamespaceDetail({ item, selectedAction, expandedSkills }: Namesp
 
       {/* Footer */}
       <Box>
-        <Text color="gray">→/Enter expand · ← collapse · Esc back{nodes.length > TREE_VIEWPORT ? " · ↑↓ scroll" : ""}</Text>
+        <Text color="gray">Enter open skill · → expand · ← collapse · Esc back{nodes.length > TREE_VIEWPORT ? " · ↑↓ scroll" : ""}</Text>
       </Box>
     </Box>
   );

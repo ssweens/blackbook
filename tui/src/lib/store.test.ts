@@ -1501,3 +1501,59 @@ describe("Repo-prescribed Pi packages", () => {
     });
   });
 });
+
+describe("Store universal detail refresh contract", () => {
+  it("syncTools refreshes open file detail after file sync", async () => {
+    const original = createMockFile({ name: "AGENTS.md", source: "old.md" });
+    const refreshed = createMockFile({ name: "AGENTS.md", source: "new.md" });
+
+    useStore.setState({
+      detail: { kind: "file", data: original },
+      files: [original],
+    });
+
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: { files: [], settings: { backup_retention: 3, package_manager: "npm" }, tools: {}, plugins: {}, configs: [], pi_packages: [] } as any,
+      configPath: "/tmp/blackbook/config.yaml",
+      errors: [],
+    });
+
+    const loadFilesSpy = vi.spyOn(useStore.getState(), "loadFiles").mockImplementation(async () => {
+      useStore.setState({ files: [refreshed] });
+      return [refreshed];
+    });
+
+    vi.mocked(runApply).mockResolvedValue({
+      steps: [{ label: "AGENTS.md:claude-code:main", check: { status: "missing", message: "" }, apply: { changed: true, message: "copied" } }],
+      summary: { ok: 0, missing: 0, drifted: 0, failed: 0, changed: 1 },
+    });
+
+    await useStore.getState().syncTools([
+      {
+        kind: "file",
+        file: {
+          ...original,
+          instances: [
+            {
+              toolId: "claude-code",
+              instanceId: "main",
+              instanceName: "Claude",
+              configDir: "/tmp/.claude",
+              targetRelPath: "AGENTS.md",
+              sourcePath: "/tmp/repo/AGENTS.md",
+              targetPath: "/tmp/.claude/AGENTS.md",
+              status: "missing",
+              message: "",
+            },
+          ],
+        },
+        missingInstances: ["Claude"],
+        driftedInstances: [],
+      },
+    ]);
+
+    expect(useStore.getState().detail).toEqual({ kind: "file", data: refreshed });
+
+    loadFilesSpy.mockRestore();
+  });
+});

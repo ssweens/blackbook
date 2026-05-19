@@ -300,6 +300,7 @@ async function handleUninstallAction(
   }
   if (item._skill && callbacks.uninstallSkillAll) {
     await callbacks.uninstallSkillAll(item._skill);
+    callbacks.refreshDetailSkill?.(item._skill);
     return true;
   }
   return false;

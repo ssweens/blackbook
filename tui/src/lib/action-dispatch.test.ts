@@ -103,6 +103,8 @@ function createCallbacks(): DispatchCallbacks {
     deletePiPackageEverywhere: vi.fn().mockResolvedValue(true),
     refreshDetailPiPackage: vi.fn(),
     buildPluginDiffTarget: vi.fn().mockResolvedValue(null),
+    refreshDetailSkill: vi.fn(),
+    uninstallSkillAll: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -259,6 +261,24 @@ describe("handleItemAction", () => {
     await handleItemAction(item, action, callbacks);
     expect(callbacks.uninstallPlugin).toHaveBeenCalledWith(plugin);
     expect(callbacks.refreshDetailPlugin).toHaveBeenCalledWith(plugin);
+  });
+
+  it("uninstall skill-all refreshes skill detail", async () => {
+    const skill = {
+      name: "ambient-texture-drones",
+      installations: [],
+      diskPath: "/tmp/ambient-texture-drones",
+      toolId: "claude-code",
+      instanceName: "Claude",
+      instanceId: "main",
+    } as any;
+    const item = createItem({ _skill: skill });
+    const action: ItemAction = { id: "u", label: "Uninstall", type: "uninstall" };
+
+    await handleItemAction(item, action, callbacks);
+
+    expect(callbacks.uninstallSkillAll).toHaveBeenCalledWith(skill);
+    expect(callbacks.refreshDetailSkill).toHaveBeenCalledWith(skill);
   });
 
   // ── update ───────────────────────────────────────────────────────────

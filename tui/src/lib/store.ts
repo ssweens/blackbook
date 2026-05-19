@@ -81,6 +81,7 @@ import {
   manifestPath,
   removeClaudeMarketplace,
   groupSkillsByNamespace,
+  migrateLegacyStandaloneSkillLayout,
 } from "./install.js";
 import { invalidatePluginToolStatusCache } from "./plugin-status.js";
 import type { PluginDrift } from "./plugin-drift.js";
@@ -1529,6 +1530,10 @@ export const useStore = create<Store>((rawSet, get) => {
       return { ...p, skills: uniqueStrings(p.skills, mp.skills) };
     });
 
+    // One-way compatibility migration: move legacy flat standalone skill installs
+    // to namespaced layout for non-flat tools when source namespace is known.
+    migrateLegacyStandaloneSkillLayout();
+
     const state = get();
     set({
       installedPlugins: installedWithStatus,
@@ -1856,6 +1861,7 @@ export const useStore = create<Store>((rawSet, get) => {
     await get().loadPiPackages({ silent });
     await get().loadFiles({ silent });
     get().refreshManagedTools();
+    get().refreshDetail();
   },
 
   installPlugin: async (plugin) => {
@@ -2164,15 +2170,19 @@ export const useStore = create<Store>((rawSet, get) => {
     const hadFiles = items.some((item) => item.kind === "file");
     const hadPlugins = items.some((item) => item.kind === "plugin");
     const hadPiPackages = items.some((item) => item.kind === "piPackage");
+    const hadSkills = items.some((item) => item.kind === "skill");
+
     if (hadFiles) {
-      void get().loadFiles({ silent: true });
+      await get().loadFiles({ silent: true });
     }
-    if (hadPlugins) {
-      void get().loadInstalledPlugins({ silent: true });
+    if (hadPlugins || hadSkills) {
+      await get().loadInstalledPlugins({ silent: true });
     }
     if (hadPiPackages) {
-      void get().loadPiPackages({ silent: true });
+      await get().loadPiPackages({ silent: true });
     }
+
+    get().refreshDetail();
   },
 
   addMarketplace: (name, url) => {
@@ -2458,16 +2468,16 @@ export const useStore = create<Store>((rawSet, get) => {
       if (hadError) {
         const msg = result.steps.find((s) => s.apply?.error)?.apply?.error;
         notify(`Pull failed: ${msg || "unknown error"}`, "error");
-        void get().refreshAll({ silent: true });
+        await get().refreshAll({ silent: true });
         return false;
       }
 
       notify(`✓ Pulled ${file.name} from ${picked.instanceName}`, "success");
-      void get().refreshAll({ silent: true });
+      await get().refreshAll({ silent: true });
       return true;
     } catch (error) {
       notify(`Pull failed: ${error instanceof Error ? error.message : String(error)}`, "error");
-      void get().refreshAll({ silent: true });
+      await get().refreshAll({ silent: true });
       return false;
     }
   },

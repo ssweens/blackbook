@@ -1866,11 +1866,39 @@ export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSki
           }
         }
       } else {
-        // Namespaced layout: skills/<plugin>/<skill>/SKILL.md
+        // Preferred namespaced layout: skills/<namespace>/<skill>/SKILL.md
+        // Compatibility: also detect legacy flat layout skills/<skill>/SKILL.md.
         for (const pluginEntry of readdirSync(skillsDir, { withFileTypes: true })) {
           if (!pluginEntry.isDirectory() && !pluginEntry.isSymbolicLink()) continue;
           if (pluginEntry.name.startsWith(".")) continue;
           const pluginDir = join(skillsDir, pluginEntry.name);
+
+          // Legacy flat layout entry: skills/<skill>/SKILL.md
+          if (existsSync(join(pluginDir, "SKILL.md"))) {
+            if (globalPluginOwnedSkills.has(pluginEntry.name)) continue;
+            const installation: SkillInstallation = {
+              toolId: instance.toolId,
+              instanceId: instance.instanceId,
+              instanceName: instance.name,
+              diskPath: pluginDir,
+            };
+            const existing = byName.get(pluginEntry.name);
+            if (existing) {
+              existing.installations.push(installation);
+            } else {
+              byName.set(pluginEntry.name, {
+                name: pluginEntry.name,
+                installations: [installation],
+                diskPath: pluginDir,
+                toolId: instance.toolId,
+                instanceId: instance.instanceId,
+                instanceName: instance.name,
+              });
+            }
+            continue;
+          }
+
+          // Namespaced layout entry: skills/<namespace>/<skill>/SKILL.md
           for (const skillEntry of readdirSync(pluginDir, { withFileTypes: true })) {
             if (!skillEntry.isDirectory() && !skillEntry.isSymbolicLink()) continue;
             if (skillEntry.name.startsWith(".")) continue;
@@ -2248,6 +2276,23 @@ export function pullbackSkillToSource(
   return true;
 }
 
+function getStandaloneSkillTargetDir(
+  skill: Pick<StandaloneSkill, "name" | "namespace">,
+  target: ToolInstance,
+): string {
+  if (!target.skillsSubdir) return "";
+  // Claude/user-flat tools keep standalone skills as skills/<name>.
+  if (target.pluginFlatInstall) {
+    return join(target.configDir, target.skillsSubdir, skill.name);
+  }
+  // Non-flat tools prefer namespaced layout when namespace is known.
+  if (skill.namespace) {
+    return join(target.configDir, target.skillsSubdir, skill.namespace, skill.name);
+  }
+  // Backward-compat fallback for skills without a known namespace.
+  return join(target.configDir, target.skillsSubdir, skill.name);
+}
+
 /** Copy the skill from its current first installation into a target tool instance. */
 export function installSkillToInstance(
   skill: StandaloneSkill,
@@ -2262,8 +2307,10 @@ export function installSkillToInstance(
     (i) => i.toolId === toolId && i.instanceId === instanceId,
   );
   if (!target || !target.skillsSubdir) return false;
-  const targetDir = join(target.configDir, target.skillsSubdir, skill.name);
+  const targetDir = getStandaloneSkillTargetDir(skill, target);
+  if (!targetDir) return false;
   try {
+    mkdirSync(dirname(targetDir), { recursive: true });
     cpSync(sourcePath, targetDir, { recursive: true });
     return true;
   } catch {
@@ -2327,6 +2374,76 @@ export function installSkillToAllNonSynced(skill: StandaloneSkill): { installed:
     skipped += 1;
   }
   return { installed, resynced, skipped, failed };
+}
+
+/**
+ * Migrate legacy flat standalone skill installs on non-flat tools:
+ *   skills/<skill>/SKILL.md -> skills/<namespace>/<skill>/SKILL.md
+ * Namespace is derived from source-repo layout: skills/<namespace>/<skill>/SKILL.md.
+ */
+export function migrateLegacyStandaloneSkillLayout(): { moved: number; skipped: number; errors: string[] } {
+  const sourceRepo = getConfigRepoPath();
+  if (!sourceRepo || !existsSync(sourceRepo)) {
+    return { moved: 0, skipped: 0, errors: [] };
+  }
+
+  const skillsRoot = join(sourceRepo, "skills");
+  if (!existsSync(skillsRoot)) {
+    return { moved: 0, skipped: 0, errors: [] };
+  }
+
+  const namespaceBySkill = new Map<string, string>();
+  try {
+    for (const nsEntry of readdirSync(skillsRoot, { withFileTypes: true })) {
+      if (!nsEntry.isDirectory() || nsEntry.name.startsWith(".")) continue;
+      const nsDir = join(skillsRoot, nsEntry.name);
+      for (const skillEntry of readdirSync(nsDir, { withFileTypes: true })) {
+        if (!skillEntry.isDirectory() || skillEntry.name.startsWith(".")) continue;
+        const skillDir = join(nsDir, skillEntry.name);
+        if (!existsSync(join(skillDir, "SKILL.md"))) continue;
+        // First match wins if duplicates exist.
+        if (!namespaceBySkill.has(skillEntry.name)) {
+          namespaceBySkill.set(skillEntry.name, nsEntry.name);
+        }
+      }
+    }
+  } catch {
+    return { moved: 0, skipped: 0, errors: [] };
+  }
+
+  let moved = 0;
+  let skipped = 0;
+  const errors: string[] = [];
+
+  const targets = getToolInstances().filter(
+    (i) => i.kind === "tool" && i.enabled && !!i.skillsSubdir && !i.pluginFlatInstall,
+  );
+
+  for (const target of targets) {
+    const skillsDir = join(target.configDir, target.skillsSubdir!);
+    if (!existsSync(skillsDir)) continue;
+
+    for (const [skillName, namespace] of namespaceBySkill.entries()) {
+      const flatDir = join(skillsDir, skillName);
+      const nsDir = join(skillsDir, namespace, skillName);
+
+      if (!existsSync(flatDir) || !existsSync(join(flatDir, "SKILL.md"))) continue;
+      if (existsSync(nsDir)) {
+        skipped += 1;
+        continue;
+      }
+
+      try {
+        mkdirSync(dirname(nsDir), { recursive: true });
+        renameSync(flatDir, nsDir);
+        moved += 1;
+      } catch (e) {
+        errors.push(`${target.toolId}:${target.instanceId}:${skillName} -> ${namespace}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
+
+  return { moved, skipped, errors };
 }
 
 // ── Namespace bulk operations ─────────────────────────────────────────────

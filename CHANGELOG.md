@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0] - 2026-05-18
+
+### Added
+- **Universal Action Contract** (`docs/plans/action-contract-checklist.md`) — the single source of truth for all mutations (skills, plugins, files, Pi packages, namespaces, tools).
+- Full compliance sweep across `handleEntityAction()`, `handleNamespaceTreeAction()`, tool lifecycle, Sync tab, and legacy marketplace code.
+- `refreshDetail()` in store now handles ALL artifact kinds uniformly (including tools and namespaces) using fresh store data.
+- Enforcement tests for the full matrix (namespace install, multi-instance, expand/collapse during action, detail preservation).
+- Updated `tasks/todo.md` and `tasks/lessons.md` with final convergence status and new patterns.
+
+### Changed
+- All non-destructive actions now preserve detail view + tree state (no more unnecessary closes).
+- `refreshDetail()` is the ONLY post-mutation detail update path.
+- Version bumped to 0.23.0.
+
+### Fixed
+- All remaining stale closure and refresh bugs across the app.
+- 100% contract compliance for core flows (namespace tree was already compliant; legacy paths now match).
+- **Pi standalone skill detection compatibility** — non-flat tools (including Pi) now detect both namespaced (`skills/<namespace>/<skill>/SKILL.md`) and legacy flat (`skills/<skill>/SKILL.md`) skill layouts, so `ssmp` skills installed on disk are correctly shown as installed in the app.
+- **Namespace tree skill detail** — pressing Enter on a skill-header in the namespace tree now opens the full standalone skill detail view (identical to opening a skill from the Skills section), with per-tool status, pullbacks, uninstalls, and delete-everywhere actions.
+
+### Tests
+- 477/477 passing (added contract enforcement tests + Pi standalone-scan compatibility regressions for flat->namespaced install/migration).
+- Full tmux visual verification completed for all tabs, namespace tree actions, multi-instance Claude, Sync tab (no ghosts, immediate updates, correct counts).
+
+[0.23.0]: https://github.com/ssweens/blackbook/compare/v0.21.4...v0.23.0
+
 ## [Unreleased]
 
 ### Fixed

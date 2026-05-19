@@ -1186,6 +1186,11 @@ export function App() {
     setActionIndex(0);
   };
 
+  const openSkillDetail = (skill: import("./lib/install.js").StandaloneSkill) => {
+    setDetail({ kind: "skill", data: skill });
+    setActionIndex(0);
+  };
+
   const toggleInstall = (plugin: Plugin) => plugin.installed ? doUninstall(plugin) : doInstall(plugin);
   const toggleInstallPiPkg = (pkg: PiPackage) => pkg.installed ? doUninstallPiPkg(pkg) : doInstallPiPkg(pkg);
 
@@ -1449,14 +1454,27 @@ export function App() {
     if (detail?.kind === "namespace" && namespaceTreeNodes.length > 0) {
       const node = namespaceTreeNodes[actionIndex];
       if (node) {
-        if ((key.rightArrow || key.return) && node.type === "skill-header") {
-          // Toggle expand
+        // Enter on skill-header: open the skill detail (identical to standalone skill view)
+        if (key.return && node.type === "skill-header") {
+          if (node.skill) {
+            openSkillDetail(node.skill);
+          }
+          return;
+        }
+        // Right arrow on collapsed skill-header: expand
+        if (key.rightArrow && node.type === "skill-header" && !node.expanded) {
           const skillName = node.skill!.name;
           setExpandedSkills((prev) => {
             const next = new Set(prev);
-            if (next.has(skillName)) next.delete(skillName); else next.add(skillName);
+            next.add(skillName);
             return next;
           });
+          return;
+        }
+        // Right arrow on expanded skill-header: move cursor to first child
+        if (key.rightArrow && node.type === "skill-header" && node.expanded) {
+          const childIdx = actionIndex + 1;
+          if (childIdx < namespaceTreeNodes.length) setActionIndex(childIdx);
           return;
         }
         if (key.leftArrow && node.type === "skill-header" && node.expanded) {
@@ -1467,13 +1485,6 @@ export function App() {
           // Jump to parent skill-header
           const parentIdx = namespaceTreeNodes.findIndex((n, i) => i < actionIndex && n.type === "skill-header" && n.skill?.name === node.skill?.name);
           if (parentIdx >= 0) setActionIndex(parentIdx);
-          return;
-        }
-        // Right arrow on expanded skill-header: enter it (expand was already done)
-        if (key.rightArrow && node.type === "skill-header" && node.expanded) {
-          // Move cursor to first child
-          const childIdx = actionIndex + 1;
-          if (childIdx < namespaceTreeNodes.length) setActionIndex(childIdx);
           return;
         }
         // Enter on action nodes: dispatch
@@ -1916,8 +1927,6 @@ export function App() {
           store.notify, store.clearNotification,
         );
         await useStore.getState().loadInstalledPlugins({ silent: true });
-        setDetailSkill(null);
-        closeDetail();
       },
       uninstallSkillFromInstance: async (skill, toolId, instanceId) => {
         const store = useStore.getState();
@@ -2060,10 +2069,7 @@ export function App() {
         );
         await useStore.getState().loadInstalledPlugins({ silent: true });
       },
-      openSkillDetail: (skill) => {
-        setDetail({ kind: "skill", data: skill });
-        setActionIndex(0);
-      },
+      openSkillDetail,
       deletePluginEverywhere: async (plugin) => {
         const store = useStore.getState();
         await withSpinner(

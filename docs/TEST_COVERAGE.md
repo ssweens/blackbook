@@ -3,7 +3,7 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 472
+- **Total Tests:** 477
 - **Test Files:** 41
 
 ## Critical Paths
@@ -40,6 +40,9 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Conflict detection for both-changed files
 - [x] Cleanup detection of orphaned state entries
 - [x] Plugin install/remove via module wrappers
+- [x] Unified action dispatch refresh contract for skill uninstall-all (non-destructive action keeps detail state fresh)
+- [x] Sync flow refreshes open detail after file sync mutations
+- [x] Non-flat tool standalone scan compatibility: detects legacy flat skill layout on disk and maps namespace from source repo (Pi `ssmp` case)
 
 ## Boundaries
 - [x] Marketplace fetch (remote marketplace.json)
