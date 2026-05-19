@@ -80,6 +80,7 @@ import {
   syncPluginInstances,
   manifestPath,
   removeClaudeMarketplace,
+  groupSkillsByNamespace,
 } from "./install.js";
 import { invalidatePluginToolStatusCache } from "./plugin-status.js";
 import type { PluginDrift } from "./plugin-drift.js";
@@ -751,6 +752,13 @@ export const useStore = create<Store>((rawSet, get) => {
       case "skill": {
         const fresh = state.standaloneSkills.find((s) => s.name === d.data.name);
         set({ detail: fresh ? { kind: "skill", data: fresh } : null });
+        return;
+      }
+      case "namespace": {
+        const fresh = groupSkillsByNamespace(state.standaloneSkills).find(
+          (n) => n.name === d.data.name
+        );
+        set({ detail: fresh ? { kind: "namespace", data: fresh } : null });
         return;
       }
       case "piPackage": {

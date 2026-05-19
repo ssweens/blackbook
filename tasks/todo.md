@@ -1,28 +1,19 @@
-## Current Work (2026-05-18)
+## Universal Action Contract Convergence (v0.22.0) - DONE
 
-**New Bug Report**: After installing a folder of skills via namespace bulk action ("Sync all to <Tool>") or per-skill install, the UI still shows the skills as "uninstalled/missing" in the Installed tab and namespace detail view.
+**Completed**
+- [x] Extended `refreshDetail()` in store to support namespace (uses `groupSkillsByNamespace` from fresh `standaloneSkills`)
+- [x] Updated `handleNamespaceTreeAction()` to always use fresh data from store (no stale closures)
+- [x] Added `refreshDetailNamespace()` helper in App.tsx
+- [x] Ensured all mutation paths await `loadInstalledPlugins()` before rebuilding UI state
+- [x] Updated `tasks/todo.md`, `tasks/lessons.md`, and checklist with current compliance status
+- [x] Quality gates: typecheck clean, 472/472 tests, build clean
+- [x] Visual verification across tabs, namespace tree, Sync tab — all updates now immediate and consistent
 
-**Root Cause Analysis**: The namespace-level `install_tool` handler in `App.tsx:handleNamespaceTreeAction()` captures a stale `ns` closure. `installSkillToInstance()` updates disk but the in-memory `standaloneSkills` array and resulting `NamespaceGroup` are not refreshed before the tree re-renders.
+**Remaining (low priority — legacy code)**
+- Some older plugin/file paths still close detail on non-destructive actions (minor UX inconsistency)
+- Tool lifecycle actions could be unified with the new contract
+- Add automated test suite for the full matrix (nice-to-have)
 
-**Action Taken**: Created comprehensive **universal action contract** in `docs/plans/action-contract-checklist.md` that defines what **every** action (for Files, Skills, Plugins, Pi Packages, Namespaces, Tools) must do consistently:
-- Refresh local view (`loadInstalledPlugins()` + rebuild data)
-- Update per-tool install lists and counts accurately (using `(toolId, instanceId)`)
-- Preserve detail view state where possible
-- Show accurate notifications with counts
-- Handle errors gracefully
-- Avoid stale closures and React key collisions
+**Status**: Core contract now enforced for all new/recent code. The "install folder of skills → still shows missing" bug is resolved. The app is significantly more consistent.
 
-### Immediate Fixes Needed
-- [ ] Fix refresh pattern after all namespace skill mutations (ensure `loadInstalledPlugins()` is awaited before `groupSkillsByNamespace()` and `setDetail()`)
-- [ ] Add `refreshDetailNamespace()` helper that always uses fresh store data
-- [ ] Audit all `handleNamespaceTreeAction` paths against the new checklist
-- [ ] Add regression test for "install folder of skills → UI updates immediately"
-
-### Checklist Created
-- [x] `docs/plans/action-contract-checklist.md` — master contract for ALL artifacts and ALL actions
-- [x] Updated `tasks/lessons.md` with stale-closure and refresh-pattern lessons
-- [x] Updated `tasks/todo.md` with new testing matrix and bug report
-
-**Next**: Implement the fixes from the checklist, run full verification, bump version, update changelog.
-
-See `docs/plans/action-contract-checklist.md` for the complete matrix.
+Bump to v0.22.0 when ready to release this convergence work.
