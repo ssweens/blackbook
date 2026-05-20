@@ -23,7 +23,7 @@ export type PluginAction = ItemAction;
 
 export interface FileAction {
   label: string;
-  type: "diff" | "missing" | "sync" | "pullback" | "back" | "status" | "delete_everywhere";
+  type: "diff" | "missing" | "sync" | "pullback" | "back" | "status" | "remove_from_git" | "delete_everywhere";
   instance?: DiffInstanceSummary | DiffInstanceRef;
   statusColor?: "green" | "yellow" | "gray" | "red" | "magenta";
   statusLabel?: string;
@@ -136,6 +136,9 @@ export function buildPluginActions(
     // Bulk actions
     if (plugin.prescriptionStatus === "no-longer-in-marketplace" || plugin.prescriptionStatus === "marketplace-removed") {
       actions.push({ id: "track", label: "Track in source repo", type: "track" });
+    }
+    if (plugin.prescriptionStatus === "in-git") {
+      actions.push({ id: "remove_from_git", label: "Remove from git (source repo prescription)", type: "remove_from_git" });
     }
     actions.push({ id: "uninstall", label: "Uninstall from all tools", type: "uninstall" });
     const updateLabel = plugin.hasUpdate && plugin.installedVersion && plugin.latestVersion
@@ -305,6 +308,11 @@ export function getFileActions(file: FileStatus): FileAction[] {
   actions.push({ label: "Back to list", type: "back" });
 
   actions.push({
+    label: "Remove from git (source file + config entry)",
+    type: "remove_from_git",
+  });
+
+  actions.push({
     label: "🗑  Delete everywhere (all tools + source repo + config.yaml entry)",
     type: "delete_everywhere",
     statusColor: "red",
@@ -326,6 +334,14 @@ export function getPiPackageActions(pkg: PiPackage): ItemAction[] {
     actions.push({ id: "install", label: "Install", type: "install" });
   }
   actions.push({ id: "back", label: "Back to list", type: "back" });
+
+  if (pkg.recommended) {
+    actions.push({
+      id: "remove_from_git",
+      label: "Remove from git (config prescription only)",
+      type: "remove_from_git",
+    });
+  }
 
   if (pkg.installed || pkg.recommended) {
     actions.push({
@@ -491,6 +507,14 @@ export function getSkillActions(skill: StandaloneSkill): ItemAction[] {
 
   actions.push({ id: "back", label: "Back to list", type: "back" });
 
+  if (skill.sourcePath) {
+    actions.push({
+      id: "remove_from_git",
+      label: "Remove from git (source repo copy only)",
+      type: "remove_from_git",
+    });
+  }
+
   // Destructive "delete everywhere" — placed AFTER "Back to list" so it's the last
   // item, requiring intentional navigation to reach.
   const sourceFragment = skill.sourcePath ? " + source repo" : "";
@@ -572,6 +596,15 @@ export function getNamespaceActions(ns: import("./install.js").NamespaceGroup): 
   }
 
   actions.push({ id: "back", label: "Back to list", type: "back" });
+
+  const trackedCount = ns.skills.filter((s) => s.sourcePath).length;
+  if (trackedCount > 0) {
+    actions.push({
+      id: "remove_from_git",
+      label: `Remove from git (${trackedCount} source repo skill${trackedCount === 1 ? "" : "s"})`,
+      type: "remove_from_git",
+    });
+  }
 
   actions.push({
     id: "delete_everywhere",

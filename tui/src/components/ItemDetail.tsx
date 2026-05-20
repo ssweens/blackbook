@@ -36,6 +36,7 @@ export interface ItemAction {
     | "uninstall_tool"
     | "pullback"
     | "track"
+    | "remove_from_git"
     | "delete_everywhere"
     | "open_skill"
     | "back";
@@ -185,7 +186,8 @@ function getActionColor(type: ItemAction["type"]): string {
       return "cyan";
     case "pullback":
     case "track":
-      return "cyan";
+    case "remove_from_git":
+      return "yellow";
     default:
       return "white";
   }

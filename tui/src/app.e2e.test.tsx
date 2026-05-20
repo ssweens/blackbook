@@ -635,6 +635,57 @@ describe("App E2E — Installed Tab", () => {
     }
   });
 
+  it("shows both installed and in-git-not-installed pi package variants in alphabetical default order", async () => {
+    useStore.setState({
+      tab: "installed",
+      installedPlugins: [],
+      sortBy: "default",
+      sortDir: "asc",
+      selectedIndex: 0,
+      piPackages: [
+        createPiPackage({
+          name: "pi-web-access",
+          source: "npm:pi-web-access",
+          sourceType: "npm",
+          installed: false,
+          recommended: true,
+          marketplace: "npm",
+        }),
+        createPiPackage({
+          name: "pi-web-access",
+          source: "../../src/pi-packages/pi-web-access",
+          sourceType: "local",
+          installed: true,
+          marketplace: "local",
+          recommended: false,
+        }),
+        createPiPackage({
+          name: "pi-btw",
+          source: "../../src/pi-packages/pi-btw",
+          sourceType: "local",
+          installed: true,
+          marketplace: "local",
+          recommended: false,
+        }),
+      ],
+    });
+    const { stdout, unmount } = render(<App />);
+    try {
+      const frame = await waitForFrame(stdout.lastFrame, (f) =>
+        f.includes("Pi Packages") &&
+        f.includes("❯ pi-btw") &&
+        f.includes("pi-web-access") &&
+        f.includes("· local") &&
+        f.includes("· npm") &&
+        f.includes("in git") &&
+        f.includes("not in git")
+      );
+      expect(frame).toContain("Pi Packages");
+    } finally {
+      unmount();
+    }
+  });
+
   it("plugin detail shows Instances section with metadata", async () => {
     useStore.setState({
       tab: "installed",

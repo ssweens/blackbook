@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, watch, writeFileSync } from "fs";
+import { execFileSync } from "child_process";
 import { dirname, join } from "path";
 
 /**
@@ -32,7 +33,7 @@ import type {
   ManagedToolRow,
   ToolDetectionResult,
 } from "./types.js";
-import { fetchMarketplace, loadAllPiMarketplaces, getAllPiPackages, loadPiSettings, isPackageInstalled, fetchNpmPackageDetails, getGlobalPiPackageInstallInfo, getSourceType } from "./marketplace.js";
+import { fetchMarketplace, loadAllPiMarketplaces, getAllPiPackages, loadPiSettings, isPackageInstalled, fetchNpmPackageDetails, getGlobalPiPackageInstallInfo, getSourceType, normalizePiPackageSource } from "./marketplace.js";
 import { installPiPackage, removePiPackage, updatePiPackage, repairPiPackageManager } from "./pi-install.js";
 import {
   parseMarketplaces,
@@ -107,6 +108,7 @@ interface Actions {
   uninstallPlugin: (plugin: Plugin) => Promise<boolean>;
   updatePlugin: (plugin: Plugin) => Promise<boolean>;
   trackPluginInSource: (plugin: Plugin) => Promise<boolean>;
+  removePluginFromGit: (plugin: Plugin) => Promise<boolean>;
   setDetailPlugin: (plugin: Plugin | null) => void;
   setDetailMarketplace: (marketplace: Marketplace | null) => void;
   /** Unified detail setter. Replaces setDetailPlugin/etc. */
@@ -130,6 +132,7 @@ interface Actions {
   updatePiPackage: (pkg: PiPackage) => Promise<boolean>;
   repairPiPackage: (pkg: PiPackage) => Promise<boolean>;
   trackPiPackageInSource: (pkg: PiPackage) => Promise<boolean>;
+  removePiPackageFromGit: (pkg: PiPackage) => Promise<boolean>;
   deletePiPackageEverywhere: (pkg: PiPackage) => Promise<boolean>;
   setDetailPiPackage: (pkg: PiPackage | null) => Promise<void>;
   togglePiMarketplaceEnabled: (name: string) => Promise<void>;
@@ -349,8 +352,8 @@ function getSourceRepoBlackbookConfigPath(config: ReturnType<typeof loadYamlConf
 }
 
 function removePiPackageSpec(source: string, specs: PiPackageSpec[]): { specs: PiPackageSpec[]; removed: boolean } {
-  const sourceKey = source.toLowerCase();
-  const specsAfterDelete = specs.filter((entry) => entry.source.toLowerCase() !== sourceKey);
+  const sourceKey = normalizePiPackageSource(source);
+  const specsAfterDelete = specs.filter((entry) => normalizePiPackageSource(entry.source) !== sourceKey);
   return { specs: specsAfterDelete, removed: specsAfterDelete.length < specs.length };
 }
 
@@ -358,9 +361,17 @@ function inferPackageNameFromSource(source: string): string {
   const trimmed = source.trim().replace(/\/$/, "");
   if (trimmed.startsWith("npm:")) return trimmed.slice(4);
   if (trimmed.startsWith("git:")) return inferPackageNameFromSource(trimmed.slice(4));
+
   const withoutGit = trimmed.replace(/\.git$/, "");
+
+  // For filesystem paths, use the final path segment.
+  if (withoutGit.startsWith("/") || withoutGit.startsWith("./") || withoutGit.startsWith("../")) {
+    const parts = withoutGit.split("/").filter(Boolean);
+    return parts[parts.length - 1] ?? withoutGit;
+  }
+
   const match = withoutGit.match(/([^/@:]+\/[^/@:]+|[^/@:]+)$/);
-  return match ? match[1] : trimmed;
+  return match ? match[1] : withoutGit;
 }
 
 function ensurePluginJson(pluginDir: string, plugin: Plugin): void {
@@ -375,6 +386,19 @@ function ensurePluginJson(pluginDir: string, plugin: Plugin): void {
     commands: plugin.commands,
     agents: plugin.agents,
   }, null, 2));
+}
+
+function removeFromSourceRepoMarketplace(sourceRepo: string, pluginName: string): void {
+  const marketplacePath = join(sourceRepo, ".claude-plugin", "marketplace.json");
+  if (!existsSync(marketplacePath)) return;
+  try {
+    const marketplace = JSON.parse(readFileSync(marketplacePath, "utf-8"));
+    if (!Array.isArray(marketplace.plugins)) return;
+    marketplace.plugins = (marketplace.plugins as Array<Record<string, unknown>>).filter(
+      (p) => p.name !== pluginName,
+    );
+    writeFileSync(marketplacePath, JSON.stringify(marketplace, null, 2) + "\n");
+  } catch { /* ignore */ }
 }
 
 function upsertSourceRepoMarketplacePlugin(sourceRepo: string, plugin: Plugin): void {
@@ -1087,10 +1111,12 @@ export const useStore = create<Store>((rawSet, get) => {
       const settings = loadPiSettings();
       const installInfo = getGlobalPiPackageInstallInfo();
       const desiredSpecs = loadDesiredPiPackageSpecs();
-      const desiredBySource = new Map(desiredSpecs.map((spec) => [spec.source.toLowerCase(), spec]));
+      const desiredBySource = new Map(
+        desiredSpecs.map((spec) => [normalizePiPackageSource(spec.source), spec]),
+      );
 
       packages = packages.map((pkg) => {
-        const desired = desiredBySource.get(pkg.source.toLowerCase());
+        const desired = desiredBySource.get(normalizePiPackageSource(pkg.source));
         if (!desired) return pkg;
         return {
           ...pkg,
@@ -1101,54 +1127,79 @@ export const useStore = create<Store>((rawSet, get) => {
         };
       });
 
-      const existingSources = new Set(packages.map((p) => p.source.toLowerCase()));
+      const existingSources = new Set(
+        packages.map((p) => normalizePiPackageSource(p.source)),
+      );
 
       // Add repo-prescribed packages that aren't in any marketplace or local scan.
       for (const spec of desiredSpecs) {
-        const normalizedSource = spec.source.toLowerCase();
+        const normalizedSource = normalizePiPackageSource(spec.source);
         if (existingSources.has(normalizedSource)) continue;
         const pkg = await createPiPackageFromSpec(spec, preferredManager, settings, installInfo);
         packages.push(pkg);
         existingSources.add(normalizedSource);
       }
 
-      // Add installed npm packages that aren't in any marketplace or desired list.
+      // Add installed packages that aren't in any marketplace or desired list.
       for (const source of settings.packages) {
-        if (existingSources.has(source.toLowerCase())) continue;
-        if (!source.startsWith("npm:")) continue;
+        const normalizedSource = normalizePiPackageSource(source);
+        if (existingSources.has(normalizedSource)) continue;
 
-        // Fetch package details from npm
-        const pkgName = source.slice(4);
-        const details = await fetchNpmPackageDetails(pkgName);
-        if (!details) continue;
+        const sourceType = getSourceType(source);
+        if (sourceType === "npm") {
+          // Fetch package details from npm when possible.
+          const pkgName = source.slice(4);
+          const details = await fetchNpmPackageDetails(pkgName);
+          if (!details) continue;
 
-        const detected = installInfo.get(pkgName);
-        const installedVersion = detected?.version ?? undefined;
-        const latestVersion = details.version ?? "0.0.0";
-        const pkg: PiPackage = {
-          name: details.name ?? pkgName,
-          description: details.description ?? "",
-          version: latestVersion,
+          const detected = installInfo.get(pkgName);
+          const installedVersion = detected?.version ?? undefined;
+          const latestVersion = details.version ?? "0.0.0";
+
+          const pkg: PiPackage = {
+            name: details.name ?? pkgName,
+            description: details.description ?? "",
+            version: latestVersion,
+            source,
+            sourceType: "npm",
+            marketplace: "npm",
+            installed: true,
+            installedVersion,
+            hasUpdate: Boolean(installedVersion && installedVersion !== latestVersion),
+            installedVia: detected?.via,
+            installedViaManagers: detected?.viaManagers,
+            managerMismatch: Boolean(detected?.managerMismatch),
+            preferredManager,
+            extensions: details.extensions ?? [],
+            skills: details.skills ?? [],
+            prompts: details.prompts ?? [],
+            themes: details.themes ?? [],
+            homepage: details.homepage,
+            repository: details.repository,
+            author: details.author,
+            license: details.license,
+          };
+          packages.push(pkg);
+          existingSources.add(normalizedSource);
+          continue;
+        }
+
+        // Include installed git/local packages even when they are not marketplace-listed.
+        packages.push({
+          name: inferPackageNameFromSource(source),
+          description: "Installed Pi package",
+          version: "0.0.0",
           source,
-          sourceType: "npm",
-          marketplace: "npm",
+          sourceType,
+          marketplace: sourceType,
           installed: true,
-          installedVersion,
-          hasUpdate: Boolean(installedVersion && installedVersion !== latestVersion),
-          installedVia: detected?.via,
-          installedViaManagers: detected?.viaManagers,
-          managerMismatch: Boolean(detected?.managerMismatch),
           preferredManager,
-          extensions: details.extensions ?? [],
-          skills: details.skills ?? [],
-          prompts: details.prompts ?? [],
-          themes: details.themes ?? [],
-          homepage: details.homepage,
-          repository: details.repository,
-          author: details.author,
-          license: details.license,
-        };
-        packages.push(pkg);
+          extensions: [],
+          skills: [],
+          prompts: [],
+          themes: [],
+        });
+        existingSources.add(normalizedSource);
       }
 
       const state = get();
@@ -1295,6 +1346,55 @@ export const useStore = create<Store>((rawSet, get) => {
       return true;
     } catch (error) { notify(`Error updating ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error"); }
     return false;
+  },
+
+  removePiPackageFromGit: async (pkg) => {
+    const { notify } = get();
+    const configResult = loadYamlConfig();
+    if (configResult.errors.length > 0) {
+      notify(`Config load failed: ${configResult.errors[0].message}`, "error");
+      return false;
+    }
+    const localDelete = removePiPackageSpec(pkg.source, configResult.config.pi_packages);
+    const sourceConfigPath = getSourceRepoBlackbookConfigPath(configResult.config);
+    const shouldUpdateSource = Boolean(
+      sourceConfigPath && sourceConfigPath !== configResult.configPath && existsSync(sourceConfigPath),
+    );
+    const sourceConfigResult = shouldUpdateSource ? loadYamlConfig(sourceConfigPath!) : null;
+    const sourceDelete = sourceConfigResult
+      ? removePiPackageSpec(pkg.source, sourceConfigResult.config.pi_packages)
+      : { specs: [], removed: false };
+
+    if (localDelete.removed) {
+      saveYamlConfig({ ...configResult.config, pi_packages: localDelete.specs }, configResult.configPath);
+    }
+    if (sourceConfigResult && sourceDelete.removed) {
+      saveYamlConfig({ ...sourceConfigResult.config, pi_packages: sourceDelete.specs }, sourceConfigResult.configPath);
+    }
+
+    // Auto-commit and push the source repo config change.
+    if (sourceConfigPath && sourceDelete.removed && existsSync(join(dirname(sourceConfigPath), "..", "..", "..", ".git"))) {
+      const sourceRepo = sourceConfigPath.replace(/\/config\/blackbook\/config\.yaml$/, "");
+      if (existsSync(join(sourceRepo, ".git"))) {
+        try {
+          execFileSync("git", ["-C", sourceRepo, "add", sourceConfigPath], { encoding: "utf-8", timeout: 10000 });
+          execFileSync("git", ["-C", sourceRepo, "commit", "-m", `remove: ${pkg.name} Pi package from git`], { encoding: "utf-8", timeout: 10000 });
+          execFileSync("git", ["-C", sourceRepo, "push"], { encoding: "utf-8", timeout: 30000 });
+        } catch { /* git failure non-fatal */ }
+      }
+    }
+
+    await get().loadPiPackages({ silent: true });
+    get().refreshDetail();
+
+    const parts: string[] = [];
+    if (localDelete.removed) parts.push("config.yaml");
+    if (sourceDelete.removed) parts.push("source repo config");
+    notify(
+      `Removed ${pkg.name} from git: ${parts.join(", ") || "not found in config"}`,
+      parts.length > 0 ? "info" : "warning",
+    );
+    return true;
   },
 
   trackPiPackageInSource: async (pkg) => {
@@ -1852,6 +1952,7 @@ export const useStore = create<Store>((rawSet, get) => {
     const silent = options?.silent === true;
     clearSourceStatusCache();
     await get().loadMarketplaces();
+    await get().loadInstalledPlugins({ silent });
     await get().refreshToolDetection();
     await get().loadPiPackages({ silent });
     await get().loadFiles({ silent });
@@ -1949,6 +2050,41 @@ export const useStore = create<Store>((rawSet, get) => {
       notify(`✗ Failed to update ${plugin.name}: ${result.errors.join("; ")}`, "error");
     }
     return result.success;
+  },
+
+  removePluginFromGit: async (plugin) => {
+    const { notify } = get();
+    const sourceRepo = getConfigRepoPath();
+    if (!sourceRepo) {
+      notify("No source repo configured.", "error");
+      return false;
+    }
+    const pluginDir = join(sourceRepo, "plugins", plugin.name);
+    const marketplacePath = join(sourceRepo, ".claude-plugin", "marketplace.json");
+    const commitPaths: string[] = [];
+    if (existsSync(pluginDir)) {
+      try {
+        rmSync(pluginDir, { recursive: true, force: true });
+        commitPaths.push(pluginDir);
+      } catch (e) {
+        notify(`Failed to remove plugin dir: ${e instanceof Error ? e.message : String(e)}`, "error");
+        return false;
+      }
+    }
+    removeFromSourceRepoMarketplace(sourceRepo, plugin.name);
+    if (existsSync(marketplacePath)) commitPaths.push(marketplacePath);
+    if (commitPaths.length > 0 && existsSync(join(sourceRepo, ".git"))) {
+      try {
+        for (const p of commitPaths) {
+          execFileSync("git", ["-C", sourceRepo, "add", p], { encoding: "utf-8", timeout: 10000 });
+        }
+        execFileSync("git", ["-C", sourceRepo, "commit", "-m", `remove: ${plugin.name} from git`], { encoding: "utf-8", timeout: 10000 });
+        execFileSync("git", ["-C", sourceRepo, "push"], { encoding: "utf-8", timeout: 30000 });
+      } catch { /* git failure non-fatal */ }
+    }
+    await get().refreshAll({ silent: true });
+    notify(`Removed ${plugin.name} from git`, "info");
+    return true;
   },
 
   trackPluginInSource: async (plugin) => {

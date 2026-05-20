@@ -75,6 +75,13 @@ export interface DispatchCallbacks {
   // Plugin / file delete-everywhere
   deletePluginEverywhere?: (plugin: Plugin) => Promise<void>;
   deleteFileEverywhere?: (file: FileStatus) => Promise<void>;
+
+  // Remove from git (source-repo prescription/copy only — local installs untouched)
+  removePluginFromGit?: (plugin: Plugin) => Promise<void>;
+  removePiPackageFromGit?: (pkg: PiPackage) => Promise<void>;
+  removeFileFromGit?: (file: FileStatus) => Promise<void>;
+  removeSkillFromGit?: (skill: import("./install.js").StandaloneSkill) => Promise<void>;
+  removeNamespaceFromGit?: (ns: import("./install.js").NamespaceGroup) => Promise<void>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -162,6 +169,9 @@ export async function handleItemAction(
         return true;
       }
       return false;
+
+    case "remove_from_git":
+      return handleRemoveFromGit(item, callbacks);
 
     case "delete_everywhere":
       if (item._namespace && callbacks.deleteNamespaceEverywhere) {
@@ -408,5 +418,36 @@ async function handlePullbackAction(
     return true;
   }
 
+  return false;
+}
+
+async function handleRemoveFromGit(
+  item: ManagedItem,
+  callbacks: DispatchCallbacks,
+): Promise<boolean> {
+  if (item._namespace && callbacks.removeNamespaceFromGit) {
+    await callbacks.removeNamespaceFromGit(item._namespace);
+    callbacks.refreshDetailNamespace?.(item._namespace);
+    return true;
+  }
+  if (item._skill && callbacks.removeSkillFromGit) {
+    await callbacks.removeSkillFromGit(item._skill);
+    callbacks.refreshDetailSkill?.(item._skill);
+    return true;
+  }
+  if (item._plugin && callbacks.removePluginFromGit) {
+    await callbacks.removePluginFromGit(item._plugin);
+    callbacks.refreshDetailPlugin(item._plugin);
+    return true;
+  }
+  if (item._file && callbacks.removeFileFromGit) {
+    await callbacks.removeFileFromGit(item._file);
+    return true;
+  }
+  if (item._piPackage && callbacks.removePiPackageFromGit) {
+    await callbacks.removePiPackageFromGit(item._piPackage);
+    callbacks.refreshDetailPiPackage(item._piPackage);
+    return true;
+  }
   return false;
 }

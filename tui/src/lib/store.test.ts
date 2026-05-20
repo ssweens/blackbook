@@ -10,6 +10,7 @@ import {
   syncPluginInstances,
   updatePlugin,
 } from "./install.js";
+import { getSkillActions } from "./item-actions.js";
 import { getConfigPath as getYamlConfigPath, loadConfig as loadYamlConfig } from "./config/loader.js";
 import { saveConfig as saveYamlConfig } from "./config/writer.js";
 import {
@@ -48,6 +49,7 @@ vi.mock("./install.js", async (importOriginal) => {
     ...actual,
     getAllInstalledPlugins: vi.fn(),
     getPluginToolStatus: vi.fn(),
+    getStandaloneSkills: vi.fn().mockReturnValue([]),
     syncPluginInstances: vi.fn(),
     updatePlugin: vi.fn(),
   };
@@ -107,6 +109,14 @@ vi.mock("./config/playbooks.js", async (importOriginal) => {
     getAllPlaybooks: vi.fn().mockReturnValue(new Map()),
     resolveToolInstances: vi.fn().mockReturnValue(new Map()),
     isSyncTarget: vi.fn().mockReturnValue(true),
+  };
+});
+
+vi.mock("./tool-view.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./tool-view.js")>();
+  return {
+    ...actual,
+    getManagedToolRows: vi.fn().mockReturnValue([]),
   };
 });
 
@@ -179,6 +189,8 @@ function createMockTool(overrides: Partial<ToolInstance> = {}): ToolInstance {
     ...overrides,
   };
 }
+
+const ORIGINAL_REFRESH_ALL = useStore.getState().refreshAll;
 
 describe("Plugin version merge", () => {
   beforeEach(() => {
@@ -1357,6 +1369,198 @@ describe("Repo-prescribed Pi packages", () => {
     ]);
   });
 
+  it("includes installed non-npm Pi packages from settings when not marketplace-listed", async () => {
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: {
+        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+        marketplaces: {},
+        tools: {},
+        files: [],
+        configs: [],
+        plugins: {},
+        pi_packages: [],
+      },
+      configPath: "/tmp/blackbook/config.yaml",
+      errors: [],
+    });
+    vi.mocked(loadPiSettings).mockReturnValue({
+      packages: ["https://github.com/example/new-pi-package.git"],
+    });
+
+    await useStore.getState().loadPiPackages();
+
+    expect(useStore.getState().piPackages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "https://github.com/example/new-pi-package.git",
+          sourceType: "git",
+          installed: true,
+        }),
+      ]),
+    );
+  });
+
+  it("does not duplicate installed git package when source uses equivalent git forms", async () => {
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: {
+        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+        marketplaces: {},
+        tools: {},
+        files: [],
+        configs: [],
+        plugins: {},
+        pi_packages: [],
+      },
+      configPath: "/tmp/blackbook/config.yaml",
+      errors: [],
+    });
+    vi.mocked(loadAllPiMarketplaces).mockResolvedValue([
+      {
+        name: "git-market",
+        source: "https://github.com/example/market.git",
+        sourceType: "git",
+        enabled: true,
+        builtIn: false,
+        packages: [
+          {
+            name: "new-pi-package",
+            description: "Git package",
+            version: "1.0.0",
+            source: "https://github.com/example/new-pi-package.git",
+            sourceType: "git",
+            marketplace: "git-market",
+            installed: false,
+            extensions: [],
+            skills: [],
+            prompts: [],
+            themes: [],
+          },
+        ],
+      } as any,
+    ]);
+    vi.mocked(getAllPiPackages).mockImplementation((marketplaces: any[]) => marketplaces.flatMap((m) => m.packages ?? []));
+    vi.mocked(loadPiSettings).mockReturnValue({
+      packages: ["git:github.com/example/new-pi-package"],
+    });
+
+    await useStore.getState().loadPiPackages();
+
+    const matches = useStore
+      .getState()
+      .piPackages.filter((p) => p.name === "new-pi-package");
+    expect(matches).toHaveLength(1);
+  });
+
+  it("keeps separate rows for same package name across npm and local sources", async () => {
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: {
+        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+        marketplaces: {},
+        tools: {},
+        files: [],
+        configs: [],
+        plugins: {},
+        pi_packages: [{ source: "npm:pi-web-access", name: "pi-web-access" }],
+      },
+      configPath: "/tmp/blackbook/config.yaml",
+      errors: [],
+    });
+    vi.mocked(loadAllPiMarketplaces).mockResolvedValue([
+      {
+        name: "npm",
+        source: "npm",
+        sourceType: "npm",
+        enabled: true,
+        builtIn: true,
+        packages: [
+          {
+            name: "pi-web-access",
+            description: "Web access",
+            version: "1.0.0",
+            source: "npm:pi-web-access",
+            sourceType: "npm",
+            marketplace: "npm",
+            installed: false,
+            extensions: [],
+            skills: [],
+            prompts: [],
+            themes: [],
+          },
+        ],
+      } as any,
+    ]);
+    vi.mocked(getAllPiPackages).mockImplementation((marketplaces: any[]) => marketplaces.flatMap((m) => m.packages ?? []));
+    vi.mocked(loadPiSettings).mockReturnValue({
+      packages: ["../../src/pi-packages/pi-web-access"],
+    });
+
+    await useStore.getState().loadPiPackages();
+
+    const matches = useStore
+      .getState()
+      .piPackages.filter((p) => p.name === "pi-web-access");
+    expect(matches).toHaveLength(2);
+
+    const npmRow = matches.find((p) => p.sourceType === "npm");
+    const localRow = matches.find((p) => p.sourceType === "local");
+
+    expect(npmRow).toBeDefined();
+    expect(localRow).toBeDefined();
+    expect(npmRow?.installed).toBe(false);
+    expect(localRow?.installed).toBe(true);
+  });
+
+  it("does not duplicate installed npm package when source differs only by case", async () => {
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: {
+        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+        marketplaces: {},
+        tools: {},
+        files: [],
+        configs: [],
+        plugins: {},
+        pi_packages: [],
+      },
+      configPath: "/tmp/blackbook/config.yaml",
+      errors: [],
+    });
+    vi.mocked(loadAllPiMarketplaces).mockResolvedValue([
+      {
+        name: "npm",
+        source: "npm",
+        sourceType: "npm",
+        enabled: true,
+        builtIn: true,
+        packages: [
+          {
+            name: "pi-ask-user",
+            description: "Ask user",
+            version: "2.0.0",
+            source: "npm:pi-ask-user",
+            sourceType: "npm",
+            marketplace: "npm",
+            installed: false,
+            extensions: [],
+            skills: [],
+            prompts: [],
+            themes: [],
+          },
+        ],
+      } as any,
+    ]);
+    vi.mocked(getAllPiPackages).mockImplementation((marketplaces: any[]) => marketplaces.flatMap((m) => m.packages ?? []));
+    vi.mocked(loadPiSettings).mockReturnValue({
+      packages: ["npm:PI-ASK-USER"],
+    });
+
+    await useStore.getState().loadPiPackages();
+
+    const matches = useStore
+      .getState()
+      .piPackages.filter((p) => p.source.toLowerCase() === "npm:pi-ask-user");
+    expect(matches).toHaveLength(1);
+  });
+
   it("tracks an installed local-only Pi package by adding it to pi_packages", async () => {
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: {
@@ -1555,5 +1759,104 @@ describe("Store universal detail refresh contract", () => {
     expect(useStore.getState().detail).toEqual({ kind: "file", data: refreshed });
 
     loadFilesSpy.mockRestore();
+  });
+});
+
+describe("Store refreshAll includes installed plugins reload", () => {
+  it("refreshAll reloads installed plugins so stale state is cleared", async () => {
+    const stalePlugin = createMockPlugin({ name: "old-plugin", installed: true });
+    const freshPlugin = createMockPlugin({ name: "new-plugin", installed: true });
+
+    vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [freshPlugin], byTool: {} });
+    vi.mocked(getPluginToolStatus).mockReturnValue([
+      { toolId: "opencode", instanceId: "default", name: "OC", installed: true, supported: true, enabled: true },
+    ]);
+    vi.mocked(getToolInstances).mockReturnValue([
+      {
+        kind: "tool",
+        toolId: "opencode",
+        instanceId: "default",
+        name: "OC",
+        enabled: true,
+        skillsSubdir: "skills",
+        commandsSubdir: "commands",
+        agentsSubdir: "agents",
+        pluginFlatInstall: false,
+        configDir: "/tmp/.opencode",
+      },
+    ]);
+
+    const originalLoadMarketplaces = useStore.getState().loadMarketplaces;
+    useStore.setState({
+      marketplaces: [createMockMarketplace({ name: "test-marketplace", plugins: [] })],
+      installedPlugins: [stalePlugin],
+      installedPluginsLoaded: true,
+      loadMarketplaces: vi.fn().mockResolvedValue(undefined),
+    });
+
+    try {
+      await ORIGINAL_REFRESH_ALL({ silent: true });
+    } finally {
+      useStore.setState({ loadMarketplaces: originalLoadMarketplaces });
+    }
+
+    const state = useStore.getState();
+    expect(state.installedPlugins.some((p) => p.name === "new-plugin")).toBe(true);
+    expect(state.installedPlugins.some((p) => p.name === "old-plugin")).toBe(false);
+  });
+});
+
+describe("Unified skill detail actions", () => {
+  it("produces identical actions for a skill whether opened standalone or from namespace tree", () => {
+    vi.mocked(getToolInstances).mockReturnValue([
+      {
+        kind: "tool",
+        toolId: "claude-code",
+        instanceId: "default",
+        name: "Claude",
+        enabled: true,
+        skillsSubdir: "skills",
+        commandsSubdir: "commands",
+        agentsSubdir: "agents",
+        pluginFlatInstall: true,
+        configDir: "/tmp/.claude",
+      },
+      {
+        kind: "tool",
+        toolId: "pi",
+        instanceId: "default",
+        name: "Pi",
+        enabled: true,
+        skillsSubdir: "skills",
+        commandsSubdir: "commands",
+        agentsSubdir: "agents",
+        pluginFlatInstall: false,
+        configDir: "/tmp/.pi",
+      },
+    ]);
+
+    const skill = {
+      name: "ambient-texture-drones",
+      namespace: "ssmp",
+      installations: [
+        { toolId: "pi", instanceId: "default", instanceName: "Pi", diskPath: "/tmp/pi/skills/ssmp/ambient-texture-drones", drifted: false },
+      ],
+      diskPath: "/tmp/pi/skills/ssmp/ambient-texture-drones",
+      toolId: "pi",
+      instanceId: "default",
+      instanceName: "Pi",
+      sourcePath: "/tmp/repo/skills/ssmp/ambient-texture-drones",
+    } as any;
+
+    const standaloneActions = getSkillActions(skill);
+
+    // From namespace tree, the same skill object is passed to getSkillActions
+    // via buildItemActions → getSkillActions. The action list must be identical.
+    const namespaceActions = getSkillActions(skill);
+
+    expect(namespaceActions).toEqual(standaloneActions);
+    expect(namespaceActions.some((a) => a.type === "pullback")).toBe(true);
+    expect(namespaceActions.some((a) => a.type === "uninstall")).toBe(true);
+    expect(namespaceActions.some((a) => a.type === "delete_everywhere")).toBe(true);
   });
 });

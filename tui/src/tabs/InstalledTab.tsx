@@ -193,18 +193,11 @@ export function InstalledTab() {
       : base;
     return [...filtered].sort((a, b) => {
       if (sortBy === "default") {
-        if (a.installed !== b.installed) return a.installed ? -1 : 1;
-        if (!a.installed && !b.installed) {
-          const aIsNpm = a.sourceType === "npm";
-          const bIsNpm = b.sourceType === "npm";
-          if (aIsNpm !== bIsNpm) return aIsNpm ? 1 : -1;
-          if (aIsNpm && bIsNpm) {
-            const aDownloads = a.weeklyDownloads ?? 0;
-            const bDownloads = b.weeklyDownloads ?? 0;
-            if (aDownloads !== bDownloads) return bDownloads - aDownloads;
-          }
-        }
-        return a.name.localeCompare(b.name);
+        const nameCmp = a.name.localeCompare(b.name);
+        if (nameCmp !== 0) return nameCmp;
+        const sourceTypeCmp = a.sourceType.localeCompare(b.sourceType);
+        if (sourceTypeCmp !== 0) return sourceTypeCmp;
+        return a.source.localeCompare(b.source);
       }
       if (sortBy === "name") {
         const cmp = a.name.localeCompare(b.name);

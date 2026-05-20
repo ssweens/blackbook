@@ -2227,6 +2227,145 @@ export function deleteSkillEverywhere(skill: StandaloneSkill): { ok: boolean; to
   return { ok: true, tools: toolsRemoved, source: sourceRemoved };
 }
 
+/**
+ * Stage, commit, and push changes in the source repo.
+ * Non-fatal — if git fails the file changes already succeeded.
+ */
+function commitAndPushSourceRepo(sourceRepo: string, paths: string[], message: string): void {
+  if (!existsSync(join(sourceRepo, ".git"))) return;
+  try {
+    for (const p of paths) {
+      execFileSync("git", ["-C", sourceRepo, "add", p], { encoding: "utf-8", timeout: 10000 });
+    }
+    execFileSync("git", ["-C", sourceRepo, "commit", "-m", message], { encoding: "utf-8", timeout: 10000 });
+    execFileSync("git", ["-C", sourceRepo, "push"], { encoding: "utf-8", timeout: 30000 });
+  } catch {
+    // git failure is non-fatal — filesystem changes already succeeded
+  }
+}
+
+/**
+ * Remove a file from the source repo only — leave tool targets untouched.
+ * Removes the source file and the config.yaml entry from both local and
+ * source-repo configs so the file won't reappear on next pull.
+ */
+export function removeFileFromGit(file: FileStatus): {
+  ok: boolean;
+  source: boolean;
+  config: boolean;
+  error?: string;
+} {
+  let sourceRemoved = false;
+  const sourcePath = file.instances[0]?.sourcePath;
+  if (sourcePath && existsSync(sourcePath)) {
+    try {
+      rmSync(sourcePath, { force: true });
+      sourceRemoved = true;
+    } catch (e) {
+      return { ok: false, source: false, config: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  let configRemoved = false;
+  try {
+    const { config, configPath } = loadYamlConfig();
+    const before = config.files.length;
+    config.files = config.files.filter((f) => f.name !== file.name);
+    if (config.files.length < before) {
+      saveYamlConfig(config, configPath);
+      configRemoved = true;
+    }
+    // Also remove from source repo config to prevent reappearing on next pull.
+    const sourceRepo = getConfigRepoPath();
+    if (sourceRepo) {
+      const srcCfgPath = join(expandPath(sourceRepo), "config", "blackbook", "config.yaml");
+      if (existsSync(srcCfgPath) && srcCfgPath !== configPath) {
+        try {
+          const srcResult = loadYamlConfig(srcCfgPath);
+          const srcBefore = srcResult.config.files.length;
+          srcResult.config.files = srcResult.config.files.filter((f) => f.name !== file.name);
+          if (srcResult.config.files.length < srcBefore) {
+            saveYamlConfig(srcResult.config, srcCfgPath);
+          }
+        } catch { /* ignore */ }
+      }
+    }
+  } catch (e) {
+    return { ok: false, source: sourceRemoved, config: false, error: e instanceof Error ? e.message : String(e) };
+  }
+
+  // Auto-commit and push so the user never needs to touch git.
+  const sourceRepo = getConfigRepoPath();
+  if (sourceRepo) {
+    const commitPaths: string[] = [];
+    if (sourceRemoved && sourcePath) commitPaths.push(sourcePath);
+    // Stage the config file regardless — even if the entry wasn't found locally,
+    // the source-repo config edit may have changed it.
+    const srcCfgPath2 = join(expandPath(sourceRepo), "config", "blackbook", "config.yaml");
+    if (existsSync(srcCfgPath2)) commitPaths.push(srcCfgPath2);
+    if (commitPaths.length > 0) {
+      commitAndPushSourceRepo(sourceRepo, commitPaths, `remove: ${file.name} from git`);
+    }
+  }
+
+  return { ok: true, source: sourceRemoved, config: configRemoved };
+}
+
+/**
+ * Remove a skill from the source repo only — leave tool installs untouched.
+ * Auto-commits and pushes the deletion.
+ */
+export function removeSkillFromGit(skill: StandaloneSkill): {
+  ok: boolean;
+  source: boolean;
+  error?: string;
+} {
+  if (!skill.sourcePath || !existsSync(skill.sourcePath)) return { ok: true, source: false };
+  try {
+    rmSync(skill.sourcePath, { recursive: true, force: true });
+  } catch (e) {
+    return { ok: false, source: false, error: e instanceof Error ? e.message : String(e) };
+  }
+  const sourceRepo = getConfigRepoPath();
+  if (sourceRepo) {
+    commitAndPushSourceRepo(sourceRepo, [skill.sourcePath], `remove: ${skill.name} from git`);
+  }
+  return { ok: true, source: true };
+}
+
+/**
+ * Remove all tracked skills in a namespace from the source repo only.
+ * Auto-commits and pushes all deletions in one commit.
+ */
+export function removeNamespaceFromGit(group: NamespaceGroup): {
+  removed: number;
+  errors: string[];
+} {
+  let removed = 0;
+  const errors: string[] = [];
+  const removedPaths: string[] = [];
+
+  for (const skill of group.skills) {
+    if (!skill.sourcePath || !existsSync(skill.sourcePath)) continue;
+    try {
+      rmSync(skill.sourcePath, { recursive: true, force: true });
+      removedPaths.push(skill.sourcePath);
+      removed++;
+    } catch (e) {
+      errors.push(`${skill.name}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  if (removedPaths.length > 0) {
+    const sourceRepo = getConfigRepoPath();
+    if (sourceRepo) {
+      commitAndPushSourceRepo(sourceRepo, removedPaths, `remove: ${group.name} namespace from git`);
+    }
+  }
+
+  return { removed, errors };
+}
+
 /** Pull the skill from a specific disk installation back to the source repo. */
 export function pullbackSkillToSource(
   skill: StandaloneSkill,

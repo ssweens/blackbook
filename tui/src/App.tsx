@@ -49,6 +49,9 @@ import {
   deleteSkillEverywhere,
   deletePluginEverywhere,
   deleteFileEverywhere,
+  removeFileFromGit,
+  removeSkillFromGit,
+  removeNamespaceFromGit,
   groupSkillsByNamespace,
   syncNamespaceToAllMissing,
   resyncNamespaceDrifted,
@@ -184,6 +187,7 @@ export function App() {
   const doUninstall = useStore((s) => s.uninstallPlugin);
   const doUpdate = useStore((s) => s.updatePlugin);
   const doTrackPlugin = useStore((s) => s.trackPluginInSource);
+  const doRemovePluginFromGit = useStore((s) => s.removePluginFromGit);
   const updateMarketplace = useStore((s) => s.updateMarketplace);
   const toggleMarketplaceEnabled = useStore((s) => s.toggleMarketplaceEnabled);
   const removeMarketplace = useStore((s) => s.removeMarketplace);
@@ -205,6 +209,7 @@ export function App() {
   const doUpdatePiPkg = useStore((s) => s.updatePiPackage);
   const doRepairPiPkg = useStore((s) => s.repairPiPackage);
   const doTrackPiPkg = useStore((s) => s.trackPiPackageInSource);
+  const doRemovePiPkgFromGit = useStore((s) => s.removePiPackageFromGit);
   const doDeletePiPkg = useStore((s) => s.deletePiPackageEverywhere);
   const togglePiMarketplaceEnabled = useStore((s) => s.togglePiMarketplaceEnabled);
   const addPiMarketplace = useStore((s) => s.addPiMarketplace);
@@ -514,7 +519,7 @@ export function App() {
     if (tab !== "discover" && tab !== "installed") return [];
 
     const lowerSearch = search.toLowerCase();
-    const base = tab === "installed" ? effectivePiPackages.filter((p) => p.installed) : effectivePiPackages;
+    const base = tab === "installed" ? effectivePiPackages.filter((p) => p.installed || p.recommended) : effectivePiPackages;
     let filtered = base;
     if (search) {
       filtered = base.filter(
@@ -527,28 +532,11 @@ export function App() {
 
     const sorted = [...filtered].sort((a, b) => {
       if (sortBy === "default") {
-        // Default sort: installed first (alpha), then local/git (alpha), then npm (by popularity)
-        // 1. Installed packages first
-        if (a.installed !== b.installed) {
-          return a.installed ? -1 : 1;
-        }
-        // 2. Among non-installed: local/git before npm
-        if (!a.installed && !b.installed) {
-          const aIsNpm = a.sourceType === "npm";
-          const bIsNpm = b.sourceType === "npm";
-          if (aIsNpm !== bIsNpm) {
-            return aIsNpm ? 1 : -1; // local/git comes first
-          }
-          // 3. Within same source type
-          if (aIsNpm && bIsNpm) {
-            // npm: sort by popularity (most popular first)
-            const aDownloads = a.weeklyDownloads ?? 0;
-            const bDownloads = b.weeklyDownloads ?? 0;
-            if (aDownloads !== bDownloads) return bDownloads - aDownloads;
-          }
-        }
-        // Fallback: alphabetical
-        return a.name.localeCompare(b.name);
+        const nameCmp = a.name.localeCompare(b.name);
+        if (nameCmp !== 0) return nameCmp;
+        const sourceTypeCmp = a.sourceType.localeCompare(b.sourceType);
+        if (sourceTypeCmp !== 0) return sourceTypeCmp;
+        return a.source.localeCompare(b.source);
       }
       if (sortBy === "name") {
         const cmp = a.name.localeCompare(b.name);
@@ -1905,6 +1893,9 @@ export function App() {
       uninstallPlugin: doUninstall,
       updatePlugin: doUpdate,
       trackPluginInSource: doTrackPlugin,
+      removePluginFromGit: async (plugin) => {
+        await doRemovePluginFromGit(plugin);
+      },
       installPluginToInstance: installPluginToInstanceCb,
       uninstallPluginFromInstance: uninstallPluginFromInstanceCb,
       refreshDetailPlugin,
@@ -1915,6 +1906,9 @@ export function App() {
       uninstallPiPackage: doUninstallPiPkg,
       updatePiPackage: doUpdatePiPkg,
       trackPiPackageInSource: doTrackPiPkg,
+      removePiPackageFromGit: async (pkg) => {
+        await doRemovePiPkgFromGit(pkg);
+      },
       deletePiPackageEverywhere: doDeletePiPkg,
       refreshDetailPiPackage,
       buildPluginDiffTarget: buildPluginDiffTargetCb,
@@ -2111,6 +2105,66 @@ export function App() {
         await useStore.getState().loadFiles({ silent: true });
         setDetailFile(null);
         closeDetail();
+      },
+      removeFileFromGit: async (file) => {
+        const store = useStore.getState();
+        await withSpinner(
+          `Removing ${file.name} from git...`,
+          async () => {
+            const result = removeFileFromGit(file);
+            if (result.ok) {
+              const parts: string[] = [];
+              if (result.source) parts.push("source file");
+              if (result.config) parts.push("config entry");
+              store.notify(
+                `Removed ${file.name} from git: ${parts.join(", ") || "nothing found"}`,
+                "info",
+              );
+            } else {
+              store.notify(`Remove from git failed: ${result.error}`, "error");
+            }
+          },
+          store.notify, store.clearNotification,
+        );
+        await useStore.getState().loadFiles({ silent: true });
+      },
+      removeSkillFromGit: async (skill) => {
+        const store = useStore.getState();
+        await withSpinner(
+          `Removing ${skill.name} from git...`,
+          async () => {
+            const result = removeSkillFromGit(skill);
+            if (result.ok) {
+              store.notify(
+                result.source
+                  ? `Removed ${skill.name} from git`
+                  : `${skill.name} has no source repo path to remove`,
+                result.source ? "info" : "warning",
+              );
+            } else {
+              store.notify(`Remove from git failed: ${result.error}`, "error");
+            }
+          },
+          store.notify, store.clearNotification,
+        );
+        await useStore.getState().loadInstalledPlugins({ silent: true });
+      },
+      removeNamespaceFromGit: async (ns) => {
+        const store = useStore.getState();
+        await withSpinner(
+          `Removing ${ns.name} from git...`,
+          async () => {
+            const result = removeNamespaceFromGit(ns);
+            const parts = [`${result.removed} skill${result.removed === 1 ? "" : "s"} removed`];
+            if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
+            store.notify(
+              `Removed ${ns.name} from git: ${parts.join(", ")}`,
+              result.errors.length > 0 ? "warning" : "info",
+            );
+          },
+          store.notify, store.clearNotification,
+        );
+        await useStore.getState().loadInstalledPlugins({ silent: true });
       },
       refreshDetailSkill: (skill) => {
         const refreshed = useStore.getState().standaloneSkills.find((s) => s.name === skill.name);

@@ -29,7 +29,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 477/477 passing (added contract enforcement tests + Pi standalone-scan compatibility regressions for flat->namespaced install/migration).
 - Full tmux visual verification completed for all tabs, namespace tree actions, multi-instance Claude, Sync tab (no ghosts, immediate updates, correct counts).
 
+[0.24.0]: https://github.com/ssweens/blackbook/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/ssweens/blackbook/compare/v0.21.4...v0.23.0
+
+## [0.24.0] - 2026-05-20
+
+### Added
+- **Remove from git** action in every artifact detail view (Pi packages, plugins, skills, namespaces, files).
+  - Removes the source-repo prescription/copy only — local tool installs are untouched.
+  - Auto-commits and pushes to the source repo immediately; no manual git steps required.
+  - **Pi package**: removes `pi_packages` prescription from `config.yaml` and source repo config, then git add/commit/push.
+  - **Plugin**: removes plugin dir and `marketplace.json` entry from source repo, then git add/commit/push.
+  - **Skill**: removes source repo skill dir, then git add/commit/push.
+  - **Namespace**: removes all tracked skill dirs in one commit+push.
+  - **File**: removes source file and `config.yaml` entry from both local and source repo config, then git add/commit/push.
+- **Installed tab Pi packages now always alphabetical** — default sort uses strict alphabetical order with stable `sourceType`/`source` tiebreakers; installed-first grouping removed.
+- **Installed tab shows prescribed (in git) Pi packages** even when not yet installed locally — base filter now includes `installed || recommended`.
+
+### Fixed
+- **Pi package install-state source-specific** — `loadPiSettings()` no longer merges global package-manager scan into settings, preventing a local `pi-web-access` install from incorrectly marking the npm `pi-web-access` row as installed.
+
+### Tests
+- 484/484 passing.
+- Added E2E regression: `shows both installed and in-git-not-installed pi package variants in alphabetical default order`.
 
 ## [Unreleased]
 

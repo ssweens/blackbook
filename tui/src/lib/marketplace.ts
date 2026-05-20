@@ -474,12 +474,6 @@ export function loadPiSettings(): PiSettings {
     // Ignore errors
   }
 
-  const pmPackages = getGlobalPiPackageVersions();
-  for (const pkgName of pmPackages.keys()) {
-    const source = `npm:${pkgName}`;
-    if (!packages.includes(source)) packages.push(source);
-  }
-
   return { packages };
 }
 
@@ -642,9 +636,24 @@ function resolvePackagePath(source: string): string {
   }
 }
 
+export function normalizePiPackageSource(source: string): string {
+  const sourceType = getSourceType(source);
+
+  if (sourceType === "npm") {
+    const name = source.startsWith("npm:") ? source.slice(4) : source;
+    return `npm:${name}`.toLowerCase();
+  }
+
+  if (sourceType === "git") {
+    return normalizeGitSource(source).toLowerCase();
+  }
+
+  return resolvePackagePath(source).toLowerCase();
+}
+
 export function isPackageInstalled(source: string, settings: PiSettings): boolean {
-  const normalizedSource = resolvePackagePath(source).toLowerCase();
-  return settings.packages.some((pkg) => resolvePackagePath(pkg).toLowerCase() === normalizedSource);
+  const normalizedSource = normalizePiPackageSource(source);
+  return settings.packages.some((pkg) => normalizePiPackageSource(pkg) === normalizedSource);
 }
 
 export function getSourceType(source: string): PiPackageSourceType {
@@ -654,7 +663,9 @@ export function getSourceType(source: string): PiPackageSourceType {
     trimmed.startsWith("git:") ||
     trimmed.startsWith("git@") ||
     trimmed.startsWith("https://github.com") ||
-    trimmed.endsWith(".git")
+    trimmed.startsWith("github.com/") ||
+    trimmed.endsWith(".git") ||
+    /^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+$/.test(trimmed)
   ) {
     return "git";
   }
