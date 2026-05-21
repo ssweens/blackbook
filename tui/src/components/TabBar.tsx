@@ -23,17 +23,15 @@ export function TabBar() {
         <React.Fragment key={tab.id}>
           {activeTab === tab.id ? (
             <>
-              <Text color="cyan">[</Text>
+              <Text color="cyan">[{i + 1}] </Text>
               <Text bold color="white">{tab.label}</Text>
-              <Text color="cyan">]</Text>
             </>
           ) : (
-            <Text color="gray">{tab.label}</Text>
+            <Text color="gray">{i + 1} {tab.label}</Text>
           )}
           {i < TABS.length - 1 && <Text>  </Text>}
         </React.Fragment>
       ))}
-      <Text color="gray">  (1-6 or tab to switch)</Text>
     </Box>
   );
 }

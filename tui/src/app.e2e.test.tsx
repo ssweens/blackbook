@@ -494,11 +494,11 @@ describe("App E2E — Tab Navigation", () => {
     useStore.setState({ tab: "installed", notifications: [] });
     const { stdout, unmount } = render(<App />);
     try {
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("[Installed]"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("[4] Installed"));
       useStore.setState({ tab: "marketplaces" });
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("[Marketplaces]"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("[5] Marketplaces"));
       useStore.setState({ tab: "settings" });
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("[Settings]"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("[6] Settings"));
     } finally {
       unmount();
     }
@@ -547,7 +547,7 @@ describe("App E2E — Tab Navigation", () => {
 
     const { stdout, unmount } = render(<App />);
     try {
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("[Installed]") && f.includes("test-plugin"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("[4] Installed") && f.includes("test-plugin"));
       await waitForFrame(stdout.lastFrame, () => loadInstalledPlugins.mock.calls.length === 1);
       expect(loadPiPackages).toHaveBeenCalledTimes(1);
       expect(loadFiles).toHaveBeenCalledTimes(1);
@@ -561,7 +561,7 @@ describe("App E2E — Tab Navigation", () => {
       act(() => {
         useStore.setState({ tab: "marketplaces" });
       });
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("[Marketplaces]"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("[5] Marketplaces"));
       await settleInput();
       expect(loadInstalledPlugins).not.toHaveBeenCalled();
       expect(loadPiPackages).not.toHaveBeenCalled();
@@ -573,7 +573,7 @@ describe("App E2E — Tab Navigation", () => {
       act(() => {
         useStore.setState({ tab: "tools" });
       });
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("[Tools]"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("[2] Tools"));
       await settleInput();
       expect(refreshToolDetection).not.toHaveBeenCalled();
       expect(refreshManagedTools).not.toHaveBeenCalled();
@@ -1275,7 +1275,7 @@ describe("App E2E — Settings Tab", () => {
     useStore.setState({ tab: "settings" });
     const { stdout, unmount } = render(<App />);
     try {
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("[Settings]"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("[6] Settings"));
     } finally {
       unmount();
     }
