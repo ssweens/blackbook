@@ -256,7 +256,13 @@ export function App() {
   const syncSelection = useStore((s) => s.syncSelection);
   const toggleSyncSelection = useStore((s) => s.toggleSyncSelection);
   const [searchFocused, setSearchFocused] = useState(false);
-  const syncPreview = useMemo(() => getSyncPreview(), [getSyncPreview]);
+  // Recompute when any data source the preview reads from changes. Without these
+  // deps, maxIndex (computed from syncPreview.length) freezes to the first render
+  // and caps cursor navigation — even though SyncTab itself renders the full list.
+  const syncPreview = useMemo(
+    () => getSyncPreview(),
+    [getSyncPreview, managedTools, toolDetection, files, installedPlugins, standaloneSkills, marketplaces, piPackages],
+  );
   const [marketplaceBrowseContext, setMarketplaceBrowseContext] = useState<Marketplace | null>(null);
   const [tabRefreshInProgress, setTabRefreshInProgress] = useState(false);
   const [showRefreshIndicator, setShowRefreshIndicator] = useState(false);

@@ -29,12 +29,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 477/477 passing (added contract enforcement tests + Pi standalone-scan compatibility regressions for flat->namespaced install/migration).
 - Full tmux visual verification completed for all tabs, namespace tree actions, multi-instance Claude, Sync tab (no ghosts, immediate updates, correct counts).
 
+[0.24.5]: https://github.com/ssweens/blackbook/compare/v0.24.4...v0.24.5
 [0.24.4]: https://github.com/ssweens/blackbook/compare/v0.24.3...v0.24.4
 [0.24.3]: https://github.com/ssweens/blackbook/compare/v0.24.2...v0.24.3
 [0.24.2]: https://github.com/ssweens/blackbook/compare/v0.24.1...v0.24.2
 [0.24.1]: https://github.com/ssweens/blackbook/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/ssweens/blackbook/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/ssweens/blackbook/compare/v0.21.4...v0.23.0
+
+## [0.24.5] - 2026-05-21
+
+### Fixed
+- Sync tab cursor capped partway through the list when more items loaded after first render. `syncPreview` memo in `App.tsx` only depended on the stable store action, so `maxIndex` froze to the initial batch even though `SyncTab` itself rendered the full list. Added the same data-source deps that `SyncTab` uses so the memo recomputes when files/plugins/skills/pi packages/marketplaces refresh.
 
 ## [0.24.4] - 2026-05-21
 
