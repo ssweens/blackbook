@@ -90,7 +90,15 @@ export const SyncList = React.memo(function SyncList({
           name = item.skill.namespace ? `${item.skill.namespace}/${item.skill.name}` : item.skill.name;
           const parts: string[] = [];
           if (item.missingInstances.length > 0) parts.push(`Missing: ${item.missingInstances.length}`);
-          if (item.driftedInstances.length > 0) parts.push(`Drifted: ${item.driftedInstances.length}`);
+          if (item.driftedInstances.length > 0) {
+            const dir = item.skill.gitStatus === "modified" ? "source" : item.skill.gitStatus === "clean" ? "disk" : null;
+            const dirLabel = dir ? ` (${dir})` : "";
+            if (item.driftedInstances.length === 1) {
+              parts.push(`Drifted on ${item.driftedInstances[0]}${dirLabel}`);
+            } else {
+              parts.push(`Drifted: ${item.driftedInstances.length}${dirLabel} (${item.driftedInstances.join(", ")})`);
+            }
+          }
           statusLabel = parts.join(" · ");
         } else if (item.kind === "piPackage") {
           name = item.piPackage.name;

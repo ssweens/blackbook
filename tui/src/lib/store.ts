@@ -2521,6 +2521,30 @@ export const useStore = create<Store>((rawSet, get) => {
       return;
     }
 
+    if (item.kind === "skill") {
+      const driftedInst = item.skill.installations.find((i) => i.drifted);
+      if (!driftedInst || !item.skill.sourcePath) {
+        get().notify("No drifted instance or source path available for this skill.", "warning");
+        return;
+      }
+      const sourcePath = join(item.skill.sourcePath, "SKILL.md");
+      const targetPath = join(driftedInst.diskPath, "SKILL.md");
+      const diffTarget = buildFileDiffTarget(
+        `${item.skill.name} · ${driftedInst.instanceName}`,
+        "SKILL.md",
+        sourcePath,
+        targetPath,
+        {
+          toolId: driftedInst.toolId,
+          instanceId: driftedInst.instanceId,
+          instanceName: driftedInst.instanceName,
+          configDir: driftedInst.diskPath,
+        },
+      );
+      set({ diffTarget });
+      return;
+    }
+
     if (item.kind === "file") {
       const drifted = item.file.instances.filter((i) => i.status === "drifted");
       const missing = item.file.instances.filter((i) => i.status === "missing");

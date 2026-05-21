@@ -74,7 +74,11 @@ export function buildSkillNodes(ns: NamespaceGroup): SkillNode[] {
     const parts: string[] = [];
     if (installations.length > 0) parts.push(`${installations.length} tool${installations.length === 1 ? "" : "s"}`);
     if (missingTools.length > 0) parts.push(`${missingTools.length} missing`);
-    if (hasDrift) parts.push("drifted");
+    if (hasDrift) {
+      const driftedNames = installations.filter((i) => i.drifted).map((i) => i.instanceName);
+      if (driftedNames.length === 1) parts.push(`drifted on ${driftedNames[0]}`);
+      else parts.push(`drifted (${driftedNames.join(", ")})`);
+    }
     const summary = parts.length > 0 ? parts.join(", ") : "not installed";
 
     return { skill, displayName, installations, missingTools, status, summary };

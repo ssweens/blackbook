@@ -29,9 +29,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 477/477 passing (added contract enforcement tests + Pi standalone-scan compatibility regressions for flat->namespaced install/migration).
 - Full tmux visual verification completed for all tabs, namespace tree actions, multi-instance Claude, Sync tab (no ghosts, immediate updates, correct counts).
 
+[0.24.2]: https://github.com/ssweens/blackbook/compare/v0.24.1...v0.24.2
 [0.24.1]: https://github.com/ssweens/blackbook/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/ssweens/blackbook/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/ssweens/blackbook/compare/v0.21.4...v0.23.0
+
+## [0.24.2] - 2026-05-20
+
+### Fixed
+- **Drifted skills now show which tool and which side drifted** in both Sync tab and namespace tree:
+  - Sync tab: `Drifted on Pi (disk)` or `Drifted on Pi (source)` based on git status heuristic.
+  - Namespace tree skill headers: `2 tools, 1 missing, drifted on Pi` instead of generic `drifted`.
+- **Press `d` on a drifted skill in Sync tab to open diff view** — `openDiffFromSyncItem` now handles skills, building a diff of `SKILL.md` (source vs disk) for the first drifted instance.
 
 ## [0.24.1] - 2026-05-20
 
