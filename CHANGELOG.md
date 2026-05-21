@@ -29,11 +29,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 477/477 passing (added contract enforcement tests + Pi standalone-scan compatibility regressions for flat->namespaced install/migration).
 - Full tmux visual verification completed for all tabs, namespace tree actions, multi-instance Claude, Sync tab (no ghosts, immediate updates, correct counts).
 
+[0.24.4]: https://github.com/ssweens/blackbook/compare/v0.24.3...v0.24.4
 [0.24.3]: https://github.com/ssweens/blackbook/compare/v0.24.2...v0.24.3
 [0.24.2]: https://github.com/ssweens/blackbook/compare/v0.24.1...v0.24.2
 [0.24.1]: https://github.com/ssweens/blackbook/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/ssweens/blackbook/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/ssweens/blackbook/compare/v0.21.4...v0.23.0
+
+## [0.24.4] - 2026-05-21
+
+### Changed
+- Diff file list now spells out `NEW in source → not yet in <instance>` for missing files and `EXTRA in <instance> → not in source` for extras, so a brand-new file is obvious instead of relying on the `[+]` glyph alone.
+- Updated legend to match.
 
 ## [0.24.3] - 2026-05-20
 

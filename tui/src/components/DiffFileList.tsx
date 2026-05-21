@@ -86,6 +86,12 @@ export function DiffFileList({ title, instanceName, files, onSelect, onClose, on
               <Text color={i === selected ? "cyan" : "white"}>
                 {file.displayPath.padEnd(maxPathLength + 2)}
               </Text>
+              {file.status === "missing" && (
+                <Text color="green" bold>NEW in source → not yet in {instanceName}  </Text>
+              )}
+              {file.status === "extra" && (
+                <Text color="red" bold>EXTRA in {instanceName} → not in source  </Text>
+              )}
               {file.status !== "binary" && (
                 <>
                   <Text color="green">+{file.linesAdded}</Text>
@@ -113,7 +119,7 @@ export function DiffFileList({ title, instanceName, files, onSelect, onClose, on
 
       <Box marginTop={1} flexDirection="column">
         <Text color="gray" dimColor>
-          [M] modified · [+] missing in instance · [-] extra in instance · [B] binary
+          [M] modified · [+] new (in source, not in instance) · [-] extra (in instance, not in source) · [B] binary
         </Text>
         <Box>
           <Text color="red">- </Text><Text color="gray" dimColor>instance ({instanceName})  </Text>
