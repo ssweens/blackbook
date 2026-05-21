@@ -29,10 +29,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 477/477 passing (added contract enforcement tests + Pi standalone-scan compatibility regressions for flat->namespaced install/migration).
 - Full tmux visual verification completed for all tabs, namespace tree actions, multi-instance Claude, Sync tab (no ghosts, immediate updates, correct counts).
 
+[0.24.3]: https://github.com/ssweens/blackbook/compare/v0.24.2...v0.24.3
 [0.24.2]: https://github.com/ssweens/blackbook/compare/v0.24.1...v0.24.2
 [0.24.1]: https://github.com/ssweens/blackbook/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/ssweens/blackbook/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/ssweens/blackbook/compare/v0.21.4...v0.23.0
+
+## [0.24.3] - 2026-05-20
+
+### Changed
+- **Single canonical skill-diff path** — extracted `buildSkillDiffTarget()` in `tui/src/lib/diff.ts` and wired it into every entry point that shows a skill detail view:
+  - **Sync tab**: `d` on drifted skill row.
+  - **Skill detail**: Enter on a drifted per-tool row (now `type: "diff"` instead of `"status"`).
+  - **Namespace tree**: Enter on a drifted skill-tool node.
+- No more divergent implementations — one helper, one behavior.
 
 ## [0.24.2] - 2026-05-20
 

@@ -70,6 +70,7 @@ export interface DispatchCallbacks {
   uninstallNamespaceFromInstance?: (ns: import("./install.js").NamespaceGroup, toolId: string, instanceId: string) => Promise<void>;
   pullbackNamespaceFromInstance?: (ns: import("./install.js").NamespaceGroup, toolId: string, instanceId: string) => Promise<void>;
   openSkillDetail?: (skill: import("./install.js").StandaloneSkill) => void;
+  openSkillDiff?: (skill: import("./install.js").StandaloneSkill, toolId: string, instanceId: string) => void;
   refreshDetailNamespace?: (ns: import("./install.js").NamespaceGroup) => void;
 
   // Plugin / file delete-everywhere
@@ -214,6 +215,12 @@ async function handleDiffAction(
 
   if (item._file) {
     callbacks.openDiffForFile(item._file, action.instance as DiffInstanceRef);
+    return true;
+  }
+
+  if (item._skill && callbacks.openSkillDiff) {
+    const inst = action.instance as DiffInstanceRef;
+    callbacks.openSkillDiff(item._skill, inst.toolId, inst.instanceId);
     return true;
   }
 

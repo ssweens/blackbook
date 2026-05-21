@@ -62,7 +62,7 @@ import {
 } from "./lib/install.js";
 import { resolvePluginSourcePaths, type PluginDrift } from "./lib/plugin-drift.js";
 import { computeItemDrift } from "./lib/item-drift.js";
-import { buildFileDiffTarget } from "./lib/diff.js";
+import { buildFileDiffTarget, buildSkillDiffTarget } from "./lib/diff.js";
 import { getToolLifecycleCommand, detectInstallMethodMismatch } from "./lib/tool-lifecycle.js";
 import { getPackageManager } from "./lib/config.js";
 import { setupSourceRepository, shouldShowSourceSetupWizard, pullSourceRepo } from "./lib/source-setup.js";
@@ -1480,8 +1480,15 @@ export function App() {
           void handleNamespaceTreeAction(node);
           return;
         }
-        // Enter on skill-tool status rows: no-op (informational)
-        if (key.return && node.type === "skill-tool") return;
+        // Enter on skill-tool status rows: open diff if drifted, else no-op
+        if (key.return && node.type === "skill-tool" && node.skill && node.toolInfo) {
+          if (node.toolStatusLabel === "Drifted") {
+            const diffTarget = buildSkillDiffTarget(node.skill, node.toolInfo.toolId, node.toolInfo.instanceId);
+            if (diffTarget) useStore.setState({ diffTarget });
+            else useStore.getState().notify("Skill has no source repo path to diff against.", "warning");
+          }
+          return;
+        }
       }
       // Up/down for namespace tree
       if (key.upArrow) {
@@ -2064,6 +2071,14 @@ export function App() {
         await useStore.getState().loadInstalledPlugins({ silent: true });
       },
       openSkillDetail,
+      openSkillDiff: (skill, toolId, instanceId) => {
+        const diffTarget = buildSkillDiffTarget(skill, toolId, instanceId);
+        if (!diffTarget) {
+          useStore.getState().notify("Skill has no source repo path to diff against.", "warning");
+          return;
+        }
+        useStore.setState({ diffTarget });
+      },
       deletePluginEverywhere: async (plugin) => {
         const store = useStore.getState();
         await withSpinner(

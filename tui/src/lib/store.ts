@@ -63,7 +63,7 @@ import { runCheck, runApply } from "./modules/orchestrator.js";
 import { fileCopyModule } from "./modules/file-copy.js";
 import { directorySyncModule } from "./modules/directory-sync.js";
 import { globCopyModule } from "./modules/glob-copy.js";
-import { buildFileDiffTarget, buildFileMissingSummary } from "./diff.js";
+import { buildFileDiffTarget, buildFileMissingSummary, buildSkillDiffTarget } from "./diff.js";
 import { buildStateKey } from "./state.js";
 import type { OrchestratorStep } from "./modules/orchestrator.js";
 import { getManagedToolRows } from "./tool-view.js";
@@ -2523,24 +2523,15 @@ export const useStore = create<Store>((rawSet, get) => {
 
     if (item.kind === "skill") {
       const driftedInst = item.skill.installations.find((i) => i.drifted);
-      if (!driftedInst || !item.skill.sourcePath) {
-        get().notify("No drifted instance or source path available for this skill.", "warning");
+      if (!driftedInst) {
+        get().notify("No drifted instance found for this skill.", "warning");
         return;
       }
-      const sourcePath = join(item.skill.sourcePath, "SKILL.md");
-      const targetPath = join(driftedInst.diskPath, "SKILL.md");
-      const diffTarget = buildFileDiffTarget(
-        `${item.skill.name} · ${driftedInst.instanceName}`,
-        "SKILL.md",
-        sourcePath,
-        targetPath,
-        {
-          toolId: driftedInst.toolId,
-          instanceId: driftedInst.instanceId,
-          instanceName: driftedInst.instanceName,
-          configDir: driftedInst.diskPath,
-        },
-      );
+      const diffTarget = buildSkillDiffTarget(item.skill, driftedInst.toolId, driftedInst.instanceId);
+      if (!diffTarget) {
+        get().notify("Skill has no source repo path to diff against.", "warning");
+        return;
+      }
       set({ diffTarget });
       return;
     }

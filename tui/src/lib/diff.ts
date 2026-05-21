@@ -405,6 +405,53 @@ export function buildFileDiffTarget(
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Skill diff — single canonical entry point reused by Sync tab, Skill detail,
+// and Namespace tree. Diffs the entire skill dir (SKILL.md + references).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface SkillDiffInput {
+  name: string;
+  sourcePath?: string;
+  installations: Array<{
+    toolId: string;
+    instanceId: string;
+    instanceName: string;
+    diskPath: string;
+    drifted?: boolean;
+  }>;
+}
+
+/**
+ * Build a DiffTarget for a skill installation. Source = source repo skill dir,
+ * target = on-disk skill dir. Returns null if no source path or no matching
+ * installation. Use this from every entry point that needs to show a skill diff
+ * — Sync tab, Skill detail, Namespace tree — so the behavior stays consistent.
+ */
+export function buildSkillDiffTarget(
+  skill: SkillDiffInput,
+  toolId: string,
+  instanceId: string,
+): DiffTarget | null {
+  if (!skill.sourcePath) return null;
+  const inst = skill.installations.find(
+    (i) => i.toolId === toolId && i.instanceId === instanceId,
+  );
+  if (!inst) return null;
+  return buildFileDiffTarget(
+    `${skill.name} · ${inst.instanceName}`,
+    skill.name,
+    skill.sourcePath,
+    inst.diskPath,
+    {
+      toolId: inst.toolId,
+      instanceId: inst.instanceId,
+      instanceName: inst.instanceName,
+      configDir: inst.diskPath,
+    },
+  );
+}
+
 export function buildFileMissingSummary(
   title: string,
   displayPath: string,

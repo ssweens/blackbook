@@ -373,13 +373,23 @@ export function getSkillActions(skill: StandaloneSkill): ItemAction[] {
     // Status combines presence + drift in one label so the user sees the
     // complete state at a glance. Yellow when drifted (still installed but
     // out of sync with source); green when synced.
+    // Drifted rows are `type: "diff"` so Enter opens the unified skill diff view
+    // (same path as Sync tab and Namespace tree).
     const isDrifted = inst.drifted === true;
     actions.push({
       id: `status_${inst.toolId}_${inst.instanceId}`,
       label: inst.instanceName,
-      type: "status",
+      type: isDrifted ? "diff" : "status",
       statusColor: isDrifted ? "yellow" : "green",
       statusLabel: isDrifted ? "Installed (drifted)" : "Installed (synced)",
+      instance: isDrifted
+        ? {
+            toolId: inst.toolId,
+            instanceId: inst.instanceId,
+            instanceName: inst.instanceName,
+            configDir: inst.diskPath,
+          }
+        : undefined,
     });
   }
 
