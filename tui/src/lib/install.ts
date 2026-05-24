@@ -31,6 +31,7 @@ import {
   setPluginComponentEnabled,
   parseMarketplaces,
 } from "./config.js";
+import { loadPiSettings, normalizePiPackageSource } from "./marketplace.js";
 import { loadConfig as loadYamlConfig } from "./config/loader.js";
 import { saveConfig as saveYamlConfig } from "./config/writer.js";
 import { getGitHubToken, isGitHubHost } from "./github.js";
@@ -149,6 +150,28 @@ async function ensureGitAvailable(): Promise<void> {
       "Git is required to download plugins but was not found. Install from https://git-scm.com/",
     );
   }
+}
+
+const PI_BRIDGE_REQUIRED_SOURCES = [
+  "npm:pi-claude-marketplace",
+  "npm:pi-subagents",
+  "npm:pi-mcp-adapter",
+] as const;
+
+function isPiPluginBridgeReady(): boolean {
+  const settings = loadPiSettings();
+  const installed = new Set(settings.packages.map((s) => normalizePiPackageSource(s)));
+  return PI_BRIDGE_REQUIRED_SOURCES.every((s) => installed.has(normalizePiPackageSource(s)));
+}
+
+async function runPiBridgePluginCommand(instance: ToolInstance, command: string): Promise<void> {
+  if (!isPiPluginBridgeReady()) {
+    throw new Error("Pi plugin bridge is not ready. Install: npm:pi-claude-marketplace, npm:pi-subagents, npm:pi-mcp-adapter");
+  }
+  await execFileAsync("pi", ["-p", command], {
+    timeout: 120000,
+    cwd: instance.configDir,
+  });
 }
 
 function validateClaudePluginId(pluginId: string): void {
@@ -424,8 +447,9 @@ export async function installPlugin(
   const claudeInstances = enabledInstances.filter(
     (instance) => instance.toolId === "claude-code",
   );
+  const piInstances = enabledInstances.filter((instance) => instance.toolId === "pi");
   const nonClaudeInstances = enabledInstances.filter(
-    (instance) => instance.toolId !== "claude-code",
+    (instance) => instance.toolId !== "claude-code" && instance.toolId !== "pi",
   );
 
   // For Claude instances, use the native CLI
@@ -440,7 +464,19 @@ export async function installPlugin(
     }
   }
 
-  // For non-Claude instances, download and create symlinks
+  // For Pi instances, use Pi bridge plugin commands
+  for (const instance of piInstances) {
+    try {
+      await runPiBridgePluginCommand(instance, `/claude:plugin install ${plugin.name}@${plugin.marketplace}`);
+      result.linkedInstances[instanceKey(instance)] = 1;
+    } catch (e) {
+      result.errors.push(
+        `Pi bridge install failed for ${instance.name}: ${e instanceof Error ? e.message : "unknown error"}`,
+      );
+    }
+  }
+
+  // For non-Claude/Pi instances, download and create symlinks
   if (nonClaudeInstances.length > 0) {
     const sourcePath = await downloadPlugin(plugin, marketplaceUrl);
 
@@ -488,6 +524,13 @@ export function uninstallPluginFromInstance(
     (i) => i.toolId === toolId && i.instanceId === instanceId,
   );
   if (!instance) return false;
+
+  if (instance.toolId === "pi") {
+    // Fire-and-forget bridge uninstall for sync API parity with this sync fn.
+    void runPiBridgePluginCommand(instance, `/claude:plugin uninstall ${plugin.name}@${plugin.marketplace}`);
+    return true;
+  }
+
   const removed = uninstallPluginItemsFromInstance(plugin.name, instance) > 0;
   removeFromClaudeInstalledPluginsJson(instance, plugin.name, plugin.installedMarketplace ?? plugin.marketplace);
   return removed;
@@ -863,6 +906,11 @@ export async function enablePlugin(
   for (const instance of enabledInstances) {
     if (isConfigOnlyInstance(instance)) continue;
     try {
+      if (instance.toolId === "pi") {
+        await runPiBridgePluginCommand(instance, `/claude:plugin install ${plugin.name}@${plugin.marketplace}`);
+        result.linkedInstances[instanceKey(instance)] = 1;
+        continue;
+      }
       const { count, errors } = installPluginItemsToInstance(
         plugin.name,
         sourcePath,
@@ -905,6 +953,15 @@ export async function disablePlugin(plugin: Plugin): Promise<EnableResult> {
   // Disable (uninstall) from all enabled instances using the same method
   for (const instance of enabledInstances) {
     if (isConfigOnlyInstance(instance)) continue;
+    if (instance.toolId === "pi") {
+      try {
+        await runPiBridgePluginCommand(instance, `/claude:plugin uninstall ${plugin.name}@${plugin.marketplace}`);
+        result.linkedInstances[instanceKey(instance)] = 1;
+      } catch {
+        result.linkedInstances[instanceKey(instance)] = 0;
+      }
+      continue;
+    }
     const removed = uninstallPluginItemsFromInstance(plugin.name, instance);
     result.linkedInstances[instanceKey(instance)] = removed;
   }
@@ -943,7 +1000,8 @@ export async function updatePlugin(
   }
 
   const claudeInstances = targetInstances.filter((instance) => instance.toolId === "claude-code");
-  const managedInstances = targetInstances.filter((instance) => instance.toolId !== "claude-code");
+  const piInstances = targetInstances.filter((instance) => instance.toolId === "pi");
+  const managedInstances = targetInstances.filter((instance) => instance.toolId !== "claude-code" && instance.toolId !== "pi");
 
   // Claude-native plugins should be reinstalled through Claude's own plugin
   // manager, using an explicit marketplace-qualified id to avoid ambiguity when
@@ -959,6 +1017,19 @@ export async function updatePlugin(
       logError(`Claude update failed for ${plugin.name} in ${instance.name}`, error);
       result.errors.push(
         `Claude update failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
+    }
+  }
+
+  // Update Pi bridge-managed plugin instances.
+  for (const instance of piInstances) {
+    try {
+      await runPiBridgePluginCommand(instance, `/claude:plugin update ${plugin.name}@${plugin.marketplace}`);
+      result.linkedInstances[instanceKey(instance)] = 1;
+    } catch (error) {
+      logError(`Pi bridge update failed for ${plugin.name} in ${instance.name}`, error);
+      result.errors.push(
+        `Pi bridge update failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`,
       );
     }
   }
@@ -2812,6 +2883,12 @@ export async function syncPluginInstances(
     // Sync (install) to all missing instances using the same method
     for (const instance of missingInstances) {
       try {
+        if (instance.toolId === "pi") {
+          await runPiBridgePluginCommand(instance, `/claude:plugin install ${plugin.name}@${plugin.marketplace}`);
+          result.syncedInstances[instanceKey(instance)] = 1;
+          continue;
+        }
+
         let { count, errors } = installPluginItemsToInstance(
           plugin.name,
           sourcePath,

@@ -6,6 +6,7 @@ import { readFileSync, existsSync, lstatSync, unlinkSync, rmSync, renameSync } f
 import { join } from "path";
 import type { Plugin, ToolInstance } from "./types.js";
 import { getToolInstances, getEnabledToolInstances, setPluginComponentEnabled } from "./config.js";
+import { loadPiSettings, normalizePiPackageSource } from "./marketplace.js";
 import { safePath, validatePluginMetadata, logError } from "./validation.js";
 import { loadManifest, saveManifest } from "./manifest.js";
 import { getPluginSourcePath, instanceKey, createSymlink, isSymlink } from "./plugin-helpers.js";
@@ -19,6 +20,18 @@ export interface ToolInstallStatus {
   supported: boolean;
   enabled: boolean;
   installedVersion?: string;
+}
+
+const PI_BRIDGE_REQUIRED_SOURCES = [
+  "npm:pi-claude-marketplace",
+  "npm:pi-subagents",
+  "npm:pi-mcp-adapter",
+] as const;
+
+function isPiPluginBridgeReady(): boolean {
+  const settings = loadPiSettings();
+  const installed = new Set(settings.packages.map((s) => normalizePiPackageSource(s)));
+  return PI_BRIDGE_REQUIRED_SOURCES.every((s) => installed.has(normalizePiPackageSource(s)));
 }
 
 function isConfigOnlyInstance(instance: ToolInstance): boolean {
@@ -75,9 +88,12 @@ function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
 
     // Claude supports anything its plugin system handles — hooks, MCP, LSP, output styles, etc.
     // For non-Claude tools, we only sync component types they understand (skills/commands/agents).
+    // Pi support is bridge-gated.
     const isClaude = instance.toolId === "claude-code";
-    const supported = canInstallSkills || canInstallCommands || canInstallAgents ||
+    const isPi = instance.toolId === "pi";
+    const baseSupported = canInstallSkills || canInstallCommands || canInstallAgents ||
                       (isClaude && (plugin.hasMcp || plugin.hasLsp || hasHooks));
+    const supported = isPi ? isPiPluginBridgeReady() && baseSupported : baseSupported;
 
     let installed = false;
     let installedVersion: string | undefined;

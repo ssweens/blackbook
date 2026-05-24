@@ -17,6 +17,7 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Plugin per-component enable/disable config parsing and round-trip
 - [x] Sync preview generation for partial installs
 - [x] Discover → plugin detail → install to all tools (E2E)
+- [x] Pi is excluded from Blackbook plugin projection lifecycle (install/update/enable/disable/sync/scanning); plugin detail actions do not show Pi targets
 - [x] Install failure notification stays on detail (E2E)
 - [x] Config multi-file sync (directory, glob patterns)
 - [x] Asset path resolution (URLs, absolute, home-relative, relative)

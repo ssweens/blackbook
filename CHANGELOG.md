@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 477/477 passing (added contract enforcement tests + Pi standalone-scan compatibility regressions for flat->namespaced install/migration).
 - Full tmux visual verification completed for all tabs, namespace tree actions, multi-instance Claude, Sync tab (no ghosts, immediate updates, correct counts).
 
+[0.24.6]: https://github.com/ssweens/blackbook/compare/v0.24.5...v0.24.6
 [0.24.5]: https://github.com/ssweens/blackbook/compare/v0.24.4...v0.24.5
 [0.24.4]: https://github.com/ssweens/blackbook/compare/v0.24.3...v0.24.4
 [0.24.3]: https://github.com/ssweens/blackbook/compare/v0.24.2...v0.24.3
@@ -36,6 +37,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.24.1]: https://github.com/ssweens/blackbook/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/ssweens/blackbook/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/ssweens/blackbook/compare/v0.21.4...v0.23.0
+
+## [0.24.6] - 2026-05-23
+
+### Changed
+- **Pi plugin support is now bridge-gated**: Pi plugin actions are enabled only when all required Pi packages are installed:
+  - `npm:pi-claude-marketplace`
+  - `npm:pi-subagents`
+  - `npm:pi-mcp-adapter`
+- Pi plugin lifecycle actions (install/update/uninstall/sync) are routed through Pi bridge commands via `pi -p` + `/claude:plugin ...` (no Blackbook projection fallback).
+- Added `npm:pi-claude-marketplace` to prescribed `pi_packages` in playbook config so bridge enablement is source-controlled.
+- Integration tests and plugin status gating updated to reflect bridge-backed Pi behavior.
 
 ## [0.24.5] - 2026-05-21
 

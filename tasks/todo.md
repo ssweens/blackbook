@@ -140,3 +140,12 @@ All previously identified remaining contract gaps are now closed in the primary 
   - local installed (`not in git`)
   - npm prescribed not-installed (`in git`)
 - [x] Capture final tmux proof output (`/tmp/blackbook-installed-piweb-fixed2.txt`).
+
+## Pi plugin bridge hard-gating (2026-05-23)
+- [x] Remove Pi plugin projection fallback paths for plugin lifecycle operations.
+- [x] Gate Pi plugin support on installed bridge prerequisites (`pi-claude-marketplace`, `pi-subagents`, `pi-mcp-adapter`).
+- [x] Route Pi plugin install/update/uninstall/sync through bridge commands (`pi -p "/claude:plugin ..."`).
+- [x] Keep non-Pi plugin lifecycle behavior unchanged.
+- [x] Update integration tests to cover non-Pi projection assumptions removal and keep suite green.
+- [x] Run quality gates (`pnpm typecheck`, `pnpm test -- --run`, `pnpm build`) — `484/484` passing.
+- [x] Visual verify in tmux plugin detail gating (`/tmp/bb-pi-bridge-gate.txt`).

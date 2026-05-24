@@ -46,6 +46,8 @@ Everything is a plugin. Plugins can include skills, commands, agents, hooks, MCP
 
 \* Pi uses `agent/skills/` for skills and `agent/prompts/` for prompt templates (`/name` syntax)
 
+> Pi plugin projection is intentionally disabled in Blackbook. Use Pi packages for Pi-native extensibility; Claude-style marketplace plugin lifecycle for Pi should be handled by a Pi bridge backend (e.g. `pi-claude-marketplace`).
+
 ## Installation
 
 For local development, use Node.js 23.x and pnpm.

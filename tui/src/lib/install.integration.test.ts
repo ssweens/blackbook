@@ -422,18 +422,16 @@ describe("updatePlugin", () => {
     mkdirSync(join(pluginSourceDir, "skills", skillName), { recursive: true });
     writeFileSync(join(pluginSourceDir, "skills", skillName, "SKILL.md"), "# Updated Skill");
 
-    const pi = getInstance("pi");
-    const piSkillDir = join(pi.configDir, pi.skillsSubdir!, pluginName, skillName);
-    mkdirSync(piSkillDir, { recursive: true });
-    writeFileSync(join(piSkillDir, "SKILL.md"), "# Old Skill");
-
     const opencode = getInstance("opencode");
+    const opencodeSkillDir = join(opencode.configDir, opencode.skillsSubdir!, pluginName, skillName);
+    mkdirSync(opencodeSkillDir, { recursive: true });
+    writeFileSync(join(opencodeSkillDir, "SKILL.md"), "# Old Skill");
+
+
     const amp = getInstance("amp-code");
     const codex = getInstance("openai-codex");
-    const opencodeSkillDir = join(opencode.configDir, opencode.skillsSubdir!, pluginName, skillName);
     const ampSkillDir = join(amp.configDir, amp.skillsSubdir!, pluginName, skillName);
     const codexSkillDir = join(codex.configDir, codex.skillsSubdir!, pluginName, skillName);
-    rmSync(opencodeSkillDir, { recursive: true, force: true });
     rmSync(ampSkillDir, { recursive: true, force: true });
     rmSync(codexSkillDir, { recursive: true, force: true });
 
@@ -456,13 +454,11 @@ describe("updatePlugin", () => {
     const result = await updatePlugin(plugin, marketplaceJsonPath);
 
     expect(result.success).toBe(true);
-    expect(result.linkedInstances[`pi:${pi.instanceId}`]).toBeGreaterThan(0);
-    expect(result.linkedInstances[`opencode:${opencode.instanceId}`]).toBeUndefined();
+    expect(result.linkedInstances[`opencode:${opencode.instanceId}`]).toBeGreaterThan(0);
     expect(result.linkedInstances[`amp-code:${amp.instanceId}`]).toBeUndefined();
     expect(result.linkedInstances[`openai-codex:${codex.instanceId}`]).toBeUndefined();
 
-    expect(readFileSync(join(piSkillDir, "SKILL.md"), "utf-8")).toContain("Updated Skill");
-    expect(existsSync(opencodeSkillDir)).toBe(false);
+    expect(readFileSync(join(opencodeSkillDir, "SKILL.md"), "utf-8")).toContain("Updated Skill");
     expect(existsSync(ampSkillDir)).toBe(false);
     expect(existsSync(codexSkillDir)).toBe(false);
   });
@@ -997,15 +993,15 @@ describe("syncPluginInstances", () => {
       scope: "user",
     };
 
-    const piInstance = getInstance("pi");
-    const targetDir = join(piInstance.configDir, piInstance.skillsSubdir!, pluginName, skillName);
+    const opencodeInstance = getInstance("opencode");
+    const targetDir = join(opencodeInstance.configDir, opencodeInstance.skillsSubdir!, pluginName, skillName);
     rmSync(targetDir, { recursive: true, force: true });
 
     const result = await syncPluginInstances(plugin, marketplaceDir, [
       {
-        toolId: "pi",
-        instanceId: piInstance.instanceId,
-        name: piInstance.name,
+        toolId: "opencode",
+        instanceId: opencodeInstance.instanceId,
+        name: opencodeInstance.name,
         installed: false,
         supported: true,
         enabled: true,
@@ -1013,7 +1009,7 @@ describe("syncPluginInstances", () => {
     ]);
 
     expect(result.success).toBe(true);
-    expect(result.syncedInstances[`pi:${piInstance.instanceId}`]).toBeGreaterThan(0);
+    expect(result.syncedInstances[`opencode:${opencodeInstance.instanceId}`]).toBeGreaterThan(0);
     expect(existsSync(join(targetDir, "SKILL.md"))).toBe(true);
     expect(existsSync(join(staleCacheDir, "skills", skillName, "SKILL.md"))).toBe(true);
   });
@@ -1050,15 +1046,15 @@ describe("syncPluginInstances", () => {
       scope: "user",
     };
 
-    const piInstance = getInstance("pi");
-    const targetDir = join(piInstance.configDir, piInstance.skillsSubdir!, pluginName, skillName);
+    const opencodeInstance = getInstance("opencode");
+    const targetDir = join(opencodeInstance.configDir, opencodeInstance.skillsSubdir!, pluginName, skillName);
     rmSync(targetDir, { recursive: true, force: true });
 
     const result = await syncPluginInstances(plugin, marketplaceJsonPath, [
       {
-        toolId: "pi",
-        instanceId: piInstance.instanceId,
-        name: piInstance.name,
+        toolId: "opencode",
+        instanceId: opencodeInstance.instanceId,
+        name: opencodeInstance.name,
         installed: false,
         supported: true,
         enabled: true,
@@ -1066,7 +1062,7 @@ describe("syncPluginInstances", () => {
     ]);
 
     expect(result.success).toBe(true);
-    expect(result.syncedInstances[`pi:${piInstance.instanceId}`]).toBeGreaterThan(0);
+    expect(result.syncedInstances[`opencode:${opencodeInstance.instanceId}`]).toBeGreaterThan(0);
     expect(existsSync(join(targetDir, "SKILL.md"))).toBe(true);
   });
 
@@ -1091,15 +1087,15 @@ describe("syncPluginInstances", () => {
       scope: "user",
     };
 
-    const piInstance = getInstance("pi");
-    const target = join(piInstance.configDir, piInstance.skillsSubdir!, TEST_SKILL_NAME, TEST_SKILL_NAME, "SKILL.md");
-    rmSync(join(piInstance.configDir, piInstance.skillsSubdir!, TEST_SKILL_NAME, TEST_SKILL_NAME), { recursive: true, force: true });
+    const opencodeInstance = getInstance("opencode");
+    const target = join(opencodeInstance.configDir, opencodeInstance.skillsSubdir!, TEST_SKILL_NAME, TEST_SKILL_NAME, "SKILL.md");
+    rmSync(join(opencodeInstance.configDir, opencodeInstance.skillsSubdir!, TEST_SKILL_NAME, TEST_SKILL_NAME), { recursive: true, force: true });
 
     const result = await syncPluginInstances(plugin, undefined, [
       {
-        toolId: "pi",
-        instanceId: piInstance.instanceId,
-        name: piInstance.name,
+        toolId: "opencode",
+        instanceId: opencodeInstance.instanceId,
+        name: opencodeInstance.name,
         installed: false,
         supported: true,
         enabled: true,
@@ -1107,7 +1103,7 @@ describe("syncPluginInstances", () => {
     ]);
 
     expect(result.success).toBe(true);
-    expect(result.syncedInstances[`pi:${piInstance.instanceId}`]).toBeGreaterThan(0);
+    expect(result.syncedInstances[`opencode:${opencodeInstance.instanceId}`]).toBeGreaterThan(0);
     expect(existsSync(target)).toBe(true);
   });
 });
