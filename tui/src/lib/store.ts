@@ -483,7 +483,9 @@ function inferPackageNameFromSource(source: string): string {
   if (trimmed.startsWith("npm:")) return trimmed.slice(4);
   if (trimmed.startsWith("git:")) return inferPackageNameFromSource(trimmed.slice(4));
 
-  const withoutGit = trimmed.replace(/\.git$/, "");
+  // Strip trailing @version or #ref suffix (e.g. repo@1.0.3, repo#main)
+  const withoutRefOrVersion = trimmed.replace(/[@#][^/]*$/, "");
+  const withoutGit = withoutRefOrVersion.replace(/\.git$/, "");
 
   // For filesystem paths, use the final path segment.
   if (withoutGit.startsWith("/") || withoutGit.startsWith("./") || withoutGit.startsWith("../")) {
@@ -1252,75 +1254,83 @@ export const useStore = create<Store>((rawSet, get) => {
         packages.map((p) => normalizePiPackageSource(p.source)),
       );
 
-      // Add repo-prescribed packages that aren't in any marketplace or local scan.
-      for (const spec of desiredSpecs) {
-        const normalizedSource = normalizePiPackageSource(spec.source);
-        if (existingSources.has(normalizedSource)) continue;
-        const pkg = await createPiPackageFromSpec(spec, preferredManager, settings, installInfo);
-        packages.push(pkg);
-        existingSources.add(normalizedSource);
+      // Add repo-prescribed packages that aren't in any marketplace or local scan — in parallel.
+      const newDesiredSpecs = desiredSpecs.filter((spec) => !existingSources.has(normalizePiPackageSource(spec.source)));
+      const newDesiredPkgs = await Promise.all(
+        newDesiredSpecs.map((spec) => createPiPackageFromSpec(spec, preferredManager, settings, installInfo)),
+      );
+      for (let i = 0; i < newDesiredPkgs.length; i++) {
+        packages.push(newDesiredPkgs[i]);
+        existingSources.add(normalizePiPackageSource(newDesiredSpecs[i].source));
       }
 
-      // Add installed packages that aren't in any marketplace or desired list.
-      for (const source of settings.packages) {
-        const normalizedSource = normalizePiPackageSource(source);
-        if (existingSources.has(normalizedSource)) continue;
+      // Add installed packages that aren't in any marketplace or desired list — in parallel.
+      const unlistedSources = settings.packages.filter(
+        (source) => !existingSources.has(normalizePiPackageSource(source)),
+      );
 
-        const sourceType = getSourceType(source);
-        if (sourceType === "npm") {
-          // Fetch package details from npm when possible.
-          const pkgName = source.slice(4);
-          const details = await fetchNpmPackageDetails(pkgName);
-          if (!details) continue;
-
-          const detected = installInfo.get(pkgName);
-          const installedVersion = detected?.version ?? undefined;
-          const latestVersion = details.version ?? "0.0.0";
-
-          const pkg: PiPackage = {
-            name: details.name ?? pkgName,
-            description: details.description ?? "",
-            version: latestVersion,
+      const unlistedResults = await Promise.all(
+        unlistedSources.map(async (source) => {
+          const sourceType = getSourceType(source);
+          if (sourceType === "npm") {
+            const pkgName = source.slice(4);
+            const details = await fetchNpmPackageDetails(pkgName);
+            if (!details) return null;
+            const detected = installInfo.get(pkgName);
+            const installedVersion = detected?.version ?? undefined;
+            const latestVersion = details.version ?? "0.0.0";
+            return {
+              source,
+              pkg: {
+                name: details.name ?? pkgName,
+                description: details.description ?? "",
+                version: latestVersion,
+                source,
+                sourceType: "npm" as const,
+                marketplace: "npm",
+                installed: true,
+                installedVersion,
+                hasUpdate: Boolean(installedVersion && installedVersion !== latestVersion),
+                installedVia: detected?.via,
+                installedViaManagers: detected?.viaManagers,
+                managerMismatch: Boolean(detected?.managerMismatch),
+                preferredManager,
+                extensions: details.extensions ?? [],
+                skills: details.skills ?? [],
+                prompts: details.prompts ?? [],
+                themes: details.themes ?? [],
+                homepage: details.homepage,
+                repository: details.repository,
+                author: details.author,
+                license: details.license,
+              } satisfies PiPackage,
+            };
+          }
+          // git/local packages — no network call needed.
+          return {
             source,
-            sourceType: "npm",
-            marketplace: "npm",
-            installed: true,
-            installedVersion,
-            hasUpdate: Boolean(installedVersion && installedVersion !== latestVersion),
-            installedVia: detected?.via,
-            installedViaManagers: detected?.viaManagers,
-            managerMismatch: Boolean(detected?.managerMismatch),
-            preferredManager,
-            extensions: details.extensions ?? [],
-            skills: details.skills ?? [],
-            prompts: details.prompts ?? [],
-            themes: details.themes ?? [],
-            homepage: details.homepage,
-            repository: details.repository,
-            author: details.author,
-            license: details.license,
+            pkg: {
+              name: inferPackageNameFromSource(source),
+              description: "Installed Pi package",
+              version: "0.0.0",
+              source,
+              sourceType,
+              marketplace: sourceType,
+              installed: true,
+              preferredManager,
+              extensions: [],
+              skills: [],
+              prompts: [],
+              themes: [],
+            } satisfies PiPackage,
           };
-          packages.push(pkg);
-          existingSources.add(normalizedSource);
-          continue;
-        }
+        }),
+      );
 
-        // Include installed git/local packages even when they are not marketplace-listed.
-        packages.push({
-          name: inferPackageNameFromSource(source),
-          description: "Installed Pi package",
-          version: "0.0.0",
-          source,
-          sourceType,
-          marketplace: sourceType,
-          installed: true,
-          preferredManager,
-          extensions: [],
-          skills: [],
-          prompts: [],
-          themes: [],
-        });
-        existingSources.add(normalizedSource);
+      for (const result of unlistedResults) {
+        if (!result) continue;
+        packages.push(result.pkg);
+        existingSources.add(normalizePiPackageSource(result.source));
       }
 
       const state = get();
