@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, watch, writeFileSync } from "fs";
 import { execFileSync } from "child_process";
 import { dirname, join } from "path";
+import { parse as parseYaml } from "yaml";
+import { ConfigSchema, type BlackbookConfig } from "./config/schema.js";
 
 /**
  * Yield to the event loop so Ink can process keyboard input between
@@ -339,16 +341,135 @@ function composeManagedItems(
   ];
 }
 
-function loadDesiredPiPackageSpecs(): PiPackageSpec[] {
+function isRemoteSourceRepo(sourceRepo: string): boolean {
+  const s = sourceRepo.trim();
+  return (
+    s.startsWith("http://") ||
+    s.startsWith("https://") ||
+    s.startsWith("git@") ||
+    s.startsWith("ssh://") ||
+    s.startsWith("git://")
+  );
+}
+
+type SourceRepoConfigLoad = {
+  config: BlackbookConfig;
+  configPath: string;
+  isRemote: boolean;
+};
+
+const sourceRepoPiPackagesMemoryCache = new Map<string, PiPackageSpec[]>();
+
+function githubRawConfigCandidates(sourceRepo: string): string[] {
+  const trimmed = sourceRepo.trim().replace(/\.git$/, "").replace(/\/$/, "");
+  const sshMatch = trimmed.match(/^git@github\.com:([^/]+)\/(.+)$/);
+  const httpsMatch = trimmed.match(/^https?:\/\/github\.com\/([^/]+)\/(.+)$/);
+  const owner = sshMatch?.[1] ?? httpsMatch?.[1];
+  const repo = sshMatch?.[2] ?? httpsMatch?.[2];
+  if (!owner || !repo) return [];
+  return [
+    `https://raw.githubusercontent.com/${owner}/${repo}/main/config/blackbook/config.yaml`,
+    `https://raw.githubusercontent.com/${owner}/${repo}/master/config/blackbook/config.yaml`,
+  ];
+}
+
+async function fetchRemoteSourceRepoPiPackages(sourceRepo: string): Promise<PiPackageSpec[]> {
+  if (sourceRepoPiPackagesMemoryCache.has(sourceRepo)) {
+    return sourceRepoPiPackagesMemoryCache.get(sourceRepo)!;
+  }
+
+  const candidates = githubRawConfigCandidates(sourceRepo);
+  if (candidates.length === 0) {
+    throw new Error(`Unsupported remote source_repo for pi_packages reads: ${sourceRepo}`);
+  }
+
+  let lastError: string | null = null;
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        lastError = `${res.status} ${res.statusText}`;
+        continue;
+      }
+      const text = await res.text();
+      const parsed = parseYaml(text);
+      const validated = ConfigSchema.safeParse(parsed ?? {});
+      if (!validated.success) {
+        lastError = validated.error.issues[0]?.message ?? "invalid config schema";
+        continue;
+      }
+      const specs = validated.data.pi_packages;
+      sourceRepoPiPackagesMemoryCache.set(sourceRepo, specs);
+      return specs;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  throw new Error(`Failed to fetch remote pi_packages from ${sourceRepo}: ${lastError ?? "unknown error"}`);
+}
+
+async function loadDesiredPiPackageSpecs(): Promise<PiPackageSpec[]> {
   const result = loadYamlConfig();
   if (result.errors.length > 0) return [];
-  return result.config.pi_packages;
+  const sourceRepo = result.config.settings.source_repo;
+  if (!sourceRepo || !isRemoteSourceRepo(sourceRepo)) {
+    return result.config.pi_packages;
+  }
+
+  try {
+    return await fetchRemoteSourceRepoPiPackages(sourceRepo);
+  } catch {
+    return result.config.pi_packages;
+  }
 }
 
 function getSourceRepoBlackbookConfigPath(config: ReturnType<typeof loadYamlConfig>["config"]): string | null {
   const sourceRepo = config.settings.source_repo;
-  if (!sourceRepo) return null;
+  if (!sourceRepo || isRemoteSourceRepo(sourceRepo)) return null;
   return join(expandConfigPath(sourceRepo), "config", "blackbook", "config.yaml");
+}
+
+function prepareWritableSourceRepoConfig(config: ReturnType<typeof loadYamlConfig>["config"]): SourceRepoConfigLoad | null {
+  const sourceRepo = config.settings.source_repo;
+  if (!sourceRepo) return null;
+
+  if (!isRemoteSourceRepo(sourceRepo)) {
+    const localPath = join(expandConfigPath(sourceRepo), "config", "blackbook", "config.yaml");
+    if (!existsSync(localPath)) return null;
+    const localResult = loadYamlConfig(localPath);
+    if (localResult.errors.length > 0) return null;
+    return { config: localResult.config, configPath: localResult.configPath, isRemote: false };
+  }
+
+  const workspace = join(getCacheDir(), "source_repo_writes", normalizePiPackageSource(sourceRepo).replace(/[^a-z0-9-]+/gi, "-"));
+  if (!existsSync(workspace)) {
+    mkdirSync(dirname(workspace), { recursive: true });
+    execFileSync("git", ["clone", sourceRepo, workspace], { encoding: "utf-8", timeout: 120000 });
+  } else {
+    execFileSync("git", ["-C", workspace, "pull", "--rebase"], { encoding: "utf-8", timeout: 120000 });
+  }
+
+  const configPath = join(workspace, "config", "blackbook", "config.yaml");
+  if (!existsSync(configPath)) {
+    throw new Error(`Remote source_repo missing config/blackbook/config.yaml: ${sourceRepo}`);
+  }
+  const loaded = loadYamlConfig(configPath);
+  if (loaded.errors.length > 0) {
+    throw new Error(`Remote source_repo config invalid: ${loaded.errors[0].message}`);
+  }
+  return { config: loaded.config, configPath, isRemote: true };
+}
+
+function commitAndPushWritableSourceRepo(sourceConfigPath: string, message: string): void {
+  const sourceRepo = sourceConfigPath.replace(/\/config\/blackbook\/config\.yaml$/, "");
+  execFileSync("git", ["-C", sourceRepo, "add", sourceConfigPath], { encoding: "utf-8", timeout: 10000 });
+  try {
+    execFileSync("git", ["-C", sourceRepo, "commit", "-m", message], { encoding: "utf-8", timeout: 15000 });
+  } catch {
+    // no-op if nothing changed
+  }
+  execFileSync("git", ["-C", sourceRepo, "push"], { encoding: "utf-8", timeout: 45000 });
 }
 
 function removePiPackageSpec(source: string, specs: PiPackageSpec[]): { specs: PiPackageSpec[]; removed: boolean } {
@@ -1110,7 +1231,7 @@ export const useStore = create<Store>((rawSet, get) => {
 
       const settings = loadPiSettings();
       const installInfo = getGlobalPiPackageInstallInfo();
-      const desiredSpecs = loadDesiredPiPackageSpecs();
+      const desiredSpecs = await loadDesiredPiPackageSpecs();
       const desiredBySource = new Map(
         desiredSpecs.map((spec) => [normalizePiPackageSource(spec.source), spec]),
       );
@@ -1257,7 +1378,19 @@ export const useStore = create<Store>((rawSet, get) => {
         sourceConfigPath !== configResult.configPath &&
         existsSync(sourceConfigPath),
       );
-      const sourceConfigResult = shouldUpdateSourceConfig ? loadYamlConfig(sourceConfigPath!) : null;
+      let sourceConfigResult = shouldUpdateSourceConfig ? loadYamlConfig(sourceConfigPath!) : null;
+      let remoteWritable: SourceRepoConfigLoad | null = null;
+      if (!sourceConfigResult && configResult.config.settings.source_repo && isRemoteSourceRepo(configResult.config.settings.source_repo)) {
+        try {
+          remoteWritable = prepareWritableSourceRepoConfig(configResult.config);
+          if (remoteWritable) {
+            sourceConfigResult = { config: remoteWritable.config, configPath: remoteWritable.configPath, errors: [] } as ReturnType<typeof loadYamlConfig>;
+          }
+        } catch (error) {
+          notify(`Source repo write prep failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+          return false;
+        }
+      }
       if (sourceConfigResult && sourceConfigResult.errors.length > 0) {
         notify(`Source config load failed: ${sourceConfigResult.errors[0].message}`, "error");
         return false;
@@ -1288,6 +1421,10 @@ export const useStore = create<Store>((rawSet, get) => {
           ...sourceConfigResult.config,
           pi_packages: sourceDelete.specs,
         }, sourceConfigResult.configPath);
+        if (remoteWritable?.isRemote) {
+          commitAndPushWritableSourceRepo(sourceConfigResult.configPath, `remove: ${pkg.name} Pi package from git`);
+          sourceRepoPiPackagesMemoryCache.delete(configResult.config.settings.source_repo || "");
+        }
       }
 
       await get().loadPiPackages({ silent: true });
@@ -1360,7 +1497,14 @@ export const useStore = create<Store>((rawSet, get) => {
     const shouldUpdateSource = Boolean(
       sourceConfigPath && sourceConfigPath !== configResult.configPath && existsSync(sourceConfigPath),
     );
-    const sourceConfigResult = shouldUpdateSource ? loadYamlConfig(sourceConfigPath!) : null;
+    let sourceConfigResult = shouldUpdateSource ? loadYamlConfig(sourceConfigPath!) : null;
+    let remoteWritable: SourceRepoConfigLoad | null = null;
+    if (!sourceConfigResult && configResult.config.settings.source_repo && isRemoteSourceRepo(configResult.config.settings.source_repo)) {
+      remoteWritable = prepareWritableSourceRepoConfig(configResult.config);
+      if (remoteWritable) {
+        sourceConfigResult = { config: remoteWritable.config, configPath: remoteWritable.configPath, errors: [] } as ReturnType<typeof loadYamlConfig>;
+      }
+    }
     const sourceDelete = sourceConfigResult
       ? removePiPackageSpec(pkg.source, sourceConfigResult.config.pi_packages)
       : { specs: [], removed: false };
@@ -1370,18 +1514,10 @@ export const useStore = create<Store>((rawSet, get) => {
     }
     if (sourceConfigResult && sourceDelete.removed) {
       saveYamlConfig({ ...sourceConfigResult.config, pi_packages: sourceDelete.specs }, sourceConfigResult.configPath);
-    }
-
-    // Auto-commit and push the source repo config change.
-    if (sourceConfigPath && sourceDelete.removed && existsSync(join(dirname(sourceConfigPath), "..", "..", "..", ".git"))) {
-      const sourceRepo = sourceConfigPath.replace(/\/config\/blackbook\/config\.yaml$/, "");
-      if (existsSync(join(sourceRepo, ".git"))) {
-        try {
-          execFileSync("git", ["-C", sourceRepo, "add", sourceConfigPath], { encoding: "utf-8", timeout: 10000 });
-          execFileSync("git", ["-C", sourceRepo, "commit", "-m", `remove: ${pkg.name} Pi package from git`], { encoding: "utf-8", timeout: 10000 });
-          execFileSync("git", ["-C", sourceRepo, "push"], { encoding: "utf-8", timeout: 30000 });
-        } catch { /* git failure non-fatal */ }
-      }
+      try {
+        commitAndPushWritableSourceRepo(sourceConfigResult.configPath, `remove: ${pkg.name} Pi package from git`);
+        sourceRepoPiPackagesMemoryCache.delete(configResult.config.settings.source_repo || "");
+      } catch { /* git failure non-fatal */ }
     }
 
     await get().loadPiPackages({ silent: true });
@@ -1423,6 +1559,30 @@ export const useStore = create<Store>((rawSet, get) => {
         },
       ],
     }, result.configPath);
+
+    const remoteWritable = result.config.settings.source_repo && isRemoteSourceRepo(result.config.settings.source_repo)
+      ? prepareWritableSourceRepoConfig(result.config)
+      : null;
+
+    if (remoteWritable) {
+      const remoteExists = remoteWritable.config.pi_packages.some((entry) => entry.source.toLowerCase() === pkg.source.toLowerCase());
+      if (!remoteExists) {
+        saveYamlConfig({
+          ...remoteWritable.config,
+          pi_packages: [
+            ...remoteWritable.config.pi_packages,
+            {
+              source: pkg.source,
+              name: pkg.name,
+              description: pkg.description || undefined,
+              marketplace: pkg.marketplace || undefined,
+            },
+          ],
+        }, remoteWritable.configPath);
+        commitAndPushWritableSourceRepo(remoteWritable.configPath, `track: ${pkg.name} Pi package in git`);
+        sourceRepoPiPackagesMemoryCache.delete(result.config.settings.source_repo || "");
+      }
+    }
 
     await get().loadPiPackages({ silent: true });
     get().refreshDetail();

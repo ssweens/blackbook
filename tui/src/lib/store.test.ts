@@ -1369,6 +1369,54 @@ describe("Repo-prescribed Pi packages", () => {
     ]);
   });
 
+  it("loads desired Pi packages from remote source_repo URL via in-memory fetch", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => `settings:\n  source_repo: https://github.com/example/playbook.git\npi_packages:\n  - source: npm:pi-remote-only\n    name: pi-remote-only\n    description: Remote package\n`,
+    status: 200,
+    statusText: "OK",
+    json: async () => ({}),
+  } as any);
+
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: {
+        settings: { source_repo: "https://github.com/example/playbook.git", package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+        marketplaces: {},
+        tools: {},
+        files: [],
+        configs: [],
+        plugins: {},
+        pi_packages: [],
+      },
+      configPath: "/tmp/blackbook/config.yaml",
+      errors: [],
+    });
+    vi.mocked(fetchNpmPackageDetails).mockResolvedValue({
+      name: "pi-remote-only",
+      description: "Remote package",
+      version: "1.0.0",
+      source: "npm:pi-remote-only",
+      sourceType: "npm",
+      marketplace: "npm",
+      installed: false,
+      extensions: [],
+      skills: [],
+      prompts: [],
+      themes: [],
+    } as any);
+
+    await useStore.getState().loadPiPackages();
+
+    expect(useStore.getState().piPackages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: "npm:pi-remote-only", recommended: true }),
+      ]),
+    );
+
+    globalThis.fetch = originalFetch;
+  });
+
   it("includes installed non-npm Pi packages from settings when not marketplace-listed", async () => {
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: {

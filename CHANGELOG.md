@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.9] - 2026-05-26
+
+### Fixed
+- `settings.source_repo` as URL/SSH now supports direct Pi package prescription reads without requiring local source-repo materialization.
+- Pi package prescription reads now fetch remote `config/blackbook/config.yaml` on demand and cache `pi_packages` in-memory for the current process.
+- Pi package write actions (`track`, `remove`, `delete everywhere`) now transparently use a Blackbook-managed writable git workspace under cache, commit, and push automatically.
+- Kept user workflow git-free while preserving fully automated source-repo updates for package prescriptions.
+
 ## [0.24.8] - 2026-05-26
 
 ### Fixed
@@ -43,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 477/477 passing (added contract enforcement tests + Pi standalone-scan compatibility regressions for flat->namespaced install/migration).
 - Full tmux visual verification completed for all tabs, namespace tree actions, multi-instance Claude, Sync tab (no ghosts, immediate updates, correct counts).
 
+[0.24.9]: https://github.com/ssweens/blackbook/compare/v0.24.8...v0.24.9
+[0.24.8]: https://github.com/ssweens/blackbook/compare/v0.24.7...v0.24.8
 [0.24.7]: https://github.com/ssweens/blackbook/compare/v0.24.6...v0.24.7
 [0.24.6]: https://github.com/ssweens/blackbook/compare/v0.24.5...v0.24.6
 [0.24.5]: https://github.com/ssweens/blackbook/compare/v0.24.4...v0.24.5
