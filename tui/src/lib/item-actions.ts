@@ -120,9 +120,19 @@ export function buildPluginActions(
       }
     }
 
-    // Not-installed instances
+    // Not-installed + unsupported instances
     for (const status of toolStatuses) {
-      if (!status.enabled || !status.supported) continue;
+      if (!status.enabled) continue;
+      if (!status.supported) {
+        actions.push({
+          id: `status_${status.toolId}:${status.instanceId}`,
+          label: status.name,
+          type: "status",
+          statusColor: "gray",
+          statusLabel: status.supportReason || "Unsupported",
+        });
+        continue;
+      }
       if (status.installed) continue;
       actions.push({
         id: `status_${status.toolId}:${status.instanceId}`,
