@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.7] - 2026-05-26
+
+### Fixed
+- Pi bridge compatibility now targets `@ssweens/pi-plugins` (including local-package installs from Pi settings) instead of `pi-claude-marketplace`.
+- Pi plugin install staging no longer writes runtime artifacts into the current working repository.
+- Pi bridge marketplace staging now uses Blackbook cache (`~/.cache/blackbook/pi-bridge-marketplaces`) instead of repo-local paths.
+- Local Claude marketplace checkouts with manifest path-form MCP declarations are staged into Pi-compatible marketplace copies before install.
+- Duplicate Pi marketplace records are repointed to the staged compatibility source to avoid stale-source install failures.
+
 ## [0.23.0] - 2026-05-18
 
 ### Added
@@ -29,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 477/477 passing (added contract enforcement tests + Pi standalone-scan compatibility regressions for flat->namespaced install/migration).
 - Full tmux visual verification completed for all tabs, namespace tree actions, multi-instance Claude, Sync tab (no ghosts, immediate updates, correct counts).
 
+[0.24.7]: https://github.com/ssweens/blackbook/compare/v0.24.6...v0.24.7
 [0.24.6]: https://github.com/ssweens/blackbook/compare/v0.24.5...v0.24.6
 [0.24.5]: https://github.com/ssweens/blackbook/compare/v0.24.4...v0.24.5
 [0.24.4]: https://github.com/ssweens/blackbook/compare/v0.24.3...v0.24.4

@@ -3,7 +3,8 @@
  */
 
 import { readFileSync, existsSync, lstatSync, unlinkSync, rmSync, renameSync } from "fs";
-import { join } from "path";
+import { execFileSync } from "child_process";
+import { basename, join, resolve } from "path";
 import type { Plugin, ToolInstance } from "./types.js";
 import { getToolInstances, getEnabledToolInstances, setPluginComponentEnabled } from "./config.js";
 import { loadPiSettings, normalizePiPackageSource } from "./marketplace.js";
@@ -19,19 +20,48 @@ export interface ToolInstallStatus {
   installed: boolean;
   supported: boolean;
   enabled: boolean;
+  supportReason?: string;
   installedVersion?: string;
 }
 
-const PI_BRIDGE_REQUIRED_SOURCES = [
-  "npm:pi-claude-marketplace",
+const PI_PLUGINS_PACKAGE_NAME = "@ssweens/pi-plugins";
+const PI_PLUGINS_EXTENSION_DIR = "pi-plugins";
+const PI_SOFT_DEP_REQUIRED_SOURCES = [
   "npm:pi-subagents",
   "npm:pi-mcp-adapter",
 ] as const;
+const PI_AGENT_DIR = join(process.env.HOME || "", ".pi", "agent");
+
+function resolvePiSettingsPackagePath(source: string): string | null {
+  const trimmed = source.trim();
+  if (!trimmed || trimmed.startsWith("npm:")) return null;
+  const expanded = trimmed.startsWith("~") ? join(process.env.HOME || "", trimmed.slice(1)) : trimmed;
+  return resolve(PI_AGENT_DIR, expanded);
+}
+
+function isPiPluginsSource(source: string): boolean {
+  const normalized = normalizePiPackageSource(source);
+  if (normalized === normalizePiPackageSource(`npm:${PI_PLUGINS_PACKAGE_NAME}`)) return true;
+
+  const resolved = resolvePiSettingsPackagePath(source);
+  if (resolved) {
+    try {
+      const pkg = JSON.parse(readFileSync(join(resolved, "package.json"), "utf-8"));
+      return pkg?.name === PI_PLUGINS_PACKAGE_NAME;
+    } catch {
+      return basename(resolved) === PI_PLUGINS_EXTENSION_DIR;
+    }
+  }
+
+  return false;
+}
 
 function isPiPluginBridgeReady(): boolean {
   const settings = loadPiSettings();
   const installed = new Set(settings.packages.map((s) => normalizePiPackageSource(s)));
-  return PI_BRIDGE_REQUIRED_SOURCES.every((s) => installed.has(normalizePiPackageSource(s)));
+  const hasPiPlugins = settings.packages.some(isPiPluginsSource);
+  const hasSoftDeps = PI_SOFT_DEP_REQUIRED_SOURCES.every((s) => installed.has(normalizePiPackageSource(s)));
+  return hasPiPlugins && hasSoftDeps;
 }
 
 function isConfigOnlyInstance(instance: ToolInstance): boolean {
@@ -46,6 +76,91 @@ function isConfigOnlyInstance(instance: ToolInstance): boolean {
 
 const statusCache = new Map<string, ToolInstallStatus[]>();
 let statusCacheGeneration = 0;
+let codexInstalledCacheGeneration = -1;
+let codexInstalledPluginIds = new Set<string>();
+let claudeInstalledCacheGeneration = -1;
+let claudeInstalledPluginIds = new Set<string>();
+let piBridgeInstalledCacheGeneration = -1;
+let piBridgeInstalledPluginIds = new Set<string>();
+
+function getCodexInstalledPluginIds(): Set<string> {
+  if (codexInstalledCacheGeneration === statusCacheGeneration) return codexInstalledPluginIds;
+  codexInstalledCacheGeneration = statusCacheGeneration;
+  codexInstalledPluginIds = new Set<string>();
+  try {
+    const output = execFileSync("codex", ["plugin", "list"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    for (const line of output.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("Marketplace ") || trimmed.startsWith("PLUGIN ")) continue;
+      const match = trimmed.match(/^([^\s]+)\s+(.+)$/);
+      if (!match) continue;
+      const pluginId = match[1];
+      const statusCell = match[2].toLowerCase();
+      if (!pluginId.includes("@")) continue;
+      if (statusCell.startsWith("installed") || statusCell.includes("installed,")) {
+        codexInstalledPluginIds.add(pluginId);
+      }
+    }
+  } catch {
+    // If codex isn't available or list fails, treat as empty.
+  }
+  return codexInstalledPluginIds;
+}
+
+function getClaudeInstalledPluginIds(): Set<string> {
+  if (claudeInstalledCacheGeneration === statusCacheGeneration) return claudeInstalledPluginIds;
+  claudeInstalledCacheGeneration = statusCacheGeneration;
+  claudeInstalledPluginIds = new Set<string>();
+  try {
+    const output = execFileSync("claude", ["plugin", "list"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    for (const raw of output.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line.startsWith("❯ ")) continue;
+      const id = line.slice(2).trim();
+      if (id.includes("@")) claudeInstalledPluginIds.add(id);
+    }
+  } catch {
+    // unavailable/failed CLI -> empty set
+  }
+  return claudeInstalledPluginIds;
+}
+
+function getPiBridgeInstalledPluginIds(): Set<string> {
+  if (piBridgeInstalledCacheGeneration === statusCacheGeneration) return piBridgeInstalledPluginIds;
+  piBridgeInstalledCacheGeneration = statusCacheGeneration;
+  piBridgeInstalledPluginIds = new Set<string>();
+  try {
+    const statePaths = [
+      join(PI_AGENT_DIR, "pi-plugins", "state.json"),
+      // Compatibility for users who have not migrated state yet.
+      join(PI_AGENT_DIR, "pi-claude-marketplace", "state.json"),
+    ];
+    const statePath = statePaths.find((p) => existsSync(p));
+    if (!statePath) return piBridgeInstalledPluginIds;
+    const json = JSON.parse(readFileSync(statePath, "utf-8"));
+    const marketplaces = json?.marketplaces;
+    if (marketplaces && typeof marketplaces === "object") {
+      for (const [marketplaceName, mpVal] of Object.entries(marketplaces as Record<string, unknown>)) {
+        const plugins = (mpVal as { plugins?: Record<string, unknown> })?.plugins;
+        if (!plugins || typeof plugins !== "object") continue;
+        for (const pluginName of Object.keys(plugins)) {
+          if (pluginName && marketplaceName) {
+            piBridgeInstalledPluginIds.add(`${pluginName}@${marketplaceName}`);
+          }
+        }
+      }
+    }
+  } catch {
+    // malformed/missing state -> empty set
+  }
+  return piBridgeInstalledPluginIds;
+}
 
 /** Invalidate the plugin tool status cache. Call after any plugin/tool mutation. */
 export function invalidatePluginToolStatusCache(): void {
@@ -86,80 +201,52 @@ function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
     const canInstallCommands = hasCommands && instance.commandsSubdir !== null;
     const canInstallAgents = hasAgents && instance.agentsSubdir !== null;
 
-    // Claude supports anything its plugin system handles — hooks, MCP, LSP, output styles, etc.
-    // For non-Claude tools, we only sync component types they understand (skills/commands/agents).
-    // Pi support is bridge-gated.
     const isClaude = instance.toolId === "claude-code";
     const isPi = instance.toolId === "pi";
+    const isOpenCode = instance.toolId === "opencode";
+    const isAmp = instance.toolId === "amp-code";
+    const isCodex = instance.toolId === "openai-codex";
+
     const baseSupported = canInstallSkills || canInstallCommands || canInstallAgents ||
-                      (isClaude && (plugin.hasMcp || plugin.hasLsp || hasHooks));
-    const supported = isPi ? isPiPluginBridgeReady() && baseSupported : baseSupported;
+      (isClaude && (plugin.hasMcp || plugin.hasLsp || hasHooks));
+
+    let supported = isCodex ? true : baseSupported;
+    let supportReason: string | undefined;
+
+    if (isOpenCode || isAmp) {
+      supported = false;
+      supportReason = "Plugin support is blocked for this tool until native plugin checks are implemented";
+    } else if (isPi) {
+      const piBridgeReady = isPiPluginBridgeReady();
+      supported = piBridgeReady && baseSupported;
+      if (!piBridgeReady) {
+        supportReason = "Pi bridge missing (install: @ssweens/pi-plugins, pi-subagents, pi-mcp-adapter)";
+      }
+    }
 
     let installed = false;
     let installedVersion: string | undefined;
     const enabled = instance.enabled;
 
     if (enabled && supported) {
-      // Check for installed components by looking at actual files/symlinks.
-      // This intentionally checks the component names declared by marketplace/plugin
-      // metadata only. Private installer artifacts or naming conventions from third-party
-      // tools are not treated as a Blackbook standard.
-      if (canInstallSkills && instance.skillsSubdir) {
-        for (const skill of plugin.skills) {
-          const flatPath = join(instance.configDir, instance.skillsSubdir, skill);
-          const nsPath = join(instance.configDir, instance.skillsSubdir, plugin.name, skill);
-          if (existsSync(flatPath) || existsSync(nsPath)) {
-            installed = true;
-            break;
-          }
-        }
-      }
-      if (!installed && canInstallCommands && instance.commandsSubdir) {
-        for (const cmd of plugin.commands) {
-          const flatPath = join(instance.configDir, instance.commandsSubdir, `${cmd}.md`);
-          const nsPath = join(instance.configDir, instance.commandsSubdir, plugin.name, `${cmd}.md`);
-          if (existsSync(flatPath) || existsSync(nsPath)) {
-            installed = true;
-            break;
-          }
-        }
-      }
-      if (!installed && canInstallAgents && instance.agentsSubdir) {
-        for (const agent of plugin.agents) {
-          const flatPath = join(instance.configDir, instance.agentsSubdir, `${agent}.md`);
-          const nsPath = join(instance.configDir, instance.agentsSubdir, plugin.name, `${agent}.md`);
-          if (existsSync(flatPath) || existsSync(nsPath)) {
-            installed = true;
-            break;
-          }
-        }
-      }
-
-      // Claude's installed_plugins.json is the AUTHORITATIVE record of what's installed
-      // (it knows about hooks/output-styles/MCP/LSP/etc., not just our scanned components).
-      // Fall back to it for ANY Claude plugin where component-scan didn't find files.
-      if (!installed && isClaude) {
-        const installedPluginsPath = join(instance.configDir, "plugins/installed_plugins.json");
-        if (existsSync(installedPluginsPath)) {
-          try {
-            const content = readFileSync(installedPluginsPath, "utf-8");
-            const data = JSON.parse(content);
-            if (data.plugins && typeof data.plugins === "object") {
-              for (const key of Object.keys(data.plugins)) {
-                const pluginName = key.split("@")[0];
-                if (pluginName === plugin.name) {
-                  installed = true;
-                  const records = Array.isArray(data.plugins[key]) ? data.plugins[key] : [data.plugins[key]];
-                  const first = records.find((r: unknown) => r && typeof r === "object") as Record<string, unknown> | undefined;
-                  installedVersion = typeof first?.version === "string" ? first.version : undefined;
-                  break;
-                }
-              }
-            }
-          } catch {
-            // Ignore parse errors
-          }
-        }
+      // Tool-specific plugin checks only. No skill/command/agent filesystem proxy scans.
+      if (isClaude) {
+        const ids = getClaudeInstalledPluginIds();
+        const id1 = `${plugin.name}@${plugin.marketplace}`;
+        const id2 = plugin.installedMarketplace ? `${plugin.name}@${plugin.installedMarketplace}` : "";
+        installed = ids.has(id1) || (id2 ? ids.has(id2) : false);
+      } else if (isPi) {
+        // Pi bridge state is authoritative; avoid file-based proxy checks.
+        const ids = getPiBridgeInstalledPluginIds();
+        const id1 = `${plugin.name}@${plugin.marketplace}`;
+        const id2 = plugin.installedMarketplace ? `${plugin.name}@${plugin.installedMarketplace}` : "";
+        installed = ids.has(id1) || (id2 ? ids.has(id2) : false);
+      } else if (isCodex) {
+        // Codex native plugin manager check.
+        const ids = getCodexInstalledPluginIds();
+        const id1 = `${plugin.name}@${plugin.marketplace}`;
+        const id2 = plugin.installedMarketplace ? `${plugin.name}@${plugin.installedMarketplace}` : "";
+        installed = ids.has(id1) || (id2 ? ids.has(id2) : false);
       }
     }
 
@@ -170,6 +257,7 @@ function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
       installed,
       supported,
       enabled,
+      supportReason,
       installedVersion,
     });
   }

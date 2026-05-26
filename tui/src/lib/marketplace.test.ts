@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { rmSync, existsSync, mkdirSync } from "fs";
+import { rmSync, existsSync, mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { fetchMarketplace } from "./marketplace.js";
@@ -50,6 +50,58 @@ describe("marketplace", () => {
   }
 
   describe("fetchMarketplace", () => {
+    it("loads a local Claude marketplace checkout and scans manifest-declared nested skill roots", async () => {
+      const root = join(tmpdir(), `blackbook-local-marketplace-${Date.now()}`);
+      const pluginDir = join(root, "plugins", "desk");
+      mkdirSync(join(root, ".claude-plugin"), { recursive: true });
+      mkdirSync(join(pluginDir, ".claude-plugin"), { recursive: true });
+      mkdirSync(join(pluginDir, "skills", "reaper-cli"), { recursive: true });
+      mkdirSync(join(pluginDir, "skills", "plugins", "plugin-serum2"), { recursive: true });
+      mkdirSync(join(pluginDir, "skills", "plugins", "plugin-microtonic"), { recursive: true });
+
+      writeFileSync(join(root, ".claude-plugin", "marketplace.json"), JSON.stringify({
+        plugins: [{
+          name: "desk",
+          description: "old description",
+          source: "./plugins/desk",
+        }],
+      }));
+      writeFileSync(join(pluginDir, ".claude-plugin", "plugin.json"), JSON.stringify({
+        version: "0.1.0",
+        description: "new description",
+        homepage: "https://github.com/ssweens/desk",
+        skills: ["./skills/", "./skills/plugins/"],
+      }));
+      writeFileSync(join(pluginDir, ".mcp.json"), "{}");
+      writeFileSync(join(pluginDir, "skills", "reaper-cli", "SKILL.md"), "---\nname: reaper-cli\ndescription: Reaper CLI\n---\n");
+      writeFileSync(join(pluginDir, "skills", "plugins", "plugin-serum2", "SKILL.md"), "---\nname: plugin-serum2\ndescription: Serum 2\n---\n");
+      writeFileSync(join(pluginDir, "skills", "plugins", "plugin-microtonic", "SKILL.md"), "---\nname: daw-microtonic\ndescription: Microtonic\n---\n");
+
+      const plugins = await fetchMarketplace({
+        name: "desk",
+        url: root,
+        isLocal: true,
+        plugins: [],
+        availableCount: 0,
+        installedCount: 0,
+        autoUpdate: false,
+        source: "claude",
+        enabled: true,
+      });
+
+      expect(plugins).toHaveLength(1);
+      expect(plugins[0]).toMatchObject({
+        name: "desk",
+        version: "0.1.0",
+        description: "new description",
+        homepage: "https://github.com/ssweens/desk",
+        hasMcp: true,
+      });
+      expect(plugins[0].skills).toEqual(["daw-microtonic", "plugin-serum2", "reaper-cli"]);
+
+      rmSync(root, { recursive: true, force: true });
+    });
+
     it("reads remote plugin metadata from the marketplace URL's declared source path", async () => {
       const marketplace = createMockMarketplace("EveryInc");
       marketplace.url = "https://raw.githubusercontent.com/EveryInc/compound-engineering-plugin/main/.claude-plugin/marketplace.json";

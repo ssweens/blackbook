@@ -308,12 +308,22 @@ describe("ItemList", () => {
     expect(frame).not.toContain("plugin-0");
   });
 
-  it("renders MCP type for hasMcp plugin", () => {
-    const items = [createItem({ hasMcp: true })];
+  it("renders MCP type for plugins that only include MCP servers", () => {
+    const items = [createItem({ hasMcp: true, skills: [], commands: [], agents: [], hooks: [] })];
     const { lastFrame } = render(
       React.createElement(ItemList, { items, selectedIndex: 0 }),
     );
     expect(lastFrame()).toContain("MCP");
+  });
+
+  it("keeps plugin type for mixed plugins that include MCP servers", () => {
+    const items = [createItem({ hasMcp: true, skills: ["reaper-cli"], commands: [], agents: [], hooks: [] })];
+    const { lastFrame } = render(
+      React.createElement(ItemList, { items, selectedIndex: 0 }),
+    );
+    const frame = lastFrame()!;
+    expect(frame).toContain("Plugin");
+    expect(frame).not.toContain("MCP");
   });
 
   it("renders PiPkg type for pi-package", () => {

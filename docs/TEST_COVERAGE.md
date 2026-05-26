@@ -3,7 +3,7 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 477
+- **Total Tests:** 485
 - **Test Files:** 41
 
 ## Critical Paths
@@ -17,7 +17,7 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Plugin per-component enable/disable config parsing and round-trip
 - [x] Sync preview generation for partial installs
 - [x] Discover → plugin detail → install to all tools (E2E)
-- [x] Pi is excluded from Blackbook plugin projection lifecycle (install/update/enable/disable/sync/scanning); plugin detail actions do not show Pi targets
+- [x] Pi plugin lifecycle routes through `@ssweens/pi-plugins` bridge commands instead of Blackbook projection paths
 - [x] Install failure notification stays on detail (E2E)
 - [x] Config multi-file sync (directory, glob patterns)
 - [x] Asset path resolution (URLs, absolute, home-relative, relative)
@@ -47,6 +47,8 @@ This project tracks coverage by critical user journeys and system boundaries.
 
 ## Boundaries
 - [x] Marketplace fetch (remote marketplace.json)
+- [x] Local Claude marketplace checkout loading via `installLocation`, including manifest-declared nested skill roots
+- [x] Pi bridge install compatibility for local Claude marketplace checkouts with path-based `mcpServers` manifests (manual `desk` install verification)
 - [x] Tool config loading and updates
 - [x] Plugin install/uninstall/update adapters
 - [x] Asset sync adapters (hashing + drift detection)
@@ -135,6 +137,7 @@ This project tracks coverage by critical user journeys and system boundaries.
 
 ## User Journeys (Problem Paths)
 - [x] Install failure surfaces error notification without leaving detail view
+- [x] Pi bridge install retries/repoints duplicate marketplace state to Blackbook's staged compatible marketplace source
 - [x] Local-only Pi package uninstall succeeds when `pi remove npm:...` reports no matching Pi settings package
 - [x] Pi package delete-everywhere removes the in-git source-repo prescription instead of leaving the package to reappear on refresh
 - [ ] Update failure surfaces error notification with context

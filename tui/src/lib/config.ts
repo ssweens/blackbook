@@ -62,7 +62,9 @@ export function loadClaudeMarketplaces(): Record<string, string> {
       const result: Record<string, string> = {};
 
       for (const [name, entry] of Object.entries(data)) {
-        if (entry.source.source === "github" && entry.source.repo) {
+        if (entry.installLocation && existsSync(entry.installLocation)) {
+          result[name] = entry.installLocation;
+        } else if (entry.source.source === "github" && entry.source.repo) {
           result[name] = `https://raw.githubusercontent.com/${entry.source.repo}/main/.claude-plugin/marketplace.json`;
         } else if (entry.source.source === "git" && entry.source.url) {
           const match = entry.source.url.match(/github\.com\/([^/]+\/[^/.]+)/);

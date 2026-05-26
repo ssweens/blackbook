@@ -143,9 +143,19 @@ All previously identified remaining contract gaps are now closed in the primary 
 
 ## Pi plugin bridge hard-gating (2026-05-23)
 - [x] Remove Pi plugin projection fallback paths for plugin lifecycle operations.
-- [x] Gate Pi plugin support on installed bridge prerequisites (`pi-claude-marketplace`, `pi-subagents`, `pi-mcp-adapter`).
+- [x] Gate Pi plugin support on installed bridge prerequisites (now `@ssweens/pi-plugins`, `pi-subagents`, `pi-mcp-adapter`).
 - [x] Route Pi plugin install/update/uninstall/sync through bridge commands (`pi -p "/claude:plugin ..."`).
 - [x] Keep non-Pi plugin lifecycle behavior unchanged.
 - [x] Update integration tests to cover non-Pi projection assumptions removal and keep suite green.
 - [x] Run quality gates (`pnpm typecheck`, `pnpm test -- --run`, `pnpm build`) — `484/484` passing.
 - [x] Visual verify in tmux plugin detail gating (`/tmp/bb-pi-bridge-gate.txt`).
+
+## Pi plugin bridge fork + Claude-manifest compatibility (2026-05-23)
+- [x] Switch Blackbook Pi plugin bridge detection from `pi-claude-marketplace` to `@ssweens/pi-plugins`, including local Pi settings package sources.
+- [x] Resolve bridge orchestrators from `extensions/pi-plugins/...` for install/update/uninstall and state reads.
+- [x] Stage Pi-compatible marketplace copies for local Claude marketplace checkouts before installing to Pi.
+- [x] Convert Claude path-form `mcpServers: "./.mcp.json"` into Pi's required marketplace-entry MCP object and sanitize the staged `.claude-plugin/plugin.json`.
+- [x] Repoint existing duplicate Pi marketplace records to Blackbook's staged compatible source so stale Claude checkout records do not keep failing installs.
+- [x] Verify direct `desk` Pi install succeeds and Pi state records `desk` as installed.
+- [x] Visually verify in tmux Installed tab: `desk Plugin · desk ✔ installed`.
+- [x] Run quality gates: `pnpm typecheck`, `pnpm build`.

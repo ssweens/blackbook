@@ -7,7 +7,7 @@ import { createHash } from "crypto";
 import { fileURLToPath } from "url";
 import { getCacheDir, getPiMarketplaces, getDisabledPiMarketplaces, getPackageManager } from "./config.js";
 import { getGitHubToken, isGitHubHost } from "./github.js";
-import { expandTilde } from "./path-utils.js";
+import { expandTilde, scanPluginContents } from "./path-utils.js";
 import type { Marketplace, Plugin, PiPackage, PiMarketplace, PiSettings, PiPackageSourceType, PackageManager } from "./types.js";
 
 export const MARKETPLACE_CACHE_TTL_SECONDS = 600;
@@ -44,19 +44,21 @@ function cacheSet(key: string, value: unknown): void {
 }
 
 interface MarketplaceJson {
-  plugins?: Array<{
-    name?: string;
-    description?: string;
-    source?: string | { source: string; url?: string; repo?: string; ref?: string };
-    homepage?: string;
-    version?: string;
-    skills?: unknown;
-    commands?: unknown;
-    agents?: unknown;
-    hooks?: unknown;
-    lspServers?: Record<string, unknown>;
-    mcpServers?: Record<string, unknown>;
-  }>;
+  plugins?: Array<MarketplacePluginJson>;
+}
+
+interface MarketplacePluginJson {
+  name?: string;
+  description?: string;
+  source?: string | { source: string; url?: string; repo?: string; ref?: string; path?: string };
+  homepage?: string;
+  version?: string;
+  skills?: unknown;
+  commands?: unknown;
+  agents?: unknown;
+  hooks?: unknown;
+  lspServers?: Record<string, unknown>;
+  mcpServers?: Record<string, unknown>;
 }
 
 function parseGithubRepoFromUrl(url: string): [string, string] | null {
@@ -174,6 +176,94 @@ function resolveLocalMarketplacePath(url: string, isLocal: boolean): string | nu
   if (!normalized.startsWith("/")) normalized = resolve(process.cwd(), normalized);
 
   return (looksLocal || existsSync(normalized)) ? normalized : null;
+}
+
+function readLocalPluginMetadata(pluginDir: string): { version?: string; description?: string; homepage?: string } {
+  for (const rel of [join(".claude-plugin", "plugin.json"), join(".codex-plugin", "plugin.json")]) {
+    try {
+      const metadataPath = join(pluginDir, rel);
+      if (!existsSync(metadataPath) || !lstatSync(metadataPath).isFile()) continue;
+      const metadata = JSON.parse(readFileSync(metadataPath, "utf-8"));
+      return {
+        version: typeof metadata.version === "string" ? metadata.version : undefined,
+        description: typeof metadata.description === "string" ? metadata.description : undefined,
+        homepage: typeof metadata.homepage === "string" ? metadata.homepage : undefined,
+      };
+    } catch {
+      // Try next manifest format.
+    }
+  }
+  return {};
+}
+
+function readLocalMarketplace(localPath: string): { data: MarketplaceJson; repoRoot: string } | null {
+  let manifestPath = localPath;
+  let repoRoot = localPath;
+
+  try {
+    if (existsSync(localPath) && lstatSync(localPath).isDirectory()) {
+      if (basename(localPath) === ".claude-plugin") {
+        manifestPath = join(localPath, "marketplace.json");
+        repoRoot = dirname(localPath);
+      } else if (existsSync(join(localPath, ".claude-plugin", "marketplace.json"))) {
+        manifestPath = join(localPath, ".claude-plugin", "marketplace.json");
+        repoRoot = localPath;
+      } else {
+        manifestPath = join(localPath, "marketplace.json");
+        repoRoot = localPath;
+      }
+    } else if (basename(dirname(localPath)) === ".claude-plugin") {
+      repoRoot = dirname(dirname(localPath));
+    } else {
+      repoRoot = dirname(localPath);
+    }
+
+    if (!existsSync(manifestPath)) return null;
+    return {
+      data: JSON.parse(readFileSync(manifestPath, "utf-8")) as MarketplaceJson,
+      repoRoot,
+    };
+  } catch (error) {
+    console.error(`Failed to read local marketplace ${localPath}: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
+function pluginFromMarketplaceEntry(
+  p: MarketplacePluginJson,
+  marketplaceName: string,
+  overrides: {
+    version?: string;
+    description?: string;
+    homepage?: string;
+    skills?: string[];
+    commands?: string[];
+    agents?: string[];
+    hooks?: string[];
+    hasMcp?: boolean;
+  } = {},
+): Plugin {
+  const declaredVersion = typeof p.version === "string" ? p.version : undefined;
+  const version = overrides.version ?? declaredVersion;
+  const hasMcp = Boolean(overrides.hasMcp) || Object.keys(p.mcpServers ?? {}).length > 0;
+
+  return {
+    name: p.name || "",
+    description: overrides.description ?? p.description ?? "",
+    version,
+    latestVersion: version,
+    source: p.source || "",
+    skills: overrides.skills ?? normalizeDeclaredList(p.skills),
+    commands: overrides.commands ?? normalizeDeclaredList(p.commands),
+    agents: overrides.agents ?? normalizeDeclaredList(p.agents),
+    hooks: overrides.hooks ?? normalizeDeclaredList(p.hooks),
+    hasMcp,
+    hasLsp: Object.keys(p.lspServers ?? {}).length > 0,
+    scope: "user" as const,
+    marketplace: marketplaceName,
+    installed: false,
+    homepage: overrides.homepage ?? p.homepage ?? "",
+  };
 }
 
 function normalizeDeclaredItem(value: unknown): string | null {
@@ -318,8 +408,36 @@ export async function fetchMarketplace(
   const localPath = resolveLocalMarketplacePath(marketplace.url, marketplace.isLocal);
 
   if (localPath) {
-    // Local marketplace paths are not supported. Marketplaces are remote URLs.
-    return [];
+    const localMarketplace = readLocalMarketplace(localPath);
+    if (!localMarketplace) return [];
+
+    return (localMarketplace.data.plugins || []).map((p) => {
+      const source = p.source || "";
+      let scanned: ReturnType<typeof scanPluginContents> | undefined;
+      let metadata: ReturnType<typeof readLocalPluginMetadata> = {};
+
+      if (typeof source === "string" && source.startsWith("./")) {
+        const pluginDir = resolve(localMarketplace.repoRoot, source);
+        scanned = scanPluginContents(pluginDir);
+        metadata = readLocalPluginMetadata(pluginDir);
+      }
+
+      const declaresSkills = Array.isArray(p.skills) || typeof p.skills === "string";
+      const declaresCommands = Array.isArray(p.commands) || typeof p.commands === "string";
+      const declaresAgents = Array.isArray(p.agents) || typeof p.agents === "string";
+      const declaresHooks = Array.isArray(p.hooks) || typeof p.hooks === "string";
+
+      return pluginFromMarketplaceEntry(p, marketplace.name, {
+        version: metadata.version,
+        description: metadata.description,
+        homepage: metadata.homepage,
+        skills: declaresSkills ? undefined : scanned?.skills,
+        commands: declaresCommands ? undefined : scanned?.commands,
+        agents: declaresAgents ? undefined : scanned?.agents,
+        hooks: declaresHooks ? undefined : scanned?.hooks,
+        hasMcp: scanned?.hasMcp,
+      });
+    });
   }
 
   let data: MarketplaceJson | null = null;
@@ -409,25 +527,16 @@ export async function fetchMarketplace(
       else if (source.source === "github" && source.repo) homepage = `https://github.com/${source.repo}`;
     }
 
-    return {
-      name: p.name || "",
-      description,
+    return pluginFromMarketplaceEntry(p, marketplace.name, {
       version,
-      latestVersion: version,
-      source,
+      description,
+      homepage,
       skills,
       commands,
       agents,
       hooks,
       hasMcp,
-      hasLsp: Object.keys(p.lspServers ?? {}).length > 0,
-      lspServers: p.lspServers,
-      mcpServers: p.mcpServers,
-      scope: "user" as const,
-      marketplace: marketplace.name,
-      installed: false,
-      homepage,
-    };
+    });
   }));
 
   return plugins;
