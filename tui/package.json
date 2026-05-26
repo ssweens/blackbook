@@ -35,7 +35,7 @@
     "access": "public"
   },
   "scripts": {
-    "dev": "tsx src/cli.tsx",
+    "dev": "bun src/cli.tsx",
     "build": "tsc && rm -rf dist/lib/playbooks && cp -r src/lib/playbooks dist/lib/playbooks",
     "start": "node dist/cli.js",
     "typecheck": "tsc --noEmit",
@@ -61,9 +61,8 @@
     "@types/react": "^19.0.0",
     "ink-testing-library": "^4.0.0",
     "react-devtools-core": "^7.0.1",
-    "tsx": "^4.19.4",
+    "tsx": "^4.22.3",
     "typescript": "^5.8.3",
     "vitest": "^4.0.18"
-  },
-  "packageManager": "pnpm@10.28.2+sha512.41872f037ad22f7348e3b1debbaf7e867cfd448f2726d9cf74c08f19507c31d2c8e7a11525b983febc2df640b5438dee6023ebb1f84ed43cc2d654d2bc326264"
+  }
 }
