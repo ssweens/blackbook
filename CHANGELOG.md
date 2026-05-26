@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.10] - 2026-05-26
+
+### Fixed
+- Explicit `Sync to tool` actions now force-sync `both-changed` file instances, so Pi config/file drift is actually pushed when selected from item detail.
+- Local `settings.source_repo` Pi package prescriptions are now read from the source repo's `config/blackbook/config.yaml`, fixing installed packages like `pi-mcp-adapter` incorrectly showing as `not in git`.
+- Pi bridge marketplace staging now emits valid regex escaping for relative MCP/source paths, fixing `Unexpected ,` syntax failures during Pi plugin installs.
+
 ## [0.24.9] - 2026-05-26
 
 ### Fixed

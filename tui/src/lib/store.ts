@@ -413,8 +413,17 @@ async function loadDesiredPiPackageSpecs(): Promise<PiPackageSpec[]> {
   const result = loadYamlConfig();
   if (result.errors.length > 0) return [];
   const sourceRepo = result.config.settings.source_repo;
-  if (!sourceRepo || !isRemoteSourceRepo(sourceRepo)) {
-    return result.config.pi_packages;
+  if (!sourceRepo) return result.config.pi_packages;
+
+  if (!isRemoteSourceRepo(sourceRepo)) {
+    const sourceRepoConfigPath = getSourceRepoBlackbookConfigPath(result.config);
+    if (!sourceRepoConfigPath || !existsSync(sourceRepoConfigPath)) {
+      return result.config.pi_packages;
+    }
+
+    const sourceRepoResult = loadYamlConfig(sourceRepoConfigPath);
+    if (sourceRepoResult.errors.length > 0) return result.config.pi_packages;
+    return sourceRepoResult.config.pi_packages;
   }
 
   try {

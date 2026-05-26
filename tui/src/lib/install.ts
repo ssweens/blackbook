@@ -273,7 +273,7 @@ async function readJsonIfExists(p) {
 }
 
 async function readMcpServers(pluginDir, relPath = '.mcp.json') {
-  const cleanRel = String(relPath || '.mcp.json').replace(/^\.\//, '');
+  const cleanRel = String(relPath || '.mcp.json').replace(/^\\.\\//, '');
   const parsed = await readJsonIfExists(path.join(pluginDir, cleanRel));
   if (!parsed || typeof parsed !== 'object') return undefined;
   return parsed.mcpServers && typeof parsed.mcpServers === 'object' ? parsed.mcpServers : parsed;
@@ -324,7 +324,7 @@ async function piCompatibleMarketplaceSource(source) {
   for (const entry of manifest.plugins) {
     const nextEntry = { ...entry };
     if (typeof entry.source === 'string' && entry.source.startsWith('./')) {
-      const rel = entry.source.replace(/^\.\//, '');
+      const rel = entry.source.replace(/^\\.\\//, '');
       const sourceDir = path.resolve(marketplaceRoot, rel);
       const targetDir = path.join(stageDir, rel);
       await mkdir(path.dirname(targetDir), { recursive: true });

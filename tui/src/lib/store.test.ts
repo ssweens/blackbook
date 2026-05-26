@@ -1369,6 +1369,59 @@ describe("Repo-prescribed Pi packages", () => {
     ]);
   });
 
+  it("loads desired Pi packages from local source_repo config", async () => {
+    const sourceRepo = mkdtempSync(join(tmpdir(), "blackbook-local-source-repo-"));
+    const sourceRepoConfigPath = join(sourceRepo, "config", "blackbook", "config.yaml");
+    mkdirSync(join(sourceRepo, "config", "blackbook"), { recursive: true });
+    writeFileSync(sourceRepoConfigPath, "pi_packages: []\n");
+
+    vi.mocked(loadYamlConfig).mockImplementation((configPath?: string) => ({
+      config: configPath === sourceRepoConfigPath
+        ? {
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+          marketplaces: {},
+          tools: {},
+          files: [],
+          configs: [],
+          plugins: {},
+          pi_packages: [{ source: "npm:pi-mcp-adapter", name: "pi-mcp-adapter" }],
+        }
+        : {
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+          marketplaces: {},
+          tools: {},
+          files: [],
+          configs: [],
+          plugins: {},
+          pi_packages: [],
+        },
+      configPath: configPath ?? "/tmp/blackbook/config.yaml",
+      errors: [],
+    }));
+    vi.mocked(loadAllPiMarketplaces).mockResolvedValue([{ name: "npm", source: "npm", sourceType: "npm", enabled: true, builtIn: true, packages: [{
+      name: "pi-mcp-adapter",
+      description: "MCP adapter",
+      version: "1.0.0",
+      source: "npm:pi-mcp-adapter",
+      sourceType: "npm",
+      marketplace: "npm",
+      installed: true,
+      extensions: [],
+      skills: [],
+      prompts: [],
+      themes: [],
+    }] } as any]);
+    vi.mocked(getAllPiPackages).mockImplementation((marketplaces: any[]) => marketplaces.flatMap((m) => m.packages ?? []));
+
+    await useStore.getState().loadPiPackages();
+
+    expect(useStore.getState().piPackages[0]).toMatchObject({
+      name: "pi-mcp-adapter",
+      source: "npm:pi-mcp-adapter",
+      recommended: true,
+    });
+  });
+
   it("loads desired Pi packages from remote source_repo URL via in-memory fetch", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = vi.fn().mockResolvedValue({
