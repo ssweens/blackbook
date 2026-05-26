@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.8] - 2026-05-26
+
+### Fixed
+- Upgraded `ink` from v5 to v7 and `react` from v18 to v19 to fix a crash when blackbook is installed inside a host environment (e.g. pi) that already has React 19 in its node_modules. Previously, `zustand` would resolve to the host's React 19 while `ink`'s renderer used blackbook's bundled React 18, causing `Cannot read properties of null (reading 'useCallback')` on startup.
+
 ## [0.24.7] - 2026-05-26
 
 ### Fixed
