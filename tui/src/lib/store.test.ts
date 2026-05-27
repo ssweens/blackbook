@@ -1323,20 +1323,35 @@ describe("Repo-prescribed Pi packages", () => {
     vi.mocked(updatePiPackage).mockResolvedValue({ success: true });
   });
 
-  it("loads desired Pi packages from config even when not installed locally", async () => {
-    vi.mocked(loadYamlConfig).mockReturnValue({
-      config: {
-        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
-        marketplaces: {},
-        tools: {},
-        files: [],
-        configs: [],
-        plugins: {},
-        pi_packages: [{ source: "npm:pi-subagents", description: "Team subagent package" }],
-      },
-      configPath: "/tmp/blackbook/config.yaml",
+  it("loads desired Pi packages from local source_repo config even when not installed locally", async () => {
+    const sourceRepo = mkdtempSync(join(tmpdir(), "blackbook-source-repo-for-prescribed-"));
+    const sourceRepoConfigPath = join(sourceRepo, "config", "blackbook", "config.yaml");
+    mkdirSync(join(sourceRepo, "config", "blackbook"), { recursive: true });
+    writeFileSync(sourceRepoConfigPath, "pi_packages: []\n");
+
+    vi.mocked(loadYamlConfig).mockImplementation((configPath?: string) => ({
+      config: configPath === sourceRepoConfigPath
+        ? {
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+          marketplaces: {},
+          tools: {},
+          files: [],
+          configs: [],
+          plugins: {},
+          pi_packages: [{ source: "npm:pi-subagents", description: "Team subagent package" }],
+        }
+        : {
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+          marketplaces: {},
+          tools: {},
+          files: [],
+          configs: [],
+          plugins: {},
+          pi_packages: [],
+        },
+      configPath: configPath ?? "/tmp/blackbook/config.yaml",
       errors: [],
-    });
+    }));
     vi.mocked(fetchNpmPackageDetails).mockResolvedValue({
       name: "pi-subagents",
       description: "Subagent tools",
@@ -1662,20 +1677,35 @@ describe("Repo-prescribed Pi packages", () => {
     expect(matches).toHaveLength(1);
   });
 
-  it("tracks an installed local-only Pi package by adding it to pi_packages", async () => {
-    vi.mocked(loadYamlConfig).mockReturnValue({
-      config: {
-        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
-        marketplaces: {},
-        tools: {},
-        files: [],
-        configs: [],
-        plugins: {},
-        pi_packages: [],
-      },
-      configPath: "/tmp/blackbook/config.yaml",
+  it("tracks an installed local-only Pi package by adding it to source repo pi_packages", async () => {
+    const sourceRepo = mkdtempSync(join(tmpdir(), "blackbook-source-repo-track-"));
+    const sourceConfigPath = join(sourceRepo, "config", "blackbook", "config.yaml");
+    mkdirSync(join(sourceRepo, "config", "blackbook"), { recursive: true });
+    writeFileSync(sourceConfigPath, "pi_packages: []\n");
+
+    vi.mocked(loadYamlConfig).mockImplementation((configPath?: string) => ({
+      config: configPath === sourceConfigPath
+        ? {
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+          marketplaces: {},
+          tools: {},
+          files: [],
+          configs: [],
+          plugins: {},
+          pi_packages: [],
+        }
+        : {
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+          marketplaces: {},
+          tools: {},
+          files: [],
+          configs: [],
+          plugins: {},
+          pi_packages: [],
+        },
+      configPath: configPath ?? "/tmp/blackbook/config.yaml",
       errors: [],
-    });
+    }));
 
     const pkg = {
       name: "pi-local-only",
@@ -1697,7 +1727,7 @@ describe("Repo-prescribed Pi packages", () => {
       expect.objectContaining({
         pi_packages: [expect.objectContaining({ source: "npm:pi-local-only", name: "pi-local-only" })],
       }),
-      "/tmp/blackbook/config.yaml",
+      sourceConfigPath,
     );
   });
 
@@ -1754,12 +1784,6 @@ describe("Repo-prescribed Pi packages", () => {
     expect(removePiPackage).toHaveBeenCalledWith(pkg);
     expect(saveYamlConfig).toHaveBeenCalledWith(
       expect.objectContaining({
-        pi_packages: [expect.objectContaining({ source: "npm:pi-keep-me" })],
-      }),
-      "/tmp/blackbook/config.yaml",
-    );
-    expect(saveYamlConfig).toHaveBeenCalledWith(
-      expect.objectContaining({
         pi_packages: [expect.objectContaining({ source: "npm:pi-source-only" })],
       }),
       sourceConfigPath,
@@ -1768,20 +1792,35 @@ describe("Repo-prescribed Pi packages", () => {
     expect(useStore.getState().detailPiPackage).toBeNull();
   });
 
-  it("marks marketplace packages as recommended when their source is prescribed", async () => {
-    vi.mocked(loadYamlConfig).mockReturnValue({
-      config: {
-        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
-        marketplaces: {},
-        tools: {},
-        files: [],
-        configs: [],
-        plugins: {},
-        pi_packages: [{ source: "npm:pi-ask-user", name: "Ask User" }],
-      },
-      configPath: "/tmp/blackbook/config.yaml",
+  it("marks marketplace packages as recommended when their source is prescribed in source repo config", async () => {
+    const sourceRepo = mkdtempSync(join(tmpdir(), "blackbook-source-repo-recommended-"));
+    const sourceConfigPath = join(sourceRepo, "config", "blackbook", "config.yaml");
+    mkdirSync(join(sourceRepo, "config", "blackbook"), { recursive: true });
+    writeFileSync(sourceConfigPath, "pi_packages: []\n");
+
+    vi.mocked(loadYamlConfig).mockImplementation((configPath?: string) => ({
+      config: configPath === sourceConfigPath
+        ? {
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+          marketplaces: {},
+          tools: {},
+          files: [],
+          configs: [],
+          plugins: {},
+          pi_packages: [{ source: "npm:pi-ask-user", name: "Ask User" }],
+        }
+        : {
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+          marketplaces: {},
+          tools: {},
+          files: [],
+          configs: [],
+          plugins: {},
+          pi_packages: [],
+        },
+      configPath: configPath ?? "/tmp/blackbook/config.yaml",
       errors: [],
-    });
+    }));
     vi.mocked(loadAllPiMarketplaces).mockResolvedValue([{ name: "npm", source: "npm", sourceType: "npm", enabled: true, builtIn: true, packages: [{
       name: "pi-ask-user",
       description: "Ask user",

@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local `settings.source_repo` Pi package prescriptions are now read from the source repo's `config/blackbook/config.yaml`, fixing installed packages like `pi-mcp-adapter` incorrectly showing as `not in git`.
 - Pi bridge marketplace staging now emits valid regex escaping for relative MCP/source paths, fixing `Unexpected ,` syntax failures during Pi plugin installs.
 
+## [0.24.10] - 2026-05-26
+
+### Changed
+- Local `config.yaml` `pi_packages` is no longer used as a prescription source.
+- Pi package prescription reads now come only from source-repo config (`config/blackbook/config.yaml`) via local source repo path or URL fetch.
+- Pi package track/remove/delete actions now mutate source-repo config only (local config is no longer treated as "in git" truth).
+
 ## [0.24.9] - 2026-05-26
 
 ### Fixed
@@ -58,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 477/477 passing (added contract enforcement tests + Pi standalone-scan compatibility regressions for flat->namespaced install/migration).
 - Full tmux visual verification completed for all tabs, namespace tree actions, multi-instance Claude, Sync tab (no ghosts, immediate updates, correct counts).
 
+[0.24.10]: https://github.com/ssweens/blackbook/compare/v0.24.9...v0.24.10
 [0.24.9]: https://github.com/ssweens/blackbook/compare/v0.24.8...v0.24.9
 [0.24.8]: https://github.com/ssweens/blackbook/compare/v0.24.7...v0.24.8
 [0.24.7]: https://github.com/ssweens/blackbook/compare/v0.24.6...v0.24.7

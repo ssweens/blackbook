@@ -413,23 +413,23 @@ async function loadDesiredPiPackageSpecs(): Promise<PiPackageSpec[]> {
   const result = loadYamlConfig();
   if (result.errors.length > 0) return [];
   const sourceRepo = result.config.settings.source_repo;
-  if (!sourceRepo) return result.config.pi_packages;
+  if (!sourceRepo) return [];
 
   if (!isRemoteSourceRepo(sourceRepo)) {
     const sourceRepoConfigPath = getSourceRepoBlackbookConfigPath(result.config);
     if (!sourceRepoConfigPath || !existsSync(sourceRepoConfigPath)) {
-      return result.config.pi_packages;
+      return [];
     }
 
     const sourceRepoResult = loadYamlConfig(sourceRepoConfigPath);
-    if (sourceRepoResult.errors.length > 0) return result.config.pi_packages;
+    if (sourceRepoResult.errors.length > 0) return [];
     return sourceRepoResult.config.pi_packages;
   }
 
   try {
     return await fetchRemoteSourceRepoPiPackages(sourceRepo);
   } catch {
-    return result.config.pi_packages;
+    return [];
   }
 }
 
@@ -1390,7 +1390,6 @@ export const useStore = create<Store>((rawSet, get) => {
         return false;
       }
 
-      const localDelete = removePiPackageSpec(pkg.source, configResult.config.pi_packages);
       const sourceConfigPath = getSourceRepoBlackbookConfigPath(configResult.config);
       const shouldUpdateSourceConfig = Boolean(
         sourceConfigPath &&
@@ -1410,13 +1409,11 @@ export const useStore = create<Store>((rawSet, get) => {
           return false;
         }
       }
-      if (sourceConfigResult && sourceConfigResult.errors.length > 0) {
-        notify(`Source config load failed: ${sourceConfigResult.errors[0].message}`, "error");
+      if (!sourceConfigResult || sourceConfigResult.errors.length > 0) {
+        notify(`Source config load failed: ${sourceConfigResult?.errors[0]?.message ?? "missing source repo config"}`, "error");
         return false;
       }
-      const sourceDelete = sourceConfigResult
-        ? removePiPackageSpec(pkg.source, sourceConfigResult.config.pi_packages)
-        : { specs: [], removed: false };
+      const sourceDelete = removePiPackageSpec(pkg.source, sourceConfigResult.config.pi_packages);
 
       let localRemoved = false;
       if (pkg.installed) {
@@ -1428,14 +1425,7 @@ export const useStore = create<Store>((rawSet, get) => {
         localRemoved = true;
       }
 
-      if (localDelete.removed) {
-        saveYamlConfig({
-          ...configResult.config,
-          pi_packages: localDelete.specs,
-        }, configResult.configPath);
-      }
-
-      if (sourceConfigResult && sourceDelete.removed) {
+      if (sourceDelete.removed) {
         saveYamlConfig({
           ...sourceConfigResult.config,
           pi_packages: sourceDelete.specs,
@@ -1451,7 +1441,6 @@ export const useStore = create<Store>((rawSet, get) => {
 
       const parts: string[] = [];
       if (localRemoved) parts.push("local install");
-      if (localDelete.removed) parts.push("config.yaml prescription");
       if (sourceDelete.removed) parts.push("source repo config");
       notify(`Deleted ${pkg.name}: ${parts.join(", ") || "nothing to remove"}`, "info");
       return true;
@@ -1511,7 +1500,6 @@ export const useStore = create<Store>((rawSet, get) => {
       notify(`Config load failed: ${configResult.errors[0].message}`, "error");
       return false;
     }
-    const localDelete = removePiPackageSpec(pkg.source, configResult.config.pi_packages);
     const sourceConfigPath = getSourceRepoBlackbookConfigPath(configResult.config);
     const shouldUpdateSource = Boolean(
       sourceConfigPath && sourceConfigPath !== configResult.configPath && existsSync(sourceConfigPath),
@@ -1524,14 +1512,14 @@ export const useStore = create<Store>((rawSet, get) => {
         sourceConfigResult = { config: remoteWritable.config, configPath: remoteWritable.configPath, errors: [] } as ReturnType<typeof loadYamlConfig>;
       }
     }
-    const sourceDelete = sourceConfigResult
-      ? removePiPackageSpec(pkg.source, sourceConfigResult.config.pi_packages)
-      : { specs: [], removed: false };
-
-    if (localDelete.removed) {
-      saveYamlConfig({ ...configResult.config, pi_packages: localDelete.specs }, configResult.configPath);
+    if (!sourceConfigResult) {
+      notify(`Removed ${pkg.name} from git: source repo config not available`, "warning");
+      return true;
     }
-    if (sourceConfigResult && sourceDelete.removed) {
+
+    const sourceDelete = removePiPackageSpec(pkg.source, sourceConfigResult.config.pi_packages);
+
+    if (sourceDelete.removed) {
       saveYamlConfig({ ...sourceConfigResult.config, pi_packages: sourceDelete.specs }, sourceConfigResult.configPath);
       try {
         commitAndPushWritableSourceRepo(sourceConfigResult.configPath, `remove: ${pkg.name} Pi package from git`);
@@ -1543,10 +1531,9 @@ export const useStore = create<Store>((rawSet, get) => {
     get().refreshDetail();
 
     const parts: string[] = [];
-    if (localDelete.removed) parts.push("config.yaml");
     if (sourceDelete.removed) parts.push("source repo config");
     notify(
-      `Removed ${pkg.name} from git: ${parts.join(", ") || "not found in config"}`,
+      `Removed ${pkg.name} from git: ${parts.join(", ") || "not found in source repo config"}`,
       parts.length > 0 ? "info" : "warning",
     );
     return true;
@@ -1560,47 +1547,44 @@ export const useStore = create<Store>((rawSet, get) => {
       return false;
     }
 
-    const exists = result.config.pi_packages.some((entry) => entry.source.toLowerCase() === pkg.source.toLowerCase());
-    if (exists) {
-      notify(`${pkg.name} is already in git`, "info");
-      return true;
-    }
+    const sourceKey = normalizePiPackageSource(pkg.source);
 
-    saveYamlConfig({
-      ...result.config,
-      pi_packages: [
-        ...result.config.pi_packages,
-        {
-          source: pkg.source,
-          name: pkg.name,
-          description: pkg.description || undefined,
-          marketplace: pkg.marketplace || undefined,
-        },
-      ],
-    }, result.configPath);
-
-    const remoteWritable = result.config.settings.source_repo && isRemoteSourceRepo(result.config.settings.source_repo)
+    const writable = result.config.settings.source_repo
       ? prepareWritableSourceRepoConfig(result.config)
       : null;
 
-    if (remoteWritable) {
-      const remoteExists = remoteWritable.config.pi_packages.some((entry) => entry.source.toLowerCase() === pkg.source.toLowerCase());
-      if (!remoteExists) {
-        saveYamlConfig({
-          ...remoteWritable.config,
-          pi_packages: [
-            ...remoteWritable.config.pi_packages,
-            {
-              source: pkg.source,
-              name: pkg.name,
-              description: pkg.description || undefined,
-              marketplace: pkg.marketplace || undefined,
-            },
-          ],
-        }, remoteWritable.configPath);
-        commitAndPushWritableSourceRepo(remoteWritable.configPath, `track: ${pkg.name} Pi package in git`);
+    if (!writable) {
+      notify(`Source repo not configured for tracking ${pkg.name}`, "error");
+      return false;
+    }
+
+    let sourceAdded = false;
+    const sourceExists = writable.config.pi_packages.some(
+      (entry) => normalizePiPackageSource(entry.source) === sourceKey,
+    );
+    if (!sourceExists) {
+      saveYamlConfig({
+        ...writable.config,
+        pi_packages: [
+          ...writable.config.pi_packages,
+          {
+            source: pkg.source,
+            name: pkg.name,
+            description: pkg.description || undefined,
+            marketplace: pkg.marketplace || undefined,
+          },
+        ],
+      }, writable.configPath);
+      if (writable.isRemote) {
+        commitAndPushWritableSourceRepo(writable.configPath, `track: ${pkg.name} Pi package in git`);
         sourceRepoPiPackagesMemoryCache.delete(result.config.settings.source_repo || "");
       }
+      sourceAdded = true;
+    }
+
+    if (!sourceAdded) {
+      notify(`${pkg.name} is already in git`, "info");
+      return true;
     }
 
     await get().loadPiPackages({ silent: true });
