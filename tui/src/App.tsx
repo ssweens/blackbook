@@ -137,13 +137,10 @@ export function App() {
   const detailPiPackage = detail?.kind === "piPackage" ? detail.data : null;
   const detailPluginDrift = detail?.kind === "plugin" ? (detail.drift ?? null) : null;
   // Setters that delegate to the unified setDetail.
-  const setDetailPlugin = (p: Plugin | null) => setDetail(p ? { kind: "plugin", data: p, drift: detailPluginDrift ?? undefined } : null);
-  const setDetailFile = (f: FileStatus | null) => setDetail(f ? { kind: "file", data: f } : null);
-  const setDetailSkill = (s: import("./lib/install.js").StandaloneSkill | null) => setDetail(s ? { kind: "skill", data: s } : null);
-  const setDetailNamespace = (ns: import("./lib/install.js").NamespaceGroup | null) => setDetail(ns ? { kind: "namespace", data: ns } : null);
   const setDetailPluginDrift = (drift: PluginDrift | null) => {
-    if (detail?.kind !== "plugin") return;
-    setDetail({ kind: "plugin", data: detail.data, drift: drift ?? undefined });
+    const current = useStore.getState().detail;
+    if (current?.kind !== "plugin") return;
+    setDetail({ kind: "plugin", data: current.data, drift: drift ?? undefined });
   };
 
   const detailMarketplace = useStore((s) => s.detailMarketplace);
@@ -441,7 +438,7 @@ export function App() {
     if (!detailFile) return;
     const refreshed = effectiveFiles.find((f) => f.name === detailFile.name);
     if (refreshed && refreshed !== detailFile) {
-      setDetailFile(refreshed);
+      setDetail({ kind: "file", data: refreshed });
     }
   }, [files, detailFile]);
 
@@ -1049,10 +1046,22 @@ export function App() {
   // recomputed) and piPackages (which need the legacy mirror updated).
   const refreshDetailPlugin = (plugin: Plugin) => {
     refreshDetail();
-    // Recompute plugin drift after refresh.
-    void computeItemDrift(pluginToManagedItem(plugin)).then((drift) => {
-      if (drift.kind === "plugin") setDetailPluginDrift(drift.plugin);
-    });
+    // Recompute plugin drift after refresh. Same guard as openPluginDetail —
+    // late resolution must not resurrect / clobber detail if the user navigated.
+    // Yield to the event loop so input handling stays responsive while drift's
+    // git subprocesses run.
+    setTimeout(() => {
+      const current = useStore.getState().detail;
+      if (current?.kind !== "plugin") return;
+      if (current.data.name !== plugin.name || current.data.marketplace !== plugin.marketplace) return;
+      void computeItemDrift(pluginToManagedItem(plugin)).then((drift) => {
+        if (drift.kind !== "plugin") return;
+        const c2 = useStore.getState().detail;
+        if (c2?.kind !== "plugin") return;
+        if (c2.data.name !== plugin.name || c2.data.marketplace !== plugin.marketplace) return;
+        setDetailPluginDrift(drift.plugin);
+      });
+    }, 300);
   };
 
   const refreshDetailPiPackage = (pkg: PiPackage) => {
@@ -1070,8 +1079,11 @@ export function App() {
 
   const closeDetail = () => { setActionIndex(0); setExpandedSkills(new Set()); };
   const handleEscape = () => {
-    // Any kind of item detail open? Close it via the unified setter.
-    if (detail) {
+    const state = useStore.getState();
+    // Any kind of item detail open? Close it via the unified setter. Read current
+    // store state so even a stale input callback closes the detail that is actually
+    // on screen.
+    if (state.detail) {
       setDetail(null);
       setComponentManagerMode(false);
       closeDetail();
@@ -1131,7 +1143,7 @@ export function App() {
           const tool = managedTools.find((entry) => entry.toolId === item.toolId);
           if (tool) setDetailToolKey(`${tool.toolId}:${tool.instanceId}`);
         } else if (item.kind === "file") {
-          setDetailFile(item.file);
+          setDetail({ kind: "file", data: item.file });
           setActionIndex(0);
         }
       }
@@ -1173,11 +1185,31 @@ export function App() {
       (p) => p.name === plugin.name && p.marketplace === plugin.marketplace,
     );
     const resolved = merged || plugin;
-    setDetailPlugin(resolved); setDetailPluginDrift(null);
-    void computeItemDrift(pluginToManagedItem(resolved)).then((drift) => {
-      if (drift.kind === "plugin") setDetailPluginDrift(drift.plugin);
-    });
+    setDetail({ kind: "plugin", data: resolved });
+    setDetailPluginDrift(null);
     setActionIndex(0);
+    // Defer drift compute by 300ms. The drift indicator is non-critical UI;
+    // delaying lets the user press Esc / navigate without competing with the
+    // ~N × M git subprocesses drift fires off. Without this delay those
+    // subprocesses saturate libuv's event queue and stall the next stdin
+    // readable event (= Esc looks like "requires a second key").
+    const driftTimer = setTimeout(() => {
+      // Bail early if user already navigated away.
+      const current = useStore.getState().detail;
+      if (current?.kind !== "plugin") return;
+      if (current.data.name !== resolved.name || current.data.marketplace !== resolved.marketplace) return;
+      void computeItemDrift(pluginToManagedItem(resolved)).then((drift) => {
+        if (drift.kind !== "plugin") return;
+        const c2 = useStore.getState().detail;
+        if (c2?.kind !== "plugin") return;
+        if (c2.data.name !== resolved.name || c2.data.marketplace !== resolved.marketplace) return;
+        setDetailPluginDrift(drift.plugin);
+      });
+    }, 300);
+    // Best-effort cleanup if a later setDetail clears the timer—React will GC
+    // unreferenced timers on unmount but we don't have a hook here. The
+    // resolution path itself checks current detail, which is the durable guard.
+    void driftTimer;
   };
 
   const openSkillDetail = (skill: import("./lib/install.js").StandaloneSkill) => {
@@ -1372,12 +1404,19 @@ export function App() {
   useInput((input, key) => {
     if (toolModalAction) { handleToolModalInput(input, key); return; }
 
+    // Terminals can emit ESC in multiple forms:
+    // - key.escape=true
+    // - raw "\u001b"
+    // - Ctrl-[ (same codepoint as ESC)
+    // Treat any of these as immediate back-navigation.
+    const isEscape = key.escape || (typeof input === "string" && input.length > 0 && input.charCodeAt(0) === 27) || (key.ctrl && input === "[");
+
     // Esc must always close the topmost overlay — it takes priority over notification
     // dismissal so users can back out even when a notification is showing.
     const stickyNotifications = notifications.filter(
       (n) => (n.type === "warning" || n.type === "error") && !n.spinner
     );
-    if (key.escape) {
+    if (isEscape) {
       stickyNotifications.forEach((n) => clearNotification(n.id));
       handleEscape();
       return;
@@ -1436,11 +1475,6 @@ export function App() {
       return;
     }
 
-    // Escape - close the topmost overlay / go back
-    if (key.escape) {
-      handleEscape();
-      return;
-    }
 
     if (handleDiffInput(input, key)) return;
 
@@ -1678,13 +1712,12 @@ export function App() {
     const updated = groupSkillsByNamespace(freshSkills).find((n) => n.name === detailNamespace.name);
     if (updated) {
       setDetail({ kind: "namespace", data: updated });
-      setDetailNamespace(updated);
     } else {
       // Namespace no longer exists (fully deleted)
-      setDetailNamespace(null);
+      if (detail?.kind === "namespace") setDetail(null);
       closeDetail();
     }
-  }, [detail, detailNamespace, setDetail, setDetailNamespace, closeDetail]);
+  }, [detail, detailNamespace, setDetail, closeDetail]);
 
   // Handle actions from the namespace tree — routes per-skill and namespace-level ops
   const handleNamespaceTreeAction = async (node: TreeNode) => {
@@ -1866,7 +1899,7 @@ export function App() {
         break;
       }
       case "back": {
-        setDetailNamespace(null);
+        if (detail?.kind === "namespace") setDetail(null);
         closeDetail();
         return;
       }
@@ -1881,7 +1914,7 @@ export function App() {
           },
           store.notify, store.clearNotification,
         );
-        setDetailNamespace(null);
+        if (detail?.kind === "namespace") setDetail(null);
         closeDetail();
         return;
       }
@@ -1898,7 +1931,7 @@ export function App() {
     if (!action) return;
 
     await handleItemAction(item, action, {
-      closeDetail: () => { setDetailFile(null); setDetailSkill(null); setDetailPlugin(null); setDetailPiPackage(null); closeDetail(); },
+      closeDetail: () => { setDetail(null); setComponentManagerMode(false); closeDetail(); },
       openDiffForFile,
       openMissingSummaryForFile,
       setDiffTarget: (target) => useStore.setState({ diffTarget: target }),
@@ -1996,7 +2029,7 @@ export function App() {
           store.notify, store.clearNotification,
         );
         await useStore.getState().loadInstalledPlugins({ silent: true });
-        setDetailSkill(null);
+        if (detail?.kind === "skill") setDetail(null);
         closeDetail();
       },
       // Namespace bulk operations
@@ -2031,7 +2064,7 @@ export function App() {
           store.notify, store.clearNotification,
         );
         await useStore.getState().loadInstalledPlugins({ silent: true });
-        setDetailNamespace(null);
+        if (detail?.kind === "namespace") setDetail(null);
         closeDetail();
       },
       uninstallNamespaceAll: async (ns) => {
@@ -2102,7 +2135,7 @@ export function App() {
           store.notify, store.clearNotification,
         );
         await useStore.getState().loadInstalledPlugins({ silent: true });
-        setDetailPlugin(null);
+        if (detail?.kind === "plugin") setDetail(null);
         setDetailPluginDrift(null);
         closeDetail();
       },
@@ -2124,7 +2157,7 @@ export function App() {
           store.notify, store.clearNotification,
         );
         await useStore.getState().loadFiles({ silent: true });
-        setDetailFile(null);
+        if (detail?.kind === "file") setDetail(null);
         closeDetail();
       },
       removeFileFromGit: async (file) => {
@@ -2189,8 +2222,8 @@ export function App() {
       },
       refreshDetailSkill: (skill) => {
         const refreshed = useStore.getState().standaloneSkills.find((s) => s.name === skill.name);
-        if (refreshed) setDetailSkill(refreshed);
-        else { setDetailSkill(null); closeDetail(); }
+        if (refreshed) setDetail({ kind: "skill", data: refreshed });
+        else { if (detail?.kind === "skill") setDetail(null); closeDetail(); }
       },
     });
   };

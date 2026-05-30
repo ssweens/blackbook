@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.11] - 2026-05-27
+
+### Fixed
+- Esc no longer requires a second keypress to close Plugin and Skill detail views in the Installed tab. Root cause was an Ink v7 bug: when a rendered frame exceeded terminal rows, Ink wrote directly to stdout via `clearTerminal + output`, bypassing logUpdate, and the next short render whose output matched logUpdate's stale `previousOutput` was silently skipped. Patched Ink via `tui/scripts/patch-ink.mjs` (idempotent, auto-applied via `postinstall`/`predev`/`prebuild`/`prestart`) to prime logUpdate's state from the tall-write branch.
+- ItemDetail now windows the action list to fit the terminal (`rows - chrome`, min 4 visible) with `↑/↓ more above/below` indicators, so detail views never exceed terminal height in the first place.
+- Plugin drift compute is now deferred 300ms after detail open and bounded to 4 components / 2 tool-instances concurrent git subprocesses, so the libuv event queue stays free for stdin input while drift runs.
+- Removed legacy detail-state shims (`setDetailPlugin`/`setDetailFile`/`setDetailSkill`/`setDetailNamespace`); all detail open/close paths now use the unified `setDetail` setter and read current store state in async callbacks, preventing stale-closure resurrections of a closed detail after async drift resolved.
+
 ## [0.24.10] - 2026-05-26
 
 ### Fixed

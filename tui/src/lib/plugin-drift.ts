@@ -186,6 +186,31 @@ export function resolvePluginSourcePaths(
   return { pluginDir: resolved.pluginDir, repoRoot: resolved.repoRoot };
 }
 
+/**
+ * Run async tasks with a bounded concurrency so we don't saturate libuv's
+ * child_process event queue. Plugin drift fires off git status / git diff
+ * subprocesses for every component × enabled tool; without this guard a
+ * plugin with many components can stall stdin readable events long enough
+ * that the next user keypress (most commonly Esc) appears unresponsive.
+ */
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 export async function computePluginDrift(
   plugin: Plugin,
 ): Promise<PluginDrift> {
@@ -204,8 +229,7 @@ export async function computePluginDrift(
     ...plugin.agents.map((name) => ({ kind: "agent" as const, name })),
   ];
 
-  await Promise.all(
-    allComponents.map(async ({ kind, name }) => {
+  await mapLimit(allComponents, 4, async ({ kind, name }) => {
       const key = `${kind}:${name}`;
 
       // ── Source side ───────────────────────────────────────────────────────
@@ -225,10 +249,10 @@ export async function computePluginDrift(
         const srcSuffix = kind === "skill" ? name : `${name}.md`;
         const srcPath = join(pluginSource.pluginDir, `${kind}s`, srcSuffix);
 
-        await Promise.all(
-          toolInstances
-            .filter((inst) => inst.enabled)
-            .map(async (inst) => {
+        await mapLimit(
+          toolInstances.filter((inst) => inst.enabled),
+          2,
+          async (inst) => {
               if (targetDirty) return;
 
               const subdir =
@@ -258,7 +282,7 @@ export async function computePluginDrift(
               if (await hasDiff(srcPath, destPath)) {
                 targetDirty = true;
               }
-            })
+            },
         );
       }
 
@@ -269,8 +293,7 @@ export async function computePluginDrift(
       else if (targetDirty) status = "target-changed";
 
       drift[key] = status;
-    })
-  );
+    });
 
   return drift;
 }

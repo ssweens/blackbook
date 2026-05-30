@@ -10,7 +10,7 @@
  */
 
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text, useStdout } from "ink";
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ManagedItem, ItemInstanceStatus } from "../lib/managed-item.js";
@@ -63,11 +63,51 @@ export interface ItemDetailProps {
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Estimate of fixed (non-actions) chrome rows so we can compute a budget for
+ * the actions window. Includes tab bar, header, description, status, metadata,
+ * "Instances:" label, footer, and the separator/status bar Blackbook renders
+ * below the detail. Slightly conservative — if we overshoot, the actions list
+ * just gets a smaller window (still scrolls correctly); if we undershoot, the
+ * total frame may exceed terminal rows and trigger Ink's tall-write path,
+ * which the patch in scripts/patch-ink.mjs covers as a safety net.
+ */
+const FIXED_CHROME_ROWS = 18;
+
+function computeActionsWindow(
+  total: number,
+  selected: number,
+  windowSize: number,
+): { start: number; end: number } {
+  if (total <= windowSize) return { start: 0, end: total };
+  // Keep the selected row roughly centered within the window when possible.
+  const half = Math.floor(windowSize / 2);
+  let start = Math.max(0, selected - half);
+  let end = start + windowSize;
+  if (end > total) {
+    end = total;
+    start = end - windowSize;
+  }
+  return { start, end };
+}
+
 export function ItemDetail({ item, actions, selectedAction, metadata }: ItemDetailProps) {
   const hasDrift = item.instances.some(
     (i) => i.status === "changed",
   );
   const isIncomplete = item.installed && item.incomplete;
+  const { stdout } = useStdout();
+  const rows = stdout?.rows ?? 30;
+  // Minimum of 4 visible actions so the view is always usable; never let the
+  // rendered frame exceed the terminal height (this is what triggered the Ink
+  // tall-write bug). Each ActionRow is one line; "sync" / "uninstall" types add
+  // a marginTop, so we budget conservatively by treating every row as 1 line
+  // plus a small safety margin.
+  const windowSize = Math.max(4, rows - FIXED_CHROME_ROWS);
+  const { start, end } = computeActionsWindow(actions.length, selectedAction, windowSize);
+  const visible = actions.slice(start, end);
+  const hiddenAbove = start;
+  const hiddenBelow = actions.length - end;
 
   return (
     <Box flexDirection="column">
@@ -100,16 +140,26 @@ export function ItemDetail({ item, actions, selectedAction, metadata }: ItemDeta
       {/* Kind-specific metadata */}
       {metadata}
 
-      {/* Instance list + actions */}
+      {/* Instance list + actions (windowed to fit the terminal) */}
       <Box flexDirection="column" marginTop={1}>
         {item.installed && <Text bold>Instances:</Text>}
-        {actions.map((action, i) => (
+        {hiddenAbove > 0 && (
+          <Text color="gray" dimColor>
+            ↑ {hiddenAbove} more above
+          </Text>
+        )}
+        {visible.map((action, i) => (
           <ActionRow
             key={action.id}
             action={action}
-            isSelected={i === selectedAction}
+            isSelected={start + i === selectedAction}
           />
         ))}
+        {hiddenBelow > 0 && (
+          <Text color="gray" dimColor>
+            ↓ {hiddenBelow} more below
+          </Text>
+        )}
       </Box>
 
       {/* Footer */}
