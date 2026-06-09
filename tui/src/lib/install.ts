@@ -2014,6 +2014,13 @@ export interface SkillInstallation {
   namespace?: string;
   /** True if this specific install's SKILL.md differs from the source-repo copy. */
   drifted?: boolean;
+  /**
+   * If true, this installation is redundant — the same skill exists at a
+   * preferred path (typically `.agents/skills/<name>/`). The redundant copy
+   * (typically at `.pi/agent/skills/<namespace>/<name>/`) is eligible for
+   * cleanup via the skill detail UI.
+   */
+  redundant?: boolean;
 }
 
 /**
@@ -2157,8 +2164,21 @@ export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSki
   }
 
   // Aggregate installations per skill name across all tool instances.
+  // Sort so that Codex/OpenCode (`.agents/`) skills are discovered before
+  // Pi skills so they take precedence as the primary path when colliding.
   const byName = new Map<string, StandaloneSkill>();
-  const instances = getToolInstances().filter((i) => i.kind === "tool" && i.enabled);
+  const instances = getToolInstances()
+    .filter((i) => i.kind === "tool" && i.enabled)
+    .sort((a, b) => {
+      // Prefer Codex (`.agents/`) over Pi (`.pi/agent/skills/`)
+      const aIsCodex = a.toolId === "openai-codex" ? 0 : 1;
+      const bIsCodex = b.toolId === "openai-codex" ? 0 : 1;
+      if (aIsCodex !== bIsCodex) return aIsCodex - bIsCodex;
+      // Prefer non-Pi over Pi
+      const aIsPi = a.toolId === "pi" ? 1 : 0;
+      const bIsPi = b.toolId === "pi" ? 1 : 0;
+      return aIsPi - bIsPi;
+    });
 
   for (const instance of instances) {
     if (!instance.skillsSubdir) continue;
@@ -2183,6 +2203,9 @@ export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSki
           const existing = byName.get(entry.name);
           if (existing) {
             existing.installations.push(installation);
+            if (!existing.namespace && installation.namespace) {
+              existing.namespace = installation.namespace;
+            }
           } else {
             byName.set(entry.name, {
               name: entry.name,
@@ -2191,6 +2214,7 @@ export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSki
               toolId: instance.toolId,
               instanceId: instance.instanceId,
               instanceName: instance.name,
+              namespace: installation.namespace,
             });
           }
         }
@@ -2263,6 +2287,62 @@ export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSki
         }
       }
     } catch { /* skip unreadable dirs */ }
+  }
+
+  // ── Conflict detection: flag redundant installations ─────────────────────
+  // When the same skill exists in `.agents/skills/<name>/` AND another
+  // location (`.pi/agent/skills/`, pi-packages source, etc.), flag the
+  // non-`.agents/` copy as `redundant`. `.agents/` may not be a tracked tool
+  // instance's skillsSubdir (Codex uses `~/.codex/`), so we check the
+  // filesystem directly rather than relying on installation[] membership.
+  const AGENTS_DIR = join(homedir(), ".agents", "skills");
+  if (existsSync(AGENTS_DIR)) {
+    // Build set of skill names that exist in .agents/ (flat or namespaced).
+    const agentsSkillNames = new Set<string>();
+    for (const entry of readdirSync(AGENTS_DIR, { withFileTypes: true })) {
+      if (entry.name.startsWith(".")) continue;
+      const p = join(AGENTS_DIR, entry.name);
+      if (existsSync(join(p, "SKILL.md"))) {
+        agentsSkillNames.add(entry.name);
+      } else if (entry.isDirectory()) {
+        for (const sub of readdirSync(p, { withFileTypes: true })) {
+          if (sub.name.startsWith(".")) continue;
+          if (existsSync(join(p, sub.name, "SKILL.md"))) {
+            agentsSkillNames.add(sub.name);
+          }
+        }
+      }
+    }
+
+    for (const [, skill] of byName) {
+      if (!agentsSkillNames.has(skill.name)) continue;
+      const redundantIdxs: number[] = [];
+      for (let i = 0; i < skill.installations.length; i++) {
+        const inst = skill.installations[i];
+        // Check if the skill is outside .agents/ and is a non-standard location
+        // that's likely duplicating the .agents/ copy. Standard tool-instance
+        // paths (.claude/, .codex/, .config/, .code/) are kept; everything else
+        // (.pi/agent/skills/, pi-packages source, etc.) is redundant.
+        if (inst.diskPath.includes("/.agents/skills/")) continue; // keep agents
+        if (inst.diskPath.includes("/.claude/")) continue; // keep claude
+        if (inst.diskPath.includes("/.claude-learning/")) continue; // keep claude-learning
+        if (inst.diskPath.includes("/.config/")) continue; // keep opencode/amp
+        if (inst.diskPath.includes("/.codex/") || inst.diskPath.includes("/.code/")) continue; // keep codex
+        if (inst.diskPath.includes("/.pi/agent/")) {
+          // Pi skills dir — redundant if .agents has the same skill
+          redundantIdxs.push(i);
+          continue;
+        }
+        // Other paths (pi-packages source, local dev dirs): flag as redundant
+        // since .agents/ should be authoritative.
+        if (existsSync(join(inst.diskPath, "SKILL.md"))) {
+          redundantIdxs.push(i);
+        }
+      }
+      for (const idx of redundantIdxs) {
+        skill.installations[idx].redundant = true;
+      }
+    }
   }
 
   // Attach source-repo paths (and drift state) where the skill exists in the source repo.
@@ -2704,22 +2784,34 @@ export function pullbackSkillToSource(
   const inst = skill.installations.find(
     (i) => i.toolId === fromToolId && i.instanceId === fromInstanceId,
   );
-  if (!inst) return false;
+  if (!inst) {
+    // eslint-disable-next-line no-console
+    console.error(`pullbackSkillToSource: skill ${skill.name} not installed in ${fromToolId}:${fromInstanceId}`);
+    return false;
+  }
 
   const sourceRepo = getConfigRepoPath();
   let targetPath = skill.sourcePath;
   if (!targetPath) {
     // No source-repo path yet — create the skill in the configured source repo
-    // under skills/<name>/ (canonical layout).
-    if (!sourceRepo) return false;
-    targetPath = join(sourceRepo, "skills", skill.name);
+    // under skills/<name>/ (canonical layout). Use namespace subdir when known.
+    if (!sourceRepo) {
+      // eslint-disable-next-line no-console
+      console.error(`pullbackSkillToSource: no source repo configured for ${skill.name}`);
+      return false;
+    }
+    targetPath = skill.namespace
+      ? join(sourceRepo, "skills", skill.namespace, skill.name)
+      : join(sourceRepo, "skills", skill.name);
   }
 
   try {
     mkdirSync(dirname(targetPath), { recursive: true });
     rmSync(targetPath, { recursive: true, force: true });
-    cpSync(inst.diskPath, targetPath, { recursive: true });
-  } catch {
+    cpSync(inst.diskPath, targetPath, { recursive: true, dereference: true });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`pullbackSkillToSource: copy failed for ${skill.name} from ${inst.diskPath} to ${targetPath}:`, err);
     return false;
   }
 

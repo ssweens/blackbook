@@ -61,6 +61,7 @@ export interface DispatchCallbacks {
   pullbackSkillFromInstance?: (skill: import("./install.js").StandaloneSkill, toolId: string, instanceId: string) => Promise<void>;
   deleteSkillEverywhere?: (skill: import("./install.js").StandaloneSkill) => Promise<void>;
   refreshDetailSkill?: (skill: import("./install.js").StandaloneSkill) => void;
+  removeRedundantSkillInstallations?: (skill: import("./install.js").StandaloneSkill, redundant: import("./install.js").SkillInstallation[]) => Promise<void>;
 
   // Namespace actions
   syncNamespace?: (ns: import("./install.js").NamespaceGroup) => Promise<void>;
@@ -168,6 +169,17 @@ export async function handleItemAction(
         await callbacks.trackPluginInSource(item._plugin);
         callbacks.refreshDetailPlugin(item._plugin);
         return true;
+      }
+      return false;
+
+    case "remove_redundant":
+      if (item._skill) {
+        const redundant = item._skill.installations.filter((i) => i.redundant);
+        if (redundant.length > 0 && callbacks.removeRedundantSkillInstallations) {
+          await callbacks.removeRedundantSkillInstallations(item._skill, redundant);
+          if (callbacks.refreshDetailSkill) callbacks.refreshDetailSkill(item._skill);
+          return true;
+        }
       }
       return false;
 

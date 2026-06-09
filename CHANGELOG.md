@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.12] - 2026-06-07
+
+### Fixed
+- Esc from a skill detail now returns to the namespace detail view instead of the main Installed list, matching user navigation expectations.
+- "Track in Source Repo" for skills now follows symlinks when copying (`dereference: true`), so skills installed as symlinks (e.g. from `.agents/skills/` into `.claude/skills/`) are committed as actual content instead of broken relative symlinks.
+- `pullbackSkillToSource` now uses namespace-aware paths (`skills/<namespace>/<name>/`) when creating skills for the first time in the source repo.
+- Track/pullback actions now report actual success/failure counts instead of silently failing. If a skill can't be tracked, you'll see an error notification rather than a false "Tracked X skills" message.
+
+### Fixed (Playbook repo)
+- Replaced 3 broken symlink commits (`ux-heuristics`, `refactoring-ui`, `ui-ux-pro-max`) with actual file content in the playbook source repo. The symlinks pointed to `../../.agents/skills/` which only resolved from the tool install directory, not from the playbook repo clone.
+
 ## [0.24.11] - 2026-05-27
 
 ### Fixed

@@ -525,6 +525,20 @@ export function getSkillActions(skill: StandaloneSkill): ItemAction[] {
     type: "uninstall",
   });
 
+  // Remove redundant Pi installations (duplicates of skills that also
+  // exist in `.agents/skills/`). The `redundant` flag is set by
+  // `getStandaloneSkills` during collision detection.
+  const redundantPiInsts = skill.installations.filter((i) => i.redundant);
+  if (redundantPiInsts.length > 0) {
+    actions.push({
+      id: "remove_redundant",
+      label: redundantPiInsts.length === 1
+        ? `Remove from ${redundantPiInsts[0].instanceName} (duplicated in .agents)`
+        : `Remove redundant copies (${redundantPiInsts.length} in Pi, use .agents instead)`,
+      type: "remove_redundant",
+    });
+  }
+
   actions.push({ id: "back", label: "Back to list", type: "back" });
 
   if (skill.sourcePath) {

@@ -38,6 +38,7 @@ export interface ItemAction {
     | "track"
     | "remove_from_git"
     | "delete_everywhere"
+    | "remove_redundant"
     | "open_skill"
     | "back";
   instance?: DiffInstanceSummary | DiffInstanceRef;

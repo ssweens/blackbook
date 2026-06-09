@@ -1084,6 +1084,20 @@ export function App() {
     // store state so even a stale input callback closes the detail that is actually
     // on screen.
     if (state.detail) {
+      // If we're in a skill detail that belongs to a namespace, go back to the
+      // namespace detail instead of closing all the way to the list.
+      if (state.detail.kind === "skill" && state.detail.data.namespace) {
+        const nsName = state.detail.data.namespace;
+        const fresh = groupSkillsByNamespace(state.standaloneSkills).find(
+          (n) => n.name === nsName,
+        );
+        if (fresh) {
+          setDetail({ kind: "namespace", data: fresh });
+          setExpandedSkills(new Set());
+          setActionIndex(0);
+          return;
+        }
+      }
       setDetail(null);
       setComponentManagerMode(false);
       closeDetail();
@@ -1765,7 +1779,12 @@ export function App() {
           if (inst) {
             await withSpinner(
               `Pulling ${skill.name} to source...`,
-              async () => { pullbackSkillToSource(skill, inst.toolId, inst.instanceId); },
+              async () => {
+                const ok = pullbackSkillToSource(skill, inst.toolId, inst.instanceId);
+                if (!ok) {
+                  store.notify(`Failed to pull ${skill.name} to source repo`, "error");
+                }
+              },
               store.notify, store.clearNotification,
             );
           }
@@ -1860,17 +1879,25 @@ export function App() {
         // Bulk track all not-in-git skills
         const notInGit = ns.skills.filter((s) => !s.sourcePath && s.installations.length > 0);
         if (notInGit.length > 0) {
+          let tracked = 0;
+          let failed = 0;
           await withSpinner(
             `Tracking ${notInGit.length} skills in source repo...`,
             async () => {
               for (const skill of notInGit) {
                 const first = skill.installations[0];
-                pullbackSkillToSource(skill, first.toolId, first.instanceId);
+                const ok = pullbackSkillToSource(skill, first.toolId, first.instanceId);
+                if (ok) {
+                  tracked += 1;
+                } else {
+                  failed += 1;
+                }
               }
-              store.notify(`Tracked ${notInGit.length} skills in source repo`, "info");
             },
             store.notify, store.clearNotification,
           );
+          const msg = tracked > 0 ? `Tracked ${tracked} skill${tracked === 1 ? "" : "s"} in source repo` : "No skills tracked";
+          store.notify(msg + (failed > 0 ? ` (${failed} failed)` : ""), failed > 0 ? "warning" : "info");
         }
         break;
       }
@@ -2007,9 +2034,31 @@ export function App() {
         const store = useStore.getState();
         await withSpinner(
           `Pulling ${skill.name} from ${toolId} to source repo...`,
-          async () => { pullbackSkillToSource(skill, toolId, instanceId); },
+          async () => {
+            const ok = pullbackSkillToSource(skill, toolId, instanceId);
+            if (!ok) {
+              store.notify(`Failed to pull ${skill.name} to source repo`, "error");
+            }
+          },
           store.notify, store.clearNotification,
         );
+        await useStore.getState().loadInstalledPlugins({ silent: true });
+      },
+      removeRedundantSkillInstallations: async (skill, redundant) => {
+        const store = useStore.getState();
+        const paths = redundant.map((i) => i.diskPath).join(", ");
+        await withSpinner(
+          `Removing ${skill.name} from Pi (${redundant.length} redundant copy${redundant.length === 1 ? "" : "ies"})...`,
+          async () => {
+            for (const inst of redundant) {
+              try {
+                rmSync(inst.diskPath, { recursive: true, force: true });
+              } catch { /* skip */ }
+            }
+          },
+          store.notify, store.clearNotification,
+        );
+        store.notify(`Removed redundant Pi copies of ${skill.name}`, "info");
         await useStore.getState().loadInstalledPlugins({ silent: true });
       },
       deleteSkillEverywhere: async (skill) => {
