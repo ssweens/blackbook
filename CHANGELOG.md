@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Eliminated load-time and navigation flicker in the TUI by making tab layouts respect the actual terminal height. Replaced hardcoded tab container heights (`installed: 34`, etc.) in `App.tsx` with a `useContentHeight()` hook that budgets rows after chrome (TabBar, hint/status bars, padding, notifications). All tabs now receive a `contentHeight` prop and cap their list heights so the rendered frame never exceeds the terminal, preventing Ink's tall-write flicker path.
+- `InstalledTab` now dynamically distributes its list budget across Files, Namespaces, Skills, Plugins, and Pi Packages sections. If the terminal is too small, the preview panel is automatically hidden so the lists still fit.
+- `DiscoverTab`, `SyncTab`, `ToolsTab`, and `MarketplacesTab` now size their lists from `contentHeight` instead of fixed defaults.
+
 ## [0.24.12] - 2026-06-07
 
 ### Fixed

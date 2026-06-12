@@ -20,7 +20,11 @@ function getRange(selectedIdx: number, totalCount: number, maxHeight: number): s
   return `(showing ${start + 1}-${end} of ${totalCount})`;
 }
 
-export function DiscoverTab() {
+export interface DiscoverTabProps {
+  contentHeight: number;
+}
+
+export function DiscoverTab({ contentHeight }: DiscoverTabProps) {
   const search = useStore((s) => s.search);
   const setSearch = useStore((s) => s.setSearch);
   const selectedIndex = useStore((s) => s.selectedIndex);
@@ -149,7 +153,7 @@ export function DiscoverTab() {
           <Text color="gray" dimColor>{getRange(subViewIndex, managedPlugins.length, 12)}</Text>
           <Text color="gray"> · Press Esc to go back</Text>
         </Box>
-        <ItemList items={managedPlugins} selectedIndex={subViewIndex} maxHeight={12} columns={PLUGIN_COLUMNS} />
+        <ItemList items={managedPlugins} selectedIndex={subViewIndex} maxHeight={Math.max(4, contentHeight - 9)} columns={PLUGIN_COLUMNS} />
         <Box marginTop={1}>
           <PluginPreview plugin={filteredPlugins[subViewIndex] ?? null} />
         </Box>
@@ -179,7 +183,7 @@ export function DiscoverTab() {
           <Text color="gray" dimColor>{getRange(subViewIndex, managedPiPackages.length, 12)}</Text>
           <Text color="gray"> · Press Esc to go back</Text>
         </Box>
-        <ItemList items={managedPiPackages} selectedIndex={subViewIndex} maxHeight={12} columns={PLUGIN_COLUMNS} />
+        <ItemList items={managedPiPackages} selectedIndex={subViewIndex} maxHeight={Math.max(4, contentHeight - 9)} columns={PLUGIN_COLUMNS} />
         <Box marginTop={1}>
           <PiPackagePreview pkg={filteredPiPackages[subViewIndex] ?? null} />
         </Box>

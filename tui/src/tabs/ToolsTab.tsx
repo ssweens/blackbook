@@ -2,7 +2,11 @@ import React from "react";
 import { useStore } from "../lib/store.js";
 import { ToolsList } from "../components/ToolsList.js";
 
-export function ToolsTab() {
+export interface ToolsTabProps {
+  contentHeight: number;
+}
+
+export function ToolsTab({ contentHeight }: ToolsTabProps) {
   const managedTools = useStore((s) => s.managedTools);
   const selectedIndex = useStore((s) => s.selectedIndex);
   const toolDetection = useStore((s) => s.toolDetection);
@@ -15,6 +19,7 @@ export function ToolsTab() {
       detection={toolDetection}
       detectionPending={toolDetectionPending}
       actionInProgress={toolActionInProgress}
+      maxHeight={Math.max(4, contentHeight - 4)}
     />
   );
 }

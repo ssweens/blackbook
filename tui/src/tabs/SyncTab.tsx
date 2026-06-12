@@ -22,7 +22,11 @@ function getSyncItemKey(item: SyncPreviewItem): string {
   return `file:${item.file.name}`;
 }
 
-export function SyncTab() {
+export interface SyncTabProps {
+  contentHeight: number;
+}
+
+export function SyncTab({ contentHeight }: SyncTabProps) {
   const selectedIndex = useStore((s) => s.selectedIndex);
   const syncSelection = useStore((s) => s.syncSelection);
   const syncArmed = useStore((s) => s.syncArmed);
@@ -67,6 +71,7 @@ export function SyncTab() {
         selectedIndex={selectedIndex}
         selectedKeys={selectedKeys}
         getItemKey={getSyncItemKey}
+        maxHeight={Math.max(4, contentHeight - 5)}
       />
       <SyncPreview item={syncPreview[selectedIndex] ?? null} />
     </>

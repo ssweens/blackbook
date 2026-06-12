@@ -37,7 +37,62 @@ function isInstalledFile(file: FileStatus): boolean {
   });
 }
 
-export function InstalledTab() {
+interface SectionDef {
+  key: string;
+  items: import("../lib/managed-item.js").ManagedItem[];
+  shown: boolean;
+  desired: number;
+  label: string;
+  columns: typeof FILE_COLUMNS;
+}
+
+const PREVIEW_HEIGHT = 5;
+
+function distributeHeights(
+  contentHeight: number,
+  sections: SectionDef[],
+  showPreview: boolean,
+): { heights: number[]; previewFits: boolean } {
+  const visibleSections = sections.filter((s) => s.shown);
+  const headerRows = visibleSections.length;
+  const marginRows = Math.max(0, visibleSections.length - 1);
+  const searchRow = 1;
+
+  // Fixed rows excluding preview and list content.
+  const fixedWithoutPreview = searchRow + headerRows + marginRows;
+
+  // Try to fit the preview in first.
+  let previewRows = showPreview ? PREVIEW_HEIGHT : 0;
+  const minListRows = visibleSections.length;
+  const fitsWithPreview = fixedWithoutPreview + previewRows + minListRows <= contentHeight;
+
+  if (!fitsWithPreview) {
+    previewRows = 0;
+  }
+
+  const fixedRows = fixedWithoutPreview + previewRows;
+  const listBudget = Math.max(minListRows, contentHeight - fixedRows);
+
+  // Only count non-empty sections when distributing budget; empty-but-shown
+  // sections still render a 1-row loading message.
+  const nonEmptySections = visibleSections.filter((s) => s.items.length > 0);
+  const desiredTotal = nonEmptySections.reduce((sum, s) => sum + s.desired, 0);
+  const scale = desiredTotal > 0 ? Math.min(1, listBudget / desiredTotal) : 1;
+
+  const heights = sections.map((s) => {
+    if (!s.shown) return 0;
+    if (s.items.length === 0) return 1; // loading message row
+    return Math.max(1, Math.min(s.items.length, Math.floor(s.desired * scale)));
+  });
+
+  return { heights, previewFits: previewRows > 0 };
+}
+
+export interface InstalledTabProps {
+  contentHeight: number;
+}
+
+export function InstalledTab({ contentHeight }: InstalledTabProps) {
   const search = useStore((s) => s.search);
   const setSearch = useStore((s) => s.setSearch);
   const selectedIndex = useStore((s) => s.selectedIndex);
@@ -233,10 +288,11 @@ export function InstalledTab() {
   }, [filteredPlugins, pluginDriftMap]);
   const managedPiPackages = useMemo(() => piPackagesToManagedItems(filteredPiPackages), [filteredPiPackages]);
 
-  const fileCount   = filteredFiles.length;
+  const fileCount   = managedFiles.length;
   const namespaceCount = filteredNamespaces.length;
   const skillCount  = filteredSkills.length;
-  const pluginCount = filteredPlugins.length;
+  const pluginCount = managedPlugins.length;
+  const piPkgCount  = managedPiPackages.length;
 
   const selectedLibraryItem = useMemo(() => {
     if (selectedIndex < fileCount) {
@@ -259,8 +315,36 @@ export function InstalledTab() {
     return piPkg ? { kind: "piPackage" as const, piPackage: piPkg } : null;
   }, [selectedIndex, fileCount, namespaceCount, skillCount, pluginCount, filteredFiles, filteredNamespaces, filteredSkills, filteredPlugins, filteredPiPackages]);
 
+  const sections: SectionDef[] = useMemo(() => [
+    { key: "files", items: managedFiles, shown: managedFiles.length > 0 || !filesLoaded, desired: 5, label: "Files", columns: FILE_COLUMNS },
+    { key: "namespaces", items: filteredNamespaces, shown: filteredNamespaces.length > 0, desired: 3, label: "Skill Namespaces", columns: FILE_COLUMNS },
+    { key: "skills", items: filteredSkills, shown: filteredSkills.length > 0, desired: 4, label: "Skills", columns: FILE_COLUMNS },
+    { key: "plugins", items: managedPlugins, shown: managedPlugins.length > 0 || !installedPluginsLoaded, desired: 4, label: "Plugins", columns: PLUGIN_COLUMNS },
+    { key: "piPackages", items: managedPiPackages, shown: managedPiPackages.length > 0 || !piPackagesLoaded, desired: 3, label: "Pi Packages", columns: PLUGIN_COLUMNS },
+  ], [managedFiles, filesLoaded, filteredNamespaces, filteredSkills, managedPlugins, installedPluginsLoaded, managedPiPackages, piPackagesLoaded]);
+
+  const showPreview = selectedLibraryItem?.kind === "plugin" || selectedLibraryItem?.kind === "piPackage" || selectedLibraryItem?.kind === "file";
+  const { heights, previewFits } = useMemo(
+    () => distributeHeights(contentHeight, sections, showPreview),
+    [contentHeight, sections, showPreview],
+  );
+
+  const [
+    fileMaxHeight,
+    namespaceMaxHeight,
+    skillMaxHeight,
+    pluginMaxHeight,
+    piPkgMaxHeight,
+  ] = heights;
+
+  const fileSelectedIndex = selectedIndex < fileCount ? selectedIndex : -1;
+  const namespaceSelectedIndex = selectedIndex >= fileCount && selectedIndex < fileCount + namespaceCount ? selectedIndex - fileCount : -1;
+  const skillSelectedIndex = selectedIndex >= fileCount + namespaceCount && selectedIndex < fileCount + namespaceCount + skillCount ? selectedIndex - fileCount - namespaceCount : -1;
+  const pluginSelectedIndex = selectedIndex >= fileCount + namespaceCount + skillCount && selectedIndex < fileCount + namespaceCount + skillCount + pluginCount ? selectedIndex - fileCount - namespaceCount - skillCount : -1;
+  const piPkgSelectedIndex = selectedIndex >= fileCount + namespaceCount + skillCount + pluginCount ? selectedIndex - fileCount - namespaceCount - skillCount - pluginCount : -1;
+
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" flexShrink={0}>
       <Box flexDirection="row" justifyContent="space-between">
         <Box flexGrow={1}>
           <SearchBox
@@ -282,12 +366,12 @@ export function InstalledTab() {
             <Text color="gray">  Files </Text>
             <Text color="gray" dimColor>
               {managedFiles.length > 0
-                ? getRange(selectedIndex < fileCount ? selectedIndex : 0, managedFiles.length, 5)
+                ? getRange(fileSelectedIndex < 0 ? 0 : fileSelectedIndex, managedFiles.length, fileMaxHeight)
                 : loading ? "(loading...)" : "(not loaded)"}
             </Text>
           </Box>
           {managedFiles.length > 0 ? (
-            <ItemList items={managedFiles} selectedIndex={selectedIndex < fileCount ? selectedIndex : -1} maxHeight={5} columns={FILE_COLUMNS} />
+            <ItemList items={managedFiles} selectedIndex={fileSelectedIndex} maxHeight={fileMaxHeight} columns={FILE_COLUMNS} />
           ) : (
             <Box marginLeft={2}><Text color={loading ? "cyan" : "gray"}>{loading ? "⠋ Loading files..." : "Press R to load files."}</Text></Box>
           )}
@@ -298,12 +382,12 @@ export function InstalledTab() {
         <Box flexDirection="column" marginTop={1} flexShrink={0}>
           <Box>
             <Text color="gray">  Skill Namespaces </Text>
-            <Text color="gray" dimColor>{getRange(selectedIndex >= fileCount && selectedIndex < fileCount + namespaceCount ? selectedIndex - fileCount : 0, filteredNamespaces.length, 3)}</Text>
+            <Text color="gray" dimColor>{getRange(namespaceSelectedIndex < 0 ? 0 : namespaceSelectedIndex, filteredNamespaces.length, namespaceMaxHeight)}</Text>
           </Box>
           <ItemList
             items={filteredNamespaces}
-            selectedIndex={selectedIndex >= fileCount && selectedIndex < fileCount + namespaceCount ? selectedIndex - fileCount : -1}
-            maxHeight={3}
+            selectedIndex={namespaceSelectedIndex}
+            maxHeight={namespaceMaxHeight}
             columns={FILE_COLUMNS}
           />
         </Box>
@@ -313,12 +397,12 @@ export function InstalledTab() {
         <Box flexDirection="column" marginTop={1} flexShrink={0}>
           <Box>
             <Text color="gray">  Skills </Text>
-            <Text color="gray" dimColor>{getRange(selectedIndex >= fileCount + namespaceCount && selectedIndex < fileCount + namespaceCount + skillCount ? selectedIndex - fileCount - namespaceCount : 0, filteredSkills.length, 4)}</Text>
+            <Text color="gray" dimColor>{getRange(skillSelectedIndex < 0 ? 0 : skillSelectedIndex, filteredSkills.length, skillMaxHeight)}</Text>
           </Box>
           <ItemList
             items={filteredSkills}
-            selectedIndex={selectedIndex >= fileCount + namespaceCount && selectedIndex < fileCount + namespaceCount + skillCount ? selectedIndex - fileCount - namespaceCount : -1}
-            maxHeight={4}
+            selectedIndex={skillSelectedIndex}
+            maxHeight={skillMaxHeight}
             columns={FILE_COLUMNS}
           />
         </Box>
@@ -330,12 +414,12 @@ export function InstalledTab() {
             <Text color="gray">  Plugins </Text>
             <Text color="gray" dimColor>
               {managedPlugins.length > 0
-                ? getRange(selectedIndex >= fileCount + namespaceCount + skillCount && selectedIndex < fileCount + namespaceCount + skillCount + pluginCount ? selectedIndex - fileCount - namespaceCount - skillCount : 0, managedPlugins.length, 4)
+                ? getRange(pluginSelectedIndex < 0 ? 0 : pluginSelectedIndex, managedPlugins.length, pluginMaxHeight)
                 : loading ? "(loading...)" : "(not loaded)"}
             </Text>
           </Box>
           {managedPlugins.length > 0 ? (
-            <ItemList items={managedPlugins} selectedIndex={selectedIndex >= fileCount + namespaceCount + skillCount && selectedIndex < fileCount + namespaceCount + skillCount + pluginCount ? selectedIndex - fileCount - namespaceCount - skillCount : -1} maxHeight={4} columns={PLUGIN_COLUMNS} />
+            <ItemList items={managedPlugins} selectedIndex={pluginSelectedIndex} maxHeight={pluginMaxHeight} columns={PLUGIN_COLUMNS} />
           ) : (
             <Box marginLeft={2}><Text color={loading ? "cyan" : "gray"}>{loading ? "⠋ Loading plugins..." : "Press R to load plugins."}</Text></Box>
           )}
@@ -348,31 +432,31 @@ export function InstalledTab() {
             <Text color="gray">  Pi Packages </Text>
             <Text color="gray" dimColor>
               {managedPiPackages.length > 0
-                ? getRange(selectedIndex >= fileCount + namespaceCount + skillCount + pluginCount ? selectedIndex - fileCount - namespaceCount - skillCount - pluginCount : 0, managedPiPackages.length, 3)
+                ? getRange(piPkgSelectedIndex < 0 ? 0 : piPkgSelectedIndex, managedPiPackages.length, piPkgMaxHeight)
                 : loading ? "(loading...)" : "(not loaded)"}
             </Text>
           </Box>
           {managedPiPackages.length > 0 ? (
-            <ItemList items={managedPiPackages} selectedIndex={selectedIndex >= fileCount + namespaceCount + skillCount + pluginCount ? selectedIndex - fileCount - namespaceCount - skillCount - pluginCount : -1} maxHeight={3} columns={PLUGIN_COLUMNS} />
+            <ItemList items={managedPiPackages} selectedIndex={piPkgSelectedIndex} maxHeight={piPkgMaxHeight} columns={PLUGIN_COLUMNS} />
           ) : (
             <Box marginLeft={2}><Text color={loading ? "cyan" : "gray"}>{loading ? "⠋ Loading Pi packages..." : "Press R to load Pi packages."}</Text></Box>
           )}
         </Box>
       )}
 
-      {/* Preview */}
-      {selectedLibraryItem?.kind === "plugin" && (
-        <Box marginTop={1}>
+      {/* Preview — only when the layout has room for it */}
+      {previewFits && selectedLibraryItem?.kind === "plugin" && (
+        <Box marginTop={1} flexShrink={0}>
           <PluginPreview plugin={selectedLibraryItem.plugin} />
         </Box>
       )}
-      {selectedLibraryItem?.kind === "piPackage" && (
-        <Box marginTop={1}>
+      {previewFits && selectedLibraryItem?.kind === "piPackage" && (
+        <Box marginTop={1} flexShrink={0}>
           <PiPackagePreview pkg={selectedLibraryItem.piPackage} />
         </Box>
       )}
-      {selectedLibraryItem?.kind === "file" && (
-        <Box marginTop={1}>
+      {previewFits && selectedLibraryItem?.kind === "file" && (
+        <Box marginTop={1} flexShrink={0}>
           <FilePreview file={selectedLibraryItem.file} />
         </Box>
       )}

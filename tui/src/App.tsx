@@ -77,9 +77,28 @@ import { useDetailInput, useDiffInput, useListInput } from "./lib/input-hooks.js
 import { handleItemAction } from "./lib/action-dispatch.js";
 import type { Tab, SyncPreviewItem, Plugin, PiPackage, PiMarketplace, DiffInstanceRef, DiscoverSection, DiscoverSubView, ManagedToolRow, FileStatus, Marketplace } from "./lib/types.js";
 import { countAppRender } from "./lib/perf.js";
+import { useContentHeight } from "./lib/use-content-height.js";
 
 const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces", "settings"];
 const TAB_REFRESH_TTL_MS = 30000;
+
+function TabContent({ tab }: { tab: Tab }) {
+  const contentHeight = useContentHeight();
+  switch (tab) {
+    case "discover":
+      return <DiscoverTab contentHeight={contentHeight} />;
+    case "installed":
+      return <InstalledTab contentHeight={contentHeight} />;
+    case "marketplaces":
+      return <MarketplacesTab contentHeight={contentHeight} />;
+    case "tools":
+      return <ToolsTab contentHeight={contentHeight} />;
+    case "sync":
+      return <SyncTab contentHeight={contentHeight} />;
+    case "settings":
+      return <SettingsTab />;
+  }
+}
 
 export function App() {
   countAppRender();
@@ -2518,19 +2537,7 @@ export function App() {
           selectedIndex={actionIndex}
         />
       ) : (
-        <Box flexDirection="column" height={(({ sync: 30, discover: 30, installed: 34 } as Record<string, number>)[tab] ?? 25)}>
-          {tab === "discover" && <DiscoverTab />}
-
-          {tab === "installed" && <InstalledTab />}
-
-          {tab === "marketplaces" && <MarketplacesTab />}
-
-          {tab === "tools" && <ToolsTab />}
-
-          {tab === "sync" && <SyncTab />}
-
-          {tab === "settings" && <SettingsTab />}
-        </Box>
+        <TabContent tab={tab} />
       )}
 
       <Notifications />

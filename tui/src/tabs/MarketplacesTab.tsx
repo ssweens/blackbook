@@ -5,7 +5,11 @@ import { MarketplaceList } from "../components/MarketplaceList.js";
 import { buildMarketplaceRows } from "../lib/marketplace-row.js";
 import type { Tab } from "../lib/types.js";
 
-export function MarketplacesTab() {
+export interface MarketplacesTabProps {
+  contentHeight: number;
+}
+
+export function MarketplacesTab({ contentHeight }: MarketplacesTabProps) {
   const selectedIndex = useStore((s) => s.selectedIndex);
   const loading = useStore((s) => s.loading);
   const marketplaces = useStore((s) => s.marketplaces);
@@ -34,7 +38,7 @@ export function MarketplacesTab() {
 
   return (
     <Box flexDirection="column">
-      <MarketplaceList rows={marketplaceRows} selectedIndex={selectedIndex} />
+      <MarketplaceList rows={marketplaceRows} selectedIndex={selectedIndex} maxHeight={Math.max(4, contentHeight - 2)} />
     </Box>
   );
 }
