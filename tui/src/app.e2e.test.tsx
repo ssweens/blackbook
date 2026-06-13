@@ -902,7 +902,7 @@ describe("App E2E — Plugin Detail", () => {
     }
   });
 
-  it("shows (drifted) label on status line when drift detected", async () => {
+  it("keeps plugin drift as a per-tool row instead of a status-line badge", async () => {
     vi.mocked(resolvePluginSourcePaths).mockReturnValue({ pluginDir: "/src/plugins/test", repoRoot: "/src" });
     vi.mocked(buildFileDiffTarget).mockReturnValue({
       kind: "file", title: "t",
@@ -918,8 +918,10 @@ describe("App E2E — Plugin Detail", () => {
     });
     const { stdout, unmount } = render(<App />);
     try {
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("drifted"), 5000);
-      expect(stdout.lastFrame()).toContain("(drifted)");
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Drifted") || f.includes("+1"), 5000);
+      const frame = stdout.lastFrame()!;
+      expect(frame).not.toContain("Status: Installed (drifted)");
+      expect(frame).toContain("Drifted");
     } finally {
       unmount();
     }

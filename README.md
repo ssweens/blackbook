@@ -28,6 +28,7 @@ Plugin manager for agentic coding tools built with React/Ink. Install skills, co
 - **TUI interface** — Interactive terminal UI with tabs for Sync, Tools, Discover, Installed, Marketplaces, and Settings
 - **Source repo git controls** — Settings tab shows upstream state (ahead/behind/diverged) and supports pull/commit flows
 - **Cross-tool sync** — Install plugins to multiple tools at once, detect incomplete installs
+- **Repo-prescribed installed rows** — Installed tab shows marketplace/source-repo plugins as `in git` even before local installation
 - **Per-component control** — Disable individual skills, commands, or agents within a plugin
 
 ## Plugin Model
@@ -44,9 +45,9 @@ Everything is a plugin. Plugins can include skills, commands, agents, hooks, MCP
 | Amp Code | `~/.config/amp` | ✓ | ✓ | ✓ | ✓ |
 | Pi | `~/.pi/agent` | ✓ | ✓* | — | ✓ |
 
-\* Pi uses `agent/skills/` for skills and `agent/prompts/` for prompt templates (`/name` syntax)
+\* Pi marketplace plugins are bridge-managed. Blackbook treats installed Pi plugin resources as namespaced generated artifacts: skills under `${TMPDIR}/pi-plugins-user-skills/<plugin>-<skill>/`, prompts under `${TMPDIR}/pi-plugins-user-prompts/<plugin>:<command>.md`, and agents under `~/.pi/agent/agents/pi-plugins-<plugin>-<agent>.md`.
 
-> Pi plugin projection is intentionally disabled in Blackbook. Use Pi packages for Pi-native extensibility; Claude-style marketplace plugin lifecycle for Pi should be handled by a Pi bridge backend (e.g. `pi-claude-marketplace`).
+> Pi plugin lifecycle in Blackbook is bridge-backed. Blackbook does not project Claude-style plugins directly into `~/.pi/agent/skills` / `prompts`; it follows the Pi bridge backend's generated resource layout and state.
 
 ## Installation
 
@@ -276,6 +277,8 @@ Native command exceptions:
 **Supported plugin types:** skills, commands, agents, hooks, MCP servers, LSP servers.
 
 Incomplete installs are detected when a plugin is missing from any enabled instance that supports it.
+
+For Pi, installed plugin status comes from the Pi bridge state, and per-tool drift/diff uses the bridge's generated resource paths rather than guessed `~/.pi/agent/skills` paths.
 
 
 ### Managing Marketplaces

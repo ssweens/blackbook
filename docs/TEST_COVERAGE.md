@@ -3,8 +3,8 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 485
-- **Test Files:** 41
+- **Total Tests:** 535
+- **Test Files:** 44
 
 ## Critical Paths
 - [x] Plugin discovery list loads
@@ -12,12 +12,14 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Marketplace plugin rows stay installed when tool components exist even if an old installed marketplace key was removed/renamed
 - [x] Plugin update refreshes an already-open detail view with fresh installed/latest version metadata
 - [x] Plugin detail view shows actions and tool status
+- [x] Plugin detail headers keep drift as a per-tool designation instead of an item-wide badge for plugins/skills
 - [x] Installed tab includes managed file entries with diff/missing detail access
 - [x] Plugin install/update/uninstall flow
 - [x] Plugin per-component enable/disable config parsing and round-trip
 - [x] Sync preview generation for partial installs
 - [x] Discover → plugin detail → install to all tools (E2E)
 - [x] Pi plugin lifecycle routes through `@ssweens/pi-plugins` bridge commands instead of Blackbook projection paths
+- [x] Pi plugin target-path resolution follows the bridge's generated namespaced layout (`pi-plugins-user-skills`, `pi-plugins-user-prompts`, `pi-plugins-<plugin>-<agent>`)
 - [x] Install failure notification stays on detail (E2E)
 - [x] Config multi-file sync (directory, glob patterns)
 - [x] Asset path resolution (URLs, absolute, home-relative, relative)
@@ -26,6 +28,7 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Sync tab shows tool update items with installed/latest version delta (E2E)
 - [x] Discover and Sync include in-git Pi packages that are missing locally
 - [x] Installed local-only Pi packages and orphaned plugins expose explicit not-in-git/marketplace status badges
+- [x] Installed tab includes repo-prescribed marketplace plugins even when they are not installed locally
 - [x] Startup hydrates the initial tab automatically while avoiding cross-tab blocking
 - [x] Tab switching does not auto-refresh tab data, tab loaders, or Tools detection after the boot refresh (E2E)
 - [x] Non-silent refreshes preserve already-loaded plugin/file rows instead of flipping loaded flags false

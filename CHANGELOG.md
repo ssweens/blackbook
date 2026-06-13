@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Installed-tab plugin rows now include repo-prescribed marketplace plugins even before they are installed locally, so `source_repo` / marketplace entries show up as `in git` instead of disappearing until install.
+- Pi bridge plugin detection, per-tool status, and diff views now share one resolver path instead of mixing bridge state with guessed `~/.pi/agent/skills|prompts` paths.
+- Pi bridge plugin component paths now follow the bridge's real namespaced install layout: skills under `${os.tmpdir()}/pi-plugins-user-skills/<plugin>-<skill>`, prompts under `${os.tmpdir()}/pi-plugins-user-prompts/<plugin>:<command>.md`, and agents under `~/.pi/agent/agents/pi-plugins-<plugin>-<agent>.md`.
+- Plugin/skill detail headers no longer show `drifted` as an item-wide badge for plugin instances; drift remains a per-tool designation on the instance rows.
 - Eliminated load-time and navigation flicker in the TUI by making tab layouts respect the actual terminal height. Replaced hardcoded tab container heights (`installed: 34`, etc.) in `App.tsx` with a `useContentHeight()` hook that budgets rows after chrome (TabBar, hint/status bars, padding, notifications). All tabs now receive a `contentHeight` prop and cap their list heights so the rendered frame never exceeds the terminal, preventing Ink's tall-write flicker path.
 - `InstalledTab` now dynamically distributes its list budget across Files, Namespaces, Skills, Plugins, and Pi Packages sections. If the terminal is too small, the preview panel is automatically hidden so the lists still fit.
 - `DiscoverTab`, `SyncTab`, `ToolsTab`, and `MarketplacesTab` now size their lists from `contentHeight` instead of fixed defaults.

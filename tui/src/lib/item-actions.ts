@@ -12,6 +12,7 @@ import type { ToolInstallStatus } from "./plugin-status.js";
 import { getToolInstances } from "./config.js";
 import { resolvePluginSourcePaths, type PluginDrift } from "./plugin-drift.js";
 import { buildFileDiffTarget } from "./diff.js";
+import { resolveInstalledPluginComponentPath } from "./pi-bridge.js";
 import type { ItemAction } from "../components/ItemDetail.js";
 
 // PluginAction is now an alias for ItemAction — PluginAction type eliminated
@@ -70,15 +71,10 @@ export function buildPluginActions(
         for (const [key, driftStatus] of Object.entries(drift)) {
           if (driftStatus === "in-sync") continue;
           const [kind, name] = key.split(":");
-          const subdir =
-            kind === "skill" ? inst.skillsSubdir
-            : kind === "command" ? inst.commandsSubdir
-            : inst.agentsSubdir;
-          if (!subdir) continue;
-
           const srcSuffix = kind === "skill" ? name : `${name}.md`;
           const srcPath = join(sourcePaths.pluginDir, `${kind}s`, srcSuffix);
-          const destPath = join(inst.configDir, subdir, srcSuffix);
+          const destPath = resolveInstalledPluginComponentPath(inst, plugin, kind as "skill" | "command" | "agent", name);
+          if (!destPath) continue;
 
           try {
             const dt = buildFileDiffTarget(

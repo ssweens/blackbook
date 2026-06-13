@@ -326,6 +326,24 @@ function buildInstalledPlugins(
     seenNames.add(marketplacePlugin.name);
   }
 
+  // PASS 3: Include uninstalled marketplace plugins from configured marketplaces.
+  // These are repo-prescribed plugins that appear in the Installed tab so users
+  // can see what's available from their source_repo without visiting Discover.
+  for (const marketplacePlugin of marketplaceCandidates) {
+    if (seenNames.has(marketplacePlugin.name)) continue;
+    const latestVersion = marketplacePlugin.latestVersion ?? marketplacePlugin.version;
+    result.push({
+      ...marketplacePlugin,
+      installed: false,
+      incomplete: false,
+      latestVersion,
+      version: latestVersion ?? marketplacePlugin.version,
+      hasUpdate: false,
+      prescriptionStatus: "in-git",
+    });
+    seenNames.add(marketplacePlugin.name);
+  }
+
   return result;
 }
 

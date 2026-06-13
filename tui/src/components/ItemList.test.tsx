@@ -58,6 +58,7 @@ describe("computeItemFlags", () => {
       notInGitArtifact: false,
       noLongerInMarketplace: false,
       marketplaceRemoved: false,
+      prescribed: false,
     });
   });
 

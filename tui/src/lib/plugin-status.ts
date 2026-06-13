@@ -12,6 +12,7 @@ import { safePath, validatePluginMetadata, logError } from "./validation.js";
 import { loadManifest, saveManifest } from "./manifest.js";
 import { getPluginSourcePath, instanceKey, createSymlink, isSymlink } from "./plugin-helpers.js";
 import { countGetPluginToolStatus } from "./perf.js";
+import { getPiBridgeInstalledPluginIds as loadPiBridgeInstalledPluginIds } from "./pi-bridge.js";
 
 export interface ToolInstallStatus {
   toolId: string;
@@ -134,31 +135,7 @@ function getClaudeInstalledPluginIds(): Set<string> {
 function getPiBridgeInstalledPluginIds(): Set<string> {
   if (piBridgeInstalledCacheGeneration === statusCacheGeneration) return piBridgeInstalledPluginIds;
   piBridgeInstalledCacheGeneration = statusCacheGeneration;
-  piBridgeInstalledPluginIds = new Set<string>();
-  try {
-    const statePaths = [
-      join(PI_AGENT_DIR, "pi-plugins", "state.json"),
-      // Compatibility for users who have not migrated state yet.
-      join(PI_AGENT_DIR, "pi-claude-marketplace", "state.json"),
-    ];
-    const statePath = statePaths.find((p) => existsSync(p));
-    if (!statePath) return piBridgeInstalledPluginIds;
-    const json = JSON.parse(readFileSync(statePath, "utf-8"));
-    const marketplaces = json?.marketplaces;
-    if (marketplaces && typeof marketplaces === "object") {
-      for (const [marketplaceName, mpVal] of Object.entries(marketplaces as Record<string, unknown>)) {
-        const plugins = (mpVal as { plugins?: Record<string, unknown> })?.plugins;
-        if (!plugins || typeof plugins !== "object") continue;
-        for (const pluginName of Object.keys(plugins)) {
-          if (pluginName && marketplaceName) {
-            piBridgeInstalledPluginIds.add(`${pluginName}@${marketplaceName}`);
-          }
-        }
-      }
-    }
-  } catch {
-    // malformed/missing state -> empty set
-  }
+  piBridgeInstalledPluginIds = loadPiBridgeInstalledPluginIds();
   return piBridgeInstalledPluginIds;
 }
 

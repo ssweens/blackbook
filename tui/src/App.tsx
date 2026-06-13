@@ -61,6 +61,7 @@ import {
   pullbackNamespaceToSource,
 } from "./lib/install.js";
 import { resolvePluginSourcePaths, type PluginDrift } from "./lib/plugin-drift.js";
+import { resolveInstalledPluginComponentPath } from "./lib/pi-bridge.js";
 import { computeItemDrift } from "./lib/item-drift.js";
 import { buildFileDiffTarget, buildSkillDiffTarget } from "./lib/diff.js";
 import { getToolLifecycleCommand, detectInstallMethodMismatch } from "./lib/tool-lifecycle.js";
@@ -1629,13 +1630,13 @@ export function App() {
     for (const [key, status] of Object.entries(pluginDrift)) {
       if (status === "in-sync") continue;
       const [kind, name] = key.split(":");
-      const subdir = kind === "skill" ? inst.skillsSubdir : kind === "command" ? inst.commandsSubdir : inst.agentsSubdir;
-      if (!subdir) continue;
       const srcSuffix = kind === "skill" ? name : `${name}.md`;
+      const targetPath = resolveInstalledPluginComponentPath(inst, plugin, kind as "skill" | "command" | "agent", name);
+      if (!targetPath) continue;
       try {
         const dt = buildFileDiffTarget(`${kind}s/${name}`, srcSuffix,
           join(sourcePaths.pluginDir, `${kind}s`, srcSuffix),
-          join(inst.configDir, subdir, srcSuffix), instance);
+          targetPath, instance);
         allFiles.push(...dt.files);
       } catch { /* skip */ }
     }
@@ -1698,14 +1699,11 @@ export function App() {
         const [kind, name] = driftKey.split(":");
         if (kind !== "skill" && kind !== "command" && kind !== "agent") continue;
 
-        const subdir = kind === "skill" ? tool.skillsSubdir : kind === "command" ? tool.commandsSubdir : tool.agentsSubdir;
-        if (!subdir) continue;
-
         const suffix = kind === "skill" ? name : `${name}.md`;
         const sourcePath = join(sourcePaths.pluginDir, `${kind}s`, suffix);
-        const targetPath = join(tool.configDir, subdir, suffix);
+        const targetPath = resolveInstalledPluginComponentPath(tool, plugin, kind, name);
 
-        if (!existsSync(targetPath)) continue;
+        if (!targetPath || !existsSync(targetPath)) continue;
 
         let hasDiff = false;
         try {

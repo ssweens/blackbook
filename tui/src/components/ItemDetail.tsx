@@ -96,6 +96,7 @@ export function ItemDetail({ item, actions, selectedAction, metadata }: ItemDeta
   const hasDrift = item.instances.some(
     (i) => i.status === "changed",
   );
+  const showAggregateDrift = hasDrift && (item.kind === "file" || item.kind === "config" || item.kind === "asset");
   const isIncomplete = item.installed && item.incomplete;
   const { stdout } = useStdout();
   const rows = stdout?.rows ?? 30;
@@ -134,7 +135,7 @@ export function ItemDetail({ item, actions, selectedAction, metadata }: ItemDeta
           {item.installed ? "Installed" : "Not Installed"}
         </Text>
         {isIncomplete && <Text color="yellow"> (incomplete)</Text>}
-        {hasDrift && <Text color="yellow"> (drifted)</Text>}
+        {showAggregateDrift && <Text color="yellow"> (drifted)</Text>}
         {item.hasUpdate && <Text color="blue"> (update available)</Text>}
       </Box>
 

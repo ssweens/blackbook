@@ -116,6 +116,8 @@ export interface ItemFlags {
   noLongerInMarketplace: boolean;
   /** True when an installed plugin belongs to a marketplace no longer configured. */
   marketplaceRemoved: boolean;
+  /** True when a plugin is in a configured marketplace but not installed to any tool. */
+  prescribed: boolean;
 }
 
 export function computeItemFlags(item: ManagedItem): ItemFlags {
@@ -141,8 +143,9 @@ export function computeItemFlags(item: ManagedItem): ItemFlags {
   );
   const noLongerInMarketplace = Boolean(item._plugin?.prescriptionStatus === "no-longer-in-marketplace");
   const marketplaceRemoved = Boolean(item._plugin?.prescriptionStatus === "marketplace-removed");
+  const prescribed = Boolean(item._plugin && !item.installed && item._plugin.prescriptionStatus === "in-git");
 
-  return { installed, incomplete, changed, sourceMissing, hasUpdate, notInGit, recommended, notInGitArtifact, noLongerInMarketplace, marketplaceRemoved };
+  return { installed, incomplete, changed, sourceMissing, hasUpdate, notInGit, recommended, notInGitArtifact, noLongerInMarketplace, marketplaceRemoved, prescribed };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -362,6 +365,12 @@ function ItemRow({ item, isSelected, flags, columns, colWidths }: ItemRowProps) 
         <>
           <Text color="gray"> · </Text>
           <Text color="yellow">marketplace removed</Text>
+        </>
+      )}
+      {flags.prescribed && (
+        <>
+          <Text color="gray"> · </Text>
+          <Text color="magenta">in git</Text>
         </>
       )}
     </Box>

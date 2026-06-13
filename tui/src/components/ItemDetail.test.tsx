@@ -116,10 +116,30 @@ describe("ItemDetail", () => {
     expect(lastFrame()).toContain("(incomplete)");
   });
 
-  it("shows drifted badge when instances have changed status", () => {
+  it("does not show plugin-wide drifted badge when a plugin instance is changed", () => {
     const { lastFrame } = render(
       React.createElement(ItemDetail, {
         item: createItem({
+          kind: "plugin",
+          instances: [{
+            toolId: "t", instanceId: "i", instanceName: "T",
+            configDir: "/c", status: "changed",
+            sourcePath: null, targetPath: null, linesAdded: 0, linesRemoved: 0,
+          }],
+        }),
+        actions: [statusAction("T", "Drifted", "yellow"), backAction()],
+        selectedAction: 0,
+      }),
+    );
+    expect(lastFrame()).not.toContain("Status: Installed (drifted)");
+    expect(lastFrame()).toContain("T: Drifted");
+  });
+
+  it("shows drifted badge for file-like items when instances have changed status", () => {
+    const { lastFrame } = render(
+      React.createElement(ItemDetail, {
+        item: createItem({
+          kind: "file",
           instances: [{
             toolId: "t", instanceId: "i", instanceName: "T",
             configDir: "/c", status: "changed",

@@ -19,6 +19,7 @@ import { loadManifest } from "./manifest.js";
 import { instanceKey } from "./plugin-helpers.js";
 import { getToolInstances, parseMarketplaces } from "./config.js";
 import { expandTilde } from "./path-utils.js";
+import { resolveInstalledPluginComponentPath } from "./pi-bridge.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -263,21 +264,13 @@ export async function computePluginDrift(
                     : inst.agentsSubdir;
               if (!subdir) return;
 
-              // Try manifest first for the exact dest path.
+              // Try manifest first for the exact dest path, then fall back to
+              // the tool-native install location. Pi plugins are bridge-managed
+              // and resolve to the staged `resolvedSource`, not ~/.pi/agent/skills.
               const ikey = instanceKey(inst);
               const manifestItem = manifest.tools[ikey]?.items[key];
-              let destPath: string;
-
-              if (manifestItem?.dest) {
-                destPath = manifestItem.dest.startsWith("/")
-                  ? manifestItem.dest
-                  : join(inst.configDir, manifestItem.dest);
-              } else {
-                const suffix = kind === "skill" ? name : `${name}.md`;
-                destPath = join(inst.configDir, subdir, suffix);
-              }
-
-              if (!existsSync(destPath)) return;
+              const destPath = resolveInstalledPluginComponentPath(inst, plugin, kind, name, manifestItem?.dest);
+              if (!destPath || !existsSync(destPath)) return;
 
               if (await hasDiff(srcPath, destPath)) {
                 targetDirty = true;

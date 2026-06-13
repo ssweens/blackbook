@@ -430,6 +430,38 @@ describe("Plugin version merge", () => {
     });
   });
 
+  it("includes repo-prescribed marketplace plugins even when not installed", async () => {
+    vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [], byTool: {} });
+    vi.mocked(getPluginToolStatus).mockReturnValue([
+      {
+        toolId: "opencode",
+        instanceId: "default",
+        name: "OC",
+        installed: false,
+        supported: true,
+        enabled: true,
+      },
+    ]);
+    useStore.setState({
+      marketplaces: [createMockMarketplace({
+        name: "playbook",
+        plugins: [
+          createMockPlugin({ name: "agentic-app-creator", marketplace: "playbook" }),
+          createMockPlugin({ name: "crafting-interfaces", marketplace: "playbook" }),
+          createMockPlugin({ name: "eval-model", marketplace: "playbook" }),
+        ],
+      })],
+    });
+
+    await useStore.getState().loadInstalledPlugins({ silent: true });
+
+    expect(useStore.getState().installedPlugins).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "agentic-app-creator", marketplace: "playbook", installed: false, prescriptionStatus: "in-git" }),
+      expect.objectContaining({ name: "crafting-interfaces", marketplace: "playbook", installed: false, prescriptionStatus: "in-git" }),
+      expect.objectContaining({ name: "eval-model", marketplace: "playbook", installed: false, prescriptionStatus: "in-git" }),
+    ]));
+  });
+
   it("tracks a recoverable orphan plugin into the source repo marketplace", async () => {
     const sourceRepo = mkdtempSync(join(tmpdir(), "blackbook-plugin-track-repo-"));
     const pluginSource = mkdtempSync(join(tmpdir(), "blackbook-plugin-track-src-"));

@@ -73,6 +73,7 @@ import {
 } from "./manifest.js";
 import { logError, validatePluginMetadata } from "./validation.js";
 import { getPluginToolStatus } from "./plugin-status.js";
+import { listPiBridgeInstalledPlugins } from "./pi-bridge.js";
 
 /**
  * Extract marketplace and plugin name from a source path.
@@ -1733,12 +1734,36 @@ function getInstalledPluginsForClaudeInstance(
   return plugins;
 }
 
+function getInstalledPluginsForPiInstance(): Plugin[] {
+  return listPiBridgeInstalledPlugins().map((plugin) => ({
+    name: plugin.name,
+    marketplace: plugin.marketplace,
+    version: plugin.version,
+    installedVersion: plugin.version,
+    latestVersion: plugin.version,
+    description: "",
+    source: plugin.resolvedSource ?? "",
+    skills: plugin.skills,
+    commands: plugin.commands,
+    agents: plugin.agents,
+    hooks: plugin.hooks,
+    hasMcp: plugin.hasMcp,
+    hasLsp: false,
+    homepage: "",
+    installed: true,
+    scope: "user",
+  }));
+}
+
 export function getInstalledPluginsForInstance(
   instance: ToolInstance,
 ): Plugin[] {
   if (!instance.enabled) return [];
   if (instance.toolId === "claude-code") {
     return getInstalledPluginsForClaudeInstance(instance);
+  }
+  if (instance.toolId === "pi") {
+    return getInstalledPluginsForPiInstance();
   }
 
   // Load manifest to get authoritative source paths
