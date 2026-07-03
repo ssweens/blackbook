@@ -51,7 +51,7 @@ Everything is a plugin. Plugins can include skills, commands, agents, hooks, MCP
 
 ## Installation
 
-For local development, use Node.js 23.x and pnpm.
+For local development, use Node.js 23.x and Bun.
 
 ```bash
 # Install from npm
@@ -70,8 +70,8 @@ Or clone and run from source:
 ```bash
 git clone https://github.com/ssweens/blackbook ~/src/blackbook
 cd ~/src/blackbook/tui
-pnpm install
-pnpm start
+bun install
+bun start
 ```
 
 ## Usage
@@ -79,7 +79,7 @@ pnpm start
 Launch the TUI:
 
 ```bash
-cd ~/src/blackbook/tui && pnpm start
+cd ~/src/blackbook/tui && bun start
 ```
 
 Blackbook opens on the **Sync** tab by default.
@@ -125,7 +125,7 @@ On first launch, if `config.yaml` is missing, Blackbook bootstraps one from dete
 # ~/.config/blackbook/config.yaml
 settings:
   source_repo: ~/src/playbook
-  package_manager: pnpm     # npm | pnpm | bun
+  package_manager: bun      # npm | pnpm | bun
   backup_retention: 3       # Number of backups to keep per file (1-100)
 
 tools:
@@ -265,7 +265,7 @@ Choose package manager for lifecycle commands in config (used by tools that inst
 
 ```yaml
 settings:
-  package_manager: pnpm   # npm | pnpm | bun
+  package_manager: bun    # npm | pnpm | bun
 ```
 
 Native command exceptions:
@@ -311,22 +311,22 @@ Remote plugin marketplace responses are cached for up to 10 minutes before refet
 
 ```bash
 cd tui
-pnpm install
-pnpm dev          # Run in development mode
-pnpm test         # Run tests
-pnpm typecheck    # Type check
-pnpm build        # Build for production
+bun install
+bun dev          # Run in development mode
+bun test         # Run tests
+bun typecheck    # Type check
+bun build        # Build for production
 ```
 
 See `docs/TEST_COVERAGE.md` for the user-flow checklist and coverage status.
 
 ```bash
 cd tui
-npm install
-npm run dev
-npm test
-npm run typecheck
-npm run build
+bun install
+bun dev
+bun test
+bun typecheck
+bun build
 ```
 
 ### TUI Code Layout
