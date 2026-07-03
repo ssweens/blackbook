@@ -83,6 +83,7 @@ import {
   syncPluginInstances,
   manifestPath,
   removeClaudeMarketplace,
+  removePiMarketplace,
   groupSkillsByNamespace,
 } from "./install.js";
 import { invalidatePluginToolStatusCache } from "./plugin-status.js";
@@ -2549,6 +2550,12 @@ export const useStore = create<Store>((rawSet, get) => {
     const marketplace = get().marketplaces.find((m) => m.name === name);
 
     try {
+      // Remove it from Pi's native plugin state before deleting Blackbook's
+      // config entry. pi-plugins cascades marketplace removal through installed
+      // plugin resources, so deleting Blackbook first would hide a failed native
+      // cleanup and leave the two systems divergent.
+      await removePiMarketplace(name);
+
       // For Claude-discovered marketplaces, run the native Claude CLI command to
       // remove it from known_marketplaces.json on every Claude instance.
       if (marketplace?.source === "claude") {

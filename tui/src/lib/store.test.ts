@@ -9,6 +9,7 @@ import {
   getPluginToolStatus,
   syncPluginInstances,
   updatePlugin,
+  removePiMarketplace,
 } from "./install.js";
 import { getSkillActions } from "./item-actions.js";
 import { getConfigPath as getYamlConfigPath, loadConfig as loadYamlConfig } from "./config/loader.js";
@@ -52,6 +53,7 @@ vi.mock("./install.js", async (importOriginal) => {
     getStandaloneSkills: vi.fn().mockReturnValue([]),
     syncPluginInstances: vi.fn(),
     updatePlugin: vi.fn(),
+    removePiMarketplace: vi.fn().mockResolvedValue(undefined),
   };
 });
 
@@ -688,6 +690,8 @@ describe("Store detail views", () => {
 
 describe("Store marketplace management", () => {
   beforeEach(() => {
+    vi.mocked(removePiMarketplace).mockReset();
+    vi.mocked(removePiMarketplace).mockResolvedValue(undefined);
     useStore.setState({
       marketplaces: [createMockMarketplace({ name: "existing" })],
     });
@@ -710,12 +714,25 @@ describe("Store marketplace management", () => {
     expect(marketplaces).toHaveLength(1);
   });
 
-  it("should remove marketplace", () => {
+  it("should remove marketplace from Pi before removing Blackbook config", async () => {
     const { removeMarketplace } = useStore.getState();
-    removeMarketplace("existing");
+    await removeMarketplace("existing");
 
+    expect(removePiMarketplace).toHaveBeenCalledWith("existing");
     const { marketplaces } = useStore.getState();
     expect(marketplaces).toHaveLength(0);
+  });
+
+  it("should keep Blackbook config when Pi marketplace removal fails", async () => {
+    vi.mocked(removePiMarketplace).mockRejectedValueOnce(new Error("Pi cleanup failed"));
+
+    const { removeMarketplace } = useStore.getState();
+    await removeMarketplace("existing");
+
+    expect(removePiMarketplace).toHaveBeenCalledWith("existing");
+    const { marketplaces } = useStore.getState();
+    expect(marketplaces).toHaveLength(1);
+    expect(marketplaces[0].name).toBe("existing");
   });
 
   it("should detect local marketplace", () => {

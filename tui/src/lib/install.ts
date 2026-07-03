@@ -223,6 +223,44 @@ function toPiBridgeMarketplaceSource(rawSource: string): string {
   return s;
 }
 
+async function runPiBridgeMarketplaceRemoveCommand(
+  instance: ToolInstance,
+  marketplaceName: string,
+): Promise<void> {
+  validateMarketplaceName(marketplaceName);
+
+  if (!isPiPluginBridgeReady()) {
+    throw new Error("Pi plugin bridge is not ready. Install: npm:@ssweens/pi-plugins, npm:pi-subagents, npm:pi-mcp-adapter");
+  }
+
+  const piPluginsRoot = resolvePiPluginsPackageRoot();
+  if (!piPluginsRoot) {
+    throw new Error("Pi plugin bridge package @ssweens/pi-plugins was not found in Pi settings or Pi node_modules.");
+  }
+
+  const script = `
+import { removeMarketplace } from ${JSON.stringify(join(piPluginsRoot, "extensions", "pi-plugins", "orchestrators", "marketplace", "remove.ts"))};
+
+const marketplace = ${JSON.stringify(marketplaceName)};
+const cwd = ${JSON.stringify(instance.configDir)};
+const ctx = { ui: { notify: () => {} } };
+const pi = { getAllTools: () => [] };
+
+await removeMarketplace({
+  ctx,
+  pi,
+  scope: "user",
+  cwd,
+  name: marketplace,
+});
+`;
+
+  await execFileAsync("bun", ["-e", script], {
+    timeout: 120000,
+    cwd: instance.configDir,
+  });
+}
+
 async function runPiBridgePluginCommand(
   instance: ToolInstance,
   command: string,
@@ -237,7 +275,7 @@ async function runPiBridgePluginCommand(
     throw new Error("Pi plugin bridge package @ssweens/pi-plugins was not found in Pi settings or Pi node_modules.");
   }
 
-  const match = command.match(/^\/claude:plugin\s+(install|update|uninstall)\s+([^@\s]+)@([^\s]+)$/);
+  const match = command.match(/^(?:\/plugin|\/claude:plugin)\s+(install|update|uninstall)\s+([^@\s]+)@([^\s]+)$/);
   if (!match) {
     throw new Error(`Unsupported Pi bridge command format: ${command}`);
   }
@@ -316,6 +354,14 @@ async function piCompatibleMarketplaceSource(source) {
 
   const manifest = await readJsonIfExists(manifestPath);
   if (!manifest || !Array.isArray(manifest.plugins)) return source;
+
+  const configuredLocalMarketplace = marketplaceUrl !== '' && !marketplaceUrl.startsWith('http://') && !marketplaceUrl.startsWith('https://');
+  if (configuredLocalMarketplace) {
+    // Local marketplaces are already Pi-compatible. Keep the real repository
+    // path as the pi-plugins source so updates track the local checkout instead
+    // of a Blackbook cache copy.
+    return marketplaceRoot;
+  }
 
   const stageDir = path.join(bridgeStageRoot, marketplace);
   await rm(stageDir, { recursive: true, force: true });
@@ -406,6 +452,11 @@ if (op === "install") {
     throw new Error("Pi install failed: " + outcome.status + (outcome.cause ? " - " + outcome.cause : ""));
   }
 } else if (op === "update") {
+  if (marketplaceUrl !== '' && !marketplaceUrl.startsWith('http://') && !marketplaceUrl.startsWith('https://')) {
+    marketplaceSource = await piCompatibleMarketplaceSource(marketplaceSource);
+    await repointExistingMarketplaceToSource(marketplaceSource);
+  }
+
   await updatePlugins({
     ctx,
     pi,
@@ -470,6 +521,28 @@ export async function removeClaudeMarketplace(marketplaceName: string): Promise<
 
   if (failures.length > 0) {
     throw new Error(`Failed to remove Claude marketplace ${marketplaceName}: ${failures.join("; ")}`);
+  }
+}
+
+export async function removePiMarketplace(marketplaceName: string): Promise<void> {
+  validateMarketplaceName(marketplaceName);
+  const piInstances = getEnabledToolInstances().filter((i) => i.toolId === "pi");
+  const failures: string[] = [];
+
+  for (const instance of piInstances) {
+    try {
+      await runPiBridgeMarketplaceRemoveCommand(instance, marketplaceName);
+    } catch (error) {
+      const commandError = error as { stderr?: string; stdout?: string; message?: string };
+      const message = commandError.stderr || commandError.stdout || commandError.message || String(error);
+      if (/not found/i.test(message)) continue;
+      logError(`Failed to remove marketplace ${marketplaceName} from ${instance.name}`, error);
+      failures.push(`${instance.name}: ${message.trim()}`);
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`Failed to remove Pi marketplace ${marketplaceName}: ${failures.join("; ")}`);
   }
 }
 
@@ -726,7 +799,7 @@ export async function installPlugin(
   // For Pi instances, use Pi bridge plugin commands
   for (const instance of piInstances) {
     try {
-      await runPiBridgePluginCommand(instance, `/claude:plugin install ${plugin.name}@${plugin.marketplace}`, marketplaceUrl);
+      await runPiBridgePluginCommand(instance, `/plugin install ${plugin.name}@${plugin.marketplace}`, marketplaceUrl);
       result.linkedInstances[instanceKey(instance)] = 1;
     } catch (e) {
       result.errors.push(
@@ -786,7 +859,7 @@ export function uninstallPluginFromInstance(
 
   if (instance.toolId === "pi") {
     // Fire-and-forget bridge uninstall for sync API parity with this sync fn.
-    void runPiBridgePluginCommand(instance, `/claude:plugin uninstall ${plugin.name}@${plugin.marketplace}`);
+    void runPiBridgePluginCommand(instance, `/plugin uninstall ${plugin.name}@${plugin.marketplace}`);
     return true;
   }
 
@@ -840,8 +913,20 @@ export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
     return false;
   }
 
-  // Uninstall from all enabled instances using the same method
+  // Uninstall from all enabled instances using the same method.
   for (const instance of enabledInstances) {
+    if (isConfigOnlyInstance(instance)) continue;
+
+    if (instance.toolId === "pi") {
+      try {
+        await runPiBridgePluginCommand(instance, `/plugin uninstall ${plugin.name}@${plugin.marketplace}`);
+        removedCount += 1;
+      } catch (error) {
+        logError(`Pi bridge uninstall failed for ${plugin.name} in ${instance.name}`, error);
+      }
+      continue;
+    }
+
     removedCount += uninstallPluginItemsFromInstance(plugin.name, instance);
     // Claude tracks installed plugins in installed_plugins.json — must clean it.
     removeFromClaudeInstalledPluginsJson(instance, plugin.name, plugin.installedMarketplace ?? plugin.marketplace);
@@ -1166,7 +1251,7 @@ export async function enablePlugin(
     if (isConfigOnlyInstance(instance)) continue;
     try {
       if (instance.toolId === "pi") {
-        await runPiBridgePluginCommand(instance, `/claude:plugin install ${plugin.name}@${plugin.marketplace}`, marketplaceUrl);
+        await runPiBridgePluginCommand(instance, `/plugin install ${plugin.name}@${plugin.marketplace}`, marketplaceUrl);
         result.linkedInstances[instanceKey(instance)] = 1;
         continue;
       }
@@ -1214,7 +1299,7 @@ export async function disablePlugin(plugin: Plugin): Promise<EnableResult> {
     if (isConfigOnlyInstance(instance)) continue;
     if (instance.toolId === "pi") {
       try {
-        await runPiBridgePluginCommand(instance, `/claude:plugin uninstall ${plugin.name}@${plugin.marketplace}`);
+        await runPiBridgePluginCommand(instance, `/plugin uninstall ${plugin.name}@${plugin.marketplace}`);
         result.linkedInstances[instanceKey(instance)] = 1;
       } catch {
         result.linkedInstances[instanceKey(instance)] = 0;
@@ -1283,7 +1368,7 @@ export async function updatePlugin(
   // Update Pi bridge-managed plugin instances.
   for (const instance of piInstances) {
     try {
-      await runPiBridgePluginCommand(instance, `/claude:plugin update ${plugin.name}@${plugin.marketplace}`, marketplaceUrl);
+      await runPiBridgePluginCommand(instance, `/plugin update ${plugin.name}@${plugin.marketplace}`, marketplaceUrl);
       result.linkedInstances[instanceKey(instance)] = 1;
     } catch (error) {
       logError(`Pi bridge update failed for ${plugin.name} in ${instance.name}`, error);
@@ -3259,7 +3344,7 @@ export async function syncPluginInstances(
     for (const instance of missingInstances) {
       try {
         if (instance.toolId === "pi") {
-          await runPiBridgePluginCommand(instance, `/claude:plugin install ${plugin.name}@${plugin.marketplace}`, marketplaceUrl);
+          await runPiBridgePluginCommand(instance, `/plugin install ${plugin.name}@${plugin.marketplace}`, marketplaceUrl);
           result.syncedInstances[instanceKey(instance)] = 1;
           continue;
         }
