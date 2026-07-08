@@ -21,6 +21,7 @@ import {
   loadManifest,
   saveManifest,
   manifestPath,
+  togglePluginComponent,
 } from "./install.js";
 import * as config from "./config.js";
 
@@ -847,5 +848,42 @@ describe("Asset sync adapters", () => {
 
   it("placeholder for future asset sync tests", () => {
     expect(true).toBe(true);
+  });
+});
+
+describe("togglePluginComponent config-write safety", () => {
+  // Isolate from the real user config (see config.test.ts for the same pattern):
+  // getConfigDir() falls back to ~/.config/blackbook without this override.
+  let tmpRoot: string;
+  let prevXdg: string | undefined;
+
+  beforeEach(() => {
+    setupTestDirs();
+    prevXdg = process.env.XDG_CONFIG_HOME;
+    tmpRoot = join(tmpdir(), `blackbook-toggle-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(join(tmpRoot, "blackbook"), { recursive: true });
+    process.env.XDG_CONFIG_HOME = tmpRoot;
+  });
+
+  afterEach(() => {
+    if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = prevXdg;
+    try { rmSync(tmpRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+    cleanupTestDirs();
+  });
+
+  it("returns {success:false, error} instead of throwing when config.yaml is unwritable", () => {
+    // A YAML syntax error makes loadYamlConfig() report errors; mutateYamlConfig
+    // (the P0.4 fix) then refuses to save over it rather than wiping the file.
+    const configPath = join(tmpRoot, "blackbook", "config.yaml");
+    writeFileSync(configPath, "settings:\n  package_manager: bun\n  bad_indent:\n bad\n");
+
+    const plugin = createMockPlugin();
+    const result = togglePluginComponent(plugin, "skill", "skill-one", false);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBeTruthy();
+    // The broken config file must be left untouched, not replaced with defaults.
+    expect(readFileSync(configPath, "utf-8")).toContain("bad_indent");
   });
 });

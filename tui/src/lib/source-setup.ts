@@ -569,6 +569,16 @@ export async function commitAndPushSourceRepo(message: string): Promise<{ succes
   }
 }
 
+/**
+ * Explicit, user-initiated "Reset to origin (drop local changes)" action in
+ * Settings. Unlike `pullSourceRepo` (the silent auto-update run on every
+ * launch, which never discards local state), this function's whole purpose
+ * is to let the user deliberately discard uncommitted edits and/or un-pushed
+ * commits and snap back to origin. The caller (SettingsPanel) requires an
+ * explicit two-step confirm before invoking this when there is anything to
+ * lose, so `reset --hard` here is an intentional, confirmed operation, not
+ * an accidental one.
+ */
 export async function pullSourceRepoChanges(): Promise<{ success: boolean; error?: string }> {
   const { config } = loadConfig();
   const sourceRepo = config.settings.source_repo;
@@ -579,7 +589,6 @@ export async function pullSourceRepoChanges(): Promise<{ success: boolean; error
     return { success: false, error: "Not a git repository" };
   }
 
-  // This is an app cache, not a user workspace. Force-reset to origin.
   try {
     await execFileAsync("git", ["fetch", "origin"], { cwd: repoPath, timeout: 120000 });
     const { stdout: branch } = await execFileAsync("git", ["branch", "--show-current"], { cwd: repoPath, timeout: 5000 });

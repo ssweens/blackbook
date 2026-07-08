@@ -1666,7 +1666,12 @@ export const useStore = create<Store>((rawSet, get) => {
     if (!marketplace) return;
 
     const newEnabled = !marketplace.enabled;
-    setPiMarketplaceEnabled(name, newEnabled);
+    try {
+      setPiMarketplaceEnabled(name, newEnabled);
+    } catch (error) {
+      notify(`Failed to update "${name}": ${error instanceof Error ? error.message : String(error)}`, "error");
+      return;
+    }
     notify(`${name} Pi marketplace ${newEnabled ? "enabled" : "disabled"}`, "info");
     await get().loadPiPackages();
   },
@@ -1678,14 +1683,24 @@ export const useStore = create<Store>((rawSet, get) => {
       notify(`Pi marketplace "${name}" already exists`, "error");
       return;
     }
-    addPiMarketplaceToConfig(name, source);
+    try {
+      addPiMarketplaceToConfig(name, source);
+    } catch (error) {
+      notify(`Failed to add Pi marketplace "${name}": ${error instanceof Error ? error.message : String(error)}`, "error");
+      return;
+    }
     notify(`Added Pi marketplace "${name}"`, "success");
     await get().loadPiPackages();
   },
 
   removePiMarketplace: async (name) => {
     const { notify } = get();
-    removePiMarketplaceFromConfig(name);
+    try {
+      removePiMarketplaceFromConfig(name);
+    } catch (error) {
+      notify(`Failed to remove Pi marketplace "${name}": ${error instanceof Error ? error.message : String(error)}`, "error");
+      return;
+    }
     notify(`Removed Pi marketplace "${name}"`, "success");
     await get().loadPiPackages();
   },
@@ -2329,12 +2344,17 @@ export const useStore = create<Store>((rawSet, get) => {
     const currentEnabled = configuredTool?.enabled ?? managedTool?.enabled ?? false;
     const currentConfigDir = configuredTool?.configDir || managedTool?.configDir;
 
-    updateToolInstanceConfig(toolId, instanceId, {
-      id: instanceId,
-      name: displayName,
-      configDir: currentConfigDir,
-      enabled: !currentEnabled,
-    });
+    try {
+      updateToolInstanceConfig(toolId, instanceId, {
+        id: instanceId,
+        name: displayName,
+        configDir: currentConfigDir,
+        enabled: !currentEnabled,
+      });
+    } catch (error) {
+      notify(`Failed to update ${displayName}: ${error instanceof Error ? error.message : String(error)}`, "error");
+      return;
+    }
     await get().refreshAll({ silent: true });
     notify(`${displayName} ${currentEnabled ? "disabled" : "enabled"}`, "success");
   },
@@ -2351,14 +2371,20 @@ export const useStore = create<Store>((rawSet, get) => {
     const configuredFromState = get().tools.find((t) => t.toolId === toolId && t.instanceId === instanceId);
     const configuredTool = configuredFromState || (getToolInstances() || []).find((t) => t.toolId === toolId && t.instanceId === instanceId);
     const managedTool = get().managedTools.find((t) => t.toolId === toolId && t.instanceId === instanceId);
-    updateToolInstanceConfig(toolId, instanceId, {
-      id: instanceId,
-      name: configuredTool?.name || managedTool?.displayName,
-      configDir: trimmed,
-      enabled: configuredTool?.enabled ?? managedTool?.enabled,
-    });
+    const displayName = (configuredTool?.name || managedTool?.displayName) ?? `${toolId}:${instanceId}`;
+    try {
+      updateToolInstanceConfig(toolId, instanceId, {
+        id: instanceId,
+        name: configuredTool?.name || managedTool?.displayName,
+        configDir: trimmed,
+        enabled: configuredTool?.enabled ?? managedTool?.enabled,
+      });
+    } catch (error) {
+      notify(`Failed to update ${displayName}: ${error instanceof Error ? error.message : String(error)}`, "error");
+      return;
+    }
     await get().refreshAll({ silent: true });
-    notify(`Updated ${(configuredTool?.name || managedTool?.displayName) ?? `${toolId}:${instanceId}`} config_dir`, "success");
+    notify(`Updated ${displayName} config_dir`, "success");
   },
 
   getSyncPreview: () => {
@@ -2522,7 +2548,12 @@ export const useStore = create<Store>((rawSet, get) => {
     }
 
     // Save to config file
-    addMarketplaceToConfig(name, url);
+    try {
+      addMarketplaceToConfig(name, url);
+    } catch (error) {
+      notify(`Failed to add marketplace "${name}": ${error instanceof Error ? error.message : String(error)}`, "error");
+      return;
+    }
 
     // Update state
     set({

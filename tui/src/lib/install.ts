@@ -1570,13 +1570,17 @@ export function togglePluginComponent(
   enabled: boolean,
 ): { success: boolean; error?: string } {
   // Update config first
-  setPluginComponentEnabled(
-    plugin.marketplace,
-    plugin.name,
-    kind,
-    componentName,
-    enabled,
-  );
+  try {
+    setPluginComponentEnabled(
+      plugin.marketplace,
+      plugin.name,
+      kind,
+      componentName,
+      enabled,
+    );
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
 
   const instances = getEnabledToolInstances();
   const manifest = loadManifest();

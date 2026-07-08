@@ -91,6 +91,16 @@ export function buildMenuItems(repoStatus: SourceRepoStatus | null): MenuItem[] 
   return items;
 }
 
+/**
+ * Whether "Reset to origin" would actually discard something the user hasn't
+ * pushed (uncommitted edits, or local commits origin doesn't have). Used to
+ * gate the confirm-before-destroy prompt — `behind` alone is never in this
+ * set, since fast-forwarding to a newer origin can't lose local work.
+ */
+export function wouldDiscardLocalWork(repoStatus: SourceRepoStatus | null): boolean {
+  return !!(repoStatus?.hasChanges || (repoStatus?.ahead ?? 0) > 0);
+}
+
 export function getUpstreamStateLabel(repoStatus: SourceRepoStatus): string {
   if (!repoStatus.hasUpstream) return "no upstream configured";
   if (repoStatus.ahead > 0 && repoStatus.behind > 0) {
@@ -203,6 +213,7 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
   const [diffContent, setDiffContent] = useState<Record<string, string[]>>({});
   const [diffLoading, setDiffLoading] = useState<string | null>(null);
   const [diffScroll, setDiffScroll] = useState(0);
+  const [pullConfirmArmed, setPullConfirmArmed] = useState(false);
 
   const menuItems = buildMenuItems(repoStatus);
 
@@ -231,6 +242,15 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
     const timer = setTimeout(() => setActionMessage(null), 3000);
     return () => clearTimeout(timer);
   }, [actionMessage]);
+
+  useEffect(() => {
+    if (!pullConfirmArmed) return;
+    const timer = setTimeout(() => {
+      setPullConfirmArmed(false);
+      setActionMessage((m) => (m?.startsWith("⚠") ? null : m));
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [pullConfirmArmed]);
 
   const persistSettings = (updated: Settings) => {
     const { config } = loadConfig();
@@ -364,10 +384,12 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
 
     // Navigation
     if (key.upArrow) {
+      setPullConfirmArmed(false);
       setSelectedIndex((i) => Math.max(0, i - 1));
       return;
     }
     if (key.downArrow) {
+      setPullConfirmArmed(false);
       setSelectedIndex((i) => Math.min(menuItems.length - 1, i + 1));
       return;
     }
@@ -415,10 +437,16 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
           return;
         }
         if (item.id === "pull") {
-          setActionMessage("Resetting app cache...");
+          if (wouldDiscardLocalWork(repoStatus) && !pullConfirmArmed) {
+            setPullConfirmArmed(true);
+            setActionMessage("⚠ This will discard local changes/commits. Press Enter again to confirm.");
+            return;
+          }
+          setPullConfirmArmed(false);
+          setActionMessage("Resetting to origin...");
           pullSourceRepoChanges().then((result) => {
             if (result.success) {
-              setActionMessage("✔ Cache reset to match remote");
+              setActionMessage("✔ Reset to match remote");
               refreshRepoStatus({ force: true, fetchRemote: false });
             } else {
               setActionMessage(`✗ ${result.error}`);

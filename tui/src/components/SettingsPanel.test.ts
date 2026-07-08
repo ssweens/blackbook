@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildMenuItems, getUpstreamStateLabel } from "./SettingsPanel.js";
+import { buildMenuItems, getUpstreamStateLabel, wouldDiscardLocalWork } from "./SettingsPanel.js";
 import type { SourceRepoStatus } from "../lib/source-setup.js";
 
 function makeRepoStatus(overrides: Partial<SourceRepoStatus>): SourceRepoStatus {
@@ -34,6 +34,28 @@ describe("buildMenuItems", () => {
     const actionIds = items.filter((item) => item.kind === "action").map((item) => item.id);
     expect(actionIds).not.toContain("commit_push");
     expect(actionIds).toContain("pull");
+  });
+});
+
+describe("wouldDiscardLocalWork", () => {
+  it("is false for a clean, up-to-date repo", () => {
+    expect(wouldDiscardLocalWork(makeRepoStatus({ hasChanges: false, ahead: 0, behind: 0 }))).toBe(false);
+  });
+
+  it("is false when only behind (fast-forward can't lose local work)", () => {
+    expect(wouldDiscardLocalWork(makeRepoStatus({ hasChanges: false, ahead: 0, behind: 5 }))).toBe(false);
+  });
+
+  it("is true when there are uncommitted local changes", () => {
+    expect(wouldDiscardLocalWork(makeRepoStatus({ hasChanges: true }))).toBe(true);
+  });
+
+  it("is true when there are un-pushed local commits", () => {
+    expect(wouldDiscardLocalWork(makeRepoStatus({ ahead: 2 }))).toBe(true);
+  });
+
+  it("is false for a null repo status", () => {
+    expect(wouldDiscardLocalWork(null)).toBe(false);
   });
 });
 

@@ -41,6 +41,9 @@ vi.mock("./config.js", async (importOriginal) => {
     getEnabledToolInstances: vi.fn(),
     getConfigRepoPath: vi.fn(),
     getPackageManager: vi.fn().mockReturnValue("npm"),
+    setPiMarketplaceEnabled: vi.fn(),
+    addPiMarketplace: vi.fn(),
+    removePiMarketplace: vi.fn(),
   };
 });
 
@@ -714,6 +717,34 @@ describe("Store marketplace management", () => {
     expect(marketplaces).toHaveLength(1);
   });
 
+  it("should notify (not throw) when saving a new marketplace to config fails", async () => {
+    const { addMarketplace: addMarketplaceToConfig } = await import("./config.js");
+    vi.mocked(addMarketplaceToConfig).mockImplementationOnce(() => {
+      throw new Error("Cannot save config: existing config.yaml has errors");
+    });
+
+    const { addMarketplace } = useStore.getState();
+    expect(() => addMarketplace("broken-config", "https://broken.example.com")).not.toThrow();
+
+    const { marketplaces, notifications } = useStore.getState();
+    expect(marketplaces).toHaveLength(1); // unchanged — the throwing write never applied
+    expect(notifications.some((n) => n.type === "error" && n.message.includes("broken-config"))).toBe(true);
+  });
+
+  it("should notify (not throw/crash) when saving a new Pi marketplace to config fails", async () => {
+    const { addPiMarketplace: addPiMarketplaceToConfig } = await import("./config.js");
+    vi.mocked(addPiMarketplaceToConfig).mockImplementationOnce(() => {
+      throw new Error("Cannot save config: existing config.yaml has errors");
+    });
+    useStore.setState({ piMarketplaces: [] });
+
+    const { addPiMarketplace } = useStore.getState();
+    await expect(addPiMarketplace("broken-pi-source", "npm:@foo/bar")).resolves.not.toThrow();
+
+    const { notifications } = useStore.getState();
+    expect(notifications.some((n) => n.type === "error" && n.message.includes("broken-pi-source"))).toBe(true);
+  });
+
   it("should remove marketplace from Pi before removing Blackbook config", async () => {
     const { removeMarketplace } = useStore.getState();
     await removeMarketplace("existing");
@@ -781,6 +812,23 @@ describe("Store tool management", () => {
       expect.objectContaining({ enabled: false })
     );
     expect(refreshAll).toHaveBeenCalled();
+  });
+
+  it("notifies (does not throw/refresh) when toggling a tool fails to save", async () => {
+    const tool = createMockTool({ enabled: true });
+    vi.mocked(getToolInstances).mockReturnValue([tool]);
+    vi.mocked(updateToolInstanceConfig).mockImplementationOnce(() => {
+      throw new Error("Cannot save config: existing config.yaml has errors");
+    });
+
+    const refreshAll = vi.fn().mockResolvedValue(undefined);
+    useStore.setState({ refreshAll: refreshAll as () => Promise<void> });
+
+    await expect(useStore.getState().toggleToolEnabled(tool.toolId, tool.instanceId)).resolves.not.toThrow();
+
+    expect(refreshAll).not.toHaveBeenCalled();
+    const { notifications } = useStore.getState();
+    expect(notifications.some((n) => n.type === "error")).toBe(true);
   });
 
   it("updates tool config_dir with trimmed value", async () => {
