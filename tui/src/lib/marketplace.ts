@@ -1,4 +1,4 @@
-import { execFile, execFileSync as execSync } from "child_process";
+import { execFile, execFileSync as execSync, spawn } from "child_process";
 import { promisify } from "util";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, readdirSync, realpathSync, lstatSync } from "fs";
 import { join, dirname, basename, resolve } from "path";
@@ -8,6 +8,7 @@ import { fileURLToPath } from "url";
 import { getCacheDir, getPiMarketplaces, getDisabledPiMarketplaces, getPackageManager } from "./config.js";
 import { getGitHubToken, isGitHubHost } from "./github.js";
 import { expandTilde, scanPluginContents } from "./path-utils.js";
+import { validateRepoSlug, validateGitRef } from "./validation.js";
 import type { Marketplace, Plugin, PiPackage, PiMarketplace, PiSettings, PiPackageSourceType, PackageManager } from "./types.js";
 
 export const MARKETPLACE_CACHE_TTL_SECONDS = 600;
@@ -329,18 +330,69 @@ async function fetchRemotePluginMetadata(
   }
 }
 
+// Pipe `curl <url> | tar -tzf -` WITHOUT a shell. Each command receives its
+// arguments as a literal argv array (never spliced into a shell command line),
+// and tar's stdin is wired directly to curl's stdout via a native OS pipe, so
+// no attacker-controlled value can be interpreted as a shell metacharacter.
+function curlToTar(url: string, timeoutMs: number, maxBuffer: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const curl = spawn("curl", ["-fsSL", url], { stdio: ["ignore", "pipe", "pipe"] });
+    const tar = spawn("tar", ["-tzf", "-"], { stdio: [curl.stdout, "pipe", "pipe"] });
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      curl.kill("SIGKILL");
+      tar.kill("SIGKILL");
+      fn();
+    };
+
+    const timer = setTimeout(() => finish(() => reject(new Error("curl|tar timed out"))), timeoutMs);
+
+    tar.stdout.setEncoding("utf-8");
+    tar.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+      if (stdout.length > maxBuffer) finish(() => reject(new Error("output exceeded maxBuffer")));
+    });
+    tar.stderr.on("data", (chunk) => { stderr += chunk; });
+
+    // curl surfaces its own failures (network, non-2xx via -f) by exiting
+    // non-zero and closing the pipe; tar then exits non-zero, which we report.
+    curl.on("error", (err) => finish(() => reject(err)));
+    tar.on("error", (err) => finish(() => reject(err)));
+    tar.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code === 0) resolve(stdout);
+      else reject(new Error(`tar exited ${code}: ${stderr.trim()}`));
+    });
+  });
+}
+
 async function fetchRepoTreePaths(repo: string, branch: string): Promise<string[]> {
   const key = `${repo}@${branch}`;
   const cached = repoTreeMemoryCache.get(key);
   if (cached) return cached;
 
+  // Defense in depth: even though curlToTar never invokes a shell, refuse to
+  // hand a malformed or attacker-shaped repo/branch to any subprocess argv.
+  try {
+    validateRepoSlug(repo);
+    validateGitRef(branch);
+  } catch (error) {
+    console.error(`Refusing to fetch repository tree for ${key}: ${error instanceof Error ? error.message : String(error)}`);
+    return [];
+  }
+
   const url = `https://codeload.github.com/${repo}/tar.gz/refs/heads/${branch}`;
   try {
-    const { stdout } = await execFileAsync("bash", ["-lc", `curl -fsSL ${JSON.stringify(url)} | tar -tzf -`], {
-      encoding: "utf-8",
-      timeout: 60000,
-      maxBuffer: 32 * 1024 * 1024,
-    });
+    const stdout = await curlToTar(url, 60000, 32 * 1024 * 1024);
     const paths = stdout.split("\n").filter(Boolean).map((line) => {
       const slash = line.indexOf("/");
       return slash === -1 ? "" : line.slice(slash + 1);

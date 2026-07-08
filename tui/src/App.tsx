@@ -2240,6 +2240,9 @@ export function App() {
                 `Removed ${file.name} from git: ${parts.join(", ") || "nothing found"}`,
                 "info",
               );
+              if (result.pushError) {
+                store.notify(`Committed locally but push failed: ${result.pushError}`, "warning");
+              }
             } else {
               store.notify(`Remove from git failed: ${result.error}`, "error");
             }
@@ -2261,6 +2264,9 @@ export function App() {
                   : `${skill.name} has no source repo path to remove`,
                 result.source ? "info" : "warning",
               );
+              if (result.pushError) {
+                store.notify(`Committed locally but push failed: ${result.pushError}`, "warning");
+              }
             } else {
               store.notify(`Remove from git failed: ${result.error}`, "error");
             }

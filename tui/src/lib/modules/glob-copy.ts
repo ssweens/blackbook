@@ -160,8 +160,8 @@ export const globCopyModule: Module<GlobCopyParams> = {
       // Ensure destination directory exists.
       mkdirSync(dirname(to), { recursive: true });
 
-      // Copy content atomically.
-      const content = readFileSync(from, "utf-8");
+      // Copy content atomically (byte-safe: read as Buffer to avoid corrupting binary files).
+      const content = readFileSync(from);
       atomicWriteFileSync(to, content);
       changed = true;
     }

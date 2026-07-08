@@ -99,6 +99,8 @@ const SETTINGS_DEFAULT = SettingsSchema.parse({});
 export const ConfigSchema = z.object({
   settings: SettingsSchema.default(SETTINGS_DEFAULT),
   marketplaces: z.record(z.string(), z.string()).default({}),
+  // Pi marketplaces: name -> source (local path or git URL)
+  pi_marketplaces: z.record(z.string(), z.string()).default({}),
 
   tools: z.record(z.string(), z.array(ToolInstanceSchema)).default({}),
   files: z.array(FileEntrySchema).default([]),

@@ -22,6 +22,7 @@ export function saveConfig(config: BlackbookConfig, configPath?: string): void {
     // Patch each top-level key
     doc.set("settings", config.settings);
     doc.set("marketplaces", config.marketplaces);
+    doc.set("pi_marketplaces", config.pi_marketplaces);
     doc.set("tools", config.tools);
     doc.set("files", config.files);
     doc.set("configs", config.configs);
@@ -46,6 +47,10 @@ function serializeConfig(config: BlackbookConfig): string {
 
   if (Object.keys(config.marketplaces).length > 0) {
     obj.marketplaces = config.marketplaces;
+  }
+
+  if (Object.keys(config.pi_marketplaces).length > 0) {
+    obj.pi_marketplaces = config.pi_marketplaces;
   }
 
   if (Object.keys(config.tools).length > 0) {

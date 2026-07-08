@@ -1397,7 +1397,6 @@ export async function updatePlugin(
   if (managedInstances.length > 0) {
     // Download fresh copy and install only to non-Claude instances where plugin is already installed.
     const sourcePath = await downloadPlugin(plugin, marketplaceUrl, { force: true });
-
     if (sourcePath) {
       for (const instance of managedInstances) {
         try {
@@ -2747,20 +2746,46 @@ export function deleteSkillEverywhere(skill: StandaloneSkill): { ok: boolean; to
 }
 
 /**
- * Stage, commit, and push changes in the source repo.
- * Non-fatal — if git fails the file changes already succeeded.
+ * Result of a source-repo commit+push. The local commit and filesystem changes
+ * are non-fatal on failure, but a failed push must NOT be hidden: it leaves a
+ * local-only commit the user needs to know about (and, until it is pushed, work
+ * that only exists on this machine).
  */
-function commitAndPushSourceRepo(sourceRepo: string, paths: string[], message: string): void {
-  if (!existsSync(join(sourceRepo, ".git"))) return;
+export interface CommitAndPushResult {
+  committed: boolean;
+  pushed: boolean;
+  /** Set when the commit succeeded locally but the push failed. */
+  pushError?: string;
+}
+
+/**
+ * Stage, commit, and push changes in the source repo.
+ *
+ * The commit is scoped to exactly `paths` (via a pathspec) so we never sweep in
+ * unrelated modifications the user has in the repo. A failed commit (e.g. nothing
+ * to commit) is treated as non-fatal, but a failed push is reported back so the
+ * caller can surface "committed locally but push failed" rather than claiming
+ * full success.
+ */
+export function commitAndPushSourceRepo(sourceRepo: string, paths: string[], message: string): CommitAndPushResult {
+  if (!existsSync(join(sourceRepo, ".git"))) return { committed: false, pushed: false };
   try {
     for (const p of paths) {
       execFileSync("git", ["-C", sourceRepo, "add", p], { encoding: "utf-8", timeout: 10000 });
     }
-    execFileSync("git", ["-C", sourceRepo, "commit", "-m", message], { encoding: "utf-8", timeout: 10000 });
-    execFileSync("git", ["-C", sourceRepo, "push"], { encoding: "utf-8", timeout: 30000 });
+    execFileSync("git", ["-C", sourceRepo, "commit", "-m", message, "--", ...paths], { encoding: "utf-8", timeout: 10000 });
   } catch {
-    // git failure is non-fatal — filesystem changes already succeeded
+    // Commit failed (e.g. nothing staged) — filesystem changes already succeeded,
+    // and there is nothing to push. Non-fatal.
+    return { committed: false, pushed: false };
   }
+  try {
+    execFileSync("git", ["-C", sourceRepo, "push"], { encoding: "utf-8", timeout: 30000 });
+  } catch (e) {
+    // Do NOT swallow: the commit exists locally but never reached origin.
+    return { committed: true, pushed: false, pushError: e instanceof Error ? e.message : String(e) };
+  }
+  return { committed: true, pushed: true };
 }
 
 /**
@@ -2773,6 +2798,8 @@ export function removeFileFromGit(file: FileStatus): {
   source: boolean;
   config: boolean;
   error?: string;
+  /** Set when the removal was committed locally but the push to origin failed. */
+  pushError?: string;
 } {
   let sourceRemoved = false;
   const sourcePath = file.instances[0]?.sourcePath;
@@ -2814,6 +2841,7 @@ export function removeFileFromGit(file: FileStatus): {
   }
 
   // Auto-commit and push so the user never needs to touch git.
+  let pushError: string | undefined;
   const sourceRepo = getConfigRepoPath();
   if (sourceRepo) {
     const commitPaths: string[] = [];
@@ -2823,11 +2851,12 @@ export function removeFileFromGit(file: FileStatus): {
     const srcCfgPath2 = join(expandPath(sourceRepo), "config", "blackbook", "config.yaml");
     if (existsSync(srcCfgPath2)) commitPaths.push(srcCfgPath2);
     if (commitPaths.length > 0) {
-      commitAndPushSourceRepo(sourceRepo, commitPaths, `remove: ${file.name} from git`);
+      const gitResult = commitAndPushSourceRepo(sourceRepo, commitPaths, `remove: ${file.name} from git`);
+      pushError = gitResult.pushError;
     }
   }
 
-  return { ok: true, source: sourceRemoved, config: configRemoved };
+  return { ok: true, source: sourceRemoved, config: configRemoved, pushError };
 }
 
 /**
@@ -2838,6 +2867,8 @@ export function removeSkillFromGit(skill: StandaloneSkill): {
   ok: boolean;
   source: boolean;
   error?: string;
+  /** Set when the removal was committed locally but the push to origin failed. */
+  pushError?: string;
 } {
   if (!skill.sourcePath || !existsSync(skill.sourcePath)) return { ok: true, source: false };
   try {
@@ -2845,11 +2876,13 @@ export function removeSkillFromGit(skill: StandaloneSkill): {
   } catch (e) {
     return { ok: false, source: false, error: e instanceof Error ? e.message : String(e) };
   }
+  let pushError: string | undefined;
   const sourceRepo = getConfigRepoPath();
   if (sourceRepo) {
-    commitAndPushSourceRepo(sourceRepo, [skill.sourcePath], `remove: ${skill.name} from git`);
+    const gitResult = commitAndPushSourceRepo(sourceRepo, [skill.sourcePath], `remove: ${skill.name} from git`);
+    pushError = gitResult.pushError;
   }
-  return { ok: true, source: true };
+  return { ok: true, source: true, pushError };
 }
 
 /**
@@ -2878,7 +2911,10 @@ export function removeNamespaceFromGit(group: NamespaceGroup): {
   if (removedPaths.length > 0) {
     const sourceRepo = getConfigRepoPath();
     if (sourceRepo) {
-      commitAndPushSourceRepo(sourceRepo, removedPaths, `remove: ${group.name} namespace from git`);
+      const gitResult = commitAndPushSourceRepo(sourceRepo, removedPaths, `remove: ${group.name} namespace from git`);
+      if (gitResult.pushError) {
+        errors.push(`committed locally but push failed: ${gitResult.pushError}`);
+      }
     }
   }
 

@@ -141,6 +141,29 @@ describe("fileCopyModule.apply", () => {
     expect(state.files[stateKey]).toBeDefined();
     expect(state.files[stateKey].sourcePath).toBe(join(SRC, "a.txt"));
   });
+
+  it("copies binary/non-UTF-8 files byte-for-byte without corruption", async () => {
+    // Bytes that are not valid UTF-8 (lone continuation/start bytes, etc.)
+    const binaryBytes = Buffer.from([
+      0xff, 0xfe, 0x00, 0x01, 0x80, 0x81, 0x82, 0xc0, 0xc1, 0xf5, 0xf6, 0xf7,
+      0xfe, 0xff, 0x00, 0x00, 0xde, 0xad, 0xbe, 0xef, 0x89, 0x50, 0x4e, 0x47,
+      0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03, 0x04, 0xaa, 0xbb, 0xcc, 0xdd,
+    ]);
+    const srcFile = join(SRC, "binary.dat");
+    const tgtFile = join(TGT, "binary.dat");
+    writeFileSync(srcFile, binaryBytes);
+
+    const result = await fileCopyModule.apply({
+      sourcePath: srcFile,
+      targetPath: tgtFile,
+      owner: "test",
+    });
+
+    expect(result.changed).toBe(true);
+    const copied = readFileSync(tgtFile);
+    expect(copied.equals(binaryBytes)).toBe(true);
+    expect(Buffer.compare(copied, binaryBytes)).toBe(0);
+  });
 });
 
 describe("fileCopyModule three-way state detection", () => {
@@ -292,5 +315,28 @@ describe("applyPullback", () => {
     });
     expect(result.changed).toBe(false);
     expect(result.error).toBeDefined();
+  });
+
+  it("copies binary/non-UTF-8 files byte-for-byte without corruption", async () => {
+    const binaryBytes = Buffer.from([
+      0xff, 0xfe, 0x00, 0x01, 0x80, 0x81, 0x82, 0xc0, 0xc1, 0xf5, 0xf6, 0xf7,
+      0xfe, 0xff, 0x00, 0x00, 0xde, 0xad, 0xbe, 0xef, 0x89, 0x50, 0x4e, 0x47,
+      0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03, 0x04, 0xaa, 0xbb, 0xcc, 0xdd,
+    ]);
+    const srcFile = join(SRC, "binary-pullback.dat");
+    const tgtFile = join(TGT, "binary-pullback.dat");
+    writeFileSync(srcFile, "placeholder");
+    writeFileSync(tgtFile, binaryBytes);
+
+    const result = await applyPullback({
+      sourcePath: srcFile,
+      targetPath: tgtFile,
+      owner: "test",
+      stateKey: "pullback:binary:default:binary-pullback.dat",
+    });
+
+    expect(result.changed).toBe(true);
+    const copied = readFileSync(srcFile);
+    expect(copied.equals(binaryBytes)).toBe(true);
   });
 });

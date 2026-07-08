@@ -112,8 +112,8 @@ export const fileCopyModule: Module<FileCopyParams> = {
     // Ensure target directory exists
     mkdirSync(dirname(targetPath), { recursive: true });
 
-    // Atomic write
-    const content = readFileSync(sourcePath, "utf-8");
+    // Atomic write (byte-safe: read as Buffer to avoid corrupting binary files)
+    const content = readFileSync(sourcePath);
     atomicWriteFileSync(targetPath, content);
 
     // Record sync state for three-way tracking
@@ -149,8 +149,8 @@ export async function applyPullback(params: FileCopyParams): Promise<ApplyResult
   // Ensure source directory exists
   mkdirSync(dirname(sourcePath), { recursive: true });
 
-  // Copy target → source
-  const content = readFileSync(targetPath, "utf-8");
+  // Copy target → source (byte-safe: read as Buffer to avoid corrupting binary files)
+  const content = readFileSync(targetPath);
   atomicWriteFileSync(sourcePath, content);
 
   // Record new state (after pullback, source and target are identical)

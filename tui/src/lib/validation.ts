@@ -3,6 +3,7 @@ import type { Plugin } from "./types.js";
 
 const SAFE_NAME_PATTERN = /^[a-zA-Z0-9._:-]+$/;
 const SAFE_GIT_REF_PATTERN = /^[a-zA-Z0-9._/-]+$/;
+const SAFE_REPO_SLUG_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 const seenErrors = new Set<string>();
 
@@ -35,6 +36,17 @@ export function validateItemName(kind: string, name: string): void {
 export function validateGitRef(ref: string): void {
   if (!SAFE_GIT_REF_PATTERN.test(ref) || ref.includes("..")) {
     throw new Error(`Invalid git ref: ${ref}`);
+  }
+}
+
+// Strict GitHub `owner/repo` slug: exactly two segments separated by a single
+// slash, each limited to characters GitHub actually permits in usernames and
+// repository names. Deliberately rejects shell metacharacters ($, `, |, ;, &,
+// parentheses, whitespace, …) so a repo derived from an untrusted marketplace
+// URL can never carry a command-substitution payload into a subprocess argv.
+export function validateRepoSlug(repo: string): void {
+  if (!SAFE_REPO_SLUG_PATTERN.test(repo) || repo.includes("..")) {
+    throw new Error(`Invalid repository slug: ${repo}`);
   }
 }
 

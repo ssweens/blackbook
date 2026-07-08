@@ -217,31 +217,131 @@ export async function setupSourceRepository(sourceInput: string): Promise<SetupS
 }
 
 /**
- * Pull latest changes for the configured source repo (if it's a git repo).
- * Safe to call frequently — silently no-ops if not a git repo or offline.
+ * Outcome of an automatic source-repo update attempt.
+ *
+ * `fast-forward` means the repo was (or would be) advanced to origin via a
+ * strict fast-forward. Every `skip` reason describes why we deliberately left
+ * the repo untouched — importantly, we NEVER discard local work.
  */
-export async function pullSourceRepo(): Promise<void> {
-  const { config, configPath } = loadConfig();
-  const sourceRepo = config.settings.source_repo;
-  if (!sourceRepo) return;
+export type SourceRepoUpdateReason =
+  | "up-to-date"
+  | "offline"
+  | "dirty"
+  | "local-commits"
+  | "detached-head"
+  | "no-upstream"
+  | "error";
 
-  const repoPath = expandPath(sourceRepo);
-  if (!existsSync(join(repoPath, ".git"))) return;
+export interface SourceRepoUpdatePlan {
+  action: "fast-forward" | "skip";
+  reason: SourceRepoUpdateReason;
+  branch?: string;
+}
 
-  // This is an app cache, not a user workspace. Force-reset to origin so
-  // local dirt from pullback/track operations never blocks the pull.
+/**
+ * Decide whether it is safe to fast-forward the source repo to its origin.
+ *
+ * Assumes a `git fetch` has already run so `origin/<branch>` is up to date.
+ * Fails safe: any uncertainty resolves to `skip`, never `fast-forward`, so a
+ * bug here can never cause data loss. Never throws.
+ *
+ * It is only safe to fast-forward when the working tree is clean AND the local
+ * branch has no commits that origin lacks. Otherwise a `reset`/`merge` could
+ * discard local work (uncommitted edits, un-pushed commits), so we back off.
+ */
+export async function planSourceRepoUpdate(repoPath: string): Promise<SourceRepoUpdatePlan> {
+  let branch = "";
   try {
-    await execFileAsync("git", ["fetch", "origin"], { cwd: repoPath, timeout: 120000 });
-    const { stdout: branch } = await execFileAsync("git", ["branch", "--show-current"], { cwd: repoPath, timeout: 5000 });
-    const ref = `origin/${branch.trim() || "main"}`;
-    await execFileAsync("git", ["reset", "--hard", ref], { cwd: repoPath, timeout: 30000 });
+    const { stdout } = await execFileAsync("git", ["branch", "--show-current"], { cwd: repoPath, timeout: 5000 });
+    branch = stdout.trim();
   } catch {
-    // Offline, not a git repo, etc. — silently continue
+    return { action: "skip", reason: "error" };
   }
 
-  clearSourceStatusCache();
+  // Empty output means a detached HEAD (or an unborn branch we shouldn't touch).
+  if (!branch) return { action: "skip", reason: "detached-head" };
 
-  // Source repos are for syncing files/configs, not as plugin marketplaces
+  const upstreamRef = `origin/${branch}`;
+  try {
+    // --verify --quiet exits non-zero (and rejects) when the ref does not exist.
+    await execFileAsync("git", ["rev-parse", "--verify", "--quiet", `${upstreamRef}^{commit}`], { cwd: repoPath, timeout: 5000 });
+  } catch {
+    return { action: "skip", reason: "no-upstream", branch };
+  }
+
+  try {
+    const { stdout: statusOut } = await execFileAsync("git", ["status", "--porcelain"], { cwd: repoPath, timeout: 5000 });
+    if (statusOut.trim().length > 0) {
+      // Uncommitted local edits (including pullback/track/delete work) — do not touch.
+      return { action: "skip", reason: "dirty", branch };
+    }
+
+    const { stdout: aheadOut } = await execFileAsync(
+      "git", ["rev-list", "--count", `${upstreamRef}..HEAD`],
+      { cwd: repoPath, timeout: 5000 },
+    );
+    if ((parseInt(aheadOut.trim(), 10) || 0) > 0) {
+      // Local commits origin doesn't have (e.g. a push that failed) — keep them.
+      return { action: "skip", reason: "local-commits", branch };
+    }
+
+    // Clean tree, no local commits ahead: a fast-forward is guaranteed safe.
+    // (If already up to date, the ff-only merge is a harmless no-op.)
+    return { action: "fast-forward", reason: "up-to-date", branch };
+  } catch {
+    return { action: "skip", reason: "error", branch };
+  }
+}
+
+/**
+ * Sync the configured source repo with origin (if it's a git repo).
+ *
+ * The source repo can be the user's real working checkout — `setupSourceRepository`
+ * lets them point `source_repo` at any local directory, including their personal
+ * dotfiles/playbook. Runs on every launch, so it MUST NEVER discard local state.
+ *
+ * Behavior: `git fetch` (only updates remote-tracking refs — always safe), then
+ * fast-forward to origin ONLY when the working tree is clean and has no local
+ * commits ahead of origin. If the repo is dirty or ahead, we leave it exactly as
+ * is. We use `merge --ff-only` rather than `reset --hard` so the operation is
+ * incapable of discarding anything. Safe to call frequently.
+ *
+ * Returns the plan so callers can optionally surface "source repo has local
+ * changes, not auto-updating" to the user.
+ */
+export async function pullSourceRepo(): Promise<SourceRepoUpdatePlan> {
+  const { config } = loadConfig();
+  const sourceRepo = config.settings.source_repo;
+  if (!sourceRepo) return { action: "skip", reason: "no-upstream" };
+
+  const repoPath = expandPath(sourceRepo);
+  if (!existsSync(join(repoPath, ".git"))) return { action: "skip", reason: "no-upstream" };
+
+  // Fetch is the only network step and is always safe (remote-tracking refs only).
+  // A failure here is a genuine offline/network/no-origin condition, distinct from
+  // the safety checks below — treat it as "offline" and leave the repo untouched.
+  try {
+    await execFileAsync("git", ["fetch", "origin"], { cwd: repoPath, timeout: 120000 });
+  } catch {
+    clearSourceStatusCache();
+    return { action: "skip", reason: "offline" };
+  }
+
+  const plan = await planSourceRepoUpdate(repoPath);
+  if (plan.action === "fast-forward" && plan.branch) {
+    try {
+      // --ff-only can only advance HEAD to origin; it errors (and changes nothing)
+      // if a real merge would be required, so it can never discard local work.
+      await execFileAsync("git", ["merge", "--ff-only", `origin/${plan.branch}`], { cwd: repoPath, timeout: 30000 });
+    } catch {
+      // Refs moved concurrently or ff no longer possible — safe to leave as is.
+    }
+  }
+  // plan.action === "skip": repo has local changes/commits (or detached HEAD);
+  // do not touch it. The returned plan lets callers surface this to the user.
+
+  clearSourceStatusCache();
+  return plan;
 }
 
 export function shouldShowSourceSetupWizard(): boolean {

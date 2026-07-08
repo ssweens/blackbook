@@ -47,7 +47,6 @@ import {
   updateToolInstanceConfig,
   getEnabledToolInstances,
   getCacheDir,
-  loadConfig,
   setMarketplaceEnabled,
   setPiMarketplaceEnabled,
   addPiMarketplace as addPiMarketplaceToConfig,
@@ -2255,17 +2254,33 @@ export const useStore = create<Store>((rawSet, get) => {
     }
     removeFromSourceRepoMarketplace(sourceRepo, plugin.name);
     if (existsSync(marketplacePath)) commitPaths.push(marketplacePath);
+    let pushError: string | undefined;
     if (commitPaths.length > 0 && existsSync(join(sourceRepo, ".git"))) {
+      let committed = false;
       try {
         for (const p of commitPaths) {
           execFileSync("git", ["-C", sourceRepo, "add", p], { encoding: "utf-8", timeout: 10000 });
         }
-        execFileSync("git", ["-C", sourceRepo, "commit", "-m", `remove: ${plugin.name} from git`], { encoding: "utf-8", timeout: 10000 });
-        execFileSync("git", ["-C", sourceRepo, "push"], { encoding: "utf-8", timeout: 30000 });
-      } catch { /* git failure non-fatal */ }
+        // Scope the commit to the paths we touched so unrelated local changes
+        // in the repo are never swept into it.
+        execFileSync("git", ["-C", sourceRepo, "commit", "-m", `remove: ${plugin.name} from git`, "--", ...commitPaths], { encoding: "utf-8", timeout: 10000 });
+        committed = true;
+      } catch { /* commit failed (e.g. nothing to commit) — non-fatal, nothing to push */ }
+      if (committed) {
+        try {
+          execFileSync("git", ["-C", sourceRepo, "push"], { encoding: "utf-8", timeout: 30000 });
+        } catch (e) {
+          // Do NOT swallow: the removal is committed locally but never reached origin.
+          pushError = e instanceof Error ? e.message : String(e);
+        }
+      }
     }
     await get().refreshAll({ silent: true });
-    notify(`Removed ${plugin.name} from git`, "info");
+    if (pushError) {
+      notify(`Removed ${plugin.name} locally, but git push failed: ${pushError}`, "warning");
+    } else {
+      notify(`Removed ${plugin.name} from git`, "info");
+    }
     return true;
   },
 

@@ -113,429 +113,8 @@ export interface ToolConfig {
   instances?: ToolInstanceConfig[];
 }
 
-export interface SyncConfig {
-  configRepo?: string;
-  assetsRepo?: string;  // defaults to configRepo if not specified
-  disabledMarketplaces?: string;    // comma-separated list of disabled plugin marketplace names
-  disabledPiMarketplaces?: string;  // comma-separated list of disabled Pi marketplace names
-  packageManager?: PackageManager;
-}
-
 export interface PiMarketplacesConfig {
   [name: string]: string;  // name -> local path or git URL
-}
-
-export interface PluginComponentEntry {
-  disabled_skills?: string;
-  disabled_commands?: string;
-  disabled_agents?: string;
-}
-
-export interface LegacyConfig {
-  marketplaces?: Record<string, string>;
-  piMarketplaces?: PiMarketplacesConfig;
-  tools?: Record<string, ToolConfig>;
-  assets?: Record<string, any>[];
-  sync?: SyncConfig;
-  configs?: Record<string, any>[];
-  plugins?: Record<string, Record<string, PluginComponentEntry>>;
-}
-
-export function loadConfig(configPath?: string): LegacyConfig {
-  const path = configPath || getConfigPath();
-  
-  if (!existsSync(path)) {
-    return { marketplaces: {}, tools: {}, assets: [], configs: [] };
-  }
-
-  return withFileLockSync(path, () => {
-    const content = readFileSync(path, "utf-8");
-    const result: LegacyConfig = { marketplaces: {}, tools: {}, assets: [], configs: [] };
-
-    let currentSection = "";
-    let currentTool = "";
-    let currentInstance: ToolInstanceConfig | null = null;
-    let currentAsset: Record<string, any> | null = null;
-    let currentConfig: Record<string, any> | null = null;
-    
-    for (const line of content.split("\n")) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith("#") || !trimmed) continue;
-
-      const arraySectionMatch = trimmed.match(/^\[\[([^\]]+)\]\]$/);
-      if (arraySectionMatch) {
-        const section = arraySectionMatch[1];
-        if (section.startsWith("tools.") && section.endsWith(".instances")) {
-          currentSection = "tool_instances";
-          currentTool = section.replace(/^tools\./, "").replace(/\.instances$/, "");
-          const toolConfig = result.tools![currentTool] || {};
-          toolConfig.instances = toolConfig.instances || [];
-          const instance: ToolInstanceConfig = {};
-          toolConfig.instances.push(instance);
-          result.tools![currentTool] = toolConfig;
-          currentInstance = instance;
-          currentAsset = null;
-        } else if (section === "assets") {
-          currentSection = "assets";
-          currentTool = "";
-          currentInstance = null;
-          currentConfig = null;
-          const asset: Record<string, any> = { name: "" };
-          result.assets = result.assets || [];
-          result.assets.push(asset);
-          currentAsset = asset;
-        } else if (section === "assets.files" && currentAsset) {
-          currentSection = "asset_files";
-          currentTool = "";
-          currentInstance = null;
-          currentConfig = null;
-          // Initialize mappings array and add new mapping
-          if (!currentAsset.mappings) {
-            currentAsset.mappings = [];
-          }
-          const mapping = { source: "", target: "" };
-          currentAsset.mappings.push(mapping);
-        } else if (section === "configs") {
-          currentSection = "configs";
-          currentTool = "";
-          currentInstance = null;
-          currentAsset = null;
-          const config: Record<string, any> = { name: "", toolId: "" };
-          result.configs = result.configs || [];
-          result.configs.push(config);
-          currentConfig = config;
-        } else if (section === "configs.files" && currentConfig) {
-          currentSection = "config_files";
-          currentTool = "";
-          currentInstance = null;
-          currentAsset = null;
-          // Initialize mappings array and add new mapping
-          if (!currentConfig.mappings) {
-            currentConfig.mappings = [];
-          }
-          const mapping = { source: "", target: "" };
-          currentConfig.mappings.push(mapping);
-        } else {
-          currentSection = "";
-          currentTool = "";
-          currentInstance = null;
-          currentAsset = null;
-          currentConfig = null;
-        }
-        continue;
-      }
-
-      const sectionMatch = trimmed.match(/^\[([^\]]+)\]$/);
-      if (sectionMatch) {
-        const section = sectionMatch[1];
-        if (section.startsWith("plugins.")) {
-          // [plugins.marketplace-name.plugin-name]
-          const pluginParts = section.replace("plugins.", "").split(".");
-          if (pluginParts.length >= 2) {
-            currentSection = "plugins";
-            const marketplace = pluginParts[0];
-            const pluginName = pluginParts.slice(1).join(".");
-            result.plugins = result.plugins || {};
-            result.plugins[marketplace] = result.plugins[marketplace] || {};
-            result.plugins[marketplace][pluginName] = result.plugins[marketplace][pluginName] || {};
-            // Store reference for KV parsing
-            currentTool = `${marketplace}:${pluginName}`;
-          }
-          currentInstance = null;
-          currentAsset = null;
-          currentConfig = null;
-        } else if (section.startsWith("tools.")) {
-          currentSection = "tools";
-          currentTool = section.replace("tools.", "");
-          result.tools![currentTool] = result.tools![currentTool] || {};
-          currentInstance = null;
-          currentAsset = null;
-        } else if (section === "assets.overrides") {
-          currentSection = "asset_overrides";
-          currentTool = "";
-          currentInstance = null;
-        } else if (section === "assets.files.overrides" && currentAsset && currentAsset.mappings && currentAsset.mappings.length > 0) {
-          currentSection = "asset_file_overrides";
-          currentTool = "";
-          currentInstance = null;
-        } else if (section === "sync") {
-          currentSection = "sync";
-          currentTool = "";
-          currentInstance = null;
-          currentAsset = null;
-          currentConfig = null;
-          result.sync = result.sync || {};
-        } else {
-          currentSection = section;
-          currentTool = "";
-          currentInstance = null;
-          currentAsset = null;
-          currentConfig = null;
-        }
-        continue;
-      }
-
-      const kvStringMatch = trimmed.match(/^(".+"|\S+)\s*=\s*"(.*)"$/);
-      const kvBoolMatch = trimmed.match(/^(\S+)\s*=\s*(true|false)$/);
-      if (kvStringMatch) {
-        let [, key, value] = kvStringMatch;
-        if (key.startsWith("\"") && key.endsWith("\"")) {
-          key = key.slice(1, -1);
-        }
-        if (currentSection === "marketplaces") {
-          result.marketplaces![key] = value;
-        } else if (currentSection === "pi-marketplaces") {
-          if (!result.piMarketplaces) result.piMarketplaces = {};
-          result.piMarketplaces[key] = value;
-        } else if (currentSection === "plugins" && currentTool) {
-          const [marketplace, pluginName] = currentTool.split(":", 2);
-          if (result.plugins?.[marketplace]?.[pluginName]) {
-            (result.plugins[marketplace][pluginName] as Record<string, string>)[key] = value;
-          }
-        } else if (currentSection === "tools" && currentTool) {
-          const normalizedKey = key === "config_dir" ? "configDir" : key;
-          (result.tools![currentTool] as Record<string, string>)[normalizedKey] = value;
-        } else if (currentSection === "tool_instances" && currentTool && currentInstance) {
-          const normalizedKey = key === "config_dir" ? "configDir" : key;
-          (currentInstance as Record<string, string>)[normalizedKey] = value;
-        } else if (currentSection === "assets" && currentAsset) {
-          const normalizedKey = key === "default_target" ? "defaultTarget" : key;
-          (currentAsset as unknown as Record<string, string>)[normalizedKey] = value;
-        } else if (currentSection === "asset_overrides" && currentAsset) {
-          if (!currentAsset.overrides) currentAsset.overrides = {};
-          currentAsset.overrides[key] = value;
-        } else if (currentSection === "asset_files" && currentAsset && currentAsset.mappings) {
-          const currentMapping = currentAsset.mappings[currentAsset.mappings.length - 1];
-          if (currentMapping) {
-            (currentMapping as unknown as Record<string, string>)[key] = value;
-          }
-        } else if (currentSection === "asset_file_overrides" && currentAsset && currentAsset.mappings) {
-          const currentMapping = currentAsset.mappings[currentAsset.mappings.length - 1];
-          if (currentMapping) {
-            if (!currentMapping.overrides) currentMapping.overrides = {};
-            currentMapping.overrides[key] = value;
-          }
-        } else if (currentSection === "sync") {
-          const normalizedKey = key === "config_repo" ? "configRepo" :
-                               key === "assets_repo" ? "assetsRepo" :
-                               key === "disabled_marketplaces" ? "disabledMarketplaces" :
-                               key === "disabled_pi_marketplaces" ? "disabledPiMarketplaces" :
-                               key === "package_manager" ? "packageManager" : key;
-          (result.sync as Record<string, string>)[normalizedKey] = value;
-        } else if (currentSection === "configs" && currentConfig) {
-          const normalizedKey = key === "tool_id" ? "toolId" :
-                               key === "source_path" ? "sourcePath" :
-                               key === "target_path" ? "targetPath" : key;
-          (currentConfig as unknown as Record<string, string>)[normalizedKey] = value;
-        } else if (currentSection === "config_files" && currentConfig && currentConfig.mappings) {
-          const currentMapping = currentConfig.mappings[currentConfig.mappings.length - 1];
-          if (currentMapping) {
-            (currentMapping as unknown as Record<string, string>)[key] = value;
-          }
-        }
-      } else if (kvBoolMatch) {
-        const [, key, rawValue] = kvBoolMatch;
-        const value = rawValue === "true";
-        if (currentSection === "tools" && currentTool) {
-          const normalizedKey = key === "config_dir" ? "configDir" : key;
-          (result.tools![currentTool] as Record<string, boolean>)[normalizedKey] = value;
-        } else if (currentSection === "tool_instances" && currentTool && currentInstance) {
-          const normalizedKey = key === "config_dir" ? "configDir" : key;
-          (currentInstance as Record<string, boolean>)[normalizedKey] = value;
-        }
-      }
-    }
-
-    return result;
-  });
-}
-
-export function saveConfig(config: LegacyConfig, configPath?: string): void {
-  const path = configPath || getConfigPath();
-  
-  const lines: string[] = [
-    "# Blackbook Configuration",
-    "# See https://github.com/ssweens/blackbook for documentation",
-    "",
-  ];
-
-  const hasMarketplaces = config.marketplaces && Object.keys(config.marketplaces).length > 0;
-  const hasPiMarketplaces = config.piMarketplaces && Object.keys(config.piMarketplaces).length > 0;
-  const hasTools = config.tools && Object.keys(config.tools).length > 0;
-  const hasAssets = config.assets && config.assets.length > 0;
-  const hasSync = Boolean(
-    config.sync && (
-      config.sync.configRepo ||
-      config.sync.assetsRepo ||
-      config.sync.disabledMarketplaces ||
-      config.sync.disabledPiMarketplaces ||
-      config.sync.packageManager
-    )
-  );
-  const hasConfigs = config.configs && config.configs.length > 0;
-
-  lines.push("[marketplaces]");
-  if (hasMarketplaces) {
-    for (const [name, url] of Object.entries(config.marketplaces!)) {
-      lines.push(`${name} = "${url}"`);
-    }
-  } else {
-    lines.push("# Add custom marketplaces here. Examples:");
-    lines.push("# my-plugins = \"https://raw.githubusercontent.com/my-org/plugins/main/.claude-plugin/marketplace.json\"");
-  }
-  lines.push("");
-
-  if (hasPiMarketplaces) {
-    lines.push("[pi-marketplaces]");
-    for (const [name, source] of Object.entries(config.piMarketplaces!)) {
-      lines.push(`${name} = "${source}"`);
-    }
-    lines.push("");
-  }
-
-  if (hasSync) {
-    lines.push("[sync]");
-    lines.push(`config_repo = "${config.sync!.configRepo}"`);
-    if (config.sync!.assetsRepo) {
-      lines.push(`assets_repo = "${config.sync!.assetsRepo}"`);
-    }
-    if (config.sync!.disabledMarketplaces) {
-      lines.push(`disabled_marketplaces = "${config.sync!.disabledMarketplaces}"`);
-    }
-    if (config.sync!.disabledPiMarketplaces) {
-      lines.push(`disabled_pi_marketplaces = "${config.sync!.disabledPiMarketplaces}"`);
-    }
-    if (config.sync!.packageManager) {
-      lines.push(`package_manager = "${config.sync!.packageManager}"`);
-    }
-    lines.push("");
-  }
-
-  if (hasAssets) {
-    for (const asset of config.assets!) {
-      lines.push("[[assets]]");
-      lines.push(`name = "${asset.name}"`);
-      lines.push(`source = "${asset.source}"`);
-      if (asset.defaultTarget) {
-        lines.push(`default_target = "${asset.defaultTarget}"`);
-      }
-      if (asset.overrides && Object.keys(asset.overrides).length > 0) {
-        lines.push("");
-        lines.push("[assets.overrides]");
-        for (const [key, value] of Object.entries(asset.overrides)) {
-          lines.push(`"${key}" = "${value}"`);
-        }
-      }
-      lines.push("");
-    }
-  }
-
-  if (hasConfigs) {
-    for (const cfg of config.configs!) {
-      lines.push("[[configs]]");
-      lines.push(`name = "${cfg.name}"`);
-      lines.push(`tool_id = "${cfg.toolId}"`);
-
-      // New format: mappings array
-      if (cfg.mappings && cfg.mappings.length > 0) {
-        for (const mapping of cfg.mappings) {
-          lines.push("[[configs.files]]");
-          lines.push(`source = "${mapping.source}"`);
-          lines.push(`target = "${mapping.target}"`);
-        }
-      } else if (cfg.sourcePath && cfg.targetPath) {
-        // Legacy format: single source/target
-        lines.push(`source_path = "${cfg.sourcePath}"`);
-        lines.push(`target_path = "${cfg.targetPath}"`);
-      }
-
-      lines.push("");
-    }
-  }
-
-  // Write plugin component configs
-  if (config.plugins) {
-    for (const [marketplace, plugins] of Object.entries(config.plugins)) {
-      for (const [pluginName, pluginConfig] of Object.entries(plugins)) {
-        const hasContent = pluginConfig.disabled_skills || pluginConfig.disabled_commands || pluginConfig.disabled_agents;
-        if (!hasContent) continue;
-        lines.push(`[plugins.${marketplace}.${pluginName}]`);
-        if (pluginConfig.disabled_skills) {
-          lines.push(`disabled_skills = "${pluginConfig.disabled_skills}"`);
-        }
-        if (pluginConfig.disabled_commands) {
-          lines.push(`disabled_commands = "${pluginConfig.disabled_commands}"`);
-        }
-        if (pluginConfig.disabled_agents) {
-          lines.push(`disabled_agents = "${pluginConfig.disabled_agents}"`);
-        }
-        lines.push("");
-      }
-    }
-  }
-
-  if (hasTools) {
-    for (const [toolId, toolConfig] of Object.entries(config.tools!)) {
-      const orderedEntries: Array<[string, string | boolean]> = [];
-      if (typeof toolConfig.enabled === "boolean") {
-        orderedEntries.push(["enabled", toolConfig.enabled]);
-      }
-      if (typeof toolConfig.configDir === "string") {
-        orderedEntries.push(["config_dir", toolConfig.configDir]);
-      }
-      if (orderedEntries.length > 0) {
-        lines.push(`[tools.${toolId}]`);
-        for (const [key, value] of orderedEntries) {
-          if (typeof value === "boolean") {
-            lines.push(`${key} = ${value}`);
-          } else {
-            lines.push(`${key} = "${value}"`);
-          }
-        }
-        lines.push("");
-      }
-
-      if (toolConfig.instances && toolConfig.instances.length > 0) {
-        for (const instance of toolConfig.instances) {
-          lines.push(`[[tools.${toolId}.instances]]`);
-          if (typeof instance.id === "string") {
-            lines.push(`id = "${instance.id}"`);
-          }
-          if (typeof instance.name === "string") {
-            lines.push(`name = "${instance.name}"`);
-          }
-          if (typeof instance.enabled === "boolean") {
-            lines.push(`enabled = ${instance.enabled}`);
-          }
-          if (typeof instance.configDir === "string") {
-            lines.push(`config_dir = "${instance.configDir}"`);
-          }
-          lines.push("");
-        }
-      }
-    }
-  } else {
-    lines.push("# Configure tool instances. Examples:");
-    lines.push("# [tools.claude-code]");
-    lines.push("#");
-    lines.push("# [[tools.claude-code.instances]]");
-    lines.push("# id = \"default\"");
-    lines.push("# name = \"Claude\"");
-    lines.push("# enabled = true");
-    lines.push("# config_dir = \"~/.claude\"");
-    lines.push("");
-    lines.push("# [tools.opencode]");
-    lines.push("#");
-    lines.push("# [[tools.opencode.instances]]");
-    lines.push("# id = \"default\"");
-    lines.push("# name = \"OpenCode\"");
-    lines.push("# enabled = true");
-    lines.push("# config_dir = \"~/.config/opencode\"");
-  }
-
-  withFileLockSync(path, () => {
-    atomicWriteFileSync(path, lines.join("\n"));
-  });
 }
 
 const DEFAULT_INITIAL_MARKETPLACES: Record<string, string> = {
@@ -637,6 +216,7 @@ function buildInitialYamlConfig(): BlackbookConfig {
       disabled_pi_marketplaces: [],
     },
     marketplaces: { ...DEFAULT_INITIAL_MARKETPLACES },
+    pi_marketplaces: {},
     tools,
     files: buildInitialYamlFiles(tools),
     configs: [],
@@ -712,40 +292,68 @@ function migrateConfig(yamlPath: string): void {
   }
 }
 
+/**
+ * Load the YAML config, apply a mutation, and persist it atomically.
+ *
+ * When config.yaml fails to parse or fails zod validation, `loadYamlConfig`
+ * returns schema defaults (NOT the user's real data) alongside `errors`.
+ * Mutating and saving in that state would overwrite the user's real config
+ * with mostly-defaults — silent data loss. This helper throws instead, so a
+ * mutation is never persisted over a broken config, and the error surfaces to
+ * the caller (and, via the store, to the user as a notification).
+ */
+function mutateYamlConfig<T>(
+  mutator: (config: BlackbookConfig) => T,
+  configPath?: string,
+): T {
+  const { config, configPath: resolvedPath, errors } = loadYamlConfig(configPath);
+  if (errors.length > 0) {
+    const detail = errors
+      .map((e) => (e.path && e.path.length > 0 ? `${e.path.join(".")}: ${e.message}` : e.message))
+      .join("; ");
+    throw new Error(
+      `Cannot save config: existing config.yaml has errors and would be overwritten with defaults: ${detail}`,
+    );
+  }
+  const result = mutator(config);
+  saveYamlConfig(config, resolvedPath);
+  return result;
+}
+
 export function updateToolInstanceConfig(
   toolId: string,
   instanceId: string,
   updates: ToolInstanceConfig
 ): void {
-  const { config, configPath } = loadYamlConfig();
-  const instances = config.tools[toolId] || [];
-  const index = instances.findIndex((inst) => inst.id === instanceId);
-  if (index >= 0) {
-    if (updates.name) instances[index].name = updates.name;
-    if (updates.configDir) instances[index].config_dir = updates.configDir;
-    if (typeof updates.enabled === "boolean") instances[index].enabled = updates.enabled;
-  } else {
-    instances.push({
-      id: instanceId,
-      name: updates.name || toolId,
-      enabled: updates.enabled ?? true,
-      config_dir: updates.configDir || "",
-    });
-  }
-  config.tools[toolId] = instances;
-  saveYamlConfig(config, configPath);
+  mutateYamlConfig((config) => {
+    const instances = config.tools[toolId] || [];
+    const index = instances.findIndex((inst) => inst.id === instanceId);
+    if (index >= 0) {
+      if (updates.name) instances[index].name = updates.name;
+      if (updates.configDir) instances[index].config_dir = updates.configDir;
+      if (typeof updates.enabled === "boolean") instances[index].enabled = updates.enabled;
+    } else {
+      instances.push({
+        id: instanceId,
+        name: updates.name || toolId,
+        enabled: updates.enabled ?? true,
+        config_dir: updates.configDir || "",
+      });
+    }
+    config.tools[toolId] = instances;
+  });
 }
 
 export function addMarketplace(name: string, url: string): void {
-  const { config, configPath } = loadYamlConfig();
-  config.marketplaces[name] = url;
-  saveYamlConfig(config, configPath);
+  mutateYamlConfig((config) => {
+    config.marketplaces[name] = url;
+  });
 }
 
 export function removeMarketplace(name: string): void {
-  const { config, configPath } = loadYamlConfig();
-  delete config.marketplaces[name];
-  saveYamlConfig(config, configPath);
+  mutateYamlConfig((config) => {
+    delete config.marketplaces[name];
+  });
 }
 
 export function getToolDefinitions(): Record<string, ToolTarget> {
@@ -821,8 +429,7 @@ export function getEnabledToolInstances(): ToolInstance[] {
   return getToolInstances().filter((instance) => instance.enabled);
 }
 
-export function parseMarketplaces(config?: LegacyConfig): Marketplace[] {
-  // Use YAML config for marketplaces (legacy TOML parser can't read YAML)
+export function parseMarketplaces(): Marketplace[] {
   const { config: yamlConfig } = loadYamlConfig();
   const blackbookUrls = { ...DEFAULT_MARKETPLACES, ...yamlConfig.marketplaces };
   const hasEnabledClaudeInstance = getToolInstances().some(
@@ -929,12 +536,12 @@ export function resolveAssetSourcePath(source: string): string {
 }
 
 /**
- * Get configured Pi marketplaces from legacy [pi-marketplaces] section.
+ * Get configured Pi marketplaces from the YAML `pi_marketplaces` section.
  * Returns a map of marketplace name -> source (local path or git URL).
  */
 export function getPiMarketplaces(): PiMarketplacesConfig {
-  const config = loadConfig();
-  return config.piMarketplaces ?? {};
+  const { config } = loadYamlConfig();
+  return config.pi_marketplaces;
 }
 
 export function getDisabledMarketplaces(): string[] {
@@ -943,32 +550,27 @@ export function getDisabledMarketplaces(): string[] {
 }
 
 export function setMarketplaceEnabled(name: string, enabled: boolean): void {
-  const { config, configPath } = loadYamlConfig();
-  const disabled = new Set(config.settings.disabled_marketplaces);
-
-  if (enabled) {
-    disabled.delete(name);
-  } else {
-    disabled.add(name);
-  }
-
-  config.settings.disabled_marketplaces = Array.from(disabled);
-  saveYamlConfig(config, configPath);
+  mutateYamlConfig((config) => {
+    const disabled = new Set(config.settings.disabled_marketplaces);
+    if (enabled) {
+      disabled.delete(name);
+    } else {
+      disabled.add(name);
+    }
+    config.settings.disabled_marketplaces = Array.from(disabled);
+  });
 }
 
 export function addPiMarketplace(name: string, source: string): void {
-  const config = loadConfig();
-  config.piMarketplaces = config.piMarketplaces || {};
-  config.piMarketplaces[name] = source;
-  saveConfig(config);
+  mutateYamlConfig((config) => {
+    config.pi_marketplaces[name] = source;
+  });
 }
 
 export function removePiMarketplace(name: string): void {
-  const config = loadConfig();
-  if (config.piMarketplaces) {
-    delete config.piMarketplaces[name];
-    saveConfig(config);
-  }
+  mutateYamlConfig((config) => {
+    delete config.pi_marketplaces[name];
+  });
 }
 
 export function getDisabledPiMarketplaces(): string[] {
@@ -977,17 +579,15 @@ export function getDisabledPiMarketplaces(): string[] {
 }
 
 export function setPiMarketplaceEnabled(name: string, enabled: boolean): void {
-  const { config, configPath } = loadYamlConfig();
-  const disabled = new Set(config.settings.disabled_pi_marketplaces);
-
-  if (enabled) {
-    disabled.delete(name);
-  } else {
-    disabled.add(name);
-  }
-
-  config.settings.disabled_pi_marketplaces = Array.from(disabled);
-  saveYamlConfig(config, configPath);
+  mutateYamlConfig((config) => {
+    const disabled = new Set(config.settings.disabled_pi_marketplaces);
+    if (enabled) {
+      disabled.delete(name);
+    } else {
+      disabled.add(name);
+    }
+    config.settings.disabled_pi_marketplaces = Array.from(disabled);
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1016,33 +616,32 @@ export function setPluginComponentEnabled(
   componentName: string,
   enabled: boolean
 ): void {
-  const { config, configPath } = loadYamlConfig();
-  if (!config.plugins[marketplace]) config.plugins[marketplace] = {};
-  if (!config.plugins[marketplace][pluginName]) {
-    config.plugins[marketplace][pluginName] = { disabled_skills: [], disabled_commands: [], disabled_agents: [] };
-  }
-
-  const pluginEntry = config.plugins[marketplace][pluginName];
-  const field = kind === "skill" ? "disabled_skills" : kind === "command" ? "disabled_commands" : "disabled_agents";
-  const current = new Set(pluginEntry[field]);
-
-  if (enabled) {
-    current.delete(componentName);
-  } else {
-    current.add(componentName);
-  }
-
-  pluginEntry[field] = Array.from(current);
-
-  // Clean up empty plugin entries
-  if (pluginEntry.disabled_skills.length === 0 && pluginEntry.disabled_commands.length === 0 && pluginEntry.disabled_agents.length === 0) {
-    delete config.plugins[marketplace][pluginName];
-    if (Object.keys(config.plugins[marketplace]).length === 0) {
-      delete config.plugins[marketplace];
+  mutateYamlConfig((config) => {
+    if (!config.plugins[marketplace]) config.plugins[marketplace] = {};
+    if (!config.plugins[marketplace][pluginName]) {
+      config.plugins[marketplace][pluginName] = { disabled_skills: [], disabled_commands: [], disabled_agents: [] };
     }
-  }
 
-  saveYamlConfig(config, configPath);
+    const pluginEntry = config.plugins[marketplace][pluginName];
+    const field = kind === "skill" ? "disabled_skills" : kind === "command" ? "disabled_commands" : "disabled_agents";
+    const current = new Set(pluginEntry[field]);
+
+    if (enabled) {
+      current.delete(componentName);
+    } else {
+      current.add(componentName);
+    }
+
+    pluginEntry[field] = Array.from(current);
+
+    // Clean up empty plugin entries
+    if (pluginEntry.disabled_skills.length === 0 && pluginEntry.disabled_commands.length === 0 && pluginEntry.disabled_agents.length === 0) {
+      delete config.plugins[marketplace][pluginName];
+      if (Object.keys(config.plugins[marketplace]).length === 0) {
+        delete config.plugins[marketplace];
+      }
+    }
+  });
 }
 
 export function isPluginComponentEnabled(

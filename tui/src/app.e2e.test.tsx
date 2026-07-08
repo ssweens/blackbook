@@ -74,7 +74,7 @@ import {
 } from "./lib/install.js";
 import { getPluginToolStatus as getPluginToolStatusDirect } from "./lib/plugin-status.js";
 import { fetchMarketplace } from "./lib/marketplace.js";
-import { parseMarketplaces, getToolInstances, loadConfig, ensureConfigExists, getPluginComponentConfig } from "./lib/config.js";
+import { parseMarketplaces, getToolInstances, ensureConfigExists, getPluginComponentConfig } from "./lib/config.js";
 import { detectTool } from "./lib/tool-detect.js";
 import { installTool, updateTool, uninstallTool } from "./lib/tool-lifecycle.js";
 import { computePluginDrift, resolvePluginSourcePaths } from "./lib/plugin-drift.js";
@@ -121,7 +121,6 @@ vi.mock("./lib/config.js", async (importOriginal) => {
     ...actual,
     parseMarketplaces: vi.fn(),
     getToolInstances: vi.fn(),
-    loadConfig: vi.fn(),
     ensureConfigExists: vi.fn(),
     getPluginComponentConfig: vi.fn().mockReturnValue({
       disabledSkills: [],
@@ -468,7 +467,6 @@ function setupMocks() {
   vi.mocked(getPluginToolStatus).mockReturnValue(toolStatusPartial);
   vi.mocked(getPluginToolStatusDirect).mockReturnValue(toolStatusPartial);
   vi.mocked(getToolInstances).mockReturnValue(createToolInstances());
-  vi.mocked(loadConfig).mockReturnValue({ assets: [] });
   vi.mocked(ensureConfigExists).mockImplementation(() => {});
   vi.mocked(computePluginDrift).mockResolvedValue({});
   vi.mocked(resolvePluginSourcePaths).mockReturnValue(null);

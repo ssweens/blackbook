@@ -19,6 +19,7 @@ function makeConfig(overrides: Partial<BlackbookConfig> = {}): BlackbookConfig {
   return {
     settings: { package_manager: "pnpm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], ...overrides.settings },
     marketplaces: overrides.marketplaces ?? {},
+    pi_marketplaces: overrides.pi_marketplaces ?? {},
     tools: overrides.tools ?? {},
     files: overrides.files ?? [],
     configs: overrides.configs ?? [],

@@ -20,7 +20,7 @@ function sleepSync(ms: number): void {
   Atomics.wait(view, 0, 0, ms);
 }
 
-export function atomicWriteFileSync(path: string, content: string): void {
+export function atomicWriteFileSync(path: string, content: string | Buffer): void {
   const dir = dirname(path);
   mkdirSync(dir, { recursive: true });
   const tempPath = join(dir, `.${Date.now()}.${process.pid}.tmp`);

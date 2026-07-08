@@ -1383,6 +1383,7 @@ describe("Repo-prescribed Pi packages", () => {
         ? {
           settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
           marketplaces: {},
+          pi_marketplaces: {},
           tools: {},
           files: [],
           configs: [],
@@ -1392,6 +1393,7 @@ describe("Repo-prescribed Pi packages", () => {
         : {
           settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
           marketplaces: {},
+          pi_marketplaces: {},
           tools: {},
           files: [],
           configs: [],
@@ -1444,6 +1446,7 @@ describe("Repo-prescribed Pi packages", () => {
         ? {
           settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
           marketplaces: {},
+          pi_marketplaces: {},
           tools: {},
           files: [],
           configs: [],
@@ -1453,6 +1456,7 @@ describe("Repo-prescribed Pi packages", () => {
         : {
           settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
           marketplaces: {},
+          pi_marketplaces: {},
           tools: {},
           files: [],
           configs: [],
@@ -1500,6 +1504,7 @@ describe("Repo-prescribed Pi packages", () => {
       config: {
         settings: { source_repo: "https://github.com/example/playbook.git", package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
         marketplaces: {},
+        pi_marketplaces: {},
         tools: {},
         files: [],
         configs: [],
@@ -1539,6 +1544,7 @@ describe("Repo-prescribed Pi packages", () => {
       config: {
         settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
         marketplaces: {},
+        pi_marketplaces: {},
         tools: {},
         files: [],
         configs: [],
@@ -1570,6 +1576,7 @@ describe("Repo-prescribed Pi packages", () => {
       config: {
         settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
         marketplaces: {},
+        pi_marketplaces: {},
         tools: {},
         files: [],
         configs: [],
@@ -1621,6 +1628,7 @@ describe("Repo-prescribed Pi packages", () => {
       config: {
         settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
         marketplaces: {},
+        pi_marketplaces: {},
         tools: {},
         files: [],
         configs: [],
@@ -1680,6 +1688,7 @@ describe("Repo-prescribed Pi packages", () => {
       config: {
         settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
         marketplaces: {},
+        pi_marketplaces: {},
         tools: {},
         files: [],
         configs: [],
@@ -1737,6 +1746,7 @@ describe("Repo-prescribed Pi packages", () => {
         ? {
           settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
           marketplaces: {},
+          pi_marketplaces: {},
           tools: {},
           files: [],
           configs: [],
@@ -1746,6 +1756,7 @@ describe("Repo-prescribed Pi packages", () => {
         : {
           settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
           marketplaces: {},
+          pi_marketplaces: {},
           tools: {},
           files: [],
           configs: [],
@@ -1789,6 +1800,7 @@ describe("Repo-prescribed Pi packages", () => {
     const localConfig = {
       settings: { source_repo: sourceRepo, package_manager: "npm" as const, backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
       marketplaces: {},
+      pi_marketplaces: {},
       tools: {},
       files: [],
       configs: [],
@@ -1852,6 +1864,7 @@ describe("Repo-prescribed Pi packages", () => {
         ? {
           settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
           marketplaces: {},
+          pi_marketplaces: {},
           tools: {},
           files: [],
           configs: [],
@@ -1861,6 +1874,7 @@ describe("Repo-prescribed Pi packages", () => {
         : {
           settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
           marketplaces: {},
+          pi_marketplaces: {},
           tools: {},
           files: [],
           configs: [],
