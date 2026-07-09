@@ -1317,9 +1317,17 @@ export const useStore = create<Store>((rawSet, get) => {
       }
 
       // Add installed packages that aren't in any marketplace or desired list — in parallel.
-      const unlistedSources = settings.packages.filter(
-        (source) => !existingSources.has(normalizePiPackageSource(source)),
-      );
+      // `settings.packages` (~/.pi/agent/settings.json, Pi's own state — not ours) can
+      // itself contain the same source listed more than once (observed in the wild); dedupe
+      // by normalized source so a single duplicated entry there doesn't produce two rows
+      // with an identical React key downstream.
+      const seenUnlistedSources = new Set<string>();
+      const unlistedSources = settings.packages.filter((source) => {
+        const normalized = normalizePiPackageSource(source);
+        if (existingSources.has(normalized) || seenUnlistedSources.has(normalized)) return false;
+        seenUnlistedSources.add(normalized);
+        return true;
+      });
 
       const unlistedResults = await Promise.all(
         unlistedSources.map(async (source) => {

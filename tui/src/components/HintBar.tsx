@@ -25,8 +25,12 @@ export const HintBar = React.memo(function HintBar({ tab, hasDetail, toolsHint }
       : HINTS[tab];
 
   return (
-    <Box borderStyle="single" borderTop borderBottom={false} borderLeft={false} borderRight={false} marginTop={1} paddingTop={1}>
-      <Text color="gray" italic>
+    // height caps the text row to exactly 1 line regardless of terminal width
+    // or hint length — see StatusBar.tsx for why an unbounded wrap here would
+    // silently exceed the CHROME_ROWS budget and trigger Ink's full-screen
+    // clearTerminal fallback on every re-render.
+    <Box borderStyle="single" borderTop borderBottom={false} borderLeft={false} borderRight={false} marginTop={1} paddingTop={1} height={3}>
+      <Text color="gray" italic wrap="truncate">
         {hint}
       </Text>
     </Box>

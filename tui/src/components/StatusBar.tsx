@@ -29,7 +29,14 @@ export function StatusBar() {
     : `${pluginsCount} plugins, ${piPackagesCount} pi-pkgs, ${filesCount} files from ${marketplacesCount} marketplaces · ${toolsLabel}`;
 
   return (
-    <Box>
+    // Fixed height + truncating Text: this line MUST stay exactly 1 row.
+    // Wrapping to 2 lines (which the unbounded text below would do at
+    // narrower terminal widths or with many enabled tools) silently exceeds
+    // the CHROME_ROWS budget every other component sizes against, which
+    // pushes the whole frame over the terminal's row count and triggers
+    // Ink's clearTerminal fallback — visible as a full-screen flash on every
+    // re-render (e.g. scrolling through Installed's Plugins section).
+    <Box height={1}>
       {loading && (
         <>
           <Text color="cyan">
@@ -40,11 +47,11 @@ export function StatusBar() {
       )}
       {error ? (
         <>
-          <Text color="red">{error}</Text>
-          <Text color="gray"> · {toolsLabel}</Text>
+          <Text color="red" wrap="truncate">{error}</Text>
+          <Text color="gray" wrap="truncate"> · {toolsLabel}</Text>
         </>
       ) : (
-        <Text color="gray">{statusText}</Text>
+        <Text color="gray" wrap="truncate">{statusText}</Text>
       )}
     </Box>
   );

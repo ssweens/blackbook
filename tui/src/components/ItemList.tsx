@@ -235,10 +235,17 @@ export function ItemList({
         const actualIndex = startIndex + visibleIdx;
         const isSelected = hasSelection && actualIndex === selectedIndex;
         const flags = computeItemFlags(item);
+        // `marketplace` is a broad bucket label (e.g. "local" for every
+        // locally-sourced Pi package), not a unique origin — two distinct
+        // packages can legitimately share both marketplace and display name
+        // (e.g. two different local "pi-crumbs" checkouts). Fold in `source`
+        // (the actual path/npm spec) to disambiguate; it's a no-op suffix for
+        // items where source is absent or already unique.
+        const sourceKey = typeof item.source === "string" ? item.source : (item.source?.source ?? "");
 
         return (
           <ItemRow
-            key={`${item.kind}:${item.marketplace}:${item.name}`}
+            key={`${item.kind}:${item.marketplace}:${item.name}:${sourceKey}`}
             item={item}
             isSelected={isSelected}
             flags={flags}

@@ -1802,6 +1802,40 @@ describe("Repo-prescribed Pi packages", () => {
     expect(matches).toHaveLength(1);
   });
 
+  it("dedupes a source listed twice within settings.packages itself", async () => {
+    // Regression: ~/.pi/agent/settings.json (Pi's own state, not ours) can end
+    // up with the exact same local package path listed twice — observed in
+    // the wild. Each duplicate produced an identical ManagedItem, which React
+    // rendered with a colliding key ("two children with the same key"
+    // warning) and showed the package twice in every list.
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: {
+        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+        marketplaces: {},
+        pi_marketplaces: {},
+        tools: {},
+        files: [],
+        configs: [],
+        plugins: {},
+        pi_packages: [],
+      },
+      configPath: "/tmp/blackbook/config.yaml",
+      errors: [],
+    });
+    vi.mocked(loadAllPiMarketplaces).mockResolvedValue([]);
+    vi.mocked(getAllPiPackages).mockReturnValue([]);
+    vi.mocked(loadPiSettings).mockReturnValue({
+      packages: ["/Users/example/src/pi-packages/pi-crumbs", "/Users/example/src/pi-packages/pi-crumbs"],
+    });
+
+    await useStore.getState().loadPiPackages();
+
+    const matches = useStore
+      .getState()
+      .piPackages.filter((p) => p.source === "/Users/example/src/pi-packages/pi-crumbs");
+    expect(matches).toHaveLength(1);
+  });
+
   it("keeps separate rows for same package name across npm and local sources", async () => {
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: {
