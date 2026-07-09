@@ -27,8 +27,9 @@ function getStatePath(): string {
   return join(getCacheDir(), "state.json");
 }
 
-export function loadState(): SyncState {
-  const path = getStatePath();
+// Read + parse the state file with no locking. Callers that already hold the
+// state lock (e.g. read-modify-write mutations) use this to avoid re-locking.
+function readStateFile(path: string): SyncState {
   if (!existsSync(path)) {
     return { version: 1, files: {} };
   }
@@ -42,6 +43,10 @@ export function loadState(): SyncState {
   } catch {
     return { version: 1, files: {} };
   }
+}
+
+export function loadState(): SyncState {
+  return readStateFile(getStatePath());
 }
 
 export function saveState(state: SyncState): void {
@@ -68,15 +73,21 @@ export function recordSync(
   sourcePath: string,
   targetPath: string,
 ): void {
-  const state = loadState();
-  state.files[key] = {
-    sourceHash,
-    targetHash,
-    syncedAt: new Date().toISOString(),
-    sourcePath,
-    targetPath,
-  };
-  saveState(state);
+  const path = getStatePath();
+  mkdirSync(dirname(path), { recursive: true });
+  // Hold a single lock across the whole read-modify-write so concurrent writers
+  // cannot interleave (load old → other writer saves → we overwrite their change).
+  withFileLockSync(path, () => {
+    const state = readStateFile(path);
+    state.files[key] = {
+      sourceHash,
+      targetHash,
+      syncedAt: new Date().toISOString(),
+      sourcePath,
+      targetPath,
+    };
+    atomicWriteFileSync(path, JSON.stringify(state, null, 2));
+  });
 }
 
 export function detectDrift(
@@ -101,9 +112,14 @@ export function detectDrift(
 }
 
 export function clearEntry(key: string): void {
-  const state = loadState();
-  delete state.files[key];
-  saveState(state);
+  const path = getStatePath();
+  mkdirSync(dirname(path), { recursive: true });
+  // Single-lock read-modify-write; see recordSync for rationale.
+  withFileLockSync(path, () => {
+    const state = readStateFile(path);
+    delete state.files[key];
+    atomicWriteFileSync(path, JSON.stringify(state, null, 2));
+  });
 }
 
 export function getEntry(key: string): SyncEntry | undefined {

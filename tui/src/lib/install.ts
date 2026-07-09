@@ -59,6 +59,8 @@ import {
   instanceKey,
   buildBackupPath,
   buildLooseBackupPath,
+  buildManifestItemKey,
+  migrateManifestKeys,
   getPluginSourcePath,
   createSymlink,
   isSymlink,
@@ -136,6 +138,17 @@ function isConfigOnlyInstance(instance: ToolInstance): boolean {
   return (
     !instance.skillsSubdir && !instance.commandsSubdir && !instance.agentsSubdir
   );
+}
+
+/**
+ * Load the manifest and migrate any legacy (un-owned) item keys to the
+ * owner-scoped format before any lookup/mutation runs. Use this everywhere
+ * install.ts reads the manifest for item-key operations.
+ */
+function loadMigratedManifest(): Manifest {
+  const manifest = loadManifest();
+  migrateManifestKeys(manifest);
+  return manifest;
 }
 
 let cachedGitAvailable: boolean | null = null;
@@ -703,15 +716,44 @@ export async function downloadPlugin(
     await ensureGitAvailable();
 
     return await withTempDir("blackbook-clone", async (tempDir) => {
-      await execFileAsync("git", [
-        "clone",
-        "--depth",
-        "1",
-        "--branch",
-        ref,
-        repoUrl!,
-        tempDir,
-      ]);
+      // Match the 60-120s git-timeout convention used elsewhere (marketplace.ts)
+      // so a hung network connection can't block the TUI indefinitely.
+      const cloneTimeout = 120000;
+      try {
+        await execFileAsync(
+          "git",
+          ["clone", "--depth", "1", "--branch", ref, repoUrl!, tempDir],
+          { timeout: cloneTimeout },
+        );
+      } catch (cloneError) {
+        // Distinguish a genuinely missing branch (retryable) from a
+        // network/timeout failure (fatal — re-throw so the caller reports it).
+        const killed = (cloneError as { killed?: boolean }).killed === true;
+        const message = cloneError instanceof Error ? cloneError.message : String(cloneError);
+        if (killed || /ETIMEDOUT|timed out/i.test(message)) {
+          throw cloneError;
+        }
+        // The pinned --branch clone failed (e.g. `ref` defaulted to "main" but
+        // the repo's default branch is "master"). Retry the default branch, then
+        // best-effort check out the requested ref.
+        rmSync(tempDir, { recursive: true, force: true });
+        mkdirSync(tempDir, { recursive: true });
+        await execFileAsync(
+          "git",
+          ["clone", "--depth", "1", repoUrl!, tempDir],
+          { timeout: cloneTimeout },
+        );
+        try {
+          await execFileAsync("git", ["-C", tempDir, "checkout", ref], { timeout: cloneTimeout });
+        } catch {
+          // `ref` is not a distinct branch/tag here (commonly a default guess for
+          // a repo whose default branch differs); fall back to the default branch.
+          logError(
+            `Using default branch for ${plugin.name}`,
+            new Error(`ref "${ref}" not found; used repository default branch`),
+          );
+        }
+      }
 
       const sourceDir = subPath ? join(tempDir, subPath) : tempDir;
 
@@ -845,11 +887,11 @@ export async function installPlugin(
   return result;
 }
 
-export function uninstallPluginFromInstance(
+export async function uninstallPluginFromInstance(
   plugin: Plugin,
   toolId: string,
   instanceId: string,
-): boolean {
+): Promise<boolean> {
   validatePluginMetadata(plugin);
   const instances = getToolInstances().filter((i) => i.kind === "tool");
   const instance = instances.find(
@@ -858,13 +900,38 @@ export function uninstallPluginFromInstance(
   if (!instance) return false;
 
   if (instance.toolId === "pi") {
-    // Fire-and-forget bridge uninstall for sync API parity with this sync fn.
-    void runPiBridgePluginCommand(instance, `/plugin uninstall ${plugin.name}@${plugin.marketplace}`);
-    return true;
+    // Await the bridge so a failure is observed (no unhandled rejection) and the
+    // caller learns the truth instead of a false success.
+    try {
+      await runPiBridgePluginCommand(instance, `/plugin uninstall ${plugin.name}@${plugin.marketplace}`);
+      return true;
+    } catch (error) {
+      logError(`Pi bridge uninstall failed for ${plugin.name} in ${instance.name}`, error);
+      return false;
+    }
+  }
+
+  if (instance.toolId === "claude-code") {
+    // Claude installs go through the native CLI, so uninstall must too — the CLI
+    // owns the plugin cache dir, settings.json enabledPlugins, and hook/MCP
+    // registrations. JSON surgery alone leaves Claude's own state desynced.
+    let cliOk = false;
+    try {
+      await execClaudeCommand(instance, "uninstall", claudeInstalledPluginId(plugin));
+      cliOk = true;
+    } catch (error) {
+      logError(`Claude uninstall failed for ${plugin.name} in ${instance.name}`, error);
+    }
+    // Best-effort safety net: clear any leftover installed_plugins.json entry.
+    try {
+      removeFromClaudeInstalledPluginsJson(instance, plugin.name, plugin.installedMarketplace ?? plugin.marketplace);
+    } catch (error) {
+      logError(`Failed to clean Claude installed_plugins.json for ${plugin.name}`, error);
+    }
+    return cliOk;
   }
 
   const removed = uninstallPluginItemsFromInstance(plugin.name, instance) > 0;
-  removeFromClaudeInstalledPluginsJson(instance, plugin.name, plugin.installedMarketplace ?? plugin.marketplace);
   return removed;
 }
 
@@ -927,9 +994,21 @@ export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
       continue;
     }
 
+    if (instance.toolId === "claude-code") {
+      // Claude installs go through the native CLI; uninstall must too so Claude's
+      // own cache/settings/registrations are cleaned. JSON surgery is a fallback.
+      try {
+        await execClaudeCommand(instance, "uninstall", claudeInstalledPluginId(plugin));
+        removedCount += 1;
+      } catch (error) {
+        logError(`Claude uninstall failed for ${plugin.name} in ${instance.name}`, error);
+      }
+      // Best-effort safety net for any leftover installed_plugins.json entry.
+      removeFromClaudeInstalledPluginsJson(instance, plugin.name, plugin.installedMarketplace ?? plugin.marketplace);
+      continue;
+    }
+
     removedCount += uninstallPluginItemsFromInstance(plugin.name, instance);
-    // Claude tracks installed plugins in installed_plugins.json — must clean it.
-    removeFromClaudeInstalledPluginsJson(instance, plugin.name, plugin.installedMarketplace ?? plugin.marketplace);
   }
 
   try {
@@ -968,6 +1047,7 @@ export interface AssetSyncResult {
 function copyWithBackup(
   src: string,
   dest: string,
+  instanceScope: string,
   pluginName: string,
   itemKind: string,
   itemName: string,
@@ -975,7 +1055,7 @@ function copyWithBackup(
   let backupPath: string | null = null;
 
   if (existsSync(dest) || isSymlink(dest)) {
-    backupPath = buildBackupPath(pluginName, itemKind, itemName);
+    backupPath = buildBackupPath(instanceScope, pluginName, itemKind, itemName);
     const tempBackup = `${backupPath}.new.${Date.now()}`;
     renameSync(dest, tempBackup);
     if (existsSync(backupPath) || isSymlink(backupPath)) {
@@ -1012,7 +1092,7 @@ function installPluginItemsToInstance(
     : null;
   const appliedKeys: string[] = [];
 
-  const manifest = loadManifest();
+  const manifest = loadMigratedManifest();
   const key = instanceKey(instance);
   if (!manifest.tools[key]) {
     manifest.tools[key] = { items: {} };
@@ -1056,9 +1136,9 @@ function installPluginItemsToInstance(
     dest: string,
   ) => {
     validateItemName(kind, name);
-    const key = `${kind}:${name}`;
+    const key = buildManifestItemKey(pluginName, kind, name);
     const previous = toolManifest.items[key] || null;
-    const result = copyWithBackup(src, dest, pluginName, kind, name);
+    const result = copyWithBackup(src, dest, instanceKey(instance), pluginName, kind, name);
     const item: InstalledItem = {
       kind,
       name,
@@ -1150,7 +1230,7 @@ function uninstallPluginItemsFromInstance(
   validatePluginName(pluginName);
   let manifest: Manifest;
   try {
-    manifest = loadManifest();
+    manifest = loadMigratedManifest();
   } catch (error) {
     logError("Failed to load manifest during uninstall", error);
     return 0;
@@ -1378,31 +1458,47 @@ export async function updatePlugin(
     }
   }
 
-  // Uninstall from currently-installed Blackbook-managed instances first.
-  for (const instance of managedInstances) {
-    uninstallPluginItemsFromInstance(plugin.name, instance);
-  }
-
-  // Clear cached plugin copies for both the old installed marketplace and the
-  // selected latest marketplace before downloading fresh content.
-  for (const marketplace of new Set([plugin.installedMarketplace, plugin.marketplace].filter(Boolean) as string[])) {
-    try {
-      const pluginDir = safePath(getPluginsCacheDir(), marketplace, plugin.name);
-      rmSync(pluginDir, { recursive: true, force: true });
-    } catch (error) {
-      logError(`Failed to remove plugin dir for ${plugin.name}`, error);
-    }
-  }
-
   if (managedInstances.length > 0) {
-    // Download fresh copy and install only to non-Claude instances where plugin is already installed.
-    const sourcePath = await downloadPlugin(plugin, marketplaceUrl, { force: true });
-    if (sourcePath) {
+    // Download and VERIFY the replacement BEFORE uninstalling anything or purging
+    // any cache. If the download fails (offline, renamed branch, GitHub outage),
+    // the currently-installed items and cache must be left exactly as they were —
+    // otherwise a transient network error silently deletes an installed plugin.
+    let sourcePath: string | null = null;
+    try {
+      sourcePath = await downloadPlugin(plugin, marketplaceUrl, { force: true });
+    } catch (error) {
+      logError(`Failed to download plugin update for ${plugin.name}`, error);
+    }
+
+    const downloadVerified =
+      !!sourcePath && pluginSourceHasExpectedComponents(plugin, sourcePath);
+
+    if (!downloadVerified) {
+      result.errors.push(
+        `Failed to download plugin update for ${plugin.name}; existing installation left untouched.`,
+      );
+    } else {
+      // Download verified — now it is safe to swap the installed copy.
+      for (const instance of managedInstances) {
+        uninstallPluginItemsFromInstance(plugin.name, instance);
+      }
+
+      // Purge the stale cache copy under the OLD installed marketplace (the
+      // selected marketplace was already refreshed by the force download above).
+      if (plugin.installedMarketplace && plugin.installedMarketplace !== plugin.marketplace) {
+        try {
+          const staleDir = safePath(getPluginsCacheDir(), plugin.installedMarketplace, plugin.name);
+          rmSync(staleDir, { recursive: true, force: true });
+        } catch (error) {
+          logError(`Failed to remove stale plugin dir for ${plugin.name}`, error);
+        }
+      }
+
       for (const instance of managedInstances) {
         try {
           const { count, errors } = installPluginItemsToInstance(
             plugin.name,
-            sourcePath,
+            sourcePath!,
             instance,
             plugin.marketplace,
           );
@@ -1415,8 +1511,6 @@ export async function updatePlugin(
           );
         }
       }
-    } else {
-      result.errors.push(`Failed to download plugin update for ${plugin.name}`);
     }
   }
 
@@ -1437,8 +1531,9 @@ export function linkPluginToInstance(
   );
 
   let linked = 0;
-  const manifest = loadManifest();
-  const key = instanceKey(instance);
+  const manifest = loadMigratedManifest();
+  const scope = instanceKey(instance);
+  const key = scope;
   if (!manifest.tools[key]) {
     manifest.tools[key] = { items: {} };
   }
@@ -1469,9 +1564,14 @@ export function linkPluginToInstance(
         ? join(instance.configDir, instance.skillsSubdir)
         : join(instance.configDir, instance.skillsSubdir, plugin.name);
       const target = safePath(baseTarget, skill);
-      const result = createSymlink(source, target, plugin.name, "skill", skill);
+      const result = createSymlink(source, target, {
+        instanceScope: scope,
+        pluginName: plugin.name,
+        itemKind: "skill",
+        itemName: skill,
+      });
       if (result.success) {
-        manifest.tools[key].items[`skill:${skill}`] = {
+        manifest.tools[key].items[buildManifestItemKey(plugin.name, "skill", skill)] = {
           kind: "skill",
           name: skill,
           source,
@@ -1500,9 +1600,14 @@ export function linkPluginToInstance(
         ? join(instance.configDir, instance.commandsSubdir)
         : join(instance.configDir, instance.commandsSubdir, plugin.name);
       const target = safePath(baseTarget, `${cmd}.md`);
-      const result = createSymlink(source, target, plugin.name, "command", cmd);
+      const result = createSymlink(source, target, {
+        instanceScope: scope,
+        pluginName: plugin.name,
+        itemKind: "command",
+        itemName: cmd,
+      });
       if (result.success) {
-        manifest.tools[key].items[`command:${cmd}`] = {
+        manifest.tools[key].items[buildManifestItemKey(plugin.name, "command", cmd)] = {
           kind: "command",
           name: cmd,
           source,
@@ -1531,9 +1636,14 @@ export function linkPluginToInstance(
         ? join(instance.configDir, instance.agentsSubdir)
         : join(instance.configDir, instance.agentsSubdir, plugin.name);
       const target = safePath(baseTarget, `${agent}.md`);
-      const result = createSymlink(source, target, plugin.name, "agent", agent);
+      const result = createSymlink(source, target, {
+        instanceScope: scope,
+        pluginName: plugin.name,
+        itemKind: "agent",
+        itemName: agent,
+      });
       if (result.success) {
-        manifest.tools[key].items[`agent:${agent}`] = {
+        manifest.tools[key].items[buildManifestItemKey(plugin.name, "agent", agent)] = {
           kind: "agent",
           name: agent,
           source,
@@ -1583,13 +1693,14 @@ export function togglePluginComponent(
   }
 
   const instances = getEnabledToolInstances();
-  const manifest = loadManifest();
+  const manifest = loadMigratedManifest();
   const sourcePath = getPluginSourcePath(plugin);
+  const failures: string[] = [];
 
   for (const instance of instances) {
     if (isConfigOnlyInstance(instance)) continue;
     const key = instanceKey(instance);
-    const itemKey = `${kind}:${componentName}`;
+    const itemKey = buildManifestItemKey(plugin.name, kind, componentName);
 
     if (!enabled) {
       // Remove the component from this instance
@@ -1625,6 +1736,9 @@ export function togglePluginComponent(
           `Failed to remove ${kind} ${componentName} from ${instance.name}`,
           error,
         );
+        failures.push(
+          `Failed to remove ${kind} ${componentName} from ${instance.name}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
 
       // Restore backup if exists
@@ -1633,6 +1747,9 @@ export function togglePluginComponent(
           renameSync(item.backup, destPath);
         } catch (error) {
           logError(`Failed to restore backup for ${componentName}`, error);
+          failures.push(
+            `Failed to restore backup for ${componentName} in ${instance.name}: ${error instanceof Error ? error.message : String(error)}`,
+          );
         }
       }
 
@@ -1668,7 +1785,12 @@ export function togglePluginComponent(
         manifest.tools[key] = { items: {} };
       }
 
-      const result = createSymlink(src, dest, plugin.name, kind, componentName);
+      const result = createSymlink(src, dest, {
+        instanceScope: key,
+        pluginName: plugin.name,
+        itemKind: kind,
+        itemName: componentName,
+      });
       if (result.success) {
         manifest.tools[key].items[itemKey] = {
           kind,
@@ -1679,11 +1801,18 @@ export function togglePluginComponent(
           owner: plugin.name,
           previous: null,
         };
+      } else {
+        failures.push(
+          `Failed to enable ${kind} ${componentName} in ${instance.name}: ${result.message}`,
+        );
       }
     }
   }
 
   saveManifest(manifest);
+  if (failures.length > 0) {
+    return { success: false, error: failures.join("; ") };
+  }
   return { success: true };
 }
 
@@ -1856,7 +1985,7 @@ export function getInstalledPluginsForInstance(
 
   // Load manifest to get authoritative source paths
   // Manifest may have items under both "toolId" and "toolId:instanceId" keys
-  const manifest = loadManifest();
+  const manifest = loadMigratedManifest();
   const toolKeys = [
     instance.toolId,
     `${instance.toolId}:${instance.instanceId}`,
@@ -2649,16 +2778,22 @@ export function deleteFileEverywhere(file: FileStatus): {
   targets: number;
   source: boolean;
   config: boolean;
+  /** Per-target removal failures, so callers can report partial success. */
+  errors: string[];
   error?: string;
 } {
   let targetsRemoved = 0;
+  const errors: string[] = [];
+  const totalTargets = file.instances.length;
   for (const inst of file.instances) {
     try {
       if (existsSync(inst.targetPath)) {
         rmSync(inst.targetPath, { force: true });
         targetsRemoved += 1;
       }
-    } catch { /* skip */ }
+    } catch (e) {
+      errors.push(`${inst.instanceName}: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   // Source-repo file removal.
@@ -2669,7 +2804,8 @@ export function deleteFileEverywhere(file: FileStatus): {
       rmSync(sourcePath, { force: true });
       sourceRemoved = true;
     } catch (e) {
-      return { ok: false, targets: targetsRemoved, source: false, config: false, error: e instanceof Error ? e.message : String(e) };
+      errors.push(`source (${sourcePath}): ${e instanceof Error ? e.message : String(e)}`);
+      return { ok: false, targets: targetsRemoved, source: false, config: false, errors, error: errors.join("; ") };
     }
   }
 
@@ -2684,10 +2820,21 @@ export function deleteFileEverywhere(file: FileStatus): {
       configRemoved = true;
     }
   } catch (e) {
-    return { ok: false, targets: targetsRemoved, source: sourceRemoved, config: false, error: e instanceof Error ? e.message : String(e) };
+    errors.push(`config: ${e instanceof Error ? e.message : String(e)}`);
+    return { ok: false, targets: targetsRemoved, source: sourceRemoved, config: false, errors, error: errors.join("; ") };
   }
 
-  return { ok: true, targets: targetsRemoved, source: sourceRemoved, config: configRemoved };
+  // A partial target-removal failure is not fatal to source/config cleanup, but
+  // it must still be surfaced so the caller can report "removed N of M".
+  const ok = errors.length === 0;
+  return {
+    ok,
+    targets: targetsRemoved,
+    source: sourceRemoved,
+    config: configRemoved,
+    errors,
+    ...(ok ? {} : { error: `deleted from ${targetsRemoved} of ${totalTargets} locations; ${errors.length} failed: ${errors.join("; ")}` }),
+  };
 }
 
 /**
@@ -3442,4 +3589,7 @@ export {
   createSymlink,
   isSymlink,
   removeSymlink,
+  buildManifestItemKey,
+  buildBackupPath,
+  migrateManifestKeys,
 } from "./plugin-helpers.js";

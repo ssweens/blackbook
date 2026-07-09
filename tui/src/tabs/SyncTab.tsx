@@ -3,24 +3,7 @@ import { Box, Text } from "ink";
 import { useStore } from "../lib/store.js";
 import { SyncList } from "../components/SyncList.js";
 import { SyncPreview } from "../components/SyncPreview.js";
-import type { SyncPreviewItem } from "../lib/types.js";
-
-function getSyncItemKey(item: SyncPreviewItem): string {
-  if (item.kind === "plugin") {
-    return `plugin:${item.plugin.marketplace}:${item.plugin.name}`;
-  }
-  if (item.kind === "tool") {
-    return `tool:${item.toolId}`;
-  }
-  if (item.kind === "skill") {
-    const ns = item.skill.namespace;
-    return `skill:${ns ? `${ns}/` : ""}${item.skill.name}`;
-  }
-  if (item.kind === "piPackage") {
-    return `piPackage:${item.piPackage.source}`;
-  }
-  return `file:${item.file.name}`;
-}
+import { getSyncItemKey } from "../lib/derived.js";
 
 export interface SyncTabProps {
   contentHeight: number;

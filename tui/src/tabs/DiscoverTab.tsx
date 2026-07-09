@@ -8,7 +8,7 @@ import { PluginPreview } from "../components/PluginPreview.js";
 import { PiPackagePreview } from "../components/PiPackagePreview.js";
 import { SearchBox } from "../components/SearchBox.js";
 import { pluginsToManagedItems, piPackagesToManagedItems } from "../lib/managed-item.js";
-import type { Plugin, PiPackage } from "../lib/types.js";
+import { sortAndFilterPiPackages } from "../lib/derived.js";
 
 function getRange(selectedIdx: number, totalCount: number, maxHeight: number): string {
   if (totalCount === 0) return "";
@@ -22,9 +22,12 @@ function getRange(selectedIdx: number, totalCount: number, maxHeight: number): s
 
 export interface DiscoverTabProps {
   contentHeight: number;
+  searchFocused: boolean;
+  onSearchFocus: () => void;
+  onSearchBlur: () => void;
 }
 
-export function DiscoverTab({ contentHeight }: DiscoverTabProps) {
+export function DiscoverTab({ contentHeight, searchFocused, onSearchFocus, onSearchBlur }: DiscoverTabProps) {
   const search = useStore((s) => s.search);
   const setSearch = useStore((s) => s.setSearch);
   const selectedIndex = useStore((s) => s.selectedIndex);
@@ -63,50 +66,12 @@ export function DiscoverTab({ contentHeight }: DiscoverTabProps) {
     });
   }, [allPlugins, search, sortBy, sortDir]);
 
-  const filteredPiPackages = useMemo(() => {
-    const lowerSearch = search.toLowerCase();
-    let filtered = piPackages;
-    if (search) {
-      filtered = piPackages.filter(
-        (p) =>
-          p.name.toLowerCase().includes(lowerSearch) ||
-          p.description.toLowerCase().includes(lowerSearch) ||
-          p.marketplace.toLowerCase().includes(lowerSearch)
-      );
-    }
-    return [...filtered].sort((a, b) => {
-      if (sortBy === "default") {
-        if (a.installed !== b.installed) return a.installed ? -1 : 1;
-        if (!a.installed && !b.installed) {
-          const aIsNpm = a.sourceType === "npm";
-          const bIsNpm = b.sourceType === "npm";
-          if (aIsNpm !== bIsNpm) return aIsNpm ? 1 : -1;
-          if (aIsNpm && bIsNpm) {
-            const aDownloads = a.weeklyDownloads ?? 0;
-            const bDownloads = b.weeklyDownloads ?? 0;
-            if (aDownloads !== bDownloads) return bDownloads - aDownloads;
-          }
-        }
-        return a.name.localeCompare(b.name);
-      }
-      if (sortBy === "name") {
-        const cmp = a.name.localeCompare(b.name);
-        return sortDir === "asc" ? cmp : -cmp;
-      }
-      if (sortBy === "popularity") {
-        const aDownloads = a.weeklyDownloads ?? 0;
-        const bDownloads = b.weeklyDownloads ?? 0;
-        const cmp = bDownloads - aDownloads;
-        if (cmp !== 0) return sortDir === "desc" ? cmp : -cmp;
-        return a.name.localeCompare(b.name);
-      }
-      const aInstalled = a.installed ? 1 : 0;
-      const bInstalled = b.installed ? 1 : 0;
-      const cmp = bInstalled - aInstalled;
-      if (cmp !== 0) return sortDir === "asc" ? cmp : -cmp;
-      return a.name.localeCompare(b.name);
-    });
-  }, [piPackages, search, sortBy, sortDir]);
+  // Canonical filter+sort shared with App.tsx's keyboard-index math, so the
+  // highlighted row always matches the Enter/Space target.
+  const filteredPiPackages = useMemo(
+    () => sortAndFilterPiPackages(piPackages, sortBy, sortDir, search),
+    [piPackages, search, sortBy, sortDir],
+  );
 
   const managedPlugins = useMemo(() => pluginsToManagedItems(filteredPlugins), [filteredPlugins]);
   const managedPiPackages = useMemo(() => piPackagesToManagedItems(filteredPiPackages), [filteredPiPackages]);
@@ -140,6 +105,9 @@ export function DiscoverTab({ contentHeight }: DiscoverTabProps) {
               value={search}
               onChange={setSearch}
               placeholder="Search plugins..."
+              focus={searchFocused}
+              onFocus={onSearchFocus}
+              onBlur={onSearchBlur}
             />
           </Box>
           <Box marginLeft={2}>
@@ -170,6 +138,9 @@ export function DiscoverTab({ contentHeight }: DiscoverTabProps) {
               value={search}
               onChange={setSearch}
               placeholder="Search pi packages..."
+              focus={searchFocused}
+              onFocus={onSearchFocus}
+              onBlur={onSearchBlur}
             />
           </Box>
           <Box marginLeft={2}>
@@ -200,6 +171,9 @@ export function DiscoverTab({ contentHeight }: DiscoverTabProps) {
             value={search}
             onChange={setSearch}
             placeholder="Search plugins and packages..."
+            focus={searchFocused}
+            onFocus={onSearchFocus}
+            onBlur={onSearchBlur}
           />
         </Box>
         <Box marginLeft={2}>

@@ -79,17 +79,39 @@ import { handleItemAction } from "./lib/action-dispatch.js";
 import type { Tab, SyncPreviewItem, Plugin, PiPackage, PiMarketplace, DiffInstanceRef, DiscoverSection, DiscoverSubView, ManagedToolRow, FileStatus, Marketplace } from "./lib/types.js";
 import { countAppRender } from "./lib/perf.js";
 import { useContentHeight } from "./lib/use-content-height.js";
+import { getSyncItemKey, sortAndFilterPiPackages } from "./lib/derived.js";
 
 const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces", "settings"];
 const TAB_REFRESH_TTL_MS = 30000;
 
-function TabContent({ tab }: { tab: Tab }) {
+interface TabContentProps {
+  tab: Tab;
+  searchFocused: boolean;
+  onSearchFocus: () => void;
+  onSearchBlur: () => void;
+}
+
+function TabContent({ tab, searchFocused, onSearchFocus, onSearchBlur }: TabContentProps) {
   const contentHeight = useContentHeight();
   switch (tab) {
     case "discover":
-      return <DiscoverTab contentHeight={contentHeight} />;
+      return (
+        <DiscoverTab
+          contentHeight={contentHeight}
+          searchFocused={searchFocused}
+          onSearchFocus={onSearchFocus}
+          onSearchBlur={onSearchBlur}
+        />
+      );
     case "installed":
-      return <InstalledTab contentHeight={contentHeight} />;
+      return (
+        <InstalledTab
+          contentHeight={contentHeight}
+          searchFocused={searchFocused}
+          onSearchFocus={onSearchFocus}
+          onSearchBlur={onSearchBlur}
+        />
+      );
     case "marketplaces":
       return <MarketplacesTab contentHeight={contentHeight} />;
     case "tools":
@@ -476,14 +498,6 @@ export function App() {
     return () => clearTimeout(timeoutId);
   }, [syncArmed]);
 
-  const getSyncItemKey = (item: import("./lib/types.js").SyncPreviewItem) => {
-    if (item.kind === "plugin") return `plugin:${item.plugin.marketplace}:${item.plugin.name}`;
-    if (item.kind === "tool") return `tool:${item.toolId}`;
-    if (item.kind === "skill") return `skill:${item.skill.name}`;
-    if (item.kind === "piPackage") return `piPackage:${item.piPackage.source}`;
-    return `file:${item.file.name}`;
-  };
-
   const selectedSyncCount = useMemo(() => {
     let count = 0;
     for (const item of syncPreview) {
@@ -539,10 +553,16 @@ export function App() {
   );
 
   const filteredPiPackages = useMemo(() => {
-    if (tab !== "discover" && tab !== "installed") return [];
+    // Discover: use the canonical ordering shared with DiscoverTab's rendering so
+    // the highlighted row and the Enter/Space target are always the same package.
+    // DiscoverTab renders from the raw `piPackages` store slice, so key off that.
+    if (tab === "discover") {
+      return sortAndFilterPiPackages(piPackages, sortBy, sortDir, search);
+    }
+    if (tab !== "installed") return [];
 
     const lowerSearch = search.toLowerCase();
-    const base = tab === "installed" ? effectivePiPackages.filter((p) => p.installed || p.recommended) : effectivePiPackages;
+    const base = effectivePiPackages.filter((p) => p.installed || p.recommended);
     let filtered = base;
     if (search) {
       filtered = base.filter(
@@ -582,7 +602,7 @@ export function App() {
     });
 
     return sorted;
-  }, [tab, effectivePiPackages, search, sortBy, sortDir]);
+  }, [tab, piPackages, effectivePiPackages, search, sortBy, sortDir]);
 
   const maxLength = (values: number[], fallback: number) => {
     if (values.length === 0) return fallback;
@@ -1445,6 +1465,18 @@ export function App() {
     // Treat any of these as immediate back-navigation.
     const isEscape = key.escape || (typeof input === "string" && input.length > 0 && input.charCodeAt(0) === 27) || (key.ctrl && input === "[");
 
+    // While the search box owns input, the TextInput consumes every character.
+    // Only Esc / Enter are handled here (both exit search focus); every other key
+    // must NOT trigger a global single-key shortcut (digits switch tabs, `q`
+    // quits, Space toggles installs, `s`/`r` cycle sort, `R` refreshes, etc.).
+    if (searchFocused) {
+      // Esc cancels (clears the filter); Enter accepts (keeps the filter). Both
+      // return focus to list navigation.
+      if (isEscape) { setSearch(""); setSearchFocused(false); return; }
+      if (key.return) { setSearchFocused(false); return; }
+      return;
+    }
+
     // Esc must always close the topmost overlay — it takes priority over notification
     // dismissal so users can back out even when a notification is showing.
     const stickyNotifications = notifications.filter(
@@ -1468,14 +1500,24 @@ export function App() {
     // Component manager mode
     if (componentManagerMode && detailPlugin) { handleComponentManagerInput(input, key); return; }
 
+    // Focus the search box (Discover/Installed only). Handled here — on the same
+    // global input path as every other shortcut — so focus is reliable. The
+    // searchFocused guard above then routes all subsequent keystrokes to the
+    // TextInput until Esc/Enter exits.
+    if (input === "/" && (tab === "discover" || tab === "installed") && !isOverlayOpen) {
+      setSearchFocused(true);
+      return;
+    }
+
     // Manual refresh: git pull source repo + reload everything
     if (input === "R") {
       void pullSourceRepo().then(() => refreshTabData(tab, { force: true }));
       return;
     }
 
-    // Quit
-    if (input === "q" && !search) {
+    // Quit. Global shortcuts (including this one) are already suppressed while the
+    // search box is focused via the searchFocused guard above.
+    if (input === "q") {
       exit();
       return;
     }
@@ -2541,7 +2583,12 @@ export function App() {
           selectedIndex={actionIndex}
         />
       ) : (
-        <TabContent tab={tab} />
+        <TabContent
+          tab={tab}
+          searchFocused={searchFocused}
+          onSearchFocus={() => setSearchFocused(true)}
+          onSearchBlur={() => setSearchFocused(false)}
+        />
       )}
 
       <Notifications />

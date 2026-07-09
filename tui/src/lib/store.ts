@@ -35,7 +35,7 @@ import type {
   ManagedToolRow,
   ToolDetectionResult,
 } from "./types.js";
-import { fetchMarketplace, loadAllPiMarketplaces, getAllPiPackages, loadPiSettings, isPackageInstalled, fetchNpmPackageDetails, getGlobalPiPackageInstallInfo, getSourceType, normalizePiPackageSource } from "./marketplace.js";
+import { fetchMarketplace, loadAllPiMarketplaces, getAllPiPackages, loadPiSettings, isPackageInstalled, fetchNpmPackageDetails, getGlobalPiPackageInstallInfo, getSourceType, normalizePiPackageSource, resetFetchErrors, getFetchErrors } from "./marketplace.js";
 import { installPiPackage, removePiPackage, updatePiPackage, repairPiPackageManager } from "./pi-install.js";
 import {
   parseMarketplaces,
@@ -728,6 +728,15 @@ function buildToolSyncPreview(
 const TOOL_OUTPUT_MAX_LINES = 200;
 let toolActionAbortController: AbortController | null = null;
 
+// Guards against double-triggering plugin/sync mutations. A user can press Enter
+// twice before the first async operation resolves and the UI updates, which
+// would otherwise run two overlapping installs/uninstalls/syncs against the same
+// target — racing manifest writes, copying files twice, colliding backups.
+// Keyed by target (plugin name, or a fixed key for the batch sync). Mirrors the
+// `toolActionInProgress` single-flight guard used by the tool lifecycle actions.
+const pluginActionInFlight = new Set<string>();
+const SYNC_TOOLS_KEY = "__syncTools__";
+
 /** Strip ANSI escape sequences so Ink doesn't re-interpret raw codes. */
 function stripAnsi(str: string): string {
   // eslint-disable-next-line no-control-regex
@@ -1254,6 +1263,9 @@ export const useStore = create<Store>((rawSet, get) => {
     }
 
     try {
+      // Clear prior fetch errors so an offline npm/git marketplace is
+      // distinguishable from a genuinely empty package list below.
+      resetFetchErrors();
       const marketplaces = await loadAllPiMarketplaces();
       const preferredManager = getPackageManager();
       let packages: PiPackage[] = getAllPiPackages(marketplaces).map((pkg) => ({ ...pkg, preferredManager }));
@@ -1367,6 +1379,14 @@ export const useStore = create<Store>((rawSet, get) => {
         piMarketplaces: marketplaces,
         managedItems: composeManagedItems(state.installedPlugins, state.files, packages),
       });
+
+      // Surface fetch failures distinctly (unless caller asked for silence) so
+      // an offline registry doesn't look like "no packages available".
+      const errors = getFetchErrors();
+      if (errors.length > 0 && !silent) {
+        const summary = errors.length === 1 ? errors[0] : `${errors[0]} (+${errors.length - 1} more)`;
+        get().notify(`Failed to fetch Pi packages: ${summary}`, "error");
+      }
     } catch (error) {
       console.error("Failed to load Pi packages:", error);
       const state = get();
@@ -1712,6 +1732,10 @@ export const useStore = create<Store>((rawSet, get) => {
       const marketplaces = parseMarketplaces();
       const tools = getToolInstances();
 
+      // Clear any prior fetch errors so we can tell "offline" apart from
+      // "genuinely empty" after the fetches below complete.
+      resetFetchErrors();
+
       // STEP 1: Fetch all marketplaces FIRST (get plugin metadata with skill names)
       const enrichedMarketplaces: Marketplace[] = await Promise.all(
         marketplaces.map(async (m) => {
@@ -1776,6 +1800,14 @@ export const useStore = create<Store>((rawSet, get) => {
         managedTools: getManagedToolRows(),
         managedItems: composeManagedItems(installedWithStatus, state.files, state.piPackages),
       });
+
+      // Surface fetch failures distinctly from a genuinely empty marketplace so
+      // "offline" doesn't silently render as "0 plugins available".
+      const errors = getFetchErrors();
+      if (errors.length > 0) {
+        const summary = errors.length === 1 ? errors[0] : `${errors[0]} (+${errors.length - 1} more)`;
+        get().notify(`Failed to fetch marketplace data: ${summary}`, "error");
+      }
     } catch (e) {
       set({ error: String(e) });
     }
@@ -2157,95 +2189,122 @@ export const useStore = create<Store>((rawSet, get) => {
   },
 
   installPlugin: async (plugin) => {
-    invalidatePluginToolStatusCache();
     const { notify, clearNotification } = get();
-    const marketplace = get().marketplaces.find((m) => m.name === plugin.marketplace);
-    if (!marketplace) { notify(`Marketplace not found for ${plugin.name}`, "error"); return false; }
-    const result = await withSpinner(`Installing ${plugin.name}...`,
-      () => installPlugin(plugin, marketplace.url), notify, clearNotification);
-    
-    if (result.success) {
-      await get().refreshAll({ silent: true });
-      
-      const parts: string[] = [];
-      const toolList = get().tools;
-      const nameByKey = new Map(
-        toolList.map((tool) => [instanceKey(tool.toolId, tool.instanceId), tool.name])
-      );
-      for (const [key, count] of Object.entries(result.linkedInstances)) {
-        if (count > 0) {
-          const toolName = nameByKey.get(key) || key;
-          parts.push(`${toolName} (${count})`);
-        }
-      }
-      
-      if (parts.length > 0) {
-        const skipped = result.skippedInstances.length > 0
-          ? ` (skipped: ${result.skippedInstances.map((key) => nameByKey.get(key) || key).join(", ")})`
-          : "";
-        notify(`✓ Installed ${plugin.name} → ${parts.join(", ")}${skipped}`, "success");
-      } else {
-        notify(`⚠ Install ran but no items linked for ${plugin.name}`, "error");
-      }
-    } else {
-      notify(`✗ Failed to install ${plugin.name}: ${result.errors.join("; ")}`, "error");
+    if (pluginActionInFlight.has(plugin.name)) {
+      notify(`Already installing ${plugin.name}...`, "warning");
+      return false;
     }
-    return result.success;
+    pluginActionInFlight.add(plugin.name);
+    try {
+      invalidatePluginToolStatusCache();
+      const marketplace = get().marketplaces.find((m) => m.name === plugin.marketplace);
+      if (!marketplace) { notify(`Marketplace not found for ${plugin.name}`, "error"); return false; }
+      const result = await withSpinner(`Installing ${plugin.name}...`,
+        () => installPlugin(plugin, marketplace.url), notify, clearNotification);
+
+      if (result.success) {
+        await get().refreshAll({ silent: true });
+
+        const parts: string[] = [];
+        const toolList = get().tools;
+        const nameByKey = new Map(
+          toolList.map((tool) => [instanceKey(tool.toolId, tool.instanceId), tool.name])
+        );
+        for (const [key, count] of Object.entries(result.linkedInstances)) {
+          if (count > 0) {
+            const toolName = nameByKey.get(key) || key;
+            parts.push(`${toolName} (${count})`);
+          }
+        }
+
+        if (parts.length > 0) {
+          const skipped = result.skippedInstances.length > 0
+            ? ` (skipped: ${result.skippedInstances.map((key) => nameByKey.get(key) || key).join(", ")})`
+            : "";
+          notify(`✓ Installed ${plugin.name} → ${parts.join(", ")}${skipped}`, "success");
+        } else {
+          notify(`⚠ Install ran but no items linked for ${plugin.name}`, "error");
+        }
+      } else {
+        notify(`✗ Failed to install ${plugin.name}: ${result.errors.join("; ")}`, "error");
+      }
+      return result.success;
+    } finally {
+      pluginActionInFlight.delete(plugin.name);
+    }
   },
 
   uninstallPlugin: async (plugin) => {
-    invalidatePluginToolStatusCache();
     const { notify, clearNotification } = get();
-    const enabledInstances = getEnabledToolInstances();
-    if (enabledInstances.length === 0) { notify("No tools enabled in config.", "error"); return false; }
-    const success = await withSpinner(`Uninstalling ${plugin.name}...`, () => uninstallPlugin(plugin), notify, clearNotification);
-    await get().refreshAll({ silent: true });
-    notify(success ? `✓ Uninstalled ${plugin.name}` : `✓ Removed ${plugin.name} from other tools`, "success");
-    return success;
+    if (pluginActionInFlight.has(plugin.name)) {
+      notify(`Already uninstalling ${plugin.name}...`, "warning");
+      return false;
+    }
+    pluginActionInFlight.add(plugin.name);
+    try {
+      invalidatePluginToolStatusCache();
+      const enabledInstances = getEnabledToolInstances();
+      if (enabledInstances.length === 0) { notify("No tools enabled in config.", "error"); return false; }
+      const success = await withSpinner(`Uninstalling ${plugin.name}...`, () => uninstallPlugin(plugin), notify, clearNotification);
+      await get().refreshAll({ silent: true });
+      notify(success ? `✓ Uninstalled ${plugin.name}` : `✓ Removed ${plugin.name} from other tools`, "success");
+      return success;
+    } finally {
+      pluginActionInFlight.delete(plugin.name);
+    }
   },
 
   updatePlugin: async (plugin) => {
-    invalidatePluginToolStatusCache();
     const { notify } = get();
-    const marketplace = get().marketplaces.find(
-      (m) => m.name === plugin.marketplace
-    );
-    if (!marketplace) {
-      notify(`Marketplace not found for ${plugin.name}`, "error");
+    if (pluginActionInFlight.has(plugin.name)) {
+      notify(`Already updating ${plugin.name}...`, "warning");
       return false;
     }
-
-    notify(`Updating ${plugin.name}...`, "info");
-    const result = await updatePlugin(plugin, marketplace.url);
-    
-    if (result.success) {
-      await get().refreshAll({ silent: true });
-      get().refreshDetail();
-      
-      const parts: string[] = [];
-      const toolList = get().tools;
-      const nameByKey = new Map(
-        toolList.map((tool) => [instanceKey(tool.toolId, tool.instanceId), tool.name])
+    pluginActionInFlight.add(plugin.name);
+    try {
+      invalidatePluginToolStatusCache();
+      const marketplace = get().marketplaces.find(
+        (m) => m.name === plugin.marketplace
       );
-      for (const [key, count] of Object.entries(result.linkedInstances)) {
-        if (count > 0) {
-          const toolName = nameByKey.get(key) || key;
-          parts.push(`${toolName} (${count})`);
+      if (!marketplace) {
+        notify(`Marketplace not found for ${plugin.name}`, "error");
+        return false;
+      }
+
+      notify(`Updating ${plugin.name}...`, "info");
+      const result = await updatePlugin(plugin, marketplace.url);
+
+      if (result.success) {
+        await get().refreshAll({ silent: true });
+        get().refreshDetail();
+
+        const parts: string[] = [];
+        const toolList = get().tools;
+        const nameByKey = new Map(
+          toolList.map((tool) => [instanceKey(tool.toolId, tool.instanceId), tool.name])
+        );
+        for (const [key, count] of Object.entries(result.linkedInstances)) {
+          if (count > 0) {
+            const toolName = nameByKey.get(key) || key;
+            parts.push(`${toolName} (${count})`);
+          }
         }
-      }
-      
-      if (parts.length > 0) {
-        const skipped = result.skippedInstances.length > 0
-          ? ` (skipped: ${result.skippedInstances.map((key) => nameByKey.get(key) || key).join(", ")})`
-          : "";
-        notify(`✓ Updated ${plugin.name} → ${parts.join(", ")}${skipped}`, "success");
+
+        if (parts.length > 0) {
+          const skipped = result.skippedInstances.length > 0
+            ? ` (skipped: ${result.skippedInstances.map((key) => nameByKey.get(key) || key).join(", ")})`
+            : "";
+          notify(`✓ Updated ${plugin.name} → ${parts.join(", ")}${skipped}`, "success");
+        } else {
+          notify(`✓ Updated ${plugin.name}`, "success");
+        }
       } else {
-        notify(`✓ Updated ${plugin.name}`, "success");
+        notify(`✗ Failed to update ${plugin.name}: ${result.errors.join("; ")}`, "error");
       }
-    } else {
-      notify(`✗ Failed to update ${plugin.name}: ${result.errors.join("; ")}`, "error");
+      return result.success;
+    } finally {
+      pluginActionInFlight.delete(plugin.name);
     }
-    return result.success;
   },
 
   removePluginFromGit: async (plugin) => {
@@ -2418,6 +2477,14 @@ export const useStore = create<Store>((rawSet, get) => {
       notify("All enabled instances are in sync.", "success");
       return;
     }
+    // Single-flight guard: a second Enter-press before this batch resolves would
+    // otherwise run overlapping syncs, racing file copies and manifest writes.
+    if (pluginActionInFlight.has(SYNC_TOOLS_KEY)) {
+      notify("A sync is already running...", "warning");
+      return;
+    }
+    pluginActionInFlight.add(SYNC_TOOLS_KEY);
+    try {
 
     const marketplaces = get().marketplaces;
     notify(`Syncing ${items.length} items...`, "info");
@@ -2537,6 +2604,9 @@ export const useStore = create<Store>((rawSet, get) => {
     }
 
     get().refreshDetail();
+    } finally {
+      pluginActionInFlight.delete(SYNC_TOOLS_KEY);
+    }
   },
 
   addMarketplace: (name, url) => {

@@ -14,7 +14,8 @@ import {
 } from "fs";
 import { join, dirname } from "path";
 import { tmpdir } from "os";
-import type { Plugin, ToolInstance } from "./types.js";
+import type { Plugin, ToolInstance, InstalledItem } from "./types.js";
+import type { Manifest } from "./manifest.js";
 import { getCacheDir } from "./config.js";
 import { safePath, validatePluginName, validateMarketplaceName, validateItemName, logError } from "./validation.js";
 
@@ -41,17 +42,127 @@ export function getPluginSourcePath(plugin: Plugin): string | null {
   }
 }
 
+/**
+ * Context needed to build a per-plugin, per-tool-instance backup path. Scoping
+ * the backup by BOTH the owning plugin and the specific tool instance prevents
+ * one plugin's (or one instance's) backup from clobbering another's when they
+ * happen to share a same-named component.
+ */
+export interface BackupContext {
+  /** `${toolId}:${instanceId}` — see instanceKey(). */
+  instanceScope: string;
+  pluginName: string;
+  itemKind: string;
+  itemName: string;
+}
+
 export function buildBackupPath(
+  instanceScope: string,
   pluginName: string,
   itemKind: string,
   itemName: string
 ): string {
   validatePluginName(pluginName);
   validateItemName(itemKind, itemName);
+  // instanceScope is derived from internal tool config (not untrusted input),
+  // but safePath still guards against traversal via `..`, slashes, or NUL.
   const backupRoot = join(getCacheDir(), "backups");
-  const backupPath = safePath(backupRoot, itemKind, itemName);
+  const backupPath = safePath(backupRoot, instanceScope, pluginName, itemKind, itemName);
   mkdirSync(dirname(backupPath), { recursive: true });
   return backupPath;
+}
+
+// ── Manifest item keys ────────────────────────────────────────────────────────
+// Manifest items are keyed by owner so that same-named components shipped by two
+// different plugins never collide. Older manifests used the un-owned
+// `"<kind>:<name>"` form; migrateManifestKeys() rewrites those on load.
+
+const UNOWNED_MANIFEST_OWNER = "__unowned__";
+
+export function buildManifestItemKey(
+  owner: string | undefined,
+  kind: string,
+  name: string
+): string {
+  const ownerKey = owner && owner.length > 0 ? owner : UNOWNED_MANIFEST_OWNER;
+  return `${ownerKey}:${kind}:${name}`;
+}
+
+function appendChain(
+  head: InstalledItem | null,
+  tail: InstalledItem | null
+): InstalledItem | null {
+  if (!head) return tail;
+  let node = head;
+  while (node.previous) node = node.previous;
+  node.previous = tail;
+  return head;
+}
+
+/**
+ * Insert `item` (which may carry a `previous` chain of mixed owners) into the
+ * rebuilt owner-keyed map. Entries in the `previous` chain that belong to a
+ * DIFFERENT owner are detached and promoted to their own top-level owner-keyed
+ * entry, so uninstalling that other owner can still find them. Returns the
+ * canonical key the (top-level) item was stored under.
+ */
+function insertMigratedItem(
+  rebuilt: Record<string, InstalledItem>,
+  item: InstalledItem
+): string {
+  const key = buildManifestItemKey(item.owner, item.kind, item.name);
+
+  const kept: InstalledItem[] = [];
+  const detached: InstalledItem[] = [];
+  let cur: InstalledItem | null | undefined = item.previous;
+  while (cur) {
+    const next: InstalledItem | null | undefined = cur.previous;
+    const node: InstalledItem = { ...cur, previous: null };
+    if (buildManifestItemKey(cur.owner, cur.kind, cur.name) === key) {
+      kept.push(node);
+    } else {
+      detached.push(node);
+    }
+    cur = next;
+  }
+
+  // Rebuild the same-owner nested chain, preserving original order.
+  let nested: InstalledItem | null = null;
+  for (let i = kept.length - 1; i >= 0; i--) {
+    kept[i].previous = nested;
+    nested = kept[i];
+  }
+
+  const normalized: InstalledItem = { ...item, previous: nested };
+  if (rebuilt[key]) {
+    // Two distinct chains resolve to the same owner key — chain rather than drop.
+    normalized.previous = appendChain(normalized.previous ?? null, rebuilt[key]);
+  }
+  rebuilt[key] = normalized;
+
+  for (const d of detached) insertMigratedItem(rebuilt, d);
+  return key;
+}
+
+/**
+ * Migrate a manifest's item keys from the legacy `"<kind>:<name>"` form to the
+ * owner-scoped `"<owner>:<kind>:<name>"` form, in place. Entries with no
+ * recorded owner are preserved under an `__unowned__` fallback (never dropped).
+ * Returns true if any key changed. Idempotent.
+ */
+export function migrateManifestKeys(manifest: Manifest): boolean {
+  let changed = false;
+  for (const toolKey of Object.keys(manifest.tools)) {
+    const toolEntry = manifest.tools[toolKey];
+    if (!toolEntry || !toolEntry.items) continue;
+    const rebuilt: Record<string, InstalledItem> = {};
+    for (const [oldKey, item] of Object.entries(toolEntry.items)) {
+      const canonicalKey = insertMigratedItem(rebuilt, item);
+      if (canonicalKey !== oldKey) changed = true;
+    }
+    toolEntry.items = rebuilt;
+  }
+  return changed;
 }
 
 export function buildLooseBackupPath(target: string): string {
@@ -88,9 +199,7 @@ export function isSymlink(path: string): boolean {
 export function createSymlink(
   source: string,
   target: string,
-  pluginName?: string,
-  itemKind?: string,
-  itemName?: string
+  backup?: BackupContext
 ): SymlinkResult {
   if (!existsSync(source)) {
     return { success: false, code: "SOURCE_NOT_FOUND", message: `Source not found: ${source}` };
@@ -110,8 +219,8 @@ export function createSymlink(
     }
 
     let backupPath: string;
-    if (pluginName && itemKind && itemName) {
-      backupPath = buildBackupPath(pluginName, itemKind, itemName);
+    if (backup) {
+      backupPath = buildBackupPath(backup.instanceScope, backup.pluginName, backup.itemKind, backup.itemName);
     } else {
       backupPath = buildLooseBackupPath(target);
     }

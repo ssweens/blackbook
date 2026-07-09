@@ -9,8 +9,8 @@ import type { Plugin, ToolInstance } from "./types.js";
 import { getToolInstances, getEnabledToolInstances, setPluginComponentEnabled } from "./config.js";
 import { loadPiSettings, normalizePiPackageSource } from "./marketplace.js";
 import { safePath, validatePluginMetadata, logError } from "./validation.js";
-import { loadManifest, saveManifest } from "./manifest.js";
-import { getPluginSourcePath, instanceKey, createSymlink, isSymlink } from "./plugin-helpers.js";
+import { loadManifest, saveManifest, type Manifest } from "./manifest.js";
+import { getPluginSourcePath, instanceKey, createSymlink, isSymlink, buildManifestItemKey, migrateManifestKeys } from "./plugin-helpers.js";
 import { countGetPluginToolStatus } from "./perf.js";
 import { getPiBridgeInstalledPluginIds as loadPiBridgeInstalledPluginIds } from "./pi-bridge.js";
 
@@ -67,6 +67,29 @@ function isPiPluginBridgeReady(): boolean {
 
 function isConfigOnlyInstance(instance: ToolInstance): boolean {
   return !instance.skillsSubdir && !instance.commandsSubdir && !instance.agentsSubdir;
+}
+
+/**
+ * Whether Blackbook's own manifest records a file-copy install of `pluginName`
+ * for this instance. Codex is materialized via file-copy (like OpenCode/Amp),
+ * so `codex plugin list` alone never sees Blackbook-installed plugins; this
+ * lets the status check recognize them. Checks both the bare toolId key and the
+ * `toolId:instanceId` key, matching getInstalledPluginsForInstance().
+ */
+function manifestHasPluginForInstance(
+  manifest: Manifest,
+  instance: ToolInstance,
+  pluginName: string,
+): boolean {
+  const keys = [instance.toolId, `${instance.toolId}:${instance.instanceId}`];
+  for (const key of keys) {
+    const items = manifest.tools[key]?.items;
+    if (!items) continue;
+    for (const item of Object.values(items)) {
+      if ((item.owner || "") === pluginName) return true;
+    }
+  }
+  return false;
 }
 
 // ── Status Cache ────────────────────────────────────────────────────────────
@@ -168,6 +191,10 @@ function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
   }
   const instances = getToolInstances().filter((i) => i.kind === "tool");
 
+  // Loaded lazily on first Codex instance: Codex installs are file-copy based,
+  // so its installed-ness must also consult Blackbook's own manifest.
+  let manifest: Manifest | null = null;
+
   for (const instance of instances) {
     const hasSkills = plugin.skills.length > 0;
     const hasCommands = plugin.commands.length > 0;
@@ -219,11 +246,21 @@ function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
         const id2 = plugin.installedMarketplace ? `${plugin.name}@${plugin.installedMarketplace}` : "";
         installed = ids.has(id1) || (id2 ? ids.has(id2) : false);
       } else if (isCodex) {
-        // Codex native plugin manager check.
+        // Installed if EITHER Codex's native plugin manager knows about it OR
+        // Blackbook's own file-copy manifest records it for this instance.
         const ids = getCodexInstalledPluginIds();
         const id1 = `${plugin.name}@${plugin.marketplace}`;
         const id2 = plugin.installedMarketplace ? `${plugin.name}@${plugin.installedMarketplace}` : "";
-        installed = ids.has(id1) || (id2 ? ids.has(id2) : false);
+        const nativeInstalled = ids.has(id1) || (id2 ? ids.has(id2) : false);
+        if (nativeInstalled) {
+          installed = true;
+        } else {
+          if (manifest === null) {
+            manifest = loadManifest();
+            migrateManifestKeys(manifest);
+          }
+          installed = manifestHasPluginForInstance(manifest, instance, plugin.name);
+        }
       }
     }
 
@@ -268,12 +305,14 @@ export function togglePluginComponent(
 
   const instances = getEnabledToolInstances();
   const manifest = loadManifest();
+  migrateManifestKeys(manifest);
   const sourcePath = getPluginSourcePath(plugin);
+  const failures: string[] = [];
 
   for (const instance of instances) {
     if (isConfigOnlyInstance(instance)) continue;
     const key = instanceKey(instance);
-    const itemKey = `${kind}:${componentName}`;
+    const itemKey = buildManifestItemKey(plugin.name, kind, componentName);
 
     if (!enabled) {
       // Remove the component from this instance
@@ -303,6 +342,9 @@ export function togglePluginComponent(
         }
       } catch (error) {
         logError(`Failed to remove ${kind} ${componentName} from ${instance.name}`, error);
+        failures.push(
+          `Failed to remove ${kind} ${componentName} from ${instance.name}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
 
       // Restore backup if exists
@@ -311,6 +353,9 @@ export function togglePluginComponent(
           renameSync(item.backup, destPath);
         } catch (error) {
           logError(`Failed to restore backup for ${componentName}`, error);
+          failures.push(
+            `Failed to restore backup for ${componentName} in ${instance.name}: ${error instanceof Error ? error.message : String(error)}`,
+          );
         }
       }
 
@@ -343,7 +388,12 @@ export function togglePluginComponent(
         manifest.tools[key] = { items: {} };
       }
 
-      const result = createSymlink(src, dest, plugin.name, kind, componentName);
+      const result = createSymlink(src, dest, {
+        instanceScope: key,
+        pluginName: plugin.name,
+        itemKind: kind,
+        itemName: componentName,
+      });
       if (result.success) {
         manifest.tools[key].items[itemKey] = {
           kind,
@@ -354,10 +404,17 @@ export function togglePluginComponent(
           owner: plugin.name,
           previous: null,
         };
+      } else {
+        failures.push(
+          `Failed to enable ${kind} ${componentName} in ${instance.name}: ${result.message}`,
+        );
       }
     }
   }
 
   saveManifest(manifest);
+  if (failures.length > 0) {
+    return { success: false, error: failures.join("; ") };
+  }
   return { success: true };
 }

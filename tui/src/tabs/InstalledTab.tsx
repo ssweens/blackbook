@@ -90,9 +90,12 @@ function distributeHeights(
 
 export interface InstalledTabProps {
   contentHeight: number;
+  searchFocused: boolean;
+  onSearchFocus: () => void;
+  onSearchBlur: () => void;
 }
 
-export function InstalledTab({ contentHeight }: InstalledTabProps) {
+export function InstalledTab({ contentHeight, searchFocused, onSearchFocus, onSearchBlur }: InstalledTabProps) {
   const search = useStore((s) => s.search);
   const setSearch = useStore((s) => s.setSearch);
   const selectedIndex = useStore((s) => s.selectedIndex);
@@ -351,6 +354,9 @@ export function InstalledTab({ contentHeight }: InstalledTabProps) {
             value={search}
             onChange={setSearch}
             placeholder="Search installed files and plugins..."
+            focus={searchFocused}
+            onFocus={onSearchFocus}
+            onBlur={onSearchBlur}
           />
         </Box>
         <Box marginLeft={2}>

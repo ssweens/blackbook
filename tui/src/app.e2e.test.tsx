@@ -1151,6 +1151,94 @@ describe("App E2E — Discover Tab", () => {
       unmount();
     }
   });
+
+  it("scrubs Discover Pi Packages sub-view so Enter always opens the highlighted package", async () => {
+    // Crafted so the OLD App-side sort (name → sourceType → source) disagrees with
+    // the rendered DiscoverTab sort (installed-first → non-npm → downloads → name).
+    // With a single shared derivation, the highlighted row and the Enter target agree.
+    const pkgSpecs = [
+      { name: "pi-zebra", installed: true },
+      { name: "pi-apple", installed: false },
+      { name: "pi-mango", installed: false },
+      { name: "pi-cherry", installed: true },
+    ];
+    const pkgByName = new Map<string, PiPackage>();
+    const piPackages = pkgSpecs.map(({ name, installed }) => {
+      const pkg = createPiPackage({
+        name,
+        installed,
+        recommended: !installed,
+        source: `../../src/pi-packages/${name}`,
+        sourceType: "local",
+        marketplace: "local",
+        description: `Unique pi detail for ${name}`,
+      });
+      pkgByName.set(name, pkg);
+      return pkg;
+    });
+    // Shared default order: installed-first (by name), then non-installed (by name).
+    const expectedOrder = ["pi-cherry", "pi-zebra", "pi-apple", "pi-mango"];
+
+    useStore.setState({
+      tab: "discover",
+      discoverSubView: "piPackages",
+      selectedIndex: 0,
+      search: "",
+      sortBy: "default",
+      sortDir: "asc",
+      marketplaces: [],
+      piPackages,
+      piPackagesLoaded: true,
+    });
+
+    const { stdout, stdin, unmount } = render(<App />);
+
+    const assertHighlighted = async (index: number) => {
+      const name = expectedOrder[index];
+      const frame = await waitForFrame(stdout.lastFrame, (f) =>
+        f.includes("Pi Packages") && f.includes(`❯ ${name}`),
+      );
+      expect(useStore.getState().selectedIndex).toBe(index);
+      expectSelectedRow(frame, name);
+    };
+
+    const assertEnterOpens = async (name: string) => {
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (f) =>
+        f.includes(name) && f.includes(`Unique pi detail for ${name}`),
+      );
+      expect(useStore.getState().detail?.kind).toBe("piPackage");
+      expect((useStore.getState().detail?.data as PiPackage).source).toBe(pkgByName.get(name)!.source);
+      sendKey(stdin, KEYS.escape);
+    };
+
+    try {
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Pi Packages"), 5000);
+      await settleInput();
+
+      await assertHighlighted(0);
+      for (let index = 1; index < expectedOrder.length; index += 1) {
+        sendKey(stdin, KEYS.down);
+        await assertHighlighted(index);
+      }
+      for (let index = expectedOrder.length - 2; index >= 0; index -= 1) {
+        sendKey(stdin, KEYS.up);
+        await assertHighlighted(index);
+      }
+
+      // At each cursor position, Enter opens the SAME package that is highlighted.
+      for (let index = 0; index < expectedOrder.length; index += 1) {
+        await assertHighlighted(index);
+        await assertEnterOpens(expectedOrder[index]);
+        await assertHighlighted(index);
+        if (index < expectedOrder.length - 1) {
+          sendKey(stdin, KEYS.down);
+        }
+      }
+    } finally {
+      unmount();
+    }
+  });
 });
 
 describe("App E2E — Sync Tab", () => {
@@ -1197,6 +1285,148 @@ describe("App E2E — Sync Tab", () => {
       expect(stdout.lastFrame()).toContain("Tool: Claude");
       expect(stdout.lastFrame()).toContain("Installed: v1.0.0");
       expect(stdout.lastFrame()).toContain("Latest: v1.2.0");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("checks the right namespaced skill on Space and syncs exactly that one", async () => {
+    // Two skills sharing the bare name "deploy" but living in different namespaces.
+    // The unqualified key (old App bug) would collide them and never render a check.
+    const makeSkill = (namespace: string) => ({
+      name: "deploy",
+      namespace,
+      installations: [],
+      diskPath: `/tmp/${namespace}/deploy`,
+      toolId: "claude-code",
+      instanceName: "Claude",
+      instanceId: "default",
+    });
+    const skillItemAlpha = {
+      kind: "skill" as const,
+      skill: makeSkill("alpha"),
+      driftedInstances: [],
+      missingInstances: ["Claude"],
+    };
+    const skillItemBeta = {
+      kind: "skill" as const,
+      skill: makeSkill("beta"),
+      driftedInstances: [],
+      missingInstances: ["Claude"],
+    };
+    const syncTools = vi.fn();
+
+    useStore.setState({
+      tab: "sync",
+      selectedIndex: 0,
+      notifications: [],
+      syncSelection: [],
+      syncArmed: false,
+      getSyncPreview: () => [skillItemAlpha, skillItemBeta] as any,
+      syncTools: syncTools as any,
+    });
+
+    const { stdout, stdin, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) =>
+        f.includes("alpha/deploy") && f.includes("beta/deploy"),
+      );
+      await settleInput();
+
+      // Toggle the first (alpha/deploy) with Space.
+      sendKey(stdin, KEYS.space);
+
+      const checkedFrame = await waitForFrame(stdout.lastFrame, (f) => {
+        const alphaRow = f.split("\n").find((l) => l.includes("alpha/deploy")) ?? "";
+        return alphaRow.includes("[x]");
+      });
+
+      const rowFor = (name: string) =>
+        checkedFrame.split("\n").find((l) => l.includes(name)) ?? "";
+      // alpha/deploy is checked; beta/deploy stays unchecked (no collision).
+      expect(rowFor("alpha/deploy")).toContain("[x]");
+      expect(rowFor("beta/deploy")).toContain("[ ]");
+      // Footer count keys off the same unified function.
+      expect(checkedFrame).toContain("(1 selected)");
+      expect(useStore.getState().syncSelection).toEqual(["skill:alpha/deploy"]);
+
+      // Confirm sync (y then y) — only the selected skill is synced.
+      sendKey(stdin, "y");
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Press y again to confirm"));
+      sendKey(stdin, "y");
+
+      await waitForFrame(stdout.lastFrame, () => syncTools.mock.calls.length > 0);
+      expect(syncTools).toHaveBeenCalledTimes(1);
+      const syncedItems = syncTools.mock.calls[0][0];
+      expect(syncedItems).toHaveLength(1);
+      expect(syncedItems[0].skill.namespace).toBe("alpha");
+      expect(syncedItems[0].skill.name).toBe("deploy");
+    } finally {
+      unmount();
+    }
+  });
+});
+
+describe("App E2E — Search", () => {
+  beforeEach(() => {
+    setupMocks();
+    useStore.setState(defaultStoreState());
+  });
+
+  it("focuses on /, filters live while typing, suppresses global shortcuts, and restores them on Esc", async () => {
+    useStore.setState({
+      tab: "installed",
+      search: "",
+      selectedIndex: 0,
+      installedPlugins: [
+        createPlugin({ name: "alpha-plugin" }),
+        createPlugin({ name: "beta-plugin" }),
+        createPlugin({ name: "gamma-plugin" }),
+      ],
+      installedPluginsLoaded: true,
+      filesLoaded: true,
+      piPackagesLoaded: true,
+    });
+
+    const { stdout, stdin, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) =>
+        f.includes("alpha-plugin") && f.includes("beta-plugin") && f.includes("gamma-plugin"),
+      );
+      await settleInput();
+
+      // Press "/" to focus the search box (shows the focused "●" indicator).
+      sendKey(stdin, "/");
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("●"));
+
+      // Typing narrows the list live and updates the store's search term.
+      for (const ch of "beta") sendKey(stdin, ch);
+      await waitForFrame(stdout.lastFrame, (f) =>
+        f.includes("beta-plugin") && !f.includes("alpha-plugin") && !f.includes("gamma-plugin"),
+      );
+      expect(useStore.getState().search).toBe("beta");
+
+      // A digit that would normally switch tabs must NOT do so while focused —
+      // it is a keystroke for the search box instead.
+      sendKey(stdin, "1");
+      await settleInput();
+      expect(useStore.getState().tab).toBe("installed");
+      expect(useStore.getState().search).toBe("beta1");
+
+      // Esc cancels the search (clears it) and returns to list navigation.
+      sendKey(stdin, KEYS.escape);
+      await waitForFrame(stdout.lastFrame, (f) =>
+        !f.includes("●") &&
+        f.includes("alpha-plugin") &&
+        f.includes("beta-plugin") &&
+        f.includes("gamma-plugin"),
+      );
+      expect(useStore.getState().search).toBe("");
+
+      // Global shortcuts work again: "1" switches to the Sync tab.
+      sendKey(stdin, "1");
+      await waitForFrame(stdout.lastFrame, () => useStore.getState().tab === "sync");
+      expect(useStore.getState().tab).toBe("sync");
     } finally {
       unmount();
     }

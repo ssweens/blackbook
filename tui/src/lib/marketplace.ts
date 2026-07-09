@@ -15,6 +15,31 @@ export const MARKETPLACE_CACHE_TTL_SECONDS = 600;
 const execFileAsync = promisify(execFile);
 const repoTreeMemoryCache = new Map<string, string[]>();
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Fetch-error surfacing
+//
+// Many fetch helpers below return [] / null on network failure so that a broken
+// connection degrades gracefully. But "the fetch failed" is not the same as
+// "there genuinely are zero items" — without a signal the UI shows an empty list
+// that looks identical to being offline. These helpers accumulate the real
+// errors so a caller (store.ts) can distinguish the two: reset before a batch of
+// fetches, then read afterwards.
+// ─────────────────────────────────────────────────────────────────────────────
+let fetchErrors: string[] = [];
+
+export function resetFetchErrors(): void {
+  fetchErrors = [];
+}
+
+export function getFetchErrors(): string[] {
+  return [...fetchErrors];
+}
+
+function recordFetchError(message: string): void {
+  fetchErrors.push(message);
+  console.error(message);
+}
+
 function getCachePath(key: string): string {
   const hash = createHash("md5").update(key).digest("hex");
   const cacheDir = join(getCacheDir(), "http_cache");
@@ -142,8 +167,9 @@ async function _fetchGitHubTree(repo: string, branch: string, path: string, atte
       return [];
     }
     if (!res.ok) {
+      // 404 is an expected "path does not exist" — not a failure to surface.
       if (res.status !== 404) {
-        console.error(`Failed to fetch GitHub contents ${apiUrl}: HTTP ${res.status}`);
+        recordFetchError(`Failed to fetch GitHub contents ${apiUrl}: HTTP ${res.status}`);
       }
       return [];
     }
@@ -158,6 +184,7 @@ async function _fetchGitHubTree(repo: string, branch: string, path: string, atte
 
     return items;
   } catch (error) {
+    recordFetchError(`Failed to fetch GitHub contents ${apiUrl}: ${error instanceof Error ? error.message : String(error)}`);
     return [];
   }
 }
@@ -400,7 +427,7 @@ async function fetchRepoTreePaths(repo: string, branch: string): Promise<string[
     repoTreeMemoryCache.set(key, paths);
     return paths;
   } catch (error) {
-    console.error(`Failed to fetch repository tree for ${repo}@${branch}: ${error instanceof Error ? error.message : String(error)}`);
+    recordFetchError(`Failed to fetch repository tree for ${repo}@${branch}: ${error instanceof Error ? error.message : String(error)}`);
     return [];
   }
 }
@@ -509,7 +536,7 @@ export async function fetchMarketplace(
         }
         const res = await fetch(marketplace.url, { headers });
         if (!res.ok) {
-          console.error(`Failed to fetch marketplace ${marketplace.url}: HTTP ${res.status}`);
+          recordFetchError(`Failed to fetch marketplace ${marketplace.url}: HTTP ${res.status}`);
           return [];
         }
         data = await res.json();
@@ -529,7 +556,7 @@ export async function fetchMarketplace(
           data = JSON.parse(stdout);
           cacheSet(cacheKey, data);
         } catch (curlError) {
-          console.error(`Failed to fetch marketplace ${marketplace.url}: ${curlError instanceof Error ? curlError.message : String(curlError)}`);
+          recordFetchError(`Failed to fetch marketplace ${marketplace.url}: ${curlError instanceof Error ? curlError.message : String(curlError)}`);
           return [];
         }
       }
@@ -879,7 +906,8 @@ async function ensureGitMarketplaceCached(source: string): Promise<string | null
     }
 
     return cachePath;
-  } catch {
+  } catch (error) {
+    recordFetchError(`Failed to fetch git marketplace ${source}: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }
@@ -988,7 +1016,8 @@ export async function fetchNpmPackages(): Promise<PiPackage[]> {
         popularity: item.score?.detail?.popularity,
       };
     });
-  } catch {
+  } catch (error) {
+    recordFetchError(`Failed to fetch npm packages: ${error instanceof Error ? error.message : String(error)}`);
     return [];
   }
 }

@@ -136,6 +136,63 @@ describe("detectDrift", () => {
   });
 });
 
+describe("read-modify-write atomicity", () => {
+  it("merges into the current on-disk state rather than overwriting a concurrent write", () => {
+    // recordSync must read the latest file contents inside its lock, so an
+    // entry written to disk between two recordSync calls is preserved instead
+    // of being clobbered by a stale in-memory snapshot.
+    recordSync("a:tool:default:a.md", "a", "a", "/s/a", "/t/a");
+
+    // Simulate a concurrent writer persisting a different key directly to disk.
+    const statePath = join(TMP, "blackbook", "state.json");
+    const { readFileSync, writeFileSync } = require("fs");
+    const onDisk = JSON.parse(readFileSync(statePath, "utf-8"));
+    onDisk.files["b:tool:default:b.md"] = {
+      sourceHash: "b",
+      targetHash: "b",
+      syncedAt: "2026-02-17T00:00:00.000Z",
+      sourcePath: "/s/b",
+      targetPath: "/t/b",
+    };
+    writeFileSync(statePath, JSON.stringify(onDisk, null, 2));
+
+    // A subsequent mutation must not lose the externally-written "b" entry.
+    recordSync("c:tool:default:c.md", "c", "c", "/s/c", "/t/c");
+
+    const state = loadState();
+    expect(Object.keys(state.files).sort()).toEqual([
+      "a:tool:default:a.md",
+      "b:tool:default:b.md",
+      "c:tool:default:c.md",
+    ]);
+  });
+
+  it("does not lose updates across rapid-fire mutations of distinct keys", async () => {
+    const keys = Array.from({ length: 25 }, (_, i) => `k${i}:tool:default:f${i}.md`);
+    // Fan out as async tasks; each recordSync holds the single state lock across
+    // its whole load-mutate-save, so no update is lost.
+    await Promise.all(
+      keys.map((key) =>
+        Promise.resolve().then(() => recordSync(key, "h", "h", "/s", "/t")),
+      ),
+    );
+
+    const state = loadState();
+    expect(Object.keys(state.files).sort()).toEqual([...keys].sort());
+  });
+
+  it("clearEntry preserves other entries written concurrently", () => {
+    recordSync("keep:tool:default:keep.md", "k", "k", "/s/k", "/t/k");
+    recordSync("drop:tool:default:drop.md", "d", "d", "/s/d", "/t/d");
+
+    clearEntry("drop:tool:default:drop.md");
+
+    const state = loadState();
+    expect(state.files["keep:tool:default:keep.md"]).toBeDefined();
+    expect(state.files["drop:tool:default:drop.md"]).toBeUndefined();
+  });
+});
+
 describe("clearEntry", () => {
   it("removes an entry from state", () => {
     const key = "clear:claude-code:default:file.md";

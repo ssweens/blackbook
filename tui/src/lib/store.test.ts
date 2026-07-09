@@ -21,6 +21,7 @@ import {
   isPackageInstalled,
   fetchNpmPackageDetails,
   getGlobalPiPackageInstallInfo,
+  getFetchErrors,
 } from "./marketplace.js";
 import { installPiPackage, removePiPackage, repairPiPackageManager, updatePiPackage } from "./pi-install.js";
 import { resolveSourcePath, expandPath as expandConfigPath } from "./config/path.js";
@@ -71,6 +72,8 @@ vi.mock("./marketplace.js", async (importOriginal) => {
     isPackageInstalled: vi.fn().mockReturnValue(false),
     fetchNpmPackageDetails: vi.fn().mockResolvedValue(null),
     getGlobalPiPackageInstallInfo: vi.fn().mockReturnValue(new Map()),
+    resetFetchErrors: vi.fn(),
+    getFetchErrors: vi.fn().mockReturnValue([]),
   };
 });
 
@@ -2109,5 +2112,102 @@ describe("Unified skill detail actions", () => {
     expect(namespaceActions.some((a) => a.type === "pullback")).toBe(true);
     expect(namespaceActions.some((a) => a.type === "uninstall")).toBe(true);
     expect(namespaceActions.some((a) => a.type === "delete_everywhere")).toBe(true);
+  });
+});
+
+describe("Store plugin action busy-guard", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useStore.setState({ notifications: [] });
+  });
+
+  it("ignores a duplicate updatePlugin trigger while the first is still in flight", async () => {
+    const plugin = createMockPlugin({ name: "guarded-plugin", marketplace: "test-marketplace" });
+    const marketplace = createMockMarketplace({ name: "test-marketplace", plugins: [plugin] });
+
+    // Make the underlying update hang until we release it, so we can fire a
+    // second trigger before the first resolves.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    vi.mocked(updatePlugin).mockImplementation(async () => {
+      await gate;
+      return { success: true, linkedInstances: {}, skippedInstances: [], errors: [] };
+    });
+
+    const originalRefreshAll = useStore.getState().refreshAll;
+    useStore.setState({
+      marketplaces: [marketplace],
+      installedPlugins: [plugin],
+      tools: [createMockTool()],
+      refreshAll: async () => {},
+    });
+
+    try {
+      // Fire twice without awaiting the first.
+      const first = useStore.getState().updatePlugin(plugin);
+      const second = useStore.getState().updatePlugin(plugin);
+
+      const secondResult = await second; // duplicate returns immediately
+      expect(secondResult).toBe(false);
+
+      release();
+      const firstResult = await first;
+      expect(firstResult).toBe(true);
+    } finally {
+      useStore.setState({ refreshAll: originalRefreshAll });
+    }
+
+    // The real mutation ran exactly once despite two triggers.
+    expect(vi.mocked(updatePlugin)).toHaveBeenCalledTimes(1);
+    // ...and the user was told the duplicate was ignored.
+    const notes = useStore.getState().notifications;
+    expect(notes.some((n) => n.type === "warning" && /Already updating/.test(n.message))).toBe(true);
+
+    // Guard is released, so a later update is allowed again.
+    vi.mocked(updatePlugin).mockResolvedValue({ success: true, linkedInstances: {}, skippedInstances: [], errors: [] });
+    useStore.setState({ refreshAll: async () => {} });
+    await useStore.getState().updatePlugin(plugin);
+    expect(vi.mocked(updatePlugin)).toHaveBeenCalledTimes(2);
+    useStore.setState({ refreshAll: originalRefreshAll });
+  });
+});
+
+describe("Store marketplace fetch-error surfacing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Restore playbook mock defaults that an earlier suite resets via mockReset,
+    // so loadMarketplaces' managed-tool composition doesn't throw here.
+    vi.mocked(getAllPlaybooks).mockReturnValue(new Map());
+    vi.mocked(resolveToolInstances).mockReturnValue(new Map());
+    vi.mocked(isSyncTarget).mockReturnValue(true);
+    useStore.setState({ notifications: [], error: null });
+  });
+
+  it("notifies with an error when a marketplace fetch fails, even though the list is empty", async () => {
+    // Simulate an offline fetch: no plugins loaded, but the fetch layer recorded
+    // a real failure. The user must see an error, not a silent empty list.
+    vi.mocked(getToolInstances).mockReturnValue([createMockTool()]);
+    vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [], byTool: {} });
+    vi.mocked(getFetchErrors).mockReturnValue([
+      "Failed to fetch marketplace https://example.com/marketplace.json: HTTP 503",
+    ]);
+
+    await useStore.getState().loadMarketplaces();
+
+    const notes = useStore.getState().notifications;
+    const errorNote = notes.find((n) => n.type === "error");
+    expect(errorNote).toBeDefined();
+    expect(errorNote!.message).toMatch(/Failed to fetch marketplace data/);
+  });
+
+  it("stays quiet when marketplaces load successfully with genuinely zero errors", async () => {
+    vi.mocked(getToolInstances).mockReturnValue([createMockTool()]);
+    vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [], byTool: {} });
+    vi.mocked(getFetchErrors).mockReturnValue([]);
+
+    await useStore.getState().loadMarketplaces();
+
+    const notes = useStore.getState().notifications;
+    expect(notes.some((n) => n.type === "error")).toBe(false);
   });
 });

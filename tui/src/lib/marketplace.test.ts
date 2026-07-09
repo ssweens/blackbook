@@ -1,8 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { rmSync, existsSync, mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
+
+// marketplace.ts's `getGlobalNodeModulesPath` shells out to `npm/pnpm root -g`
+// (via execFileSync) whenever fetchNpmPackages() runs its global-install
+// cross-reference step. Stub just that export so tests stay fast and hermetic
+// instead of invoking real package managers (which can trigger a slow corepack
+// download in CI). No other code path in this file touches child_process.
+const { execFileSyncMock } = vi.hoisted(() => ({ execFileSyncMock: vi.fn() }));
+vi.mock("child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("child_process")>();
+  return { ...actual, execFileSync: execFileSyncMock };
+});
 import { tmpdir } from "os";
-import { fetchMarketplace } from "./marketplace.js";
+import { fetchMarketplace, fetchNpmPackages, getFetchErrors, resetFetchErrors } from "./marketplace.js";
 import { getCacheDir } from "./config.js";
 import type { Marketplace } from "./types.js";
 
@@ -431,6 +442,38 @@ describe("marketplace", () => {
       const plugins = await fetchMarketplace(mockMarketplace);
 
       expect(plugins).toEqual([]);
+    });
+  });
+
+  describe("fetch-error surfacing", () => {
+    it("records a distinguishable error when npm fetch fails (offline != empty)", async () => {
+      resetFetchErrors();
+      vi.spyOn(global, "fetch").mockRejectedValue(new Error("network down"));
+
+      const packages = await fetchNpmPackages();
+
+      // Backwards-compatible empty result for existing callers...
+      expect(packages).toEqual([]);
+      // ...but the failure is captured so callers can tell offline from empty.
+      const errors = getFetchErrors();
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors.some((e) => e.includes("Failed to fetch npm packages"))).toBe(true);
+    });
+
+    it("records no error when npm fetch genuinely returns zero packages", async () => {
+      resetFetchErrors();
+      vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ objects: [], total: 0 }),
+      } as Response);
+      execFileSyncMock.mockImplementation(() => {
+        throw new Error("not available in test environment");
+      });
+
+      const packages = await fetchNpmPackages();
+
+      expect(packages).toEqual([]);
+      expect(getFetchErrors()).toEqual([]);
     });
   });
 });

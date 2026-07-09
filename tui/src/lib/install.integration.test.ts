@@ -30,7 +30,14 @@ import {
   getStandaloneSkills,
   installSkillToInstance,
   migrateLegacyStandaloneSkillLayout,
+  buildManifestItemKey,
+  buildBackupPath,
+  migrateManifestKeys,
+  uninstallPluginFromInstance,
+  deleteFileEverywhere,
 } from "./install.js";
+import { togglePluginComponent } from "./plugin-status.js";
+import type { FileStatus } from "./types.js";
 import { invalidatePluginToolStatusCache } from "./plugin-status.js";
 import { getCacheDir, getToolInstances, updateToolInstanceConfig, TOOL_IDS } from "./config.js";
 import { getConfigPath as getYamlConfigPath, loadConfig as loadYamlConfig } from "./config/loader.js";
@@ -377,11 +384,11 @@ describe("enablePlugin", () => {
 
     const opencodeKey = `${getInstance("opencode").toolId}:${getInstance("opencode").instanceId}`;
     expect(manifest.tools[opencodeKey]).toBeDefined();
-    expect(manifest.tools[opencodeKey].items[`skill:${TEST_SKILL_NAME}`]).toBeDefined();
-    expect(manifest.tools[opencodeKey].items[`command:${TEST_COMMAND_NAME}`]).toBeDefined();
-    expect(manifest.tools[opencodeKey].items[`agent:${TEST_AGENT_NAME}`]).toBeDefined();
+    expect(manifest.tools[opencodeKey].items[buildManifestItemKey(TEST_PLUGIN_NAME, "skill", TEST_SKILL_NAME)]).toBeDefined();
+    expect(manifest.tools[opencodeKey].items[buildManifestItemKey(TEST_PLUGIN_NAME, "command", TEST_COMMAND_NAME)]).toBeDefined();
+    expect(manifest.tools[opencodeKey].items[buildManifestItemKey(TEST_PLUGIN_NAME, "agent", TEST_AGENT_NAME)]).toBeDefined();
 
-    const skillItem = manifest.tools[opencodeKey].items[`skill:${TEST_SKILL_NAME}`];
+    const skillItem = manifest.tools[opencodeKey].items[buildManifestItemKey(TEST_PLUGIN_NAME, "skill", TEST_SKILL_NAME)];
     expect(skillItem.kind).toBe("skill");
     expect(skillItem.name).toBe(TEST_SKILL_NAME);
     expect(skillItem.source).toContain(TEST_PLUGIN_NAME);
@@ -709,7 +716,7 @@ describe("backup and restore", () => {
 
     const manifest = loadManifest();
     const opencodeKey = `${instance.toolId}:${instance.instanceId}`;
-    const skillItem = manifest.tools[opencodeKey]?.items[`skill:${TEST_SKILL_NAME}`];
+    const skillItem = manifest.tools[opencodeKey]?.items[buildManifestItemKey(TEST_PLUGIN_NAME, "skill", TEST_SKILL_NAME)];
     expect(skillItem?.backup).toBeTruthy();
     const backupPath = skillItem?.backup ?? "";
     expect(existsSync(backupPath)).toBe(true);
@@ -735,7 +742,7 @@ describe("backup and restore", () => {
 
     const manifest = loadManifest();
     const opencodeKey = `${instance.toolId}:${instance.instanceId}`;
-    const commandItem = manifest.tools[opencodeKey]?.items[`command:${TEST_COMMAND_NAME}`];
+    const commandItem = manifest.tools[opencodeKey]?.items[buildManifestItemKey(TEST_PLUGIN_NAME, "command", TEST_COMMAND_NAME)];
     expect(commandItem?.backup).toBeTruthy();
     const backupPath = commandItem?.backup ?? "";
     expect(existsSync(backupPath)).toBe(true);
@@ -759,7 +766,7 @@ describe("backup and restore", () => {
 
     const manifest = loadManifest();
     const opencodeKey = `${instance.toolId}:${instance.instanceId}`;
-    const skillItem = manifest.tools[opencodeKey]?.items[`skill:${TEST_SKILL_NAME}`];
+    const skillItem = manifest.tools[opencodeKey]?.items[buildManifestItemKey(TEST_PLUGIN_NAME, "skill", TEST_SKILL_NAME)];
     expect(skillItem).toBeDefined();
     expect(skillItem?.backup).toBeTruthy();
     const backupPath = skillItem?.backup ?? "";
@@ -771,7 +778,7 @@ describe("backup and restore", () => {
     expect(disableResult.linkedInstances[opencodeKey]).toBeGreaterThan(0);
 
     const manifestAfterDisable = loadManifest();
-    const itemAfterDisable = manifestAfterDisable.tools[opencodeKey]?.items[`skill:${TEST_SKILL_NAME}`];
+    const itemAfterDisable = manifestAfterDisable.tools[opencodeKey]?.items[buildManifestItemKey(TEST_PLUGIN_NAME, "skill", TEST_SKILL_NAME)];
     expect(itemAfterDisable).toBeUndefined();
 
     expect(existsSync(skillPath)).toBe(true);
@@ -784,7 +791,11 @@ describe("backup and restore", () => {
   it("overwrites existing backup (single backup per item)", async () => {
     const instance = getInstance("opencode");
     const skillPath = join(instance.configDir, instance.skillsSubdir!, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
-    const backupPath = join(getCacheDir(), "backups", "skill", TEST_SKILL_NAME);
+    // Backup paths are now scoped by tool instance + plugin, so a stale backup
+    // from a prior install of the SAME item still gets overwritten (single
+    // backup per item), while different instances/plugins never collide.
+    const opencodeKey = `${instance.toolId}:${instance.instanceId}`;
+    const backupPath = buildBackupPath(opencodeKey, TEST_PLUGIN_NAME, "skill", TEST_SKILL_NAME);
 
     mkdirSync(skillPath, { recursive: true });
     writeFileSync(join(skillPath, "SKILL.md"), "# First Version");
@@ -1248,5 +1259,247 @@ describe("manifest operations", () => {
     writeFileSync(join(TMP_CACHE, "installed_items.json"), "{ invalid json }");
 
     expect(() => loadManifest(TMP_CACHE)).toThrow(/Manifest file is corrupted/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P1 data-integrity fixes (backup scoping, manifest key migration, update
+// ordering, Claude/Pi uninstall, partial-failure reporting).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("manifest key migration (item 2)", () => {
+  it("migrates legacy owner-less keys with zero data loss across owners", () => {
+    const legacy = {
+      tools: {
+        "opencode:default": {
+          items: {
+            // Plugin B overwrote plugin A's same-named skill: A survives only
+            // nested in B's `previous` — the legacy data-loss / orphaning case.
+            "skill:review": {
+              kind: "skill",
+              name: "review",
+              source: "/cache/mkt/plugin-b/skills/review",
+              dest: "skills/plugin-b/review",
+              backup: null,
+              owner: "plugin-b",
+              previous: {
+                kind: "skill",
+                name: "review",
+                source: "/cache/mkt/plugin-a/skills/review",
+                dest: "skills/plugin-a/review",
+                backup: null,
+                owner: "plugin-a",
+                previous: null,
+              },
+            },
+            // A plain owned entry.
+            "command:build": {
+              kind: "command",
+              name: "build",
+              source: "/cache/mkt/plugin-a/commands/build.md",
+              dest: "commands/plugin-a/build.md",
+              backup: null,
+              owner: "plugin-a",
+              previous: null,
+            },
+            // A very old entry with NO recorded owner — must NOT be dropped.
+            "agent:legacy": {
+              kind: "agent",
+              name: "legacy",
+              source: "/somewhere/agents/legacy.md",
+              dest: "agents/legacy.md",
+              backup: null,
+              previous: null,
+            },
+          },
+        },
+      },
+    };
+
+    const manifest = JSON.parse(JSON.stringify(legacy));
+    const changed = migrateManifestKeys(manifest);
+    expect(changed).toBe(true);
+
+    const items = manifest.tools["opencode:default"].items;
+
+    // Both owners' `review` skills survive under distinct owner-scoped keys.
+    const bKey = buildManifestItemKey("plugin-b", "skill", "review");
+    const aKey = buildManifestItemKey("plugin-a", "skill", "review");
+    expect(items[bKey]).toBeDefined();
+    expect(items[aKey]).toBeDefined();
+    expect(items[aKey].owner).toBe("plugin-a");
+    expect(items[bKey].owner).toBe("plugin-b");
+    // Plugin A's entry is promoted to top-level (no longer buried under B).
+    expect(items[bKey].previous).toBeNull();
+    expect(items[aKey].previous).toBeNull();
+
+    // Owned command migrated.
+    expect(items[buildManifestItemKey("plugin-a", "command", "build")]).toBeDefined();
+
+    // No-owner entry preserved under a clearly-marked fallback key.
+    expect(items["__unowned__:agent:legacy"]).toBeDefined();
+
+    // Nothing gained or lost: exactly 4 entries.
+    expect(Object.keys(items)).toHaveLength(4);
+
+    // Idempotent: re-running over already-migrated data is a no-op.
+    const secondPass = JSON.parse(JSON.stringify(manifest));
+    expect(migrateManifestKeys(secondPass)).toBe(false);
+  });
+});
+
+describe("P1 data-integrity behavior", () => {
+  it("scopes backups per tool instance so they never collide (item 1)", async () => {
+    const opencode = getInstance("opencode");
+    const codex = getInstance("openai-codex");
+
+    const ocSkill = join(opencode.configDir, opencode.skillsSubdir!, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
+    const cxSkill = join(codex.configDir, codex.skillsSubdir!, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
+    mkdirSync(ocSkill, { recursive: true });
+    writeFileSync(join(ocSkill, "SKILL.md"), "# Opencode Original");
+    mkdirSync(cxSkill, { recursive: true });
+    writeFileSync(join(cxSkill, "SKILL.md"), "# Codex Original");
+
+    createTestPluginInCache();
+    await enablePlugin(createTestPlugin());
+
+    const manifest = loadManifest();
+    const key = buildManifestItemKey(TEST_PLUGIN_NAME, "skill", TEST_SKILL_NAME);
+    const ocBackup = manifest.tools[`opencode:${opencode.instanceId}`]?.items[key]?.backup ?? "";
+    const cxBackup = manifest.tools[`openai-codex:${codex.instanceId}`]?.items[key]?.backup ?? "";
+
+    expect(ocBackup).toBeTruthy();
+    expect(cxBackup).toBeTruthy();
+    // Distinct backup locations — the second instance did not clobber the first.
+    expect(ocBackup).not.toBe(cxBackup);
+    expect(readFileSync(join(ocBackup, "SKILL.md"), "utf-8")).toContain("Opencode Original");
+    expect(readFileSync(join(cxBackup, "SKILL.md"), "utf-8")).toContain("Codex Original");
+  });
+
+  it("updatePlugin leaves the installed copy untouched when the download fails (item 3)", async () => {
+    createTestPluginInCache();
+    const plugin = createTestPlugin();
+    plugin.source = ""; // force downloadPlugin to fail (no resolvable repo URL)
+
+    await enablePlugin(plugin);
+    invalidatePluginToolStatusCache();
+
+    const codex = getInstance("openai-codex");
+    const codexKey = `openai-codex:${codex.instanceId}`;
+    const itemKey = buildManifestItemKey(TEST_PLUGIN_NAME, "skill", TEST_SKILL_NAME);
+
+    const before = loadManifest();
+    const dest = before.tools[codexKey]?.items[itemKey]?.dest;
+    expect(dest).toBeTruthy();
+    // installPluginItemsToInstance records an absolute dest; resolve robustly.
+    const installedPath = dest!.startsWith("/") ? dest! : join(codex.configDir, dest!);
+    expect(existsSync(installedPath)).toBe(true);
+
+    // Point at a marketplace that cannot resolve — the download must fail.
+    const result = await updatePlugin(plugin, "/tmp/blackbook-nonexistent-marketplace/marketplace.json");
+
+    expect(result.success).toBe(false);
+    expect(result.errors.some((e) => e.includes("left untouched"))).toBe(true);
+
+    // The previously-installed item and its files are still present.
+    const after = loadManifest();
+    expect(after.tools[codexKey]?.items[itemKey]).toBeDefined();
+    expect(existsSync(installedPath)).toBe(true);
+  });
+
+  it("Claude uninstall goes through the native CLI (item 4)", async () => {
+    const binDir = join(TEST_ROOT, "fakebin");
+    const recordFile = join(TEST_ROOT, "claude-invocations.log");
+    mkdirSync(binDir, { recursive: true });
+    const claudeBin = join(binDir, "claude");
+    writeFileSync(claudeBin, `#!/bin/sh\necho "$@" >> ${JSON.stringify(recordFile)}\nexit 0\n`);
+    chmodSync(claudeBin, 0o755);
+
+    const origPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${origPath ?? ""}`;
+    try {
+      updateToolInstanceConfig("claude-code", "default", {
+        enabled: true,
+        configDir: join(TEST_TOOL_DIR, "claude-code"),
+      });
+
+      const result = await uninstallPluginFromInstance(createTestPlugin(), "claude-code", "default");
+
+      expect(result).toBe(true);
+      const log = readFileSync(recordFile, "utf-8");
+      expect(log).toContain("plugin uninstall");
+      expect(log).toContain(`${TEST_PLUGIN_NAME}@${TEST_MARKETPLACE}`);
+    } finally {
+      process.env.PATH = origPath;
+    }
+  });
+
+  it("Pi uninstall awaits the bridge and reports failure (item 5)", async () => {
+    // Force a deterministic bridge failure regardless of whether the Pi bridge
+    // package happens to be present: point the Pi instance at a non-existent
+    // working directory so the underlying `bun -e` spawn (or the readiness
+    // check) fails. The fix must AWAIT that failure and return false, rather
+    // than fire-and-forget a bogus `true`.
+    const missingDir = join(TEST_ROOT, "pi-missing-configdir");
+    updateToolInstanceConfig("pi", "default", { enabled: true, configDir: missingDir });
+    const result = await uninstallPluginFromInstance(createTestPlugin(), "pi", "default");
+    expect(result).toBe(false);
+  });
+
+  it("deleteFileEverywhere reports partial target-removal failures (item 6)", () => {
+    const okTarget = join(TEST_ROOT, "delete-ok.txt");
+    const failDir = join(TEST_ROOT, "delete-fail-dir");
+    writeFileSync(okTarget, "content");
+    // Non-empty directory: rmSync(target, { force: true }) (no recursive) throws.
+    mkdirSync(join(failDir, "child"), { recursive: true });
+
+    const mkInstance = (toolId: string, name: string, targetPath: string) => ({
+      toolId,
+      instanceId: "default",
+      instanceName: name,
+      configDir: TEST_ROOT,
+      targetRelPath: targetPath,
+      sourcePath: "/does/not/exist/source",
+      targetPath,
+      status: "ok" as const,
+      message: "",
+    });
+
+    const file: FileStatus = {
+      name: "blackbook-nonexistent-config-entry",
+      source: "/does/not/exist/source",
+      target: "target",
+      kind: "file",
+      instances: [
+        mkInstance("opencode", "OpenCode", okTarget),
+        mkInstance("openai-codex", "Codex", failDir),
+      ],
+    };
+
+    const result = deleteFileEverywhere(file);
+    expect(result.ok).toBe(false);
+    expect(result.targets).toBe(1);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain("Codex");
+    expect(result.error).toBeTruthy();
+    expect(existsSync(okTarget)).toBe(false);
+  });
+
+  it("togglePluginComponent returns false when a per-instance operation fails (item 9)", async () => {
+    createTestPluginInCache();
+    const plugin = createTestPlugin();
+    await enablePlugin(plugin);
+
+    const opencode = getInstance("opencode");
+    const namespaceDir = join(opencode.configDir, opencode.skillsSubdir!, TEST_PLUGIN_NAME);
+    // Make the parent directory read-only so removing the installed skill fails.
+    chmodSync(namespaceDir, 0o500);
+    try {
+      const result = togglePluginComponent(plugin, "skill", TEST_SKILL_NAME, false);
+      expect(result.success).toBe(false);
+      expect(result.error).toBeTruthy();
+    } finally {
+      chmodSync(namespaceDir, 0o755);
+    }
   });
 });
