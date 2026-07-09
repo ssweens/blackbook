@@ -71,6 +71,7 @@ import {
   installPlugin,
   syncPluginInstances,
   uninstallPluginFromInstance,
+  groupSkillsByNamespace,
 } from "./lib/install.js";
 import { getPluginToolStatus as getPluginToolStatusDirect } from "./lib/plugin-status.js";
 import { fetchMarketplace } from "./lib/marketplace.js";
@@ -1616,6 +1617,166 @@ describe("App E2E — Overlay Esc handling", () => {
       await settleInput();
       expect(useStore.getState().detailMarketplace).toBeNull();
       expect(stdout.lastFrame()).not.toContain("Browse plugins");
+    } finally {
+      unmount();
+    }
+  });
+
+  // The overlay registry marks the tool-action confirm modal as a "modal" overlay,
+  // and the top-of-useInput toolModalAction guard captures ALL input while it is
+  // showing. Nothing may leak through to tab-content behavior (search focus, digit
+  // tab-switch, etc.). This locks in that the confirm modal fully owns input — the
+  // consistency the registry is meant to guarantee.
+  it("tool-action confirm modal captures all input — / and digit tab-switch do not leak", async () => {
+    useStore.setState({
+      tab: "tools",
+      selectedIndex: 0,
+      notifications: [],
+      managedTools: [
+        {
+          toolId: "claude-code",
+          displayName: "Claude",
+          instanceId: "default",
+          configDir: "/tmp/claude",
+          enabled: true,
+          synthetic: false,
+        },
+      ],
+      // Not installed → 'i' opens the Install confirm modal. Both managedTools and
+      // toolDetection non-empty so the boot refresh treats tools as hydrated.
+      toolDetection: {
+        "claude-code": {
+          toolId: "claude-code",
+          installed: false,
+          binaryPath: null,
+          installedVersion: null,
+          latestVersion: "1.0.1",
+          hasUpdate: false,
+          error: null,
+        },
+      },
+    });
+    const { stdout, stdin, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Claude"));
+      await settleInput();
+
+      // 'i' opens the install confirm modal ("Install Claude … Enter to confirm").
+      sendKey(stdin, "i");
+      await waitForFrame(
+        stdout.lastFrame,
+        (f) => f.includes("Install Claude") && f.includes("Enter to confirm"),
+      );
+      expect(useStore.getState().tab).toBe("tools");
+
+      // '/' must NOT focus search / leak to tab content while the modal is showing.
+      sendKey(stdin, "/");
+      await settleInput();
+      expect(stdout.lastFrame()).toContain("Enter to confirm"); // modal still up
+      expect(useStore.getState().tab).toBe("tools");
+
+      // A digit (which switches tabs on the normal list) must NOT leak past the modal.
+      sendKey(stdin, "1");
+      await settleInput();
+      expect(useStore.getState().tab).toBe("tools"); // did not switch to sync
+      expect(stdout.lastFrame()).toContain("Enter to confirm"); // modal still up
+
+      // Esc cancels the confirm modal and returns to the tools list.
+      sendKey(stdin, KEYS.escape);
+      await waitForFrame(stdout.lastFrame, (f) => !f.includes("Enter to confirm"));
+    } finally {
+      unmount();
+    }
+  });
+
+  // Breadcrumb: Esc from a skill detail that was drilled into from a namespace
+  // detail must return to the NAMESPACE detail, not all the way to the list. This
+  // logic (closeItemDetail) now lives in the overlay registry's itemDetail entry.
+  it("Esc from a skill drilled into a namespace returns to the namespace detail", async () => {
+    const skill = {
+      name: "deploy",
+      namespace: "alpha",
+      installations: [
+        { toolId: "claude-code", instanceId: "default", instanceName: "Claude", diskPath: "/tmp/alpha/deploy" },
+      ],
+      diskPath: "/tmp/alpha/deploy",
+      toolId: "claude-code",
+      instanceName: "Claude",
+      instanceId: "default",
+    };
+    const nsGroup = groupSkillsByNamespace([skill])[0];
+
+    useStore.setState({
+      tab: "installed",
+      selectedIndex: 0,
+      notifications: [],
+      standaloneSkills: [skill],
+      // Mark data loaded so the boot refresh does not clobber the fixture.
+      installedPluginsLoaded: true,
+      filesLoaded: true,
+      piPackagesLoaded: true,
+      // Open the namespace detail directly (same state Enter on the namespace sets).
+      detail: { kind: "namespace", data: nsGroup },
+    });
+    const { stdout, stdin, unmount } = render(<App />);
+    try {
+      // Namespace detail is open (its footer is unique to the tree view).
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Enter open skill"));
+      expect(useStore.getState().detail?.kind).toBe("namespace");
+      await settleInput();
+
+      // Drill into the skill: move the cursor down to the "alpha/deploy" skill-header
+      // row, then Enter to open its detail.
+      const selectedRowHas = (needle: string) =>
+        (stdout.lastFrame() ?? "").split("\n").some((l) => l.includes("❯") && l.includes(needle));
+      for (let i = 0; i < 12 && !selectedRowHas("alpha/deploy"); i += 1) {
+        sendKey(stdin, KEYS.down);
+        await settleInput();
+      }
+      expect(selectedRowHas("alpha/deploy")).toBe(true);
+
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, () => useStore.getState().detail?.kind === "skill");
+
+      // Esc must land back on the namespace detail (breadcrumb), not the list.
+      sendKey(stdin, KEYS.escape);
+      await waitForFrame(stdout.lastFrame, () => useStore.getState().detail?.kind === "namespace");
+      expect(stdout.lastFrame()).toContain("Enter open skill"); // namespace tree again
+    } finally {
+      unmount();
+    }
+  });
+
+  // Breadcrumb: browsing into a marketplace's plugin sub-view sets a browse context;
+  // Esc must restore the MARKETPLACE detail, not drop to the marketplace list. This
+  // is handled by handleEscape's discoverSubView branch (outside the render overlay
+  // registry, since sub-views render inside TabContent).
+  it("Esc from a marketplace plugin sub-view returns to the marketplace detail", async () => {
+    useStore.setState({
+      tab: "marketplaces",
+      // Row 0 is the "add marketplace" row; row 1 is the marketplace itself.
+      selectedIndex: 1,
+      notifications: [],
+      marketplaces: [createMarketplace({ plugins: [createPlugin()], availableCount: 1 })],
+    });
+    const { stdout, stdin, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Test Marketplace"));
+      await settleInput();
+
+      // Open the marketplace detail, then browse into its plugin list (first action),
+      // which clears detailMarketplace and sets the browse context + plugins sub-view.
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Browse plugins"));
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, () => useStore.getState().discoverSubView === "plugins");
+      expect(useStore.getState().detailMarketplace).toBeNull();
+
+      // Esc restores the marketplace detail (browse-context breadcrumb).
+      sendKey(stdin, KEYS.escape);
+      await waitForFrame(stdout.lastFrame, () => useStore.getState().detailMarketplace !== null);
+      expect(useStore.getState().discoverSubView).toBeNull();
+      expect(stdout.lastFrame()).toContain("Browse plugins"); // back on the detail
     } finally {
       unmount();
     }

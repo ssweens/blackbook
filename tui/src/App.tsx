@@ -423,8 +423,19 @@ export function App() {
   // a stale value can't resurrect a closed overlay — e.g. a leftover
   // marketplaceBrowseContext re-opening the previous marketplace's detail when the
   // user returns to the Marketplaces tab and presses Esc.
+  //
+  // marketplaceBrowseContext is exempted while the tab is "discover" or
+  // "marketplaces" — that pair is the intended round-trip for the "Browse
+  // plugins/packages" action (marketplaces -> discover to view the filtered
+  // list -> back to marketplaces to restore the detail via handleEscape, which
+  // clears the context itself once it's actually consumed). Clearing it on the
+  // very tab change that action performs would break that flow immediately;
+  // navigating to any OTHER tab still clears it, since that's a genuine
+  // "wandered away" case.
   useEffect(() => {
-    setMarketplaceBrowseContext(null);
+    if (tab !== "discover" && tab !== "marketplaces") {
+      setMarketplaceBrowseContext(null);
+    }
     setDetailPiMarketplace(null);
     setDetailToolKey(null);
   }, [tab]);
@@ -942,6 +953,86 @@ export function App() {
     return null;
   }, [detailMarketplace, detailPiMarketplace]);
 
+  // ── Overlay registry ──────────────────────────────────────────────────────
+  // Single ordered source of truth for "which overlay is open", in the SAME
+  // priority order as the render switch (renderActiveOverlay) below. Every
+  // consumer — the render decision, isOverlayOpen, the modal input guard, and
+  // handleEscape — derives from THIS list so they can never disagree. That drift
+  // (e.g. isOverlayOpen omitting an overlay that is actually on screen) is exactly
+  // the class of bug this registry exists to eliminate by construction.
+  //
+  // inputMode:
+  //  - "modal": overlay owns ALL input; App's useInput returns early (either the
+  //    overlay's own useInput handles keys — wizard / edit+add modals — or, for
+  //    toolActionModal, the dedicated top-of-useInput handleToolModalInput guard).
+  //    Modals deliberately do NOT count as "detail overlays": they must not flip
+  //    HintBar's detail hint or gate the tab-content shortcuts, matching today.
+  //  - "detail": App-managed overlay. Counts toward isOverlayOpen — suppresses the
+  //    tab-content shortcuts (/ search, digit tab-switch, Tab section nav, sort)
+  //    and switches HintBar to the detail-navigation hint.
+  //
+  // escClose is defined ONLY for overlays whose Esc is owned by App's handleEscape
+  // (toolDetail / itemDetail / marketplaceDetail). diff / missingSummary /
+  // sourceSetupWizard / edit+add modals each have their OWN useInput that handles
+  // Esc (internal navigation or self-close), and toolActionModal's Esc flows
+  // through handleToolModalInput — so those intentionally omit escClose, exactly
+  // as before this refactor.
+
+  // Close the currently-open item detail. If it's a skill that belongs to a
+  // namespace, go BACK to the namespace detail (breadcrumb) instead of all the way
+  // to the list. Reads live store state so a stale input callback still closes the
+  // detail actually on screen. Relocated verbatim from the old handleEscape.
+  const closeItemDetail = () => {
+    const state = useStore.getState();
+    if (!state.detail) return;
+    if (state.detail.kind === "skill" && state.detail.data.namespace) {
+      const nsName = state.detail.data.namespace;
+      const fresh = groupSkillsByNamespace(state.standaloneSkills).find(
+        (n) => n.name === nsName,
+      );
+      if (fresh) {
+        setDetail({ kind: "namespace", data: fresh });
+        setExpandedSkills(new Set());
+        setActionIndex(0);
+        return;
+      }
+    }
+    setDetail(null);
+    closeDetail();
+  };
+
+  type OverlayKind =
+    | "sourceSetupWizard" | "diff" | "missingSummary" | "editToolModal"
+    | "addMarketplace" | "addPiMarketplace" | "toolActionModal"
+    | "toolDetail" | "itemDetail" | "marketplaceDetail";
+  interface OverlayEntry {
+    kind: OverlayKind;
+    active: boolean;
+    inputMode: "modal" | "detail";
+    escClose?: () => void;
+  }
+  const overlayEntries: OverlayEntry[] = [
+    { kind: "sourceSetupWizard", active: showSourceSetupWizard, inputMode: "modal" },
+    { kind: "diff", active: !!diffTarget, inputMode: "detail" },
+    { kind: "missingSummary", active: !!missingSummary, inputMode: "detail" },
+    { kind: "editToolModal", active: !!editingToolId, inputMode: "modal" },
+    { kind: "addMarketplace", active: modalVisible === "addMarketplace", inputMode: "modal" },
+    { kind: "addPiMarketplace", active: modalVisible === "addPiMarketplace", inputMode: "modal" },
+    { kind: "toolActionModal", active: !!(toolModalAction && activeToolForModal), inputMode: "modal" },
+    { kind: "toolDetail", active: !!detailTool, inputMode: "detail", escClose: () => setDetailToolKey(null) },
+    { kind: "itemDetail", active: !!activeDetail, inputMode: "detail", escClose: closeItemDetail },
+    {
+      kind: "marketplaceDetail",
+      active: !!activeMarketplaceDetail,
+      inputMode: "detail",
+      escClose: () => { setDetailMarketplace(null); setDetailPiMarketplace(null); closeDetail(); },
+    },
+  ];
+  // First active entry wins — same priority as the old render ternary.
+  const activeOverlay = overlayEntries.find((e) => e.active) ?? null;
+  /** True when an App-managed detail/diff/missing overlay is open — blocks global navigation. */
+  const isOverlayOpen = overlayEntries.some((e) => e.active && e.inputMode === "detail");
+
   // Thin shims around the unified store.refreshDetail() for plugins (which need drift
   // recomputed) and piPackages (which need the legacy mirror updated).
   const refreshDetailPlugin = (plugin: Plugin) => {
@@ -978,33 +1069,24 @@ export function App() {
   // ── Extracted input handlers ───────────────────────────────────────────
 
   const handleEscape = () => {
-    const state = useStore.getState();
-    // Any kind of item detail open? Close it via the unified setter. Read current
-    // store state so even a stale input callback closes the detail that is actually
-    // on screen.
-    if (state.detail) {
-      // If we're in a skill detail that belongs to a namespace, go back to the
-      // namespace detail instead of closing all the way to the list.
-      if (state.detail.kind === "skill" && state.detail.data.namespace) {
-        const nsName = state.detail.data.namespace;
-        const fresh = groupSkillsByNamespace(state.standaloneSkills).find(
-          (n) => n.name === nsName,
-        );
-        if (fresh) {
-          setDetail({ kind: "namespace", data: fresh });
-          setExpandedSkills(new Set());
-          setActionIndex(0);
-          return;
-        }
-      }
-      setDetail(null);
-      closeDetail();
-      return;
-    }
-    if (activeMarketplaceDetail) { setDetailMarketplace(null); setDetailPiMarketplace(null); closeDetail(); return; }
-    if (detailTool) { setDetailToolKey(null); return; }
+    // Topmost App-owned overlay closes first, in registry (render z-order)
+    // priority. Overlays with their own Esc handling (diff, missingSummary,
+    // wizard, edit+add modals, toolActionModal) carry no escClose and are skipped
+    // here — they self-close via their own useInput, exactly as before. The three
+    // escClose overlays (toolDetail / itemDetail / marketplaceDetail) are mutually
+    // exclusive in practice, so this z-order walk matches the old fixed cascade.
+    const overlay = overlayEntries.find((e) => e.active && e.escClose);
+    if (overlay) { overlay.escClose!(); return; }
+    // List sub-views below are NOT render overlays (they render inside TabContent),
+    // so they live outside the registry — handled here exactly as before.
     if (discoverSubView) {
-      if (tab === "marketplaces" && marketplaceBrowseContext) {
+      if (marketplaceBrowseContext) {
+        // The browse action now actually switches to the Discover tab (see
+        // handleMarketplaceDetailAction's "browse" case), so Esc from the
+        // sub-view must switch back — not just clear the sub-view in place.
+        // setTab resets discoverSubView/search/detailMarketplace to defaults,
+        // so it must run first; the restoration setters after it are what stick.
+        setTab("marketplaces");
         setDiscoverSubView(null); setSelectedIndex(0);
         setDetailMarketplace(marketplaceBrowseContext); setMarketplaceBrowseContext(null); setSearch("");
       } else { setDiscoverSubView(null); setSelectedIndex(0); }
@@ -1170,9 +1252,6 @@ export function App() {
     else if (selectedLibraryItem?.kind === "piPackage") toggleInstallPiPkg(selectedLibraryItem.piPackage);
   };
 
-  /** True when any detail/diff/missing overlay is open — blocks global navigation. */
-  const isOverlayOpen = !!(activeDetail || activeMarketplaceDetail || detailTool || diffTarget || missingSummary);
-
   const handleMarketplaceShortcut = (input: string): boolean => {
     if (!selectedMarketplaceRow) return false;
     if (input === "u") {
@@ -1256,6 +1335,11 @@ export function App() {
   });
 
   useInput((input, key) => {
+    // toolActionModal (registry "modal" entry) captures input here. Keyed on the
+    // raw toolModalAction — deliberately broader than the entry's render predicate
+    // (toolModalAction && activeToolForModal) — so no key can leak through in the
+    // transient instant where the modal state machine is engaged but no tool is
+    // resolved yet. handleToolModalInput itself no-ops safely without a tool.
     if (toolModalAction) { handleToolModalInput(input, key); return; }
 
     // Terminals can emit ESC in multiple forms:
@@ -1277,12 +1361,15 @@ export function App() {
       return;
     }
 
-    // A modal (EditToolModal, AddMarketplaceModal, SourceSetupWizard) owns input
-    // while open and handles its own Esc to close itself. Return early for EVERY
-    // key — including Esc — so App's own Esc handling below does not ALSO close the
-    // view underneath the modal, which would collapse two overlay layers at once
-    // (the modal closes itself via its own useInput; the guard must run first).
-    if (modalVisible || editingToolId) { return; }
+    // A "modal" overlay (SourceSetupWizard, EditToolModal, Add(Pi)MarketplaceModal)
+    // owns input while open and handles its own Esc to close itself. Return early
+    // for EVERY key — including Esc — so App's own Esc handling below does not ALSO
+    // close the view underneath the modal, which would collapse two overlay layers
+    // at once (the modal closes itself via its own useInput; the guard must run
+    // first). Derived from the overlay registry so this set can't drift from what
+    // is actually rendered. (toolActionModal is also a "modal" entry, but is
+    // already captured by the toolModalAction guard at the top of this handler.)
+    if (overlayEntries.some((e) => e.active && e.inputMode === "modal")) { return; }
 
     // Esc must always close the topmost overlay — it takes priority over notification
     // dismissal so users can back out even when a notification is showing. Read the
@@ -1568,6 +1655,10 @@ export function App() {
 
     switch (action.type) {
       case "browse":
+        // setTab resets discoverSubView/search/selectedIndex to defaults (it's a
+        // full tab-change reset), so it must run FIRST — setting the sub-view
+        // fields after it is what makes them stick, not the other way around.
+        setTab("discover");
         if (detail.kind === "plugin") {
           setMarketplaceBrowseContext(detail.marketplace);
           setDiscoverSubView("plugins");
@@ -1576,7 +1667,6 @@ export function App() {
         } else {
           setDiscoverSubView("piPackages");
           setSelectedIndex(0);
-          setTab("discover");
         }
         setDetailMarketplace(null);
         setDetailPiMarketplace(null);
@@ -1689,6 +1779,107 @@ export function App() {
     notify("Pullback is only available from file or plugin details.", "warning");
   };
 
+  // Render the first active overlay from the registry (activeOverlay), or the tab
+  // content when none is open. Byte-for-byte the same decision + JSX as the old
+  // render ternary — only the priority order now comes from the single overlay
+  // registry above instead of a hand-maintained conditional cascade. The non-null
+  // assertions are sound: each case is reached only when that overlay's `active`
+  // predicate (which gates the underlying state) is true.
+  const renderActiveOverlay = (): React.ReactNode => {
+    switch (activeOverlay?.kind) {
+      case "sourceSetupWizard":
+        return (
+          <SourceSetupWizard
+            onComplete={handleSourceWizardComplete}
+            onSkip={handleSourceWizardSkip}
+          />
+        );
+      case "diff":
+        return (
+          <DiffView
+            target={diffTarget!}
+            onClose={closeDiff}
+            onPullBack={handleDiffPullBack}
+          />
+        );
+      case "missingSummary":
+        return (
+          <MissingSummaryView
+            summary={missingSummary!}
+            instances={missingInstances}
+            onSelectInstance={handleMissingInstanceSelect}
+            onClose={closeMissingSummary}
+          />
+        );
+      case "editToolModal":
+        return (
+          <EditToolModal
+            tool={editingTool}
+            onSubmit={handleToolConfigSave}
+            onCancel={() => setEditingToolId(null)}
+          />
+        );
+      case "addMarketplace":
+        return <AddMarketplaceModal onSubmit={handleAddMarketplace} onCancel={() => setModalVisible(null)} />;
+      case "addPiMarketplace":
+        return <AddMarketplaceModal type="pi" onSubmit={(name, source) => { void addPiMarketplace(name, source); setModalVisible(null); }} onCancel={() => setModalVisible(null)} />;
+      case "toolActionModal":
+        return (
+          <ToolActionModal
+            toolName={activeToolForModal!.displayName}
+            action={toolModalAction!}
+            command={getToolActionCommand(activeToolForModal!, toolModalAction!)}
+            warning={toolModalWarning}
+            preferredPackageManager={getPackageManager()}
+            migrateSelected={toolModalMigrate}
+            inProgress={toolModalRunning || toolActionInProgress === activeToolForModal!.toolId}
+            done={toolModalDone}
+            success={toolModalSuccess}
+            output={toolActionOutput}
+          />
+        );
+      case "toolDetail":
+        return (
+          <ToolDetail
+            tool={detailTool!}
+            detection={toolDetection[detailTool!.toolId] || null}
+            pending={toolDetectionPending[detailTool!.toolId] === true}
+          />
+        );
+      case "itemDetail":
+        return detail?.kind === "namespace" && detailNamespace ? (
+          <NamespaceDetail
+            item={activeDetail!.item}
+            selectedAction={actionIndex}
+            expandedSkills={expandedSkills}
+          />
+        ) : (
+          <ItemDetail
+            item={activeDetail!.item}
+            selectedAction={actionIndex}
+            actions={activeDetail!.actions}
+            metadata={activeDetail!.metadata}
+          />
+        );
+      case "marketplaceDetail":
+        return (
+          <MarketplaceDetailView
+            detail={activeMarketplaceDetail!.detail}
+            selectedIndex={actionIndex}
+          />
+        );
+      default:
+        return (
+          <TabContent
+            tab={tab}
+            searchFocused={searchFocused}
+            onSearchFocus={() => setSearchFocused(true)}
+            onSearchBlur={() => setSearchFocused(false)}
+          />
+        );
+    }
+  };
+
   return (
     <Box flexDirection="column" padding={1}>
       <TabBar />
@@ -1701,82 +1892,8 @@ export function App() {
         )}
       </Box>
 
-      {/* Diff view overlay */}
-      {showSourceSetupWizard ? (
-        <SourceSetupWizard
-          onComplete={handleSourceWizardComplete}
-          onSkip={handleSourceWizardSkip}
-        />
-      ) : diffTarget ? (
-        <DiffView
-          target={diffTarget}
-          onClose={closeDiff}
-          onPullBack={handleDiffPullBack}
-        />
-      ) : missingSummary ? (
-        <MissingSummaryView
-          summary={missingSummary}
-          instances={missingInstances}
-          onSelectInstance={handleMissingInstanceSelect}
-          onClose={closeMissingSummary}
-        />
-      ) : editingToolId ? (
-        <EditToolModal
-          tool={editingTool}
-          onSubmit={handleToolConfigSave}
-          onCancel={() => setEditingToolId(null)}
-        />
-      ) : modalVisible === "addMarketplace" ? (
-        <AddMarketplaceModal onSubmit={handleAddMarketplace} onCancel={() => setModalVisible(null)} />
-      ) : modalVisible === "addPiMarketplace" ? (
-        <AddMarketplaceModal type="pi" onSubmit={(name, source) => { void addPiMarketplace(name, source); setModalVisible(null); }} onCancel={() => setModalVisible(null)} />
-      ) : toolModalAction && activeToolForModal ? (
-        <ToolActionModal
-          toolName={activeToolForModal.displayName}
-          action={toolModalAction}
-          command={getToolActionCommand(activeToolForModal, toolModalAction)}
-          warning={toolModalWarning}
-          preferredPackageManager={getPackageManager()}
-          migrateSelected={toolModalMigrate}
-          inProgress={toolModalRunning || toolActionInProgress === activeToolForModal.toolId}
-          done={toolModalDone}
-          success={toolModalSuccess}
-          output={toolActionOutput}
-        />
-      ) : detailTool ? (
-        <ToolDetail
-          tool={detailTool}
-          detection={toolDetection[detailTool.toolId] || null}
-          pending={toolDetectionPending[detailTool.toolId] === true}
-        />
-      ) : activeDetail ? (
-        detail?.kind === "namespace" && detailNamespace ? (
-          <NamespaceDetail
-            item={activeDetail.item}
-            selectedAction={actionIndex}
-            expandedSkills={expandedSkills}
-          />
-        ) : (
-          <ItemDetail
-            item={activeDetail.item}
-            selectedAction={actionIndex}
-            actions={activeDetail.actions}
-            metadata={activeDetail.metadata}
-          />
-        )
-      ) : activeMarketplaceDetail ? (
-        <MarketplaceDetailView
-          detail={activeMarketplaceDetail.detail}
-          selectedIndex={actionIndex}
-        />
-      ) : (
-        <TabContent
-          tab={tab}
-          searchFocused={searchFocused}
-          onSearchFocus={() => setSearchFocused(true)}
-          onSearchBlur={() => setSearchFocused(false)}
-        />
-      )}
+      {/* Active overlay (from the overlay registry) or the tab content. */}
+      {renderActiveOverlay()}
 
       <Notifications />
       <HintBar
