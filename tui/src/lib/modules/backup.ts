@@ -8,16 +8,37 @@ function getBackupBaseDir(): string {
   return join(getCacheDir(), "backups");
 }
 
-export function buildBackupPath(targetPath: string, owner: string): string {
-  const baseDir = getBackupBaseDir();
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  return join(baseDir, owner, timestamp, basename(targetPath));
+export interface BackupOptions {
+  /**
+   * Shared run identifier so a batch of backups (e.g. every file matched by one
+   * glob operation) lands in ONE timestamp directory and is pruned as a single
+   * unit. Defaults to a fresh per-call timestamp. Use `newBackupRun()`.
+   */
+  timestamp?: string;
+  /**
+   * Path (relative to the timestamp directory) at which to store the backup,
+   * preserving subdirectory structure so files that share a basename in
+   * different subdirectories don't collide. Defaults to `basename(targetPath)`.
+   */
+  relName?: string;
 }
 
-export function createBackup(targetPath: string, owner: string): string | null {
+/** Create a run identifier for backing up a batch of files into one directory. */
+export function newBackupRun(): string {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+export function buildBackupPath(targetPath: string, owner: string, options?: BackupOptions): string {
+  const baseDir = getBackupBaseDir();
+  const timestamp = options?.timestamp ?? newBackupRun();
+  const relName = options?.relName ?? basename(targetPath);
+  return join(baseDir, owner, timestamp, relName);
+}
+
+export function createBackup(targetPath: string, owner: string, options?: BackupOptions): string | null {
   if (!existsSync(targetPath)) return null;
 
-  const backupPath = buildBackupPath(targetPath, owner);
+  const backupPath = buildBackupPath(targetPath, owner, options);
   const backupDir = join(backupPath, "..");
   mkdirSync(backupDir, { recursive: true });
 

@@ -1,12 +1,26 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { writeFileSync, mkdirSync, rmSync, symlinkSync, readlinkSync, existsSync } from "fs";
-import { join } from "path";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
+import { writeFileSync, mkdirSync, rmSync, symlinkSync, readlinkSync, existsSync, readFileSync, lstatSync } from "fs";
+import { join, relative, dirname } from "path";
 import { tmpdir } from "os";
 import { symlinkCreateModule } from "./symlink-create.js";
 
 const TMP = join(tmpdir(), `bb-symlink-test-${Date.now()}`);
 const SRC = join(TMP, "source");
 const TGT = join(TMP, "target");
+const CACHE = join(TMP, "cache");
+const ORIG_XDG = process.env.XDG_CACHE_HOME;
+
+beforeAll(() => {
+  process.env.XDG_CACHE_HOME = CACHE;
+});
+
+afterAll(() => {
+  if (ORIG_XDG !== undefined) {
+    process.env.XDG_CACHE_HOME = ORIG_XDG;
+  } else {
+    delete process.env.XDG_CACHE_HOME;
+  }
+});
 
 beforeEach(() => {
   mkdirSync(SRC, { recursive: true });
@@ -104,5 +118,38 @@ describe("symlinkCreateModule.apply", () => {
     const result = await symlinkCreateModule.apply({ sourcePath: src, targetPath: tgt });
     expect(result.changed).toBe(true);
     expect(existsSync(tgt)).toBe(true);
+  });
+
+  it("backs up an existing real file before replacing it with a symlink", async () => {
+    const src = join(SRC, "a.txt");
+    const tgt = join(TGT, "a.txt");
+    writeFileSync(src, "source content");
+    writeFileSync(tgt, "original user content");
+
+    const result = await symlinkCreateModule.apply({ sourcePath: src, targetPath: tgt, owner: "test" });
+
+    expect(result.changed).toBe(true);
+    expect(result.backup).toBeDefined();
+    expect(existsSync(result.backup!)).toBe(true);
+    expect(readFileSync(result.backup!, "utf-8")).toBe("original user content");
+    // Target is now a symlink pointing to the source.
+    expect(lstatSync(tgt).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(tgt)).toBe(src);
+  });
+});
+
+describe("symlinkCreateModule.check — relative symlinks", () => {
+  it("recognizes a relative-but-correct symlink as not drifted", async () => {
+    const src = join(SRC, "a.txt");
+    const tgt = join(TGT, "a.txt");
+    writeFileSync(src, "hello");
+    // Relative link that still resolves to the correct source file.
+    const relLink = relative(dirname(tgt), src);
+    symlinkSync(relLink, tgt);
+    // Sanity: the raw link string is NOT the absolute source path.
+    expect(readlinkSync(tgt)).not.toBe(src);
+
+    const result = await symlinkCreateModule.check({ sourcePath: src, targetPath: tgt });
+    expect(result.status).toBe("ok");
   });
 });

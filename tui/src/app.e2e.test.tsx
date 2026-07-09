@@ -1511,3 +1511,113 @@ describe("App E2E — Settings Tab", () => {
     }
   });
 });
+
+describe("App E2E — Overlay Esc handling", () => {
+  beforeEach(() => {
+    setupMocks();
+    useStore.setState(defaultStoreState());
+  });
+
+  // Regression: a modal (EditToolModal) opened over a tool detail must close ONLY
+  // itself on Esc. Previously App's top-level Esc handler ran BEFORE the modal
+  // guard, so one Esc closed both the modal AND the tool detail underneath it.
+  it("Esc from EditToolModal closes only the modal and keeps the tool detail underneath", async () => {
+    useStore.setState({
+      tab: "tools",
+      selectedIndex: 0,
+      notifications: [],
+      managedTools: [
+        {
+          toolId: "claude-code",
+          displayName: "Claude",
+          instanceId: "default",
+          configDir: "/tmp/claude",
+          enabled: true,
+          synthetic: false,
+        },
+      ],
+      // Both managedTools and toolDetection non-empty so the boot refresh treats the
+      // tools tab as already hydrated and does not overwrite this fixture data.
+      toolDetection: {
+        "claude-code": {
+          toolId: "claude-code",
+          installed: true,
+          binaryPath: "/usr/local/bin/claude",
+          installedVersion: "1.0.0",
+          latestVersion: "1.0.0",
+          hasUpdate: false,
+          error: null,
+        },
+      },
+    });
+    const { stdout, stdin, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Claude"));
+      await settleInput();
+
+      // Enter opens the tool detail ("Binary:" is unique to the detail view).
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Binary:"));
+
+      // 'e' opens EditToolModal over the tool detail.
+      sendKey(stdin, "e");
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Edit tool config"));
+
+      // A single Esc closes ONLY the modal, returning to the tool detail — the view
+      // underneath must be unchanged (still the detail, not the tools list).
+      sendKey(stdin, KEYS.escape);
+      await waitForFrame(
+        stdout.lastFrame,
+        (f) => f.includes("Binary:") && !f.includes("Edit tool config"),
+      );
+      const frame = stdout.lastFrame()!;
+      expect(frame).toContain("Binary:"); // tool detail still open
+      expect(frame).not.toContain("Edit tool config"); // modal closed
+    } finally {
+      unmount();
+    }
+  });
+
+  // Regression: browsing into a marketplace sets a local marketplaceBrowseContext.
+  // Switching tabs (which the store's setTab resets its own state for) used to leave
+  // that local context stale, so Esc on the plain marketplace list resurrected the
+  // previous marketplace's detail. A tab-change effect now clears it.
+  it("switching tabs clears stale marketplace browse context so Esc does not resurrect the detail", async () => {
+    useStore.setState({
+      tab: "marketplaces",
+      // Row 0 is the "add marketplace" row; row 1 is the marketplace itself.
+      selectedIndex: 1,
+      notifications: [],
+      marketplaces: [createMarketplace({ plugins: [createPlugin()], availableCount: 1 })],
+    });
+    const { stdout, stdin, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Test Marketplace"));
+      await settleInput();
+
+      // Open the marketplace detail, then browse into its plugin list (browse is the
+      // first action), which sets the local marketplaceBrowseContext.
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Browse plugins"));
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, () => useStore.getState().discoverSubView === "plugins");
+      expect(useStore.getState().detailMarketplace).toBeNull();
+
+      // Switch away to Sync, then back to Marketplaces.
+      sendKey(stdin, "1");
+      await waitForFrame(stdout.lastFrame, () => useStore.getState().tab === "sync");
+      sendKey(stdin, "5");
+      await waitForFrame(stdout.lastFrame, () => useStore.getState().tab === "marketplaces");
+      await settleInput();
+      expect(useStore.getState().discoverSubView).toBeNull();
+
+      // Esc on the plain marketplace list must NOT re-open the previous detail.
+      sendKey(stdin, KEYS.escape);
+      await settleInput();
+      expect(useStore.getState().detailMarketplace).toBeNull();
+      expect(stdout.lastFrame()).not.toContain("Browse plugins");
+    } finally {
+      unmount();
+    }
+  });
+});

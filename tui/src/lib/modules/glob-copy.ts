@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, basename, join } from "node:path";
+import { dirname, basename, join, relative } from "node:path";
 import fg from "fast-glob";
 import type { Module, CheckResult, ApplyResult } from "./types.js";
 import { hashFileAsync } from "./hash.js";
-import { createBackup, pruneBackups } from "./backup.js";
+import { createBackup, pruneBackups, newBackupRun } from "./backup.js";
 import { atomicWriteFileSync } from "../fs-utils.js";
 
 export interface GlobCopyParams {
@@ -70,6 +70,21 @@ export const globCopyModule: Module<GlobCopyParams> = {
       // A glob may legitimately match 0 files in the repo while the tool has an
       // installed target (so we can pull back). Don't treat this as fatal.
       if (existsSync(targetPath)) {
+        // Forward direction: the source pattern matched nothing, but the tool
+        // side may still hold files that were previously synced. Mirror
+        // file-copy's convention and surface this as drift (target-changed) so
+        // the user can pull them back, instead of silently reporting ok.
+        if (!pullback) {
+          const orphans = listTargetMatches(targetPath, filePattern);
+          if (orphans.length > 0) {
+            return {
+              status: "drifted",
+              message: `Source matched 0 files but ${orphans.length} target file(s) exist for ${filePattern}`,
+              driftKind: "target-changed",
+            };
+          }
+        }
+
         const msg = pullback
           ? `No target files match ${filePattern} in ${targetPath}`
           : `Source pattern matched 0 files: ${sourcePath}`;
@@ -82,14 +97,15 @@ export const globCopyModule: Module<GlobCopyParams> = {
       return { status: "missing", message: msg, driftKind: "never-synced" as any };
     }
 
-    // Map each file to its corresponding target.
+    // Map each match to its counterpart using the path RELATIVE to the glob
+    // base directory so nested subdirectories are preserved (not flattened to a
+    // shared directory where same-basename files would collide).
     let anyMissing = false;
     let anyDrifted = false;
 
-    for (const src of sources) {
-      const fileName = basename(src);
-      const srcFile = pullback ? join(baseDir, fileName) : src;
-      const tgtFile = pullback ? src : join(targetPath, fileName);
+    for (const match of sources) {
+      const srcFile = pullback ? join(baseDir, relative(targetPath, match)) : match;
+      const tgtFile = pullback ? match : join(targetPath, relative(baseDir, match));
 
       if (!existsSync(tgtFile)) {
         anyMissing = true;
@@ -144,18 +160,30 @@ export const globCopyModule: Module<GlobCopyParams> = {
 
     let changed = false;
 
-    for (const src of sources) {
-      const fileName = basename(src);
-      const from = pullback ? src : src;
-      const to = pullback ? join(baseDir, fileName) : join(targetPath, fileName);
+    // Share ONE run identifier across every file in this glob operation so all
+    // backups land in a single timestamp directory and are pruned as a unit.
+    // Pruning per-file with a shared owner would otherwise delete backups made
+    // moments earlier in this same run (retention counts timestamp dirs).
+    const runId = newBackupRun();
+
+    for (const match of sources) {
+      // Map source→target (or target→source in pullback) using the path
+      // RELATIVE to the glob base directory so subdirectory structure is
+      // preserved and same-basename files in different subdirs don't collide.
+      const from = match;
+      const to = pullback
+        ? join(baseDir, relative(targetPath, match))
+        : join(targetPath, relative(baseDir, match));
 
       if (!existsSync(from)) {
         continue;
       }
 
-      // Backup before overwriting.
-      createBackup(to, owner);
-      pruneBackups(owner, backupRetention);
+      // Backup before overwriting. Preserve the relative path within the run
+      // directory so nested files with the same basename don't overwrite each
+      // other's backup. Prune once, after the whole run (below).
+      const relName = pullback ? relative(baseDir, to) : relative(targetPath, to);
+      createBackup(to, owner, { timestamp: runId, relName });
 
       // Ensure destination directory exists.
       mkdirSync(dirname(to), { recursive: true });
@@ -165,6 +193,9 @@ export const globCopyModule: Module<GlobCopyParams> = {
       atomicWriteFileSync(to, content);
       changed = true;
     }
+
+    // Prune once, after all files in this run are backed up.
+    pruneBackups(owner, backupRetention);
 
     return {
       changed,

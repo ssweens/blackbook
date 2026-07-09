@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { writeFileSync, mkdirSync, rmSync, existsSync, readFileSync } from "fs";
+import { writeFileSync, mkdirSync, rmSync, existsSync, readFileSync, symlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { directorySyncModule } from "./directory-sync.js";
@@ -76,6 +76,62 @@ describe("directorySyncModule.check", () => {
       owner: "test",
     });
     expect(result.status).toBe("missing");
+  });
+
+  it("reports drift (not ok) when source is deleted but target still exists", async () => {
+    mkdirSync(join(TGT, "dir"), { recursive: true });
+    writeFileSync(join(TGT, "dir", "a.txt"), "installed");
+    const result = await directorySyncModule.check({
+      sourcePath: join(SRC, "nonexistent"),
+      targetPath: join(TGT, "dir"),
+      owner: "test",
+    });
+    expect(result.status).not.toBe("ok");
+    expect(result.status).toBe("drifted");
+    expect(result.driftKind).toBe("target-changed");
+  });
+
+  it("detects a working symlinked file within a synced directory", async () => {
+    mkdirSync(join(SRC, "dir"), { recursive: true });
+    mkdirSync(join(TGT, "dir"), { recursive: true });
+    writeFileSync(join(SRC, "dir", "real.txt"), "data");
+    // Relative symlink to a sibling file (resolves to content "data").
+    symlinkSync("real.txt", join(SRC, "dir", "link.txt"));
+    writeFileSync(join(TGT, "dir", "real.txt"), "data");
+    writeFileSync(join(TGT, "dir", "link.txt"), "data");
+
+    const inSync = await directorySyncModule.check({
+      sourcePath: join(SRC, "dir"),
+      targetPath: join(TGT, "dir"),
+      owner: "test",
+    });
+    expect(inSync.status).toBe("ok");
+
+    // Change the target's copy of the symlinked file — must now show as drift
+    // (previously the symlinked entry was excluded from comparison entirely).
+    writeFileSync(join(TGT, "dir", "link.txt"), "changed");
+    const drifted = await directorySyncModule.check({
+      sourcePath: join(SRC, "dir"),
+      targetPath: join(TGT, "dir"),
+      owner: "test",
+    });
+    expect(drifted.status).toBe("drifted");
+  });
+
+  it("does not crash on a broken symlink within a synced directory", async () => {
+    mkdirSync(join(SRC, "dir"), { recursive: true });
+    mkdirSync(join(TGT, "dir"), { recursive: true });
+    writeFileSync(join(SRC, "dir", "good.txt"), "x");
+    writeFileSync(join(TGT, "dir", "good.txt"), "x");
+    // Dangling symlink → statSync would throw; it must be skipped gracefully.
+    symlinkSync(join(SRC, "dir", "does-not-exist.txt"), join(SRC, "dir", "broken.txt"));
+
+    const result = await directorySyncModule.check({
+      sourcePath: join(SRC, "dir"),
+      targetPath: join(TGT, "dir"),
+      owner: "test",
+    });
+    expect(result.status).toBe("ok");
   });
 });
 

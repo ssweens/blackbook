@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, cpSync, readdirSync, lstatSync } from "fs";
+import { existsSync, mkdirSync, cpSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import type { Module, CheckResult, ApplyResult } from "./types.js";
 import { hashFileAsync } from "./hash.js";
@@ -20,8 +20,19 @@ function listFilesRecursive(dir: string, prefix = ""): string[] {
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
       results.push(...listFilesRecursive(fullPath, relPath));
-    } else if (entry.isFile() || (entry.isSymbolicLink() && lstatSync(fullPath).isFile())) {
+    } else if (entry.isFile()) {
       results.push(relPath);
+    } else if (entry.isSymbolicLink()) {
+      // readdir gives the link itself; lstat would never report isFile() for a
+      // symlink. Use statSync (which follows the link) to classify the TARGET,
+      // and skip broken links (statSync throws) so they don't crash the scan.
+      try {
+        if (statSync(fullPath).isFile()) {
+          results.push(relPath);
+        }
+      } catch {
+        // Broken symlink (dangling target) — exclude from the managed file set.
+      }
     }
   }
   return results;
@@ -34,11 +45,17 @@ export const directorySyncModule: Module<DirectorySyncParams> = {
     const { sourcePath, targetPath } = params;
 
     if (!existsSync(sourcePath)) {
-      // Source repo can be empty while target already exists. Don't treat as fatal.
+      // Source deleted but the tool still has the synced directory. Mirror
+      // file-copy's convention: surface it as drift (target-changed) so the
+      // user can pull it back, rather than silently reporting ok.
       if (existsSync(targetPath)) {
-        return { status: "ok", message: `Source directory not found: ${sourcePath}` };
+        return {
+          status: "drifted",
+          message: `Source directory not found: ${sourcePath}`,
+          driftKind: "target-changed",
+        };
       }
-      return { status: "missing", message: `Source directory not found: ${sourcePath}` };
+      return { status: "missing", message: `Source directory not found: ${sourcePath}`, driftKind: "never-synced" };
     }
 
     if (!existsSync(targetPath)) {

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, watch, writeFileSync } from "fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, watch } from "fs";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { dirname, join } from "path";
@@ -103,7 +103,6 @@ interface Actions {
   loadMarketplaces: () => Promise<void>;
   loadInstalledPlugins: (options?: { silent?: boolean }) => Promise<void>;
   loadFiles: (options?: { silent?: boolean }) => Promise<FileStatus[]>;
-  loadTools: () => void;
   refreshManagedTools: () => void;
   refreshToolDetection: () => Promise<void>;
   installToolAction: (toolId: string, options?: { migrate?: boolean }) => Promise<boolean>;
@@ -116,9 +115,8 @@ interface Actions {
   updatePlugin: (plugin: Plugin) => Promise<boolean>;
   trackPluginInSource: (plugin: Plugin) => Promise<boolean>;
   removePluginFromGit: (plugin: Plugin) => Promise<boolean>;
-  setDetailPlugin: (plugin: Plugin | null) => void;
   setDetailMarketplace: (marketplace: Marketplace | null) => void;
-  /** Unified detail setter. Replaces setDetailPlugin/etc. */
+  /** Unified detail setter. Replaces the removed per-kind setters (setDetailPlugin/etc). */
   setDetail: (d: import("./types.js").DetailArtifact | null) => void;
   /** Re-resolve `detail` from current store state; close if artifact no longer exists. */
   refreshDetail: () => void;
@@ -535,7 +533,7 @@ function ensurePluginJson(pluginDir: string, plugin: Plugin): void {
   const pluginJsonPath = join(pluginDir, ".claude-plugin", "plugin.json");
   if (existsSync(pluginJsonPath)) return;
   mkdirSync(dirname(pluginJsonPath), { recursive: true });
-  writeFileSync(pluginJsonPath, JSON.stringify({
+  atomicWriteFileSync(pluginJsonPath, JSON.stringify({
     name: plugin.name,
     description: plugin.description,
     version: plugin.installedVersion ?? plugin.version ?? "1.0.0",
@@ -554,7 +552,7 @@ function removeFromSourceRepoMarketplace(sourceRepo: string, pluginName: string)
     marketplace.plugins = (marketplace.plugins as Array<Record<string, unknown>>).filter(
       (p) => p.name !== pluginName,
     );
-    writeFileSync(marketplacePath, JSON.stringify(marketplace, null, 2) + "\n");
+    atomicWriteFileSync(marketplacePath, JSON.stringify(marketplace, null, 2) + "\n");
   } catch { /* ignore */ }
 }
 
@@ -750,6 +748,18 @@ let toolActionAbortController: AbortController | null = null;
 const pluginActionInFlight = new Set<string>();
 const SYNC_TOOLS_KEY = "__syncTools__";
 
+// Monotonic run-tokens guard the data loaders against stale overwrites. A slow
+// loader call (e.g. loadFiles scanning many files, or loadPiPackages hitting the
+// network) can resolve AFTER a newer call of the same loader already wrote fresh
+// state — the older call's set() would then clobber the newer data. Each loader
+// bumps its counter on entry and captures the value; right before its terminal
+// set() it re-checks the counter, and skips the write if a newer call has since
+// started (the newer call owns the state and will set() itself).
+let loadFilesRunToken = 0;
+let loadPiPackagesRunToken = 0;
+let loadMarketplacesRunToken = 0;
+let loadInstalledPluginsRunToken = 0;
+
 /** Strip ANSI escape sequences so Ink doesn't re-interpret raw codes. */
 function stripAnsi(str: string): string {
   // eslint-disable-next-line no-control-regex
@@ -887,21 +897,12 @@ export const useStore = create<Store>((rawSet, get) => {
   setSortDir: (dir) => set({ sortDir: dir }),
   setSearch: (search) => set({ search, selectedIndex: 0 }),
   setSelectedIndex: (index) => set({ selectedIndex: index }),
-  setDetailPlugin: (plugin) => {
-    // Mirror into the unified `detail` field.
-    const prev = get().detail;
-    set({
-      detailPlugin: plugin,
-      detail: plugin
-        ? { kind: "plugin", data: plugin, drift: prev?.kind === "plugin" ? prev.drift : undefined }
-        : null,
-    });
-  },
   setDetailMarketplace: (marketplace) => set({ detailMarketplace: marketplace }),
   /**
-   * Unified detail setter. Replaces setDetailPlugin/setDetailFile/setDetailSkill/setDetailPiPackage.
-   * Sets `detail` and mirrors plugin/piPackage data into the legacy detailPlugin/detailPiPackage
-   * fields during the migration period (tests still reference those).
+   * Unified detail setter. Replaces the removed per-kind setters (setDetailPlugin/
+   * setDetailFile/setDetailSkill). Sets `detail` and mirrors plugin/piPackage data
+   * into the legacy detailPlugin/detailPiPackage fields during the migration period
+   * (tests still reference those).
    */
   setDetail: (d) => {
     set({
@@ -1017,10 +1018,6 @@ export const useStore = create<Store>((rawSet, get) => {
 
   clearNotification: (id) => {
     set((state) => ({ notifications: state.notifications.filter((n) => n.id !== id) }));
-  },
-
-  loadTools: () => {
-    set({ tools: getToolInstances(), managedTools: getManagedToolRows() });
   },
 
   refreshManagedTools: () => {
@@ -1257,6 +1254,7 @@ export const useStore = create<Store>((rawSet, get) => {
   },
 
   loadPiPackages: async (options) => {
+    const runToken = ++loadPiPackagesRunToken;
     const silent = options?.silent === true;
     if (!silent && !get().piPackagesLoaded) set({ piPackagesLoaded: false });
 
@@ -1393,6 +1391,9 @@ export const useStore = create<Store>((rawSet, get) => {
         existingSources.add(normalizePiPackageSource(result.source));
       }
 
+      // A newer loadPiPackages call has started while our awaits were in flight;
+      // let it own the final state rather than overwriting it with our staler scan.
+      if (runToken !== loadPiPackagesRunToken) return;
       const state = get();
       set({
         piPackages: packages,
@@ -1410,6 +1411,7 @@ export const useStore = create<Store>((rawSet, get) => {
       }
     } catch (error) {
       console.error("Failed to load Pi packages:", error);
+      if (runToken !== loadPiPackagesRunToken) return;
       const state = get();
       set({
         piPackages: [],
@@ -1747,6 +1749,7 @@ export const useStore = create<Store>((rawSet, get) => {
   },
 
   loadMarketplaces: async () => {
+    const runToken = ++loadMarketplacesRunToken;
     invalidatePluginToolStatusCache();
 
     try {
@@ -1812,6 +1815,8 @@ export const useStore = create<Store>((rawSet, get) => {
       // and marketplace-prescribed plugins whose components are present on disk.
       const installedWithStatus = buildInstalledPlugins(scannedPlugins, allMarketplacePlugins, configuredMarketplaceNames);
 
+      // A newer loadMarketplaces call started during our fetches — let it win.
+      if (runToken !== loadMarketplacesRunToken) return;
       const state = get();
       set({
         marketplaces: updatedMarketplaces,
@@ -1830,11 +1835,13 @@ export const useStore = create<Store>((rawSet, get) => {
         get().notify(`Failed to fetch marketplace data: ${summary}`, "error");
       }
     } catch (e) {
+      if (runToken !== loadMarketplacesRunToken) return;
       set({ error: String(e) });
     }
   },
 
   loadInstalledPlugins: async (options) => {
+    const runToken = ++loadInstalledPluginsRunToken;
     invalidatePluginToolStatusCache();
     const silent = options?.silent === true;
     if (!silent && !get().installedPluginsLoaded) set({ installedPluginsLoaded: false });
@@ -1878,6 +1885,9 @@ export const useStore = create<Store>((rawSet, get) => {
       return { ...p, skills: uniqueStrings(p.skills, mp.skills) };
     });
 
+    // A newer loadInstalledPlugins call started (it may have awaited loadMarketplaces
+    // above); let it own the final state rather than overwriting with staler data.
+    if (runToken !== loadInstalledPluginsRunToken) return;
     const state = get();
     set({
       installedPlugins: installedWithStatus,
@@ -1891,6 +1901,7 @@ export const useStore = create<Store>((rawSet, get) => {
   },
 
   loadFiles: async (options) => {
+    const runToken = ++loadFilesRunToken;
     const silent = options?.silent === true;
     if (!silent && !get().filesLoaded) set({ filesLoaded: false });
 
@@ -2187,6 +2198,9 @@ export const useStore = create<Store>((rawSet, get) => {
       }
     }
 
+    // A newer loadFiles call started while we were running per-file checks; skip
+    // our write so the newer (fresher) scan's state isn't clobbered by ours.
+    if (runToken !== loadFilesRunToken) return files;
     const state = get();
     set({
       files,
@@ -2268,7 +2282,16 @@ export const useStore = create<Store>((rawSet, get) => {
       if (enabledInstances.length === 0) { notify("No tools enabled in config.", "error"); return false; }
       const success = await withSpinner(`Uninstalling ${plugin.name}...`, () => uninstallPlugin(plugin), notify, clearNotification);
       await get().refreshAll({ silent: true });
-      notify(success ? `✓ Uninstalled ${plugin.name}` : `✓ Removed ${plugin.name} from other tools`, "success");
+      // uninstallPlugin() returns false when nothing was removed from any enabled
+      // tool (every removal failed, or the plugin wasn't present). Reporting that
+      // as a green "success" hides a real failure — surface it as an error instead.
+      // Underlying per-tool errors are only logged (install.ts logs via logError),
+      // so the message points the user there rather than inventing details.
+      if (success) {
+        notify(`✓ Uninstalled ${plugin.name}`, "success");
+      } else {
+        notify(`✗ Failed to uninstall ${plugin.name} — nothing was removed (see logs)`, "error");
+      }
       return success;
     } finally {
       pluginActionInFlight.delete(plugin.name);

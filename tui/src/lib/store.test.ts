@@ -10,6 +10,7 @@ import {
   getPluginToolStatus,
   syncPluginInstances,
   updatePlugin,
+  uninstallPlugin,
   removePiMarketplace,
 } from "./install.js";
 import { getSkillActions } from "./item-actions.js";
@@ -58,6 +59,7 @@ vi.mock("./install.js", async (importOriginal) => {
     getStandaloneSkills: vi.fn().mockReturnValue([]),
     syncPluginInstances: vi.fn(),
     updatePlugin: vi.fn(),
+    uninstallPlugin: vi.fn().mockResolvedValue(true),
     removePiMarketplace: vi.fn().mockResolvedValue(undefined),
   };
 });
@@ -795,24 +797,6 @@ describe("Store detail views", () => {
     });
   });
 
-  it("should set detail plugin", () => {
-    const plugin = createMockPlugin({ name: "my-plugin" });
-    const { setDetailPlugin } = useStore.getState();
-    setDetailPlugin(plugin);
-
-    expect(useStore.getState().detailPlugin?.name).toBe("my-plugin");
-  });
-
-  it("should clear detail plugin", () => {
-    const plugin = createMockPlugin();
-    useStore.setState({ detailPlugin: plugin });
-
-    const { setDetailPlugin } = useStore.getState();
-    setDetailPlugin(null);
-
-    expect(useStore.getState().detailPlugin).toBeNull();
-  });
-
   it("should set detail marketplace", () => {
     const marketplace = createMockMarketplace({ name: "my-marketplace" });
     const { setDetailMarketplace } = useStore.getState();
@@ -913,19 +897,6 @@ describe("Store tool management", () => {
     vi.mocked(getToolInstances).mockReset();
     vi.mocked(updateToolInstanceConfig).mockReset();
     vi.mocked(getEnabledToolInstances).mockReset();
-  });
-
-  it("should refresh tool list when config changes", () => {
-    const toolEnabled = createMockTool({ enabled: true });
-    const toolDisabled = createMockTool({ enabled: false });
-
-    vi.mocked(getToolInstances).mockReturnValueOnce([toolEnabled]);
-    useStore.getState().loadTools();
-    expect(useStore.getState().tools[0].enabled).toBe(true);
-
-    vi.mocked(getToolInstances).mockReturnValueOnce([toolDisabled]);
-    useStore.getState().loadTools();
-    expect(useStore.getState().tools[0].enabled).toBe(false);
   });
 
   it("toggles tool enablement and refreshes", async () => {
@@ -2371,5 +2342,160 @@ describe("Store marketplace fetch-error surfacing", () => {
 
     const notes = useStore.getState().notifications;
     expect(notes.some((n) => n.type === "error")).toBe(false);
+  });
+});
+
+describe("Store uninstallPlugin failure surfacing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useStore.setState({ notifications: [] });
+    vi.mocked(getEnabledToolInstances).mockReturnValue([createMockTool()]);
+    vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [], byTool: {} });
+  });
+
+  it("reports a failed uninstall as an error, not a green success", async () => {
+    const plugin = createMockPlugin({ name: "doomed-plugin" });
+    // install.ts uninstallPlugin returns false when NOTHING was removed from any
+    // enabled tool. The store action must not dress this up as a success.
+    vi.mocked(uninstallPlugin).mockResolvedValue(false);
+
+    const originalRefreshAll = useStore.getState().refreshAll;
+    useStore.setState({ refreshAll: async () => {} });
+    try {
+      const result = await useStore.getState().uninstallPlugin(plugin);
+      expect(result).toBe(false);
+
+      const notes = useStore.getState().notifications;
+      const errorNote = notes.find((n) => n.type === "error");
+      expect(errorNote).toBeDefined();
+      expect(errorNote!.message).toContain("doomed-plugin");
+      expect(errorNote!.message).toMatch(/failed/i);
+      // Crucially: no green checkmark / success notification was emitted.
+      expect(notes.some((n) => n.type === "success")).toBe(false);
+    } finally {
+      useStore.setState({ refreshAll: originalRefreshAll });
+    }
+  });
+
+  it("reports a genuine uninstall as a success", async () => {
+    const plugin = createMockPlugin({ name: "clean-plugin" });
+    vi.mocked(uninstallPlugin).mockResolvedValue(true);
+
+    const originalRefreshAll = useStore.getState().refreshAll;
+    useStore.setState({ refreshAll: async () => {} });
+    try {
+      const result = await useStore.getState().uninstallPlugin(plugin);
+      expect(result).toBe(true);
+
+      const notes = useStore.getState().notifications;
+      expect(
+        notes.some((n) => n.type === "success" && /Uninstalled clean-plugin/.test(n.message)),
+      ).toBe(true);
+      expect(notes.some((n) => n.type === "error")).toBe(false);
+    } finally {
+      useStore.setState({ refreshAll: originalRefreshAll });
+    }
+  });
+});
+
+describe("Store loader run-token guards", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useStore.setState({
+      // An enabled Pi tool so loadPiPackages runs past its early return.
+      tools: [{ toolId: "pi", instanceId: "default", name: "Pi", configDir: "/tmp/pi", enabled: true, kind: "tool" } as any],
+      toolDetection: {},
+      piPackages: [],
+      piPackagesLoaded: false,
+      piMarketplaces: [],
+      installedPlugins: [],
+      files: [],
+      managedItems: [],
+      managedTools: [],
+      standaloneSkills: [],
+      notifications: [],
+    });
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: { files: [], settings: {}, tools: {}, plugins: {}, configs: [], pi_packages: [] } as any,
+      configPath: "/tmp/blackbook/config.yaml",
+      errors: [],
+    } as any);
+    vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [], byTool: {} });
+    vi.mocked(loadPiSettings).mockReturnValue({ packages: [] } as any);
+    vi.mocked(getGlobalPiPackageInstallInfo).mockReturnValue(new Map());
+    vi.mocked(getFetchErrors).mockReturnValue([]);
+    vi.mocked(getAllPiPackages).mockImplementation((mps: any[]) => mps.flatMap((m) => m.packages ?? []));
+  });
+
+  it("a stale (older) loadPiPackages call does not clobber a newer call's state", async () => {
+    const makePkg = (name: string) => ({
+      name, description: "", version: "1.0.0", source: `npm:${name}`,
+      sourceType: "npm", marketplace: "npm", installed: false,
+      extensions: [], skills: [], prompts: [], themes: [],
+    });
+
+    // Two controllable fetches: the OLDER call gets the one we resolve LAST.
+    let resolveOld!: (v: unknown) => void;
+    let resolveNew!: (v: unknown) => void;
+    const oldFetch = new Promise((r) => { resolveOld = r; });
+    const newFetch = new Promise((r) => { resolveNew = r; });
+    vi.mocked(loadAllPiMarketplaces)
+      .mockReturnValueOnce(oldFetch as any)   // first (older) invocation
+      .mockReturnValueOnce(newFetch as any);  // second (newer) invocation
+
+    const older = useStore.getState().loadPiPackages({ silent: true });
+    const newer = useStore.getState().loadPiPackages({ silent: true });
+
+    // Newer call resolves FIRST and writes fresh state.
+    resolveNew([{ name: "new-mp", packages: [makePkg("new-pkg")] }]);
+    await newer;
+    expect(useStore.getState().piPackages.map((p) => p.name)).toEqual(["new-pkg"]);
+
+    // Older call resolves LAST with stale data. Its run-token is no longer the
+    // current one, so it must skip its set() and leave the fresh state intact.
+    resolveOld([{ name: "old-mp", packages: [makePkg("old-pkg")] }]);
+    await older;
+    expect(useStore.getState().piPackages.map((p) => p.name)).toEqual(["new-pkg"]);
+  });
+});
+
+describe("Store sync preview depends on standaloneSkills", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useStore.setState({
+      managedTools: [],
+      toolDetection: {},
+      files: [],
+      installedPlugins: [],
+      standaloneSkills: [],
+      marketplaces: [],
+      piPackages: [],
+    });
+    vi.mocked(getToolInstances).mockReturnValue([createMockTool()]);
+    vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [], byTool: {} });
+  });
+
+  it("reflects standaloneSkills, proving it is a real getSyncPreview input", () => {
+    const skill = {
+      name: "my-skill",
+      installations: [],
+      diskPath: "/disk/my-skill",
+      toolId: "opencode",
+      instanceName: "OC",
+      instanceId: "default",
+      sourcePath: "/repo/skills/my-skill",
+    };
+
+    useStore.setState({ standaloneSkills: [skill] as any });
+    const withSkill = useStore.getState().getSyncPreview();
+    expect(withSkill.some((i) => i.kind === "skill")).toBe(true);
+
+    // Removing the skill changes the preview. This is exactly why SyncTab's memo
+    // MUST list standaloneSkills as a dependency (App.tsx already did); otherwise
+    // the two call sites disagree and SyncTab's list goes stale when only skills
+    // change.
+    useStore.setState({ standaloneSkills: [] });
+    const withoutSkill = useStore.getState().getSyncPreview();
+    expect(withoutSkill.some((i) => i.kind === "skill")).toBe(false);
   });
 });

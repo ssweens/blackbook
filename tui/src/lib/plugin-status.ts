@@ -2,17 +2,20 @@
  * Plugin installation status checking and component toggling
  */
 
-import { readFileSync, existsSync, lstatSync, unlinkSync, rmSync, renameSync } from "fs";
+import { existsSync, lstatSync, unlinkSync, rmSync, renameSync } from "fs";
 import { execFileSync } from "child_process";
-import { basename, join, resolve } from "path";
+import { join } from "path";
 import type { Plugin, ToolInstance } from "./types.js";
 import { getToolInstances, getEnabledToolInstances, setPluginComponentEnabled } from "./config.js";
-import { loadPiSettings, normalizePiPackageSource } from "./marketplace.js";
 import { safePath, validatePluginMetadata, logError } from "./validation.js";
 import { loadManifest, saveManifest, type Manifest } from "./manifest.js";
 import { getPluginSourcePath, instanceKey, createSymlink, isSymlink, buildManifestItemKey, migrateManifestKeys } from "./plugin-helpers.js";
 import { countGetPluginToolStatus } from "./perf.js";
 import { getPiBridgeInstalledPluginIds as loadPiBridgeInstalledPluginIds } from "./pi-bridge.js";
+// isPiPluginBridgeReady and isConfigOnlyInstance are canonicalized in install.ts,
+// the single home for Pi-bridge resolution logic (it also operates the bridge).
+// Imported here so the status check and the install path never diverge.
+import { isPiPluginBridgeReady, isConfigOnlyInstance } from "./install.js";
 
 export interface ToolInstallStatus {
   toolId: string;
@@ -23,50 +26,6 @@ export interface ToolInstallStatus {
   enabled: boolean;
   supportReason?: string;
   installedVersion?: string;
-}
-
-const PI_PLUGINS_PACKAGE_NAME = "@ssweens/pi-plugins";
-const PI_PLUGINS_EXTENSION_DIR = "pi-plugins";
-const PI_SOFT_DEP_REQUIRED_SOURCES = [
-  "npm:pi-subagents",
-  "npm:pi-mcp-adapter",
-] as const;
-const PI_AGENT_DIR = join(process.env.HOME || "", ".pi", "agent");
-
-function resolvePiSettingsPackagePath(source: string): string | null {
-  const trimmed = source.trim();
-  if (!trimmed || trimmed.startsWith("npm:")) return null;
-  const expanded = trimmed.startsWith("~") ? join(process.env.HOME || "", trimmed.slice(1)) : trimmed;
-  return resolve(PI_AGENT_DIR, expanded);
-}
-
-function isPiPluginsSource(source: string): boolean {
-  const normalized = normalizePiPackageSource(source);
-  if (normalized === normalizePiPackageSource(`npm:${PI_PLUGINS_PACKAGE_NAME}`)) return true;
-
-  const resolved = resolvePiSettingsPackagePath(source);
-  if (resolved) {
-    try {
-      const pkg = JSON.parse(readFileSync(join(resolved, "package.json"), "utf-8"));
-      return pkg?.name === PI_PLUGINS_PACKAGE_NAME;
-    } catch {
-      return basename(resolved) === PI_PLUGINS_EXTENSION_DIR;
-    }
-  }
-
-  return false;
-}
-
-function isPiPluginBridgeReady(): boolean {
-  const settings = loadPiSettings();
-  const installed = new Set(settings.packages.map((s) => normalizePiPackageSource(s)));
-  const hasPiPlugins = settings.packages.some(isPiPluginsSource);
-  const hasSoftDeps = PI_SOFT_DEP_REQUIRED_SOURCES.every((s) => installed.has(normalizePiPackageSource(s)));
-  return hasPiPlugins && hasSoftDeps;
-}
-
-function isConfigOnlyInstance(instance: ToolInstance): boolean {
-  return !instance.skillsSubdir && !instance.commandsSubdir && !instance.agentsSubdir;
 }
 
 /**

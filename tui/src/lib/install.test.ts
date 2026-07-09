@@ -22,6 +22,8 @@ import {
   saveManifest,
   manifestPath,
   togglePluginComponent,
+  parseGithubRepoFromUrl,
+  removeFromClaudeInstalledPluginsJson,
 } from "./install.js";
 import * as config from "./config.js";
 
@@ -885,5 +887,82 @@ describe("togglePluginComponent config-write safety", () => {
     expect(result.error).toBeTruthy();
     // The broken config file must be left untouched, not replaced with defaults.
     expect(readFileSync(configPath, "utf-8")).toContain("bad_indent");
+  });
+});
+
+describe("parseGithubRepoFromUrl", () => {
+  it("parses a plain github repo url", () => {
+    expect(parseGithubRepoFromUrl("https://github.com/owner/repo")).toEqual({
+      repo: "owner/repo",
+      ref: "main",
+    });
+  });
+
+  it("strips a trailing .git suffix without truncating the repo name", () => {
+    expect(parseGithubRepoFromUrl("https://github.com/owner/repo.git")).toEqual({
+      repo: "owner/repo",
+      ref: "main",
+    });
+  });
+
+  it("keeps dots that are part of the repo name (regression for the truncation bug)", () => {
+    // The old regex used [^/.]+ for the repo segment, which stopped at the first
+    // dot and turned `owner/repo.name` into `owner/repo`, dropping `.name`.
+    expect(parseGithubRepoFromUrl("https://github.com/owner/repo.name")).toEqual({
+      repo: "owner/repo.name",
+      ref: "main",
+    });
+    expect(
+      parseGithubRepoFromUrl("https://github.com/octocat/hello.world.js.git"),
+    ).toEqual({ repo: "octocat/hello.world.js", ref: "main" });
+  });
+
+  it("parses raw.githubusercontent.com urls with their ref", () => {
+    expect(
+      parseGithubRepoFromUrl(
+        "https://raw.githubusercontent.com/owner/repo/v1.2.3/.claude-plugin/marketplace.json",
+      ),
+    ).toEqual({ repo: "owner/repo", ref: "v1.2.3" });
+  });
+
+  it("returns null for a non-github url", () => {
+    expect(parseGithubRepoFromUrl("https://example.com/owner/repo")).toBeNull();
+  });
+});
+
+describe("removeFromClaudeInstalledPluginsJson atomic write", () => {
+  let configDir: string;
+
+  beforeEach(() => {
+    configDir = join(
+      tmpdir(),
+      `blackbook-installed-plugins-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(join(configDir, "plugins"), { recursive: true });
+  });
+
+  afterEach(() => {
+    try { rmSync(configDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it("removes the entry and leaves a complete, valid JSON file", () => {
+    const jsonPath = join(configDir, "plugins", "installed_plugins.json");
+    writeFileSync(
+      jsonPath,
+      JSON.stringify(
+        { plugins: { "foo@mkt": { version: "1.0.0" }, "bar@other": { version: "2.0.0" } } },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    const instance = createMockTool({ toolId: "claude-code", configDir });
+    removeFromClaudeInstalledPluginsJson(instance, "foo", "mkt");
+
+    // The file must be fully written (parseable) after the atomic swap, with only
+    // the targeted entry removed and the untouched entry preserved.
+    const parsed = JSON.parse(readFileSync(jsonPath, "utf-8"));
+    expect(parsed.plugins["foo@mkt"]).toBeUndefined();
+    expect(parsed.plugins["bar@other"]).toEqual({ version: "2.0.0" });
   });
 });

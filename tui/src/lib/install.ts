@@ -2,7 +2,6 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  writeFileSync,
   symlinkSync,
   unlinkSync,
   renameSync,
@@ -134,7 +133,7 @@ function readClaudePluginMetadata(pluginDir: string): { version?: string; descri
 
 // Hash functions imported from modules/hash.ts (single source of truth)
 
-function isConfigOnlyInstance(instance: ToolInstance): boolean {
+export function isConfigOnlyInstance(instance: ToolInstance): boolean {
   return (
     !instance.skillsSubdir && !instance.commandsSubdir && !instance.agentsSubdir
   );
@@ -213,7 +212,7 @@ function resolvePiPluginsPackageRoot(): string | null {
   return null;
 }
 
-function isPiPluginBridgeReady(): boolean {
+export function isPiPluginBridgeReady(): boolean {
   const settings = loadPiSettings();
   const installed = new Set(settings.packages.map((s) => normalizePiPackageSource(s)));
   const hasPiPlugins = settings.packages.some(isPiPluginsSource);
@@ -588,7 +587,7 @@ function withTempDir<T>(
   });
 }
 
-function parseGithubRepoFromUrl(
+export function parseGithubRepoFromUrl(
   url: string,
 ): { repo: string; ref: string } | null {
   const rawMatch = url.match(
@@ -596,7 +595,10 @@ function parseGithubRepoFromUrl(
   );
   if (rawMatch) return { repo: rawMatch[1], ref: rawMatch[2] };
 
-  const gitMatch = url.match(/github\.com\/([^/]+\/[^/.]+)(?:\.git)?/);
+  // Non-greedy repo segment anchored at the end so a trailing `.git` is stripped
+  // without truncating repo names that legitimately contain a dot
+  // (e.g. `owner/repo.name`). Mirrors marketplace.ts's correct implementation.
+  const gitMatch = url.match(/github\.com\/([^/]+\/[^/]+?)(?:\.git)?$/);
   if (gitMatch) return { repo: gitMatch[1], ref: "main" };
 
   return null;
@@ -940,7 +942,7 @@ export async function uninstallPluginFromInstance(
  * This file is the authoritative "what plugins are installed" record for Claude Code;
  * our scanner reads it, so we MUST keep it in sync on uninstall.
  */
-function removeFromClaudeInstalledPluginsJson(
+export function removeFromClaudeInstalledPluginsJson(
   instance: ToolInstance,
   pluginName: string,
   marketplace: string,
@@ -964,7 +966,9 @@ function removeFromClaudeInstalledPluginsJson(
       changed = true;
     }
     if (changed) {
-      writeFileSync(path, JSON.stringify(data, null, 2) + "\n", "utf-8");
+      // Atomic write (temp-file + rename): a real Claude Code process may read
+      // this file concurrently, so it must never observe a truncated/partial write.
+      atomicWriteFileSync(path, JSON.stringify(data, null, 2) + "\n");
     }
   } catch (error) {
     logError(`Failed to update ${path}`, error);
@@ -1626,25 +1630,10 @@ export function linkPluginToInstance(
     manifest.tools[key] = { items: {} };
   }
 
-  // Debug logging
-  console.error(
-    `[DEBUG] linkPluginToInstance: ${plugin.name} -> ${instance.name}`,
-  );
-  console.error(`[DEBUG] sourcePath: ${sourcePath}`);
-  console.error(
-    `[DEBUG] skillsSubdir: ${instance.skillsSubdir}, commandsSubdir: ${instance.commandsSubdir}, agentsSubdir: ${instance.agentsSubdir}`,
-  );
-  console.error(`[DEBUG] plugin.skills: ${JSON.stringify(plugin.skills)}`);
-  console.error(`[DEBUG] plugin.commands: ${JSON.stringify(plugin.commands)}`);
-  console.error(`[DEBUG] plugin.agents: ${JSON.stringify(plugin.agents)}`);
-
   for (const skill of plugin.skills) {
     if (componentConfig.disabledSkills.includes(skill)) continue;
     validateItemName("skill", skill);
     const source = safePath(join(sourcePath, "skills"), skill);
-    console.error(
-      `[DEBUG] Checking skill source: ${source}, exists: ${existsSync(source)}`,
-    );
     if (!existsSync(source)) continue;
 
     if (instance.skillsSubdir) {
@@ -1750,9 +1739,6 @@ export function linkPluginToInstance(
   }
 
   saveManifest(manifest);
-  console.error(
-    `[DEBUG] linkPluginToInstance completed: ${linked} items linked for ${instance.name}`,
-  );
   return linked;
 }
 

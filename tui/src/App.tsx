@@ -28,7 +28,6 @@ import { PluginSummary } from "./components/PluginSummary.js";
 import { PiPackageSummary } from "./components/PiPackageSummary.js";
 import { PiPackagePreview } from "./components/PiPackagePreview.js";
 // PiPackageDetail actions built via toPiPkgItemActions in lib/item-actions.ts
-import { ComponentManager, getComponentItems } from "./components/ComponentManager.js";
 import { SettingsPanel } from "./components/SettingsPanel.js";
 import { ToolsTab } from "./tabs/ToolsTab.js";
 import { SettingsTab } from "./tabs/SettingsTab.js";
@@ -36,7 +35,7 @@ import { MarketplacesTab } from "./tabs/MarketplacesTab.js";
 import { SyncTab } from "./tabs/SyncTab.js";
 import { DiscoverTab } from "./tabs/DiscoverTab.js";
 import { InstalledTab } from "./tabs/InstalledTab.js";
-import { getPluginToolStatus, togglePluginComponent } from "./lib/plugin-status.js";
+import { getPluginToolStatus } from "./lib/plugin-status.js";
 import {
   syncPluginInstances,
   uninstallPluginFromInstance,
@@ -82,7 +81,6 @@ import { useContentHeight } from "./lib/use-content-height.js";
 import { getSyncItemKey, sortAndFilterPiPackages } from "./lib/derived.js";
 
 const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces", "settings"];
-const TAB_REFRESH_TTL_MS = 30000;
 
 interface TabContentProps {
   tab: Tab;
@@ -213,9 +211,6 @@ export function App() {
   const discoverSubView = useStore((s) => s.discoverSubView);
   const setDiscoverSubView = useStore((s) => s.setDiscoverSubView);
 
-  // ── Notifications (used in input handler) ──
-  const notifications = useStore((s) => s.notifications);
-
   // ── Actions (stable references — selectors here for explicitness) ──
   const loadMarketplaces = useStore((s) => s.loadMarketplaces);
   const loadInstalledPlugins = useStore((s) => s.loadInstalledPlugins);
@@ -256,8 +251,6 @@ export function App() {
 
   const [actionIndex, setActionIndex] = useState(0);
   const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set());
-  const [componentManagerMode, setComponentManagerMode] = useState(false);
-  const [componentIndex, setComponentIndex] = useState(0);
   // detailPluginDrift / detailFile / detailSkill are now derived from `detail` above.
   const pluginDriftMap = useStore((s) => s.pluginDriftMap);
   const setPluginDriftMap = useStore((s) => s.setPluginDriftMap);
@@ -307,14 +300,6 @@ export function App() {
   const [showRefreshIndicator, setShowRefreshIndicator] = useState(false);
   const tabRefreshCounterRef = useRef(0);
   const initialRefreshStartedRef = useRef(false);
-  const lastTabRefreshRef = useRef<Record<Tab, number>>({
-    sync: 0,
-    tools: 0,
-    discover: 0,
-    installed: 0,
-    marketplaces: 0,
-    settings: 0,
-  });
   const tabRefreshInFlightRef = useRef<Record<Tab, boolean>>({
     sync: false,
     tools: false,
@@ -396,19 +381,9 @@ export function App() {
     return `(showing ${start + 1}-${end} of ${totalCount})`;
   };
 
-  const refreshTabData = async (targetTab: Tab, options?: { force?: boolean }) => {
-    const force = options?.force === true;
-    const now = Date.now();
-
+  const refreshTabData = async (targetTab: Tab) => {
     if (tabRefreshInFlightRef.current[targetTab]) {
       return;
-    }
-
-    if (!force) {
-      const lastRefresh = lastTabRefreshRef.current[targetTab];
-      if (now - lastRefresh < TAB_REFRESH_TTL_MS) {
-        return;
-      }
     }
 
     tabRefreshInFlightRef.current[targetTab] = true;
@@ -416,7 +391,6 @@ export function App() {
     useStore.setState({ loading: true });
     setTabRefreshInProgress(true);
 
-    let refreshed = false;
     try {
       switch (targetTab) {
         case "settings":
@@ -444,11 +418,9 @@ export function App() {
           }); // background — files are slow, don't block UI
           break;
       }
-      refreshed = true;
     } catch (error) {
       notify(`Failed to refresh ${targetTab} tab: ${error instanceof Error ? error.message : String(error)}`, "error");
     } finally {
-      if (refreshed) lastTabRefreshRef.current[targetTab] = Date.now();
       tabRefreshInFlightRef.current[targetTab] = false;
       tabRefreshCounterRef.current -= 1;
       if (tabRefreshCounterRef.current <= 0) {
@@ -475,10 +447,22 @@ export function App() {
     if (initialTabAlreadyHydrated) return;
 
     initialRefreshStartedRef.current = true;
-    void refreshTabData(tab, { force: true });
+    void refreshTabData(tab);
     // Run exactly once on boot. Tab switches after boot do not auto-refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The store's setTab resets shared browse/detail state (detail, detailMarketplace,
+  // discoverSubView, …) on every tab change, but these App-local overlay/context
+  // states are NOT covered by that reset. Clear them here whenever the tab changes so
+  // a stale value can't resurrect a closed overlay — e.g. a leftover
+  // marketplaceBrowseContext re-opening the previous marketplace's detail when the
+  // user returns to the Marketplaces tab and presses Esc.
+  useEffect(() => {
+    setMarketplaceBrowseContext(null);
+    setDetailPiMarketplace(null);
+    setDetailToolKey(null);
+  }, [tab]);
 
   useEffect(() => {
     if (!detailFile) return;
@@ -1143,7 +1127,6 @@ export function App() {
         }
       }
       setDetail(null);
-      setComponentManagerMode(false);
       closeDetail();
       return;
     }
@@ -1344,19 +1327,6 @@ export function App() {
     if (key.return && activeToolForModal) void runToolAction(activeToolForModal, toolModalAction!, toolModalMigrate);
   };
 
-  const handleComponentManagerInput = (input: string, key: Parameters<Parameters<typeof useInput>[0]>[1]) => {
-    if (!detailPlugin) return;
-    if (key.escape) { setComponentManagerMode(false); return; }
-    const items = getComponentItems(detailPlugin);
-    if (items.length === 0) { setComponentManagerMode(false); return; }
-    if (key.upArrow) { setComponentIndex((i) => Math.max(0, i - 1)); return; }
-    if (key.downArrow) { setComponentIndex((i) => Math.min(items.length - 1, i + 1)); return; }
-    if (key.return || input === " ") {
-      const item = items[componentIndex];
-      if (item) { togglePluginComponent(detailPlugin, item.kind, item.name, !item.enabled); refreshDetailPlugin(detailPlugin); }
-    }
-  };
-
   /** Returns true if the shortcut was handled. */
   const handleToolShortcut = (input: string): boolean => {
     const tool = detailTool || managedTools[selectedIndex];
@@ -1481,9 +1451,18 @@ export function App() {
       return;
     }
 
+    // A modal (EditToolModal, AddMarketplaceModal, SourceSetupWizard) owns input
+    // while open and handles its own Esc to close itself. Return early for EVERY
+    // key — including Esc — so App's own Esc handling below does not ALSO close the
+    // view underneath the modal, which would collapse two overlay layers at once
+    // (the modal closes itself via its own useInput; the guard must run first).
+    if (modalVisible || editingToolId) { return; }
+
     // Esc must always close the topmost overlay — it takes priority over notification
-    // dismissal so users can back out even when a notification is showing.
-    const stickyNotifications = notifications.filter(
+    // dismissal so users can back out even when a notification is showing. Read the
+    // live notification list here via getState() instead of subscribing at the top
+    // level, so the whole app doesn't re-render on every notification add/clear.
+    const stickyNotifications = useStore.getState().notifications.filter(
       (n) => (n.type === "warning" || n.type === "error") && !n.spinner
     );
     if (isEscape) {
@@ -1498,12 +1477,6 @@ export function App() {
       return;
     }
 
-    // Don't handle input when modal is open (modal handles its own input)
-    if (modalVisible || editingToolId) { return; }
-
-    // Component manager mode
-    if (componentManagerMode && detailPlugin) { handleComponentManagerInput(input, key); return; }
-
     // Focus the search box (Discover/Installed only). Handled here — on the same
     // global input path as every other shortcut — so focus is reliable. The
     // searchFocused guard above then routes all subsequent keystrokes to the
@@ -1516,7 +1489,7 @@ export function App() {
     // Manual refresh: git pull source repo + reload everything
     if (input === "R") {
       void pullSourceRepo()
-        .then(() => refreshTabData(tab, { force: true }))
+        .then(() => refreshTabData(tab))
         .catch((error) => {
           notify(`Failed to refresh from source repo: ${error instanceof Error ? error.message : String(error)}`, "error");
         });
@@ -2025,7 +1998,7 @@ export function App() {
     if (!action) return;
 
     await handleItemAction(item, action, {
-      closeDetail: () => { setDetail(null); setComponentManagerMode(false); closeDetail(); },
+      closeDetail: () => { setDetail(null); closeDetail(); },
       openDiffForFile,
       openMissingSummaryForFile,
       setDiffTarget: (target) => useStore.setState({ diffTarget: target }),
@@ -2565,12 +2538,7 @@ export function App() {
           detection={toolDetection[detailTool.toolId] || null}
           pending={toolDetectionPending[detailTool.toolId] === true}
         />
-      ) : detailPlugin && componentManagerMode ? (
-        <ComponentManager
-          plugin={detailPlugin}
-          selectedIndex={componentIndex}
-        />
-      ) : activeDetail && !componentManagerMode ? (
+      ) : activeDetail ? (
         detail?.kind === "namespace" && detailNamespace ? (
           <NamespaceDetail
             item={activeDetail.item}

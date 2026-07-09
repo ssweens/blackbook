@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
-import { writeFileSync, mkdirSync, rmSync, readFileSync } from "fs";
+import { writeFileSync, mkdirSync, rmSync, readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { globCopyModule } from "./glob-copy.js";
+import { listBackups } from "./backup.js";
 
 const TMP = join(tmpdir(), `bb-glob-copy-test-${Date.now()}`);
 const SRC = join(TMP, "source");
@@ -72,5 +73,88 @@ describe("globCopyModule.apply", () => {
     });
     expect(result.changed).toBe(false);
     expect(result.error).toBeDefined();
+  });
+
+  it("preserves subdirectory structure across matches instead of flattening", async () => {
+    mkdirSync(join(SRC, "agents", "a"), { recursive: true });
+    mkdirSync(join(SRC, "agents", "b"), { recursive: true });
+    writeFileSync(join(SRC, "agents", "a", "x.md"), "content-x");
+    writeFileSync(join(SRC, "agents", "b", "y.md"), "content-y");
+
+    const result = await globCopyModule.apply({
+      sourcePath: join(SRC, "agents", "**", "*.md"),
+      targetPath: TGT,
+      owner: "test",
+    });
+
+    expect(result.changed).toBe(true);
+    // Structure preserved (not flattened to TGT/x.md, TGT/y.md).
+    expect(readFileSync(join(TGT, "agents", "a", "x.md"), "utf-8")).toBe("content-x");
+    expect(readFileSync(join(TGT, "agents", "b", "y.md"), "utf-8")).toBe("content-y");
+    expect(existsSync(join(TGT, "x.md"))).toBe(false);
+    expect(existsSync(join(TGT, "y.md"))).toBe(false);
+  });
+
+  it("does not silently overwrite same-basename matches in different subdirs", async () => {
+    mkdirSync(join(SRC, "agents", "a"), { recursive: true });
+    mkdirSync(join(SRC, "agents", "b"), { recursive: true });
+    writeFileSync(join(SRC, "agents", "a", "README.md"), "from-a");
+    writeFileSync(join(SRC, "agents", "b", "README.md"), "from-b");
+
+    const result = await globCopyModule.apply({
+      sourcePath: join(SRC, "agents", "**", "*.md"),
+      targetPath: TGT,
+      owner: "test",
+    });
+
+    expect(result.changed).toBe(true);
+    // Both survive — neither overwrites the other.
+    expect(readFileSync(join(TGT, "agents", "a", "README.md"), "utf-8")).toBe("from-a");
+    expect(readFileSync(join(TGT, "agents", "b", "README.md"), "utf-8")).toBe("from-b");
+  });
+
+  it("keeps every file's backup from one run even when retention is low", async () => {
+    // Pre-existing target files so each copy produces a backup.
+    for (let i = 1; i <= 4; i++) {
+      writeFileSync(join(TGT, `job${i}.txt`), `old-${i}`);
+      writeFileSync(join(SRC, `job${i}.txt`), `new-${i}`);
+    }
+
+    const result = await globCopyModule.apply({
+      sourcePath: join(SRC, "job*.txt"),
+      targetPath: TGT,
+      owner: "batch-owner",
+      backupRetention: 2, // Naive per-file pruning would delete 2 of the 4.
+    });
+
+    expect(result.changed).toBe(true);
+
+    // All backups from this run share ONE timestamp directory.
+    const runDirs = listBackups("batch-owner");
+    expect(runDirs.length).toBe(1);
+
+    const runDir = runDirs[0];
+    const backedUp = readdirSync(runDir).sort();
+    expect(backedUp).toEqual(["job1.txt", "job2.txt", "job3.txt", "job4.txt"]);
+    for (let i = 1; i <= 4; i++) {
+      expect(readFileSync(join(runDir, `job${i}.txt`), "utf-8")).toBe(`old-${i}`);
+    }
+  });
+});
+
+describe("globCopyModule.check", () => {
+  it("reports drift (not ok) when source matched 0 files but target exists", async () => {
+    // Source pattern matches nothing; a previously-synced target file remains.
+    writeFileSync(join(TGT, "settings.json"), "installed");
+
+    const result = await globCopyModule.check({
+      sourcePath: join(SRC, "settings*"),
+      targetPath: TGT,
+      owner: "test",
+    });
+
+    expect(result.status).not.toBe("ok");
+    expect(result.status).toBe("drifted");
+    expect(result.driftKind).toBe("target-changed");
   });
 });
