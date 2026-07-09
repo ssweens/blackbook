@@ -41,7 +41,7 @@ import type {
   DiffInstanceRef,
   FileStatus,
 } from "./types.js";
-import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
+import { atomicWriteFileSync, renameOrCopy, withFileLockSync } from "./fs-utils.js";
 import { expandTilde, scanPluginContents } from "./path-utils.js";
 import {
   safePath,
@@ -1061,7 +1061,9 @@ function copyWithBackup(
   if (existsSync(dest) || isSymlink(dest)) {
     backupPath = buildBackupPath(instanceScope, pluginName, itemKind, itemName);
     const tempBackup = `${backupPath}.new.${Date.now()}`;
-    renameSync(dest, tempBackup);
+    // dest lives in the tool's config dir; tempBackup under the cache dir — a
+    // cross-device move on setups where those trees are separate mounts.
+    renameOrCopy(dest, tempBackup);
     if (existsSync(backupPath) || isSymlink(backupPath)) {
       rmSync(backupPath, { recursive: true, force: true });
     }
@@ -1195,7 +1197,9 @@ function installPluginItemsToInstance(
           item.backup &&
           (existsSync(item.backup) || isSymlink(item.backup))
         ) {
-          renameSync(item.backup, item.dest);
+          // Restoring from cache dir back into the tool's config dir — may cross
+          // filesystems.
+          renameOrCopy(item.backup, item.dest);
         }
       } catch (error) {
         logError(`Failed to rollback ${item.dest}`, error);
@@ -1356,7 +1360,8 @@ function uninstallPluginItemsFromInstance(
           }
 
           if (backup && (existsSync(backup) || isSymlink(backup))) {
-            renameSync(backup, dest);
+            // Cache dir -> tool config dir restore; may cross filesystems.
+            renameOrCopy(backup, dest);
           }
         } catch (error) {
           logError(`Failed to uninstall ${item.kind}:${item.name}`, error);
@@ -1818,7 +1823,8 @@ export function togglePluginComponent(
       // Restore backup if exists
       if (item.backup && existsSync(item.backup)) {
         try {
-          renameSync(item.backup, destPath);
+          // Cache dir -> tool config dir restore; may cross filesystems.
+          renameOrCopy(item.backup, destPath);
         } catch (error) {
           logError(`Failed to restore backup for ${componentName}`, error);
           failures.push(

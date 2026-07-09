@@ -7,6 +7,8 @@ import {
   computeUnifiedDiff,
   isBinaryFile,
   computeFileDetail,
+  buildFileDiffTarget,
+  buildFileMissingSummary,
 } from "./diff.js";
 import type { DiffFileSummary, DiffInstanceRef } from "./types.js";
 
@@ -231,6 +233,78 @@ describe("diff target builders", () => {
       expect(ref.instanceId).toBe("default");
       expect(ref.instanceName).toBe("Claude");
       expect(ref.configDir).toBe("/home/user/.claude");
+    });
+  });
+
+  describe("glob sources spanning subdirectories preserve structure", () => {
+    let testDir: string;
+    let sourceDir: string;
+    let targetDir: string;
+    const instance: DiffInstanceRef = {
+      toolId: "test-tool",
+      instanceId: "default",
+      instanceName: "Test",
+      configDir: "",
+    };
+
+    beforeEach(() => {
+      testDir = join(tmpdir(), `blackbook-diff-glob-${Date.now()}`);
+      sourceDir = join(testDir, "source");
+      targetDir = join(testDir, "target");
+      mkdirSync(join(sourceDir, "themes", "nested"), { recursive: true });
+      mkdirSync(join(targetDir, "themes", "nested"), { recursive: true });
+    });
+
+    afterEach(() => {
+      if (existsSync(testDir)) {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    });
+
+    it("buildFileDiffTarget diffs against the nested target path, not a flattened basename", () => {
+      // Source and target counterparts live under themes/ and themes/nested/,
+      // matching what glob-copy.ts actually writes to on a real sync.
+      writeFileSync(join(sourceDir, "themes", "dark.json"), "line1\nline2\n");
+      writeFileSync(join(targetDir, "themes", "dark.json"), "line1\nlineChanged\n");
+      writeFileSync(join(sourceDir, "themes", "nested", "light.json"), "lineA\nlineB\n");
+      writeFileSync(join(targetDir, "themes", "nested", "light.json"), "lineA\nlineChangedB\n");
+
+      const globPattern = join(sourceDir, "themes", "**", "*.json");
+      const result = buildFileDiffTarget("Test", "Test", globPattern, targetDir, instance);
+
+      expect(result.files.length).toBe(2);
+
+      const dark = result.files.find((f) => f.displayPath === join("themes", "dark.json"));
+      const light = result.files.find((f) => f.displayPath === join("themes", "nested", "light.json"));
+
+      expect(dark).toBeDefined();
+      expect(light).toBeDefined();
+
+      // The computed target path must resolve to the nested location that
+      // glob-copy.ts actually writes to, not <targetDir>/dark.json / <targetDir>/light.json.
+      expect(dark!.targetPath).toBe(join(targetDir, "themes", "dark.json"));
+      expect(light!.targetPath).toBe(join(targetDir, "themes", "nested", "light.json"));
+
+      // Since the nested target files were found and differ from source, status
+      // should be "modified" (not "missing" — which is what the basename bug produced).
+      expect(dark!.status).toBe("modified");
+      expect(light!.status).toBe("modified");
+    });
+
+    it("buildFileMissingSummary reports files present at their nested target path (not missing)", () => {
+      writeFileSync(join(sourceDir, "themes", "dark.json"), "line1\nline2\n");
+      writeFileSync(join(targetDir, "themes", "dark.json"), "line1\nline2\n");
+      writeFileSync(join(sourceDir, "themes", "nested", "light.json"), "lineA\nlineB\n");
+      // Intentionally do NOT create the nested target counterpart for light.json,
+      // so it should genuinely be reported missing.
+
+      const globPattern = join(sourceDir, "themes", "**", "*.json");
+      const result = buildFileMissingSummary("Test", "Test", globPattern, targetDir, instance);
+
+      // dark.json exists at its nested target path, so it must NOT be reported missing.
+      expect(result.missingFiles).not.toContain(join("themes", "dark.json"));
+      // light.json has no target counterpart at all, so it should be reported missing.
+      expect(result.missingFiles).toContain(join("themes", "nested", "light.json"));
     });
   });
 });

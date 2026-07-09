@@ -17,6 +17,7 @@ import { tmpdir } from "os";
 import type { Plugin, ToolInstance, InstalledItem } from "./types.js";
 import type { Manifest } from "./manifest.js";
 import { getCacheDir } from "./config.js";
+import { renameOrCopy } from "./fs-utils.js";
 import { safePath, validatePluginName, validateMarketplaceName, validateItemName, logError } from "./validation.js";
 
 export function getPluginsCacheDir(): string {
@@ -227,7 +228,9 @@ export function createSymlink(
 
     try {
       const tempBackup = `${backupPath}.new.${Date.now()}`;
-      renameSync(target, tempBackup);
+      // target is in the tool's config dir; tempBackup under the cache dir — a
+      // cross-device move on setups where those trees are separate mounts.
+      renameOrCopy(target, tempBackup);
       if (existsSync(backupPath) || isSymlink(backupPath)) {
         rmSync(backupPath, { recursive: true, force: true });
       }
@@ -241,7 +244,9 @@ export function createSymlink(
   const tmpPath = join(tmpdir(), `.tmp_${Date.now()}`);
   try {
     symlinkSync(source, tmpPath);
-    renameSync(tmpPath, target);
+    // tmpPath is in the OS temp dir; target in the tool's config dir — classic
+    // cross-device (EXDEV) scenario on Linux where /tmp is its own tmpfs.
+    renameOrCopy(tmpPath, target);
     return { success: true };
   } catch (error) {
     logError(`Failed to create symlink ${target}`, error);

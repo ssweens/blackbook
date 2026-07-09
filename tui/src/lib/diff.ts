@@ -335,7 +335,7 @@ export function buildFileDiffTarget(
 
       for (const src of matches) {
         const display = relative(baseDir, src) || basename(src);
-        const tgt = targetIsDir ? join(targetPath, basename(src)) : targetPath;
+        const tgt = targetIsDir ? join(targetPath, relative(baseDir, src) || basename(src)) : targetPath;
         const summary = buildFileSummary(
           display,
           display,
@@ -477,7 +477,7 @@ export function buildFileMissingSummary(
 
       for (const src of matches) {
         const display = relative(baseDir, src) || basename(src);
-        const tgt = targetIsDir ? join(targetPath, basename(src)) : targetPath;
+        const tgt = targetIsDir ? join(targetPath, relative(baseDir, src) || basename(src)) : targetPath;
         if (!existsSync(tgt)) missingFiles.push(display);
       }
 

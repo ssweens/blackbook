@@ -1,9 +1,40 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync, utimesSync } from "fs";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  existsSync,
+  writeFileSync,
+  readFileSync,
+  utimesSync,
+} from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { spawnSync } from "child_process";
-import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
+import { atomicWriteFileSync, renameOrCopy, withFileLockSync } from "./fs-utils.js";
+
+// ESM module namespaces are not configurable, so `fs.renameSync` cannot be spied
+// directly. Mock the module with a pass-through by default (so every other test
+// exercises the real filesystem) and override the rename behavior only inside the
+// EXDEV/EACCES cases below.
+const { renameSyncMock } = vi.hoisted(() => ({ renameSyncMock: vi.fn() }));
+vi.mock("fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("fs")>();
+  renameSyncMock.mockImplementation(actual.renameSync);
+  return { ...actual, renameSync: (...args: unknown[]) => renameSyncMock(...args) };
+});
+
+function exdevError(): NodeJS.ErrnoException {
+  const err = new Error("EXDEV: cross-device link not permitted") as NodeJS.ErrnoException;
+  err.code = "EXDEV";
+  return err;
+}
+
+function eaccesError(): NodeJS.ErrnoException {
+  const err = new Error("EACCES: permission denied") as NodeJS.ErrnoException;
+  err.code = "EACCES";
+  return err;
+}
 
 let dir: string;
 let target: string;
@@ -25,6 +56,67 @@ function deadPid(): number {
   const result = spawnSync(process.execPath, ["-e", ""]);
   return result.pid ?? 999999;
 }
+
+describe("renameOrCopy", () => {
+  it("uses the fast rename path for a same-directory move", () => {
+    const src = join(dir, "src.txt");
+    const dest = join(dir, "dest.txt");
+    writeFileSync(src, "hello");
+
+    renameOrCopy(src, dest);
+
+    expect(renameSyncMock).toHaveBeenCalledWith(src, dest);
+    expect(existsSync(src)).toBe(false);
+    expect(readFileSync(dest, "utf-8")).toBe("hello");
+  });
+
+  it("falls back to copy+delete for a file when rename throws EXDEV", () => {
+    const src = join(dir, "src.txt");
+    const dest = join(dir, "dest.txt");
+    writeFileSync(src, "cross-device");
+
+    renameSyncMock.mockImplementationOnce(() => {
+      throw exdevError();
+    });
+
+    renameOrCopy(src, dest);
+
+    // Source removed, destination holds the original content.
+    expect(existsSync(src)).toBe(false);
+    expect(readFileSync(dest, "utf-8")).toBe("cross-device");
+  });
+
+  it("falls back to copy+delete for a directory when rename throws EXDEV", () => {
+    const src = join(dir, "srcdir");
+    const dest = join(dir, "destdir");
+    mkdirSync(src, { recursive: true });
+    writeFileSync(join(src, "file.txt"), "nested");
+
+    renameSyncMock.mockImplementationOnce(() => {
+      throw exdevError();
+    });
+
+    renameOrCopy(src, dest);
+
+    expect(existsSync(src)).toBe(false);
+    expect(readFileSync(join(dest, "file.txt"), "utf-8")).toBe("nested");
+  });
+
+  it("propagates non-EXDEV errors without falling back to copy", () => {
+    const src = join(dir, "src.txt");
+    const dest = join(dir, "dest.txt");
+    writeFileSync(src, "keep me");
+
+    renameSyncMock.mockImplementationOnce(() => {
+      throw eaccesError();
+    });
+
+    expect(() => renameOrCopy(src, dest)).toThrow(/EACCES/);
+    // The source is untouched and no copy was made.
+    expect(existsSync(src)).toBe(true);
+    expect(existsSync(dest)).toBe(false);
+  });
+});
 
 describe("withFileLockSync", () => {
   it("runs the critical section and cleans up the lock file", () => {

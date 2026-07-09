@@ -46,6 +46,29 @@ import { getConfigPath as getYamlConfigPath, loadConfig as loadYamlConfig } from
 import { saveConfig as saveYamlConfig } from "./config/writer.js";
 import type { Plugin, ToolInstance } from "./types.js";
 
+// Simulate a cross-filesystem (EXDEV) boundary for renames that move between two
+// different directory trees (e.g. a tool's config dir and the cache dir). The
+// mock passes through to the real renameSync unless `exdevState.active` is set,
+// in which case any rename whose src/dest live in different directories fails
+// with EXDEV — exactly the condition renameOrCopy must tolerate. Off by default
+// so every other test exercises the real filesystem.
+const exdevState = vi.hoisted(() => ({ active: false }));
+vi.mock("fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("fs")>();
+  const { dirname } = await import("path");
+  return {
+    ...actual,
+    renameSync: (src: string, dest: string) => {
+      if (exdevState.active && dirname(src) !== dirname(dest)) {
+        const err = new Error("EXDEV: cross-device link not permitted") as NodeJS.ErrnoException;
+        err.code = "EXDEV";
+        throw err;
+      }
+      return actual.renameSync(src, dest);
+    },
+  };
+});
+
 const TEST_PLUGIN_NAME = "blackbook-test-plugin";
 const TEST_SKILL_NAME = "blackbook-test-skill";
 const TEST_COMMAND_NAME = "blackbook-test-command";
@@ -788,6 +811,45 @@ describe("backup and restore", () => {
 
     const restoredContent = readFileSync(join(skillPath, "SKILL.md"), "utf-8");
     expect(restoredContent).toContain("Original Content");
+  });
+
+  it("backs up and restores across a simulated cross-device (EXDEV) boundary", async () => {
+    const instance = getInstance("opencode");
+    const skillPath = join(instance.configDir, instance.skillsSubdir!, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
+
+    mkdirSync(skillPath, { recursive: true });
+    writeFileSync(join(skillPath, "SKILL.md"), "# Original Content\n\nExisting user skill.");
+
+    createTestPluginInCache();
+    const plugin = createTestPlugin();
+
+    exdevState.active = true;
+    try {
+      // Enable moves the user's original file into the cache-backed backup dir
+      // (cross-device) and stages the new content into the config dir.
+      const enableResult = await enablePlugin(plugin);
+      expect(enableResult.success).toBe(true);
+
+      const manifest = loadManifest();
+      const opencodeKey = `${instance.toolId}:${instance.instanceId}`;
+      const skillItem =
+        manifest.tools[opencodeKey]?.items[buildManifestItemKey(TEST_PLUGIN_NAME, "skill", TEST_SKILL_NAME)];
+      expect(skillItem?.backup).toBeTruthy();
+      const backupPath = skillItem?.backup ?? "";
+      expect(existsSync(backupPath)).toBe(true);
+      expect(readFileSync(join(backupPath, "SKILL.md"), "utf-8")).toContain("Original Content");
+
+      // Disable restores the backup from the cache dir back into the config dir
+      // (again cross-device).
+      const disableResult = await disablePlugin(plugin);
+      expect(disableResult.success).toBe(true);
+
+      expect(existsSync(skillPath)).toBe(true);
+      expect(existsSync(backupPath)).toBe(false);
+      expect(readFileSync(join(skillPath, "SKILL.md"), "utf-8")).toContain("Original Content");
+    } finally {
+      exdevState.active = false;
+    }
   });
 
   it("overwrites existing backup (single backup per item)", async () => {

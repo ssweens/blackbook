@@ -1,6 +1,8 @@
 import {
   closeSync,
+  cpSync,
   fsyncSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -113,6 +115,40 @@ function tryReclaimStaleLock(lockPath: string): boolean {
     // Ignore cleanup failures for the stolen stale lock.
   }
   return true;
+}
+
+/**
+ * Move `src` to `dest`, tolerating cross-filesystem boundaries.
+ *
+ * `renameSync` (POSIX `rename(2)`) fails with `EXDEV` when the source and
+ * destination live on different mounts — common on Linux where `/tmp`, `~/.cache`,
+ * and a tool's config dir can each be a separate filesystem. When that specific
+ * error occurs we fall back to copy-then-delete, which works across devices and
+ * handles both files and directories (and preserves symlinks verbatim).
+ *
+ * Any error other than `EXDEV` propagates unchanged — we never swallow
+ * `ENOENT`, `EACCES`, etc. The source is removed only after the destination
+ * copy succeeds, so a failed copy leaves the original intact.
+ */
+export function renameOrCopy(src: string, dest: string): void {
+  try {
+    renameSync(src, dest);
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EXDEV") {
+      throw error;
+    }
+  }
+  // EXDEV fallback: copy first, and only unlink the source once the copy lands.
+  // Use lstat (not existsSync) so a copied-but-dangling symlink still counts as
+  // present — cpSync preserves symlinks verbatim.
+  cpSync(src, dest, { recursive: true });
+  try {
+    lstatSync(dest);
+  } catch {
+    throw new Error(`renameOrCopy: copy to ${dest} did not produce a destination`);
+  }
+  rmSync(src, { recursive: true, force: true });
 }
 
 export function atomicWriteFileSync(path: string, content: string | Buffer): void {
