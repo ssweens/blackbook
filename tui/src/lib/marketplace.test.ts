@@ -113,6 +113,37 @@ describe("marketplace", () => {
       rmSync(root, { recursive: true, force: true });
     });
 
+    it("skips marketplace entries with unsafe or missing plugin names", async () => {
+      const root = join(tmpdir(), `blackbook-unsafe-marketplace-${Date.now()}`);
+      mkdirSync(join(root, ".claude-plugin"), { recursive: true });
+      writeFileSync(join(root, ".claude-plugin", "marketplace.json"), JSON.stringify({
+        plugins: [
+          { name: "good-plugin", description: "fine", source: "./plugins/good-plugin" },
+          { name: "../../evil", description: "traversal", source: "./x" },
+          { name: "", description: "empty", source: "./y" },
+          { description: "no name at all", source: "./z" },
+          { name: 42, description: "non-string name", source: "./w" },
+        ],
+      }));
+
+      const plugins = await fetchMarketplace({
+        name: "unsafe",
+        url: root,
+        isLocal: true,
+        plugins: [],
+        availableCount: 0,
+        installedCount: 0,
+        autoUpdate: false,
+        source: "claude",
+        enabled: true,
+      });
+
+      expect(plugins).toHaveLength(1);
+      expect(plugins[0].name).toBe("good-plugin");
+
+      rmSync(root, { recursive: true, force: true });
+    });
+
     it("reads remote plugin metadata from the marketplace URL's declared source path", async () => {
       const marketplace = createMockMarketplace("EveryInc");
       marketplace.url = "https://raw.githubusercontent.com/EveryInc/compound-engineering-plugin/main/.claude-plugin/marketplace.json";

@@ -1,7 +1,8 @@
-import { existsSync, readFileSync, mkdirSync } from "fs";
+import { existsSync, readFileSync, mkdirSync, renameSync } from "fs";
 import { join, dirname } from "path";
 import { getCacheDir } from "./config/path.js";
 import { atomicWriteFileSync, withFileLockSync } from "./fs-utils.js";
+import { logError } from "./validation.js";
 
 export interface SyncEntry {
   sourceHash: string;
@@ -40,7 +41,22 @@ function readStateFile(path: string): SyncState {
       return { version: 1, files: {} };
     }
     return data as SyncState;
-  } catch {
+  } catch (error) {
+    // A corrupt state file would otherwise degrade EVERY tracked file to
+    // "never-synced" — which the bulk sync treats as safe to overwrite,
+    // silently clobbering locally-edited targets. Never discard the evidence
+    // silently: preserve the bad file for inspection and log it, then fall
+    // back to empty state so the app keeps functioning.
+    try {
+      const corruptPath = `${path}.corrupt-${Date.now()}`;
+      renameSync(path, corruptPath);
+      logError(
+        `Corrupt state.json preserved at ${corruptPath}; starting from empty state`,
+        error,
+      );
+    } catch (renameError) {
+      logError("Failed to preserve corrupt state.json", renameError);
+    }
     return { version: 1, files: {} };
   }
 }

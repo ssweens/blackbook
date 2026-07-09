@@ -317,6 +317,36 @@ describe("applyPullback", () => {
     expect(result.error).toBeDefined();
   });
 
+  it("via fileCopyModule.apply with pullback:true records canonical orientation (source=repo, target=tool)", async () => {
+    // Regression: pullback used to reach the module via swapped source/target
+    // params, which recorded the TOOL file as entry.sourcePath and the REPO
+    // file as entry.targetPath — the reverse of every forward sync. Cleanup
+    // then deletes entry.targetPath, so a swapped entry would delete the repo.
+    const repoFile = join(SRC, "canonical.json");
+    const toolFile = join(TGT, "canonical.json");
+    const stateKey = "canonical:claude-code:default:canonical.json";
+
+    writeFileSync(repoFile, "stale repo copy");
+    writeFileSync(toolFile, "edited in tool");
+
+    const result = await fileCopyModule.apply({
+      sourcePath: repoFile, // repo — passed in canonical (non-swapped) order
+      targetPath: toolFile, // tool
+      owner: "test",
+      stateKey,
+      pullback: true,
+    });
+
+    expect(result.changed).toBe(true);
+    // Bytes were pulled back: repo now matches the tool's edited copy.
+    expect(readFileSync(repoFile, "utf-8")).toBe("edited in tool");
+
+    const entry = loadState().files[stateKey];
+    expect(entry).toBeDefined();
+    expect(entry.sourcePath).toBe(repoFile);
+    expect(entry.targetPath).toBe(toolFile);
+  });
+
   it("copies binary/non-UTF-8 files byte-for-byte without corruption", async () => {
     const binaryBytes = Buffer.from([
       0xff, 0xfe, 0x00, 0x01, 0x80, 0x81, 0x82, 0xc0, 0xc1, 0xf5, 0xf6, 0xf7,

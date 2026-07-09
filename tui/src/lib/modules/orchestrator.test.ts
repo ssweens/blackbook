@@ -40,6 +40,27 @@ describe("runCheck", () => {
     await runCheck([{ label: "test", module: mod, params: {} }]);
     expect(applyCalled).toBe(false);
   });
+
+  it("contains a thrown check() as a failed result and continues", async () => {
+    const throwing: Module<unknown> = {
+      name: "throwing",
+      check: async () => {
+        throw new Error("scan race ENOENT");
+      },
+      apply: async () => ({ changed: true, message: "applied" }),
+    };
+
+    const result = await runCheck([
+      { label: "boom", module: throwing, params: {} },
+      { label: "ok", module: mockModule({ status: "ok", message: "ok" }), params: {} },
+    ]);
+
+    expect(result.steps).toHaveLength(2);
+    expect(result.steps[0].check.status).toBe("failed");
+    expect(result.steps[0].check.error).toContain("scan race ENOENT");
+    expect(result.summary.ok).toBe(1);
+    expect(result.summary.failed).toBe(1);
+  });
 });
 
 describe("runApply", () => {
@@ -76,6 +97,67 @@ describe("runApply", () => {
 
     await runApply([{ label: "test", module: mod, params: {} }]);
     expect(applyCalled).toBe(false);
+  });
+
+  it("contains a thrown apply() and still applies the remaining steps", async () => {
+    const throwing: Module<unknown> = {
+      name: "throwing",
+      check: async () => ({ status: "drifted", message: "drifted" }),
+      apply: async () => {
+        throw new Error("cpSync EACCES");
+      },
+    };
+    const succeeding = mockModule(
+      { status: "missing", message: "missing" },
+      { changed: true, message: "created" }
+    );
+
+    const result = await runApply([
+      { label: "boom", module: throwing, params: {} },
+      { label: "good", module: succeeding, params: {} },
+    ]);
+
+    // Batch completed without the exception escaping runApply.
+    expect(result.steps).toHaveLength(2);
+
+    // Throwing step surfaces as a non-changed apply carrying the error.
+    const boom = result.steps.find((s) => s.label === "boom")!;
+    expect(boom.apply).toBeDefined();
+    expect(boom.apply!.changed).toBe(false);
+    expect(boom.apply!.error).toContain("cpSync EACCES");
+
+    // The later step still got its chance to apply.
+    const good = result.steps.find((s) => s.label === "good")!;
+    expect(good.apply).toBeDefined();
+    expect(good.apply!.changed).toBe(true);
+    expect(result.summary.changed).toBe(1);
+  });
+
+  it("contains a thrown check() as a failed result", async () => {
+    const throwingCheck: Module<unknown> = {
+      name: "throwing-check",
+      check: async () => {
+        throw new Error("readFileSync ENOENT");
+      },
+      apply: async () => ({ changed: true, message: "applied" }),
+    };
+    const succeeding = mockModule(
+      { status: "missing", message: "missing" },
+      { changed: true, message: "created" }
+    );
+
+    const result = await runApply([
+      { label: "bad-check", module: throwingCheck, params: {} },
+      { label: "good", module: succeeding, params: {} },
+    ]);
+
+    expect(result.steps).toHaveLength(2);
+    const badCheck = result.steps.find((s) => s.label === "bad-check")!;
+    expect(badCheck.check.status).toBe("failed");
+    expect(badCheck.check.error).toContain("readFileSync ENOENT");
+    expect(badCheck.apply).toBeUndefined(); // failed checks are not applied
+    expect(result.summary.failed).toBe(1);
+    expect(result.summary.changed).toBe(1);
   });
 
   it("respects filter", async () => {

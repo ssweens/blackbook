@@ -8,7 +8,7 @@ import { fileURLToPath } from "url";
 import { getCacheDir, getPiMarketplaces, getDisabledPiMarketplaces, getPackageManager } from "./config.js";
 import { getGitHubToken, isGitHubHost } from "./github.js";
 import { expandTilde, scanPluginContents } from "./path-utils.js";
-import { validateRepoSlug, validateGitRef } from "./validation.js";
+import { validateRepoSlug, validateGitRef, validatePluginName, logError } from "./validation.js";
 import type { Marketplace, Plugin, PiPackage, PiMarketplace, PiSettings, PiPackageSourceType, PackageManager } from "./types.js";
 
 export const MARKETPLACE_CACHE_TTL_SECONDS = 600;
@@ -257,6 +257,30 @@ function readLocalMarketplace(localPath: string): { data: MarketplaceJson; repoR
   }
 }
 
+// Marketplace manifests can come from untrusted remote sources. A plugin
+// entry whose name is empty, non-string, or contains path-traversal segments
+// must never flow downstream into a filesystem path. Skip such entries at
+// parse time rather than accepting them as usable plugins.
+function isSafeMarketplacePluginName(name: unknown): name is string {
+  if (typeof name !== "string") return false;
+  try {
+    validatePluginName(name);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function filterValidMarketplacePlugins(
+  plugins: MarketplacePluginJson[],
+): MarketplacePluginJson[] {
+  return plugins.filter((p) => {
+    if (isSafeMarketplacePluginName(p?.name)) return true;
+    logError("Skipping marketplace plugin with invalid name", JSON.stringify(p?.name));
+    return false;
+  });
+}
+
 function pluginFromMarketplaceEntry(
   p: MarketplacePluginJson,
   marketplaceName: string,
@@ -490,7 +514,7 @@ export async function fetchMarketplace(
     const localMarketplace = readLocalMarketplace(localPath);
     if (!localMarketplace) return [];
 
-    return (localMarketplace.data.plugins || []).map((p) => {
+    return filterValidMarketplacePlugins(localMarketplace.data.plugins || []).map((p) => {
       const source = p.source || "";
       let scanned: ReturnType<typeof scanPluginContents> | undefined;
       let metadata: ReturnType<typeof readLocalPluginMetadata> = {};
@@ -568,7 +592,7 @@ export async function fetchMarketplace(
   // Build plugins from the configured marketplace URL and, when the remote
   // marketplace declares a relative plugin source, the corresponding remote
   // source path in that same repo. Never use local marketplace JSON/checkouts.
-  const plugins: Plugin[] = await Promise.all((data?.plugins || []).map(async (p) => {
+  const plugins: Plugin[] = await Promise.all(filterValidMarketplacePlugins(data?.plugins || []).map(async (p) => {
     const source = p.source || "";
     const declaredVersion = typeof p.version === "string" ? p.version : undefined;
     const declaresSkills = Array.isArray(p.skills);

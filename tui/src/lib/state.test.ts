@@ -29,10 +29,11 @@ afterAll(() => {
 });
 
 afterEach(() => {
-  // Clean state file between tests
-  const statePath = join(TMP, "blackbook", "state.json");
-  if (existsSync(statePath)) {
-    rmSync(statePath);
+  // Clean the whole cache dir between tests so state.json and any preserved
+  // state.json.corrupt-* siblings don't leak across cases.
+  const dir = join(TMP, "blackbook");
+  if (existsSync(dir)) {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
@@ -76,6 +77,32 @@ describe("loadState / saveState", () => {
     const state = loadState();
     expect(state.version).toBe(1);
     expect(state.files).toEqual({});
+  });
+
+  it("preserves corrupt state.json aside instead of silently discarding it", () => {
+    const dir = join(TMP, "blackbook");
+    const statePath = join(dir, "state.json");
+    mkdirSync(dir, { recursive: true });
+    const { writeFileSync, readdirSync, readFileSync } = require("fs");
+    const corruptBytes = '{ "version": 1, "files": { OOPS trailing garbage';
+    writeFileSync(statePath, corruptBytes);
+
+    // Must not throw and must fall back to empty state.
+    const state = loadState();
+    expect(state.version).toBe(1);
+    expect(state.files).toEqual({});
+
+    // A .corrupt-* sibling must now hold the original bad content for inspection,
+    // and the primary state.json must no longer be the corrupt file.
+    const corruptSiblings = (readdirSync(dir) as string[]).filter((f) =>
+      f.startsWith("state.json.corrupt-"),
+    );
+    expect(corruptSiblings.length).toBe(1);
+    expect(readFileSync(join(dir, corruptSiblings[0]!), "utf-8")).toBe(corruptBytes);
+
+    // Normal operation continues: a fresh load starts clean (no corrupt file remains).
+    expect(existsSync(statePath)).toBe(false);
+    expect(loadState().files).toEqual({});
   });
 });
 

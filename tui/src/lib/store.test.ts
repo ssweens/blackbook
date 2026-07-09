@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { execFileSync } from "child_process";
 import { join } from "path";
 import { tmpdir } from "os";
 import { useStore } from "./store.js";
@@ -502,6 +503,133 @@ describe("Plugin version merge", () => {
     } finally {
       rmSync(sourceRepo, { recursive: true, force: true });
       rmSync(pluginSource, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to track a plugin whose name escapes the plugins/ directory", async () => {
+    const sourceRepo = mkdtempSync(join(tmpdir(), "blackbook-plugin-evil-repo-"));
+    const pluginSource = mkdtempSync(join(tmpdir(), "blackbook-plugin-evil-src-"));
+    // A sibling file outside plugins/ that a traversal delete would clobber.
+    const outsideVictim = join(sourceRepo, "victim.txt");
+    writeFileSync(outsideVictim, "precious");
+
+    vi.mocked(getConfigRepoPath).mockReturnValue(sourceRepo);
+    const plugin = createMockPlugin({
+      name: "../../evil",
+      marketplace: "evil",
+      source: pluginSource,
+      installed: true,
+    });
+
+    try {
+      const ok = await useStore.getState().trackPluginInSource(plugin);
+      expect(ok).toBe(false);
+      // The traversal target must be untouched.
+      expect(existsSync(outsideVictim)).toBe(true);
+      expect(readFileSync(outsideVictim, "utf-8")).toBe("precious");
+    } finally {
+      rmSync(sourceRepo, { recursive: true, force: true });
+      rmSync(pluginSource, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to remove-from-git a plugin whose name escapes the plugins/ directory", async () => {
+    const sourceRepo = mkdtempSync(join(tmpdir(), "blackbook-plugin-evilrm-repo-"));
+    const outsideVictim = join(sourceRepo, "victim.txt");
+    writeFileSync(outsideVictim, "precious");
+
+    vi.mocked(getConfigRepoPath).mockReturnValue(sourceRepo);
+    const plugin = createMockPlugin({ name: "../../evil", marketplace: "evil" });
+
+    try {
+      const ok = await useStore.getState().removePluginFromGit(plugin);
+      expect(ok).toBe(false);
+      expect(existsSync(outsideVictim)).toBe(true);
+      expect(readFileSync(outsideVictim, "utf-8")).toBe("precious");
+    } finally {
+      rmSync(sourceRepo, { recursive: true, force: true });
+    }
+  });
+
+  it("aborts tracking without overwriting a corrupt source-repo marketplace.json", async () => {
+    const sourceRepo = mkdtempSync(join(tmpdir(), "blackbook-plugin-corrupt-repo-"));
+    const pluginSource = mkdtempSync(join(tmpdir(), "blackbook-plugin-corrupt-src-"));
+    mkdirSync(join(pluginSource, "skills", "s"), { recursive: true });
+    writeFileSync(join(pluginSource, "skills", "s", "SKILL.md"), "---\nname: s\n---\n");
+
+    const marketplacePath = join(sourceRepo, ".claude-plugin", "marketplace.json");
+    mkdirSync(join(sourceRepo, ".claude-plugin"), { recursive: true });
+    // Deliberately invalid JSON (trailing comma) holding multiple real entries.
+    const corruptContent = `{
+  "name": "playbook",
+  "plugins": [
+    { "name": "alpha", "source": "./plugins/alpha" },
+    { "name": "beta", "source": "./plugins/beta" },
+  ]
+}`;
+    writeFileSync(marketplacePath, corruptContent);
+
+    vi.mocked(getConfigRepoPath).mockReturnValue(sourceRepo);
+    const plugin = createMockPlugin({
+      name: "tracked-plugin",
+      marketplace: "old",
+      source: pluginSource,
+      installed: true,
+      skills: ["s"],
+    });
+
+    try {
+      const ok = await useStore.getState().trackPluginInSource(plugin);
+      expect(ok).toBe(false);
+      // The corrupt-but-real file must be preserved byte-for-byte, not reset.
+      expect(readFileSync(marketplacePath, "utf-8")).toBe(corruptContent);
+    } finally {
+      rmSync(sourceRepo, { recursive: true, force: true });
+      rmSync(pluginSource, { recursive: true, force: true });
+    }
+  });
+
+  it("removes a tracked plugin from a real git source repo (async git path)", async () => {
+    const sourceRepo = mkdtempSync(join(tmpdir(), "blackbook-plugin-git-repo-"));
+    // Real git repo so removePluginFromGit exercises the async add/commit/push path.
+    const gitEnv = {
+      ...process.env,
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_SYSTEM: "/dev/null",
+    };
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: sourceRepo, encoding: "utf-8", env: gitEnv });
+    git("init", "-b", "main");
+    git("config", "user.email", "test@example.com");
+    git("config", "user.name", "Test");
+
+    mkdirSync(join(sourceRepo, "plugins", "gitplugin"), { recursive: true });
+    writeFileSync(join(sourceRepo, "plugins", "gitplugin", "file.txt"), "content");
+    mkdirSync(join(sourceRepo, ".claude-plugin"), { recursive: true });
+    writeFileSync(
+      join(sourceRepo, ".claude-plugin", "marketplace.json"),
+      JSON.stringify({ name: "playbook", plugins: [{ name: "gitplugin", source: "./plugins/gitplugin" }] }, null, 2) + "\n",
+    );
+    git("add", "-A");
+    git("commit", "-m", "initial");
+
+    vi.mocked(getConfigRepoPath).mockReturnValue(sourceRepo);
+    const plugin = createMockPlugin({ name: "gitplugin", marketplace: "playbook" });
+
+    try {
+      const ok = await useStore.getState().removePluginFromGit(plugin);
+      expect(ok).toBe(true);
+      // Plugin dir gone and marketplace entry stripped.
+      expect(existsSync(join(sourceRepo, "plugins", "gitplugin"))).toBe(false);
+      const marketplace = JSON.parse(
+        readFileSync(join(sourceRepo, ".claude-plugin", "marketplace.json"), "utf-8"),
+      );
+      expect(marketplace.plugins.find((p: { name: string }) => p.name === "gitplugin")).toBeUndefined();
+      // The removal was committed locally (push fails with no remote, but that's a warning).
+      const log = execFileSync("git", ["log", "--oneline"], { cwd: sourceRepo, encoding: "utf-8", env: gitEnv });
+      expect(log).toContain("remove: gitplugin from git");
+    } finally {
+      rmSync(sourceRepo, { recursive: true, force: true });
     }
   });
 

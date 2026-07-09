@@ -1,5 +1,34 @@
 import type { Module, CheckResult, ApplyResult } from "./types.js";
 
+/**
+ * Run a step's check(), converting any thrown exception into a `failed`
+ * CheckResult. This keeps one misbehaving module (e.g. an ENOENT race when a
+ * file is deleted mid-scan) from aborting the entire batch.
+ */
+async function safeCheck(module: Module<unknown>, params: unknown): Promise<CheckResult> {
+  try {
+    return await module.check(params);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { status: "failed", message, error: message };
+  }
+}
+
+/**
+ * Run a step's apply(), converting any thrown exception into a non-changed
+ * ApplyResult carrying the error. Matches the failure shape modules already
+ * produce on recoverable errors so aggregation counts it correctly and the
+ * remaining steps in the batch still run.
+ */
+async function safeApply(module: Module<unknown>, params: unknown): Promise<ApplyResult> {
+  try {
+    return await module.apply(params);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { changed: false, message, error: message };
+  }
+}
+
 export interface OrchestratorStep {
   label: string;
   module: Module<unknown>;
@@ -30,7 +59,7 @@ export async function runCheck(steps: OrchestratorStep[]): Promise<OrchestratorR
   const results: StepResult[] = [];
 
   for (const step of steps) {
-    const check = await step.module.check(step.params);
+    const check = await safeCheck(step.module, step.params);
     results.push({ label: step.label, check });
   }
 
@@ -48,7 +77,7 @@ export async function runApply(
   const results: StepResult[] = [];
 
   for (const step of steps) {
-    const check = await step.module.check(step.params);
+    const check = await safeCheck(step.module, step.params);
 
     if (check.status === "ok" || check.status === "failed") {
       results.push({ label: step.label, check });
@@ -61,7 +90,7 @@ export async function runApply(
       continue;
     }
 
-    const apply = await step.module.apply(step.params);
+    const apply = await safeApply(step.module, step.params);
     results.push({ label: step.label, check, apply });
   }
 

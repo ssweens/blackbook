@@ -1,7 +1,12 @@
 import { create } from "zustand";
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, watch, writeFileSync } from "fs";
-import { execFileSync } from "child_process";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { dirname, join } from "path";
+import { atomicWriteFileSync } from "./fs-utils.js";
+import { safePath } from "./validation.js";
+
+const execFileAsync = promisify(execFile);
 import { parse as parseYaml } from "yaml";
 import { ConfigSchema, type BlackbookConfig } from "./config/schema.js";
 
@@ -457,7 +462,7 @@ function getSourceRepoBlackbookConfigPath(config: ReturnType<typeof loadYamlConf
   return join(expandConfigPath(sourceRepo), "config", "blackbook", "config.yaml");
 }
 
-function prepareWritableSourceRepoConfig(config: ReturnType<typeof loadYamlConfig>["config"]): SourceRepoConfigLoad | null {
+async function prepareWritableSourceRepoConfig(config: ReturnType<typeof loadYamlConfig>["config"]): Promise<SourceRepoConfigLoad | null> {
   const sourceRepo = config.settings.source_repo;
   if (!sourceRepo) return null;
 
@@ -470,11 +475,13 @@ function prepareWritableSourceRepoConfig(config: ReturnType<typeof loadYamlConfi
   }
 
   const workspace = join(getCacheDir(), "source_repo_writes", normalizePiPackageSource(sourceRepo).replace(/[^a-z0-9-]+/gi, "-"));
+  // Async git so the Ink TUI keeps rendering/handling input during clone/pull
+  // (these can each block for up to two minutes on a slow network).
   if (!existsSync(workspace)) {
     mkdirSync(dirname(workspace), { recursive: true });
-    execFileSync("git", ["clone", sourceRepo, workspace], { encoding: "utf-8", timeout: 120000 });
+    await execFileAsync("git", ["clone", sourceRepo, workspace], { encoding: "utf-8", timeout: 120000 });
   } else {
-    execFileSync("git", ["-C", workspace, "pull", "--rebase"], { encoding: "utf-8", timeout: 120000 });
+    await execFileAsync("git", ["-C", workspace, "pull", "--rebase"], { encoding: "utf-8", timeout: 120000 });
   }
 
   const configPath = join(workspace, "config", "blackbook", "config.yaml");
@@ -488,15 +495,15 @@ function prepareWritableSourceRepoConfig(config: ReturnType<typeof loadYamlConfi
   return { config: loaded.config, configPath, isRemote: true };
 }
 
-function commitAndPushWritableSourceRepo(sourceConfigPath: string, message: string): void {
+async function commitAndPushWritableSourceRepo(sourceConfigPath: string, message: string): Promise<void> {
   const sourceRepo = sourceConfigPath.replace(/\/config\/blackbook\/config\.yaml$/, "");
-  execFileSync("git", ["-C", sourceRepo, "add", sourceConfigPath], { encoding: "utf-8", timeout: 10000 });
+  await execFileAsync("git", ["-C", sourceRepo, "add", sourceConfigPath], { encoding: "utf-8", timeout: 10000 });
   try {
-    execFileSync("git", ["-C", sourceRepo, "commit", "-m", message], { encoding: "utf-8", timeout: 15000 });
+    await execFileAsync("git", ["-C", sourceRepo, "commit", "-m", message], { encoding: "utf-8", timeout: 15000 });
   } catch {
     // no-op if nothing changed
   }
-  execFileSync("git", ["-C", sourceRepo, "push"], { encoding: "utf-8", timeout: 45000 });
+  await execFileAsync("git", ["-C", sourceRepo, "push"], { encoding: "utf-8", timeout: 45000 });
 }
 
 function removePiPackageSpec(source: string, specs: PiPackageSpec[]): { specs: PiPackageSpec[]; removed: boolean } {
@@ -562,8 +569,14 @@ function upsertSourceRepoMarketplacePlugin(sourceRepo: string, plugin: Plugin): 
   if (existsSync(marketplacePath)) {
     try {
       marketplace = JSON.parse(readFileSync(marketplacePath, "utf-8"));
-    } catch {
-      marketplace = { name: "playbook", plugins: [] };
+    } catch (error) {
+      // An existing-but-unparseable marketplace.json holds the user's real
+      // plugin entries. Resetting it to an empty scaffold would silently
+      // destroy every other entry, so abort and let the caller surface it
+      // rather than overwriting real data with defaults.
+      throw new Error(
+        `Refusing to overwrite corrupt ${marketplacePath}: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -579,7 +592,7 @@ function upsertSourceRepoMarketplacePlugin(sourceRepo: string, plugin: Plugin): 
   else plugins.push(entry);
   marketplace.plugins = plugins;
 
-  writeFileSync(marketplacePath, JSON.stringify(marketplace, null, 2) + "\n");
+  atomicWriteFileSync(marketplacePath, JSON.stringify(marketplace, null, 2) + "\n");
 }
 
 async function createPiPackageFromSpec(
@@ -1438,7 +1451,7 @@ export const useStore = create<Store>((rawSet, get) => {
       let remoteWritable: SourceRepoConfigLoad | null = null;
       if (!sourceConfigResult && configResult.config.settings.source_repo && isRemoteSourceRepo(configResult.config.settings.source_repo)) {
         try {
-          remoteWritable = prepareWritableSourceRepoConfig(configResult.config);
+          remoteWritable = await prepareWritableSourceRepoConfig(configResult.config);
           if (remoteWritable) {
             sourceConfigResult = { config: remoteWritable.config, configPath: remoteWritable.configPath, errors: [] } as ReturnType<typeof loadYamlConfig>;
           }
@@ -1469,7 +1482,7 @@ export const useStore = create<Store>((rawSet, get) => {
           pi_packages: sourceDelete.specs,
         }, sourceConfigResult.configPath);
         if (remoteWritable?.isRemote) {
-          commitAndPushWritableSourceRepo(sourceConfigResult.configPath, `remove: ${pkg.name} Pi package from git`);
+          await commitAndPushWritableSourceRepo(sourceConfigResult.configPath, `remove: ${pkg.name} Pi package from git`);
           sourceRepoPiPackagesMemoryCache.delete(configResult.config.settings.source_repo || "");
         }
       }
@@ -1545,7 +1558,7 @@ export const useStore = create<Store>((rawSet, get) => {
     let sourceConfigResult = shouldUpdateSource ? loadYamlConfig(sourceConfigPath!) : null;
     let remoteWritable: SourceRepoConfigLoad | null = null;
     if (!sourceConfigResult && configResult.config.settings.source_repo && isRemoteSourceRepo(configResult.config.settings.source_repo)) {
-      remoteWritable = prepareWritableSourceRepoConfig(configResult.config);
+      remoteWritable = await prepareWritableSourceRepoConfig(configResult.config);
       if (remoteWritable) {
         sourceConfigResult = { config: remoteWritable.config, configPath: remoteWritable.configPath, errors: [] } as ReturnType<typeof loadYamlConfig>;
       }
@@ -1560,7 +1573,7 @@ export const useStore = create<Store>((rawSet, get) => {
     if (sourceDelete.removed) {
       saveYamlConfig({ ...sourceConfigResult.config, pi_packages: sourceDelete.specs }, sourceConfigResult.configPath);
       try {
-        commitAndPushWritableSourceRepo(sourceConfigResult.configPath, `remove: ${pkg.name} Pi package from git`);
+        await commitAndPushWritableSourceRepo(sourceConfigResult.configPath, `remove: ${pkg.name} Pi package from git`);
         sourceRepoPiPackagesMemoryCache.delete(configResult.config.settings.source_repo || "");
       } catch { /* git failure non-fatal */ }
     }
@@ -1588,7 +1601,7 @@ export const useStore = create<Store>((rawSet, get) => {
     const sourceKey = normalizePiPackageSource(pkg.source);
 
     const writable = result.config.settings.source_repo
-      ? prepareWritableSourceRepoConfig(result.config)
+      ? await prepareWritableSourceRepoConfig(result.config)
       : null;
 
     if (!writable) {
@@ -1614,7 +1627,7 @@ export const useStore = create<Store>((rawSet, get) => {
         ],
       }, writable.configPath);
       if (writable.isRemote) {
-        commitAndPushWritableSourceRepo(writable.configPath, `track: ${pkg.name} Pi package in git`);
+        await commitAndPushWritableSourceRepo(writable.configPath, `track: ${pkg.name} Pi package in git`);
         sourceRepoPiPackagesMemoryCache.delete(result.config.settings.source_repo || "");
       }
       sourceAdded = true;
@@ -2314,7 +2327,16 @@ export const useStore = create<Store>((rawSet, get) => {
       notify("No source repo configured.", "error");
       return false;
     }
-    const pluginDir = join(sourceRepo, "plugins", plugin.name);
+    // plugin.name originates from marketplace manifest data (potentially from
+    // an untrusted source). safePath rejects traversal so a name like "../.."
+    // can never resolve outside the repo's plugins/ dir before rmSync runs.
+    let pluginDir: string;
+    try {
+      pluginDir = safePath(join(sourceRepo, "plugins"), plugin.name);
+    } catch (e) {
+      notify(`Invalid plugin name: ${e instanceof Error ? e.message : String(e)}`, "error");
+      return false;
+    }
     const marketplacePath = join(sourceRepo, ".claude-plugin", "marketplace.json");
     const commitPaths: string[] = [];
     if (existsSync(pluginDir)) {
@@ -2333,16 +2355,16 @@ export const useStore = create<Store>((rawSet, get) => {
       let committed = false;
       try {
         for (const p of commitPaths) {
-          execFileSync("git", ["-C", sourceRepo, "add", p], { encoding: "utf-8", timeout: 10000 });
+          await execFileAsync("git", ["-C", sourceRepo, "add", p], { encoding: "utf-8", timeout: 10000 });
         }
         // Scope the commit to the paths we touched so unrelated local changes
         // in the repo are never swept into it.
-        execFileSync("git", ["-C", sourceRepo, "commit", "-m", `remove: ${plugin.name} from git`, "--", ...commitPaths], { encoding: "utf-8", timeout: 10000 });
+        await execFileAsync("git", ["-C", sourceRepo, "commit", "-m", `remove: ${plugin.name} from git`, "--", ...commitPaths], { encoding: "utf-8", timeout: 10000 });
         committed = true;
       } catch { /* commit failed (e.g. nothing to commit) — non-fatal, nothing to push */ }
       if (committed) {
         try {
-          execFileSync("git", ["-C", sourceRepo, "push"], { encoding: "utf-8", timeout: 30000 });
+          await execFileAsync("git", ["-C", sourceRepo, "push"], { encoding: "utf-8", timeout: 30000 });
         } catch (e) {
           // Do NOT swallow: the removal is committed locally but never reached origin.
           pushError = e instanceof Error ? e.message : String(e);
@@ -2370,8 +2392,9 @@ export const useStore = create<Store>((rawSet, get) => {
       return false;
     }
 
-    const destDir = join(sourceRepo, "plugins", plugin.name);
     try {
+      // Reject path traversal in plugin.name before any destructive rmSync/cpSync.
+      const destDir = safePath(join(sourceRepo, "plugins"), plugin.name);
       if (existsSync(destDir)) rmSync(destDir, { recursive: true, force: true });
       mkdirSync(dirname(destDir), { recursive: true });
       cpSync(plugin.source, destDir, { recursive: true });
@@ -2886,31 +2909,55 @@ export const useStore = create<Store>((rawSet, get) => {
       // Glob sources cannot be pulled back by swapping paths (the destination is a pattern).
       // Instead, let glob-copy interpret pullback=true as target→source.
       const isGlob = isGlobPath(picked.sourcePath);
+      const label = `pullback:${file.name}:${picked.toolId}:${picked.instanceId}`;
+      const owner = `file:${file.name}`;
+      const syncModule = getSyncModule(picked.sourcePath);
 
-      const step: OrchestratorStep = isGlob
-        ? {
-            label: `pullback:${file.name}:${picked.toolId}:${picked.instanceId}`,
-            module: globCopyModule as any,
-            params: {
-              sourcePath: picked.sourcePath,
-              targetPath: picked.targetPath,
-              owner: `file:${file.name}`,
-              pullback: true,
-              backupRetention,
-            },
-          }
-        : {
-            label: `pullback:${file.name}:${picked.toolId}:${picked.instanceId}`,
-            module: getSyncModule(picked.targetPath) as any,
-            params: {
-              sourcePath: picked.targetPath,
-              targetPath: picked.sourcePath,
-              owner: `file:${file.name}`,
-              stateKey,
-              pullback: true,
-              backupRetention,
-            },
-          };
+      let step: OrchestratorStep;
+      if (isGlob) {
+        step = {
+          label,
+          module: globCopyModule as any,
+          params: {
+            sourcePath: picked.sourcePath,
+            targetPath: picked.targetPath,
+            owner,
+            pullback: true,
+            backupRetention,
+          },
+        };
+      } else if (syncModule === fileCopyModule) {
+        // File pullback: keep source/target in canonical orientation (source =
+        // repo, target = tool) and let file-copy's pullback mode copy the bytes
+        // target→source. This ensures recordSync stores the correct orientation,
+        // unlike swapping the paths into a forward apply().
+        step = {
+          label,
+          module: fileCopyModule as any,
+          params: {
+            sourcePath: picked.sourcePath,
+            targetPath: picked.targetPath,
+            owner,
+            stateKey,
+            pullback: true,
+            backupRetention,
+          },
+        };
+      } else {
+        // Directory pullback: directory-sync has no pullback mode and records no
+        // sync state, so we swap the paths to copy tool→repo via its forward
+        // apply(). No state orientation concern applies here.
+        step = {
+          label,
+          module: syncModule as any,
+          params: {
+            sourcePath: picked.targetPath,
+            targetPath: picked.sourcePath,
+            owner,
+            backupRetention,
+          },
+        };
+      }
 
       notify(`Pulling ${file.name} from ${picked.instanceName}...`, "info");
       const result = await runApply([step]);

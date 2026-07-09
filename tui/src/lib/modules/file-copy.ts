@@ -14,6 +14,13 @@ export interface FileCopyParams {
   owner: string;
   /** When set, enables three-way state tracking for drift detection. */
   stateKey?: string;
+  /**
+   * When true, copy target → source (pullback) instead of the default
+   * source → target (forward). The byte-copy direction flips, but the
+   * recorded state orientation stays canonical: entry.sourcePath is always
+   * the repo file and entry.targetPath is always the tool file.
+   */
+  pullback?: boolean;
   /** Number of backups to retain per file. */
   backupRetention?: number;
 }
@@ -99,6 +106,13 @@ export const fileCopyModule: Module<FileCopyParams> = {
   },
 
   async apply(params): Promise<ApplyResult> {
+    // Pullback copies target → source. Delegate to the dedicated helper so the
+    // recorded state orientation (source = repo, target = tool) is preserved
+    // instead of being swapped by callers passing reversed paths.
+    if (params.pullback) {
+      return applyPullback(params);
+    }
+
     const { sourcePath, targetPath, owner, stateKey, backupRetention } = params;
 
     if (!existsSync(sourcePath)) {

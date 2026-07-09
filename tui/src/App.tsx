@@ -426,7 +426,9 @@ export function App() {
         case "marketplaces": await Promise.all([loadMarketplaces(), loadPiPackages()]); break;
         case "installed":
           await Promise.all([loadInstalledPlugins(), loadPiPackages()]);
-          void loadFiles(); // background — Installed stays responsive
+          void loadFiles().catch((error) => {
+            notify(`Failed to load files in background: ${error instanceof Error ? error.message : String(error)}`, "error");
+          }); // background — Installed stays responsive
           break;
         case "tools":
           refreshManagedTools();
@@ -437,7 +439,9 @@ export function App() {
           // Sync: load plugins/tools first (fast), then files in background (slow).
           refreshManagedTools();
           await Promise.all([loadInstalledPlugins(), refreshToolDetection()]);
-          void loadFiles(); // background — files are slow, don't block UI
+          void loadFiles().catch((error) => {
+            notify(`Failed to load files in background: ${error instanceof Error ? error.message : String(error)}`, "error");
+          }); // background — files are slow, don't block UI
           break;
       }
       refreshed = true;
@@ -1511,7 +1515,11 @@ export function App() {
 
     // Manual refresh: git pull source repo + reload everything
     if (input === "R") {
-      void pullSourceRepo().then(() => refreshTabData(tab, { force: true }));
+      void pullSourceRepo()
+        .then(() => refreshTabData(tab, { force: true }))
+        .catch((error) => {
+          notify(`Failed to refresh from source repo: ${error instanceof Error ? error.message : String(error)}`, "error");
+        });
       return;
     }
 

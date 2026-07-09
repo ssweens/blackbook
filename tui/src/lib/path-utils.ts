@@ -9,9 +9,15 @@ import { fileURLToPath } from "url";
 /**
  * Expand a `~`-prefixed path to an absolute path.
  * Returns the path unchanged if it doesn't start with `~`.
+ *
+ * Note: `~/foo` must strip both the tilde AND the following slash before
+ * joining onto the home directory. Stripping only the tilde leaves an
+ * absolute `/foo`, which `resolve(home, "/foo")` would treat as an override
+ * and silently discard the home directory.
  */
 export function expandTilde(p: string): string {
-  if (p.startsWith("~")) return resolve(homedir(), p.slice(1));
+  if (p === "~") return homedir();
+  if (p.startsWith("~/")) return join(homedir(), p.slice(2));
   return p;
 }
 

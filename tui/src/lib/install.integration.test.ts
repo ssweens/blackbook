@@ -35,7 +35,9 @@ import {
   migrateManifestKeys,
   uninstallPluginFromInstance,
   deleteFileEverywhere,
+  reconcileStaleInstallArtifacts,
 } from "./install.js";
+import * as manifestModule from "./manifest.js";
 import { togglePluginComponent } from "./plugin-status.js";
 import type { FileStatus } from "./types.js";
 import { invalidatePluginToolStatusCache } from "./plugin-status.js";
@@ -1501,5 +1503,99 @@ describe("P1 data-integrity behavior", () => {
     } finally {
       chmodSync(namespaceDir, 0o755);
     }
+  });
+});
+
+describe("crash resilience: incremental manifest persistence", () => {
+  beforeEach(() => {
+    cleanupAllTestArtifacts();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    cleanupAllTestArtifacts();
+  });
+
+  function countItems(manifest: { tools: Record<string, { items: Record<string, unknown> }> }): number {
+    return Object.values(manifest.tools).reduce(
+      (total, tool) => total + Object.keys(tool.items).length,
+      0,
+    );
+  }
+
+  it("persists the manifest after each item so a crash cannot strand files", async () => {
+    createTestPluginInCache();
+    const plugin = createTestPlugin(); // 1 skill + 1 command + 1 agent per managed instance
+
+    // Record the item-count of every manifest snapshot handed to saveManifest.
+    // A pre-fix install would only save once (at the very end), so the only
+    // snapshot would be the final full count. The fix saves per item, so we
+    // should observe intermediate snapshots — meaning a crash at that point
+    // still leaves a recoverable manifest record for the already-copied files.
+    const realSave = manifestModule.saveManifest;
+    const snapshots: number[] = [];
+    const spy = vi
+      .spyOn(manifestModule, "saveManifest")
+      .mockImplementation((manifest, cacheDir) => {
+        snapshots.push(countItems(manifest as never));
+        return realSave(manifest, cacheDir);
+      });
+
+    await enablePlugin(plugin);
+    spy.mockRestore();
+
+    expect(snapshots.length).toBeGreaterThan(1);
+    const finalCount = Math.max(...snapshots);
+    expect(finalCount).toBeGreaterThanOrEqual(3);
+    // Crucial invariant: at least one persisted snapshot held a partial set of
+    // items (0 < n < final). Pre-fix, no such intermediate snapshot exists.
+    expect(snapshots.some((n) => n > 0 && n < finalCount)).toBe(true);
+
+    // And the final on-disk manifest records everything that was installed.
+    const onDisk = loadManifest();
+    expect(countItems(onDisk)).toBe(finalCount);
+  });
+});
+
+describe("crash resilience: reconcileStaleInstallArtifacts", () => {
+  const SCOPE = "recon-scope";
+  const PLUGIN = "recon-plugin";
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    rmSync(join(getCacheDir(), "backups", SCOPE), { recursive: true, force: true });
+  });
+
+  it("completes an interrupted backup move when the final slot is free", () => {
+    const backupPath = buildBackupPath(SCOPE, PLUGIN, "command", "recon-cmd");
+    // Simulate a crash mid-copyWithBackup: the user's original file was renamed
+    // to the temp name but never moved onto the final backup path.
+    const orphan = `${backupPath}.new.1700000000000`;
+    writeFileSync(orphan, "ORIGINAL USER CONTENT");
+    expect(existsSync(backupPath)).toBe(false);
+
+    const result = reconcileStaleInstallArtifacts();
+
+    expect(existsSync(orphan)).toBe(false);
+    expect(existsSync(backupPath)).toBe(true);
+    expect(readFileSync(backupPath, "utf-8")).toBe("ORIGINAL USER CONTENT");
+    expect(result.restored).toContain(backupPath);
+    expect(result.needsReview).toHaveLength(0);
+  });
+
+  it("flags for review (never overwrites) when the final slot is occupied", () => {
+    const backupPath = buildBackupPath(SCOPE, PLUGIN, "command", "recon-cmd2");
+    const orphan = `${backupPath}.new.1700000000000`;
+    writeFileSync(backupPath, "EXISTING BACKUP");
+    writeFileSync(orphan, "ORPHANED ORIGINAL");
+
+    const result = reconcileStaleInstallArtifacts();
+
+    // Neither file is touched — silently overwriting could destroy user content.
+    expect(existsSync(orphan)).toBe(true);
+    expect(readFileSync(orphan, "utf-8")).toBe("ORPHANED ORIGINAL");
+    expect(readFileSync(backupPath, "utf-8")).toBe("EXISTING BACKUP");
+    expect(result.needsReview).toContain(orphan);
+    expect(result.restored).not.toContain(backupPath);
   });
 });

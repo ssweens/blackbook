@@ -1076,6 +1076,81 @@ function copyWithBackup(
   return { dest, backup: backupPath };
 }
 
+// Matches the transient temp name copyWithBackup uses while swapping a user's
+// original file into the backup cache: `${backupPath}.new.${Date.now()}`.
+const STALE_BACKUP_TEMP_PATTERN = /\.new\.\d+$/;
+
+/**
+ * Recover user files stranded by a crash mid-backup.
+ *
+ * copyWithBackup moves a user's pre-existing file to `<backup>.new.<timestamp>`
+ * and then renames it onto its final `<backup>` path. If the process dies
+ * between those two renames, the `.new.<timestamp>` orphan is left behind
+ * holding the user's ORIGINAL content, with the manifest unaware of it.
+ *
+ * This scans the backup cache for such orphans and, when the final backup slot
+ * is free, completes the interrupted move (unambiguous). If the final slot is
+ * already occupied it does NOT touch either file — it logs the orphan for the
+ * user to review, since silently overwriting could destroy real content.
+ *
+ * Safe to call once at startup. Returns a summary for callers/tests.
+ */
+export function reconcileStaleInstallArtifacts(): {
+  restored: string[];
+  needsReview: string[];
+} {
+  const restored: string[] = [];
+  const needsReview: string[] = [];
+  const backupRoot = join(getCacheDir(), "backups");
+  if (!existsSync(backupRoot)) return { restored, needsReview };
+
+  const walk = (dir: string) => {
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch (error) {
+      logError(`Failed to scan backup dir ${dir}`, error);
+      return;
+    }
+    for (const entry of entries) {
+      const full = join(dir, entry);
+      if (STALE_BACKUP_TEMP_PATTERN.test(entry)) {
+        // Orphaned temp artifact: complete or flag the interrupted move.
+        const intended = full.replace(STALE_BACKUP_TEMP_PATTERN, "");
+        try {
+          if (!existsSync(intended) && !isSymlink(intended)) {
+            renameSync(full, intended);
+            restored.push(intended);
+          } else {
+            needsReview.push(full);
+            logError(
+              "Stale install backup needs review",
+              new Error(
+                `Orphaned backup ${full} could not be auto-restored because ${intended} already exists. It may hold your original file; review it manually.`,
+              ),
+            );
+          }
+        } catch (error) {
+          needsReview.push(full);
+          logError(`Failed to reconcile stale backup ${full}`, error);
+        }
+        // Do not descend into a matched orphan (it holds user content).
+        continue;
+      }
+      let isDir = false;
+      try {
+        isDir = lstatSync(full).isDirectory() && !isSymlink(full);
+      } catch {
+        isDir = false;
+      }
+      if (isDir) walk(full);
+    }
+  };
+
+  walk(backupRoot);
+  return { restored, needsReview };
+}
+
 function installPluginItemsToInstance(
   pluginName: string,
   sourcePath: string,
@@ -1151,6 +1226,13 @@ function installPluginItemsToInstance(
     toolManifest.items[key] = item;
     items.push(item);
     appliedKeys.push(key);
+    // Persist immediately: copyWithBackup has already moved the user's original
+    // file into the backup cache and copied plugin content into place. If we
+    // deferred the manifest write to the end of the loop, a crash here would
+    // strand that backup with no manifest record — uninstall could never find
+    // it to restore. saveManifest is a small atomic local JSON write, cheap
+    // enough to call per item.
+    saveManifest(manifest);
   };
 
   try {
@@ -1213,9 +1295,15 @@ function installPluginItemsToInstance(
       `${message}: ${error instanceof Error ? error.message : String(error)}`,
     );
     rollback();
+    // Persist the rolled-back state: earlier items were already saved to disk
+    // per-item above, and rollback has reverted them in memory + restored the
+    // files, so the on-disk manifest must reflect the reverted state too.
+    saveManifest(manifest);
     return { count: 0, items: [], errors };
   }
 
+  // Manifest is already persisted per-item inside installItem; this final save
+  // is a no-op safety net for the success path.
   if (items.length > 0) {
     saveManifest(manifest);
   }
