@@ -37,7 +37,7 @@ function isInstalledFile(file: FileStatus): boolean {
   });
 }
 
-interface SectionDef {
+export interface SectionDef {
   key: string;
   items: import("../lib/managed-item.js").ManagedItem[];
   shown: boolean;
@@ -48,10 +48,9 @@ interface SectionDef {
 
 const PREVIEW_HEIGHT = 5;
 
-function distributeHeights(
+export function distributeHeights(
   contentHeight: number,
   sections: SectionDef[],
-  showPreview: boolean,
 ): { heights: number[]; previewFits: boolean } {
   const visibleSections = sections.filter((s) => s.shown);
   const headerRows = visibleSections.length;
@@ -61,8 +60,15 @@ function distributeHeights(
   // Fixed rows excluding preview and list content.
   const fixedWithoutPreview = searchRow + headerRows + marginRows;
 
-  // Try to fit the preview in first.
-  let previewRows = showPreview ? PREVIEW_HEIGHT : 0;
+  // Always reserve the preview's row budget, regardless of whether the
+  // *currently selected* item happens to be preview-eligible (file/plugin/
+  // pi-package vs. skill/namespace). Section heights must stay constant as
+  // the user's selection moves across item kinds — otherwise every section
+  // reflows on every keystroke that crosses that boundary, which reads as
+  // flicker. Whether the preview actually renders for the current selection
+  // is decided separately at the render site via `previewFits` combined with
+  // the selected item's kind.
+  let previewRows = PREVIEW_HEIGHT;
   const minListRows = visibleSections.length;
   const fitsWithPreview = fixedWithoutPreview + previewRows + minListRows <= contentHeight;
 
@@ -326,10 +332,9 @@ export function InstalledTab({ contentHeight, searchFocused, onSearchFocus, onSe
     { key: "piPackages", items: managedPiPackages, shown: managedPiPackages.length > 0 || !piPackagesLoaded, desired: 3, label: "Pi Packages", columns: PLUGIN_COLUMNS },
   ], [managedFiles, filesLoaded, filteredNamespaces, filteredSkills, managedPlugins, installedPluginsLoaded, managedPiPackages, piPackagesLoaded]);
 
-  const showPreview = selectedLibraryItem?.kind === "plugin" || selectedLibraryItem?.kind === "piPackage" || selectedLibraryItem?.kind === "file";
   const { heights, previewFits } = useMemo(
-    () => distributeHeights(contentHeight, sections, showPreview),
-    [contentHeight, sections, showPreview],
+    () => distributeHeights(contentHeight, sections),
+    [contentHeight, sections],
   );
 
   const [

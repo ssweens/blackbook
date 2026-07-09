@@ -388,7 +388,13 @@ async function fetchRemotePluginMetadata(
 function curlToTar(url: string, timeoutMs: number, maxBuffer: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const curl = spawn("curl", ["-fsSL", url], { stdio: ["ignore", "pipe", "pipe"] });
-    const tar = spawn("tar", ["-tzf", "-"], { stdio: [curl.stdout, "pipe", "pipe"] });
+    const tar = spawn("tar", ["-tzf", "-"], { stdio: ["pipe", "pipe", "pipe"] });
+    // Wire the pipe via the stream API rather than passing curl.stdout directly
+    // as a stdio array element — Bun's spawn doesn't support that (Node's does;
+    // Bun throws "TODO: stream.Readable stdio"), and .pipe() works identically
+    // on both runtimes since it's plain Node stream plumbing, not a spawn option.
+    curl.stdout.pipe(tar.stdin);
+    curl.stdout.on("error", () => {});
 
     let stdout = "";
     let stderr = "";
@@ -426,7 +432,7 @@ function curlToTar(url: string, timeoutMs: number, maxBuffer: number): Promise<s
   });
 }
 
-async function fetchRepoTreePaths(repo: string, branch: string): Promise<string[]> {
+export async function fetchRepoTreePaths(repo: string, branch: string): Promise<string[]> {
   const key = `${repo}@${branch}`;
   const cached = repoTreeMemoryCache.get(key);
   if (cached) return cached;

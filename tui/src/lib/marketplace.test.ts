@@ -13,7 +13,7 @@ vi.mock("child_process", async (importOriginal) => {
   return { ...actual, execFileSync: execFileSyncMock };
 });
 import { tmpdir } from "os";
-import { fetchMarketplace, fetchNpmPackages, getFetchErrors, resetFetchErrors } from "./marketplace.js";
+import { fetchMarketplace, fetchNpmPackages, fetchRepoTreePaths, getFetchErrors, resetFetchErrors } from "./marketplace.js";
 import { getCacheDir } from "./config.js";
 import type { Marketplace } from "./types.js";
 
@@ -506,5 +506,22 @@ describe("marketplace", () => {
       expect(packages).toEqual([]);
       expect(getFetchErrors()).toEqual([]);
     });
+  });
+
+  describe("fetchRepoTreePaths", () => {
+    // Regression test for a real Bun runtime incompatibility: the previous
+    // implementation wired curl→tar by passing `curl.stdout` (a Readable
+    // stream object) directly as a stdio array element to `spawn("tar", ...)`.
+    // Node's child_process supports this; Bun's spawn does not (it throws
+    // "TODO: stream.Readable stdio"). This hits the real network against a
+    // small, stable public repo to exercise the actual subprocess pipe under
+    // whichever runtime the test suite is running on, not a mocked one.
+    it("lists a real public repo's tarball contents without a runtime/stdio error", async () => {
+      resetFetchErrors();
+      const paths = await fetchRepoTreePaths("ssweens/blackbook", "main");
+      expect(paths.length).toBeGreaterThan(0);
+      expect(paths).toContain("README.md");
+      expect(getFetchErrors()).toEqual([]);
+    }, 30000);
   });
 });
