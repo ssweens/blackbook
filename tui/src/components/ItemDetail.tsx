@@ -67,8 +67,8 @@ export interface ItemDetailProps {
 /**
  * Estimate of fixed (non-actions) chrome rows so we can compute a budget for
  * the actions window. Includes tab bar, header, description, status, metadata,
- * "Instances:" label, footer, and the separator/status bar Blackbook renders
- * below the detail. Slightly conservative — if we overshoot, the actions list
+ * "Instances:" label, and the separator/status bar Blackbook renders below the
+ * detail. Slightly conservative — if we overshoot, the actions list
  * just gets a smaller window (still scrolls correctly); if we undershoot, the
  * total frame may exceed terminal rows and trigger Ink's tall-write path,
  * which the patch in scripts/patch-ink.mjs covers as a safety net.
@@ -162,14 +162,6 @@ export function ItemDetail({ item, actions, selectedAction, metadata }: ItemDeta
             ↓ {hiddenBelow} more below
           </Text>
         )}
-      </Box>
-
-      {/* Footer */}
-      <Box marginTop={1}>
-        <Text color="gray">
-          {actions.some((a) => a.type === "pullback") ? "p pull to source · " : ""}
-          Esc back
-        </Text>
       </Box>
     </Box>
   );

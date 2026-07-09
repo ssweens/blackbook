@@ -6,6 +6,7 @@
  * live here so the render components (PluginDetail, FileDetail) can be deleted.
  */
 
+import { existsSync } from "fs";
 import { join } from "path";
 import type { Plugin, FileStatus, PiPackage, DiffInstanceRef, DiffInstanceSummary } from "./types.js";
 import type { ToolInstallStatus } from "./plugin-status.js";
@@ -13,6 +14,8 @@ import { getToolInstances } from "./config.js";
 import { resolvePluginSourcePaths, type PluginDrift } from "./plugin-drift.js";
 import { buildFileDiffTarget } from "./diff.js";
 import { resolveInstalledPluginComponentPath } from "./pi-bridge.js";
+import { loadManifest } from "./manifest.js";
+import { buildManifestItemKey, instanceKey } from "./plugin-helpers.js";
 import type { ItemAction } from "../components/ItemDetail.js";
 
 // PluginAction is now an alias for ItemAction — PluginAction type eliminated
@@ -46,6 +49,7 @@ export function buildPluginActions(
     const sourcePaths = resolvePluginSourcePaths(plugin);
     const allInstances = getToolInstances();
     const changedInstances: DiffInstanceRef[] = [];
+    const manifest = loadManifest();
 
     for (const status of toolStatuses) {
       if (!status.enabled || !status.supported) continue;
@@ -68,13 +72,25 @@ export function buildPluginActions(
       let hasDrift = false;
 
       if (sourcePaths && drift) {
+        const ikey = instanceKey(inst);
         for (const [key, driftStatus] of Object.entries(drift)) {
           if (driftStatus === "in-sync") continue;
           const [kind, name] = key.split(":");
           const srcSuffix = kind === "skill" ? name : `${name}.md`;
           const srcPath = join(sourcePaths.pluginDir, `${kind}s`, srcSuffix);
-          const destPath = resolveInstalledPluginComponentPath(inst, plugin, kind as "skill" | "command" | "agent", name);
+          const manifestKey = buildManifestItemKey(plugin.name, kind, name);
+          const manifestItem = manifest.tools[ikey]?.items[manifestKey];
+          const destPath = resolveInstalledPluginComponentPath(inst, plugin, kind as "skill" | "command" | "agent", name, manifestItem?.dest);
           if (!destPath) continue;
+          // Pi skills/commands with no manifest record resolve to an ephemeral
+          // tmpdir staging path (see resolveInstalledPluginComponentPath) that
+          // rarely still exists by the time drift is displayed. Treating a
+          // missing staging path as "entire file deleted" produces line counts
+          // in the thousands — skip the stat but keep the drift-map's status.
+          if (inst.toolId === "pi" && kind !== "agent" && !existsSync(destPath)) {
+            hasDrift = true;
+            continue;
+          }
 
           try {
             const dt = buildFileDiffTarget(

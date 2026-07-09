@@ -16,7 +16,7 @@ import { promisify } from "util";
 import { basename, dirname, join, resolve } from "path";
 import type { Plugin } from "./types.js";
 import { loadManifest } from "./manifest.js";
-import { instanceKey } from "./plugin-helpers.js";
+import { buildManifestItemKey, instanceKey } from "./plugin-helpers.js";
 import { getToolInstances, parseMarketplaces } from "./config.js";
 import { expandTilde } from "./path-utils.js";
 import { resolveInstalledPluginComponentPath } from "./pi-bridge.js";
@@ -268,7 +268,8 @@ export async function computePluginDrift(
               // the tool-native install location. Pi plugins are bridge-managed
               // and resolve to the staged `resolvedSource`, not ~/.pi/agent/skills.
               const ikey = instanceKey(inst);
-              const manifestItem = manifest.tools[ikey]?.items[key];
+              const manifestKey = buildManifestItemKey(plugin.name, kind, name);
+              const manifestItem = manifest.tools[ikey]?.items[manifestKey];
               const destPath = resolveInstalledPluginComponentPath(inst, plugin, kind, name, manifestItem?.dest);
               if (!destPath || !existsSync(destPath)) return;
 

@@ -234,32 +234,6 @@ describe("ItemDetail", () => {
     expect(lastFrame()).toContain("Back to list");
   });
 
-  it("shows Esc back in footer", () => {
-    const { lastFrame } = render(
-      React.createElement(ItemDetail, {
-        item: createItem(),
-        actions: [backAction()],
-        selectedAction: 0,
-      }),
-    );
-    expect(lastFrame()).toContain("Esc back");
-  });
-
-  it("shows pullback hint when pullback actions exist", () => {
-    const actions: ItemAction[] = [
-      { id: "pull", label: "Pull from Claude", type: "pullback" },
-      backAction(),
-    ];
-    const { lastFrame } = render(
-      React.createElement(ItemDetail, {
-        item: createItem(),
-        actions,
-        selectedAction: 0,
-      }),
-    );
-    expect(lastFrame()).toContain("p pull to source");
-  });
-
   it("renders custom metadata via prop", () => {
     const metadata = React.createElement("ink-text", null, "Custom metadata here");
     const { lastFrame } = render(
