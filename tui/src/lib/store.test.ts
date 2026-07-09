@@ -2499,3 +2499,130 @@ describe("Store sync preview depends on standaloneSkills", () => {
     expect(withoutSkill.some((i) => i.kind === "skill")).toBe(false);
   });
 });
+
+// Regression guard for the slices refactor (store.ts split into ./store/*-slice.ts).
+// The store is now composed by spreading five slice creators; if any slice
+// accidentally drops a field or action during a future edit, the composed shape
+// would silently lose a key. These tests pin the full public surface so a missing
+// key fails loudly here rather than at some distant call site.
+describe("composed store shape", () => {
+  const EXPECTED_STATE_FIELDS = [
+    "tab",
+    "marketplaces",
+    "installedPlugins",
+    "installedPluginsLoaded",
+    "standaloneSkills",
+    "files",
+    "filesLoaded",
+    "tools",
+    "managedTools",
+    "toolDetection",
+    "toolDetectionPending",
+    "toolActionInProgress",
+    "toolActionOutput",
+    "search",
+    "selectedIndex",
+    "loading",
+    "error",
+    "detailPlugin",
+    "detailMarketplace",
+    "detailPiPackage",
+    "detail",
+    "notifications",
+    "diffTarget",
+    "missingSummary",
+    "piPackages",
+    "piPackagesLoaded",
+    "piMarketplaces",
+    "managedItems",
+    "sortBy",
+    "sortDir",
+    "syncSelection",
+    "syncArmed",
+    "pluginDriftMap",
+    "currentSection",
+    "discoverSubView",
+  ] as const;
+
+  const EXPECTED_ACTIONS = [
+    "setTab",
+    "setSearch",
+    "setSelectedIndex",
+    "loadMarketplaces",
+    "loadInstalledPlugins",
+    "loadFiles",
+    "refreshManagedTools",
+    "refreshToolDetection",
+    "installToolAction",
+    "updateToolAction",
+    "uninstallToolAction",
+    "cancelToolAction",
+    "refreshAll",
+    "installPlugin",
+    "uninstallPlugin",
+    "updatePlugin",
+    "trackPluginInSource",
+    "removePluginFromGit",
+    "setDetailMarketplace",
+    "setDetail",
+    "refreshDetail",
+    "addMarketplace",
+    "removeMarketplace",
+    "updateMarketplace",
+    "toggleMarketplaceEnabled",
+    "toggleToolEnabled",
+    "updateToolConfigDir",
+    "getSyncPreview",
+    "syncTools",
+    "notify",
+    "clearNotification",
+    "loadPiPackages",
+    "installPiPackage",
+    "uninstallPiPackage",
+    "updatePiPackage",
+    "repairPiPackage",
+    "trackPiPackageInSource",
+    "removePiPackageFromGit",
+    "deletePiPackageEverywhere",
+    "setDetailPiPackage",
+    "togglePiMarketplaceEnabled",
+    "addPiMarketplace",
+    "removePiMarketplace",
+    "setSortBy",
+    "setSortDir",
+    "setCurrentSection",
+    "setDiscoverSubView",
+    "toggleSyncSelection",
+    "setSyncArmed",
+    "setPluginDriftMap",
+    "openDiffForFile",
+    "openMissingSummaryForFile",
+    "openDiffFromSyncItem",
+    "closeDiff",
+    "closeMissingSummary",
+    "pullbackFileInstance",
+  ] as const;
+
+  it("exposes every expected state field", () => {
+    const keys = new Set(Object.keys(useStore.getState()));
+    for (const field of EXPECTED_STATE_FIELDS) {
+      expect(keys.has(field)).toBe(true);
+    }
+  });
+
+  it("exposes every expected action as a function", () => {
+    const state = useStore.getState() as unknown as Record<string, unknown>;
+    for (const action of EXPECTED_ACTIONS) {
+      expect(typeof state[action]).toBe("function");
+    }
+  });
+
+  it("exposes no unexpected top-level keys", () => {
+    const expected = new Set<string>([...EXPECTED_STATE_FIELDS, ...EXPECTED_ACTIONS]);
+    const actual = Object.keys(useStore.getState());
+    expect(actual.length).toBe(expected.size);
+    for (const key of actual) {
+      expect(expected.has(key)).toBe(true);
+    }
+  });
+});

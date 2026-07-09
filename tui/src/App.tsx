@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useRef, useCallback } from "react";
+import React, { useEffect, useState, useMemo, useRef } from "react";
 import { join, dirname } from "path";
 import { existsSync, lstatSync, rmSync, cpSync, copyFileSync, mkdirSync } from "fs";
 import { Box, Text, useInput, useApp } from "ink";
@@ -14,7 +14,7 @@ import { SourceSetupWizard } from "./components/SourceSetupWizard.js";
 import { EditToolModal } from "./components/EditToolModal.js";
 import { ToolsList } from "./components/ToolsList.js";
 import { ToolDetail } from "./components/ToolDetail.js";
-import { ToolActionModal, type ToolModalAction } from "./components/ToolActionModal.js";
+import { ToolActionModal } from "./components/ToolActionModal.js";
 import { SyncList } from "./components/SyncList.js";
 import { SyncPreview } from "./components/SyncPreview.js";
 import { FilePreview } from "./components/FilePreview.js";
@@ -39,45 +39,29 @@ import { getPluginToolStatus } from "./lib/plugin-status.js";
 import {
   syncPluginInstances,
   uninstallPluginFromInstance,
-  uninstallSkillAllInstances,
-  uninstallSkillFromInstance,
-  installSkillToInstance,
-  installSkillToAllMissing,
-  installSkillToAllNonSynced,
-  pullbackSkillToSource,
-  deleteSkillEverywhere,
-  deletePluginEverywhere,
-  deleteFileEverywhere,
-  removeFileFromGit,
-  removeSkillFromGit,
-  removeNamespaceFromGit,
   groupSkillsByNamespace,
-  syncNamespaceToAllMissing,
-  resyncNamespaceDrifted,
-  deleteNamespaceEverywhere,
-  uninstallNamespaceAll,
-  uninstallNamespaceFromInstance,
-  pullbackNamespaceToSource,
 } from "./lib/install.js";
 import { resolvePluginSourcePaths, type PluginDrift } from "./lib/plugin-drift.js";
 import { resolveInstalledPluginComponentPath } from "./lib/pi-bridge.js";
 import { computeItemDrift } from "./lib/item-drift.js";
-import { buildFileDiffTarget, buildSkillDiffTarget } from "./lib/diff.js";
-import { getToolLifecycleCommand, detectInstallMethodMismatch } from "./lib/tool-lifecycle.js";
+import { buildFileDiffTarget } from "./lib/diff.js";
 import { getPackageManager } from "./lib/config.js";
 import { setupSourceRepository, shouldShowSourceSetupWizard, pullSourceRepo } from "./lib/source-setup.js";
 import { ItemList, FILE_COLUMNS, PLUGIN_COLUMNS } from "./components/ItemList.js";
 import { ItemDetail, PluginMetadata, FileMetadata, PiPackageMetadata, SkillMetadata, NamespaceMetadata, type ItemAction } from "./components/ItemDetail.js";
-import { NamespaceDetail, buildTreeNodes, buildSkillNodes, type TreeNode } from "./components/NamespaceDetail.js";
+import { NamespaceDetail } from "./components/NamespaceDetail.js";
 import { pluginToManagedItem, fileToManagedItem, piPackageToManagedItem } from "./lib/managed-item.js";
 import type { ManagedItem } from "./lib/managed-item.js";
 import { getMarketplaceDetailActions, type MarketplaceDetailContext } from "./lib/marketplace-detail.js";
 import { buildMarketplaceRows, type MarketplaceRow } from "./lib/marketplace-row.js";
 import { useDetailInput, useDiffInput, useListInput } from "./lib/input-hooks.js";
 import { handleItemAction } from "./lib/action-dispatch.js";
-import type { Tab, SyncPreviewItem, Plugin, PiPackage, PiMarketplace, DiffInstanceRef, DiscoverSection, DiscoverSubView, ManagedToolRow, FileStatus, Marketplace } from "./lib/types.js";
+import type { Tab, SyncPreviewItem, Plugin, PiPackage, PiMarketplace, DiffInstanceRef, DiscoverSection, DiscoverSubView, FileStatus, Marketplace } from "./lib/types.js";
 import { countAppRender } from "./lib/perf.js";
 import { useContentHeight } from "./lib/use-content-height.js";
+import { useToolActions } from "./lib/use-tool-actions.js";
+import { useNamespaceTree } from "./lib/use-namespace-tree.js";
+import { buildDetailCallbacks } from "./lib/detail-callbacks.js";
 import { getSyncItemKey, sortAndFilterPiPackages } from "./lib/derived.js";
 
 const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces", "settings"];
@@ -227,11 +211,6 @@ export function App() {
   const removeMarketplace = useStore((s) => s.removeMarketplace);
   const addMarketplace = useStore((s) => s.addMarketplace);
   const toggleToolEnabled = useStore((s) => s.toggleToolEnabled);
-  const updateToolConfigDir = useStore((s) => s.updateToolConfigDir);
-  const installToolAction = useStore((s) => s.installToolAction);
-  const updateToolAction = useStore((s) => s.updateToolAction);
-  const uninstallToolAction = useStore((s) => s.uninstallToolAction);
-  const cancelToolAction = useStore((s) => s.cancelToolAction);
   const getSyncPreview = useStore((s) => s.getSyncPreview);
   const syncTools = useStore((s) => s.syncTools);
   const notify = useStore((s) => s.notify);
@@ -250,13 +229,20 @@ export function App() {
   const removePiMarketplace = useStore((s) => s.removePiMarketplace);
 
   const [actionIndex, setActionIndex] = useState(0);
-  const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set());
+  const openSkillDetail = (skill: import("./lib/install.js").StandaloneSkill) => {
+    setDetail({ kind: "skill", data: skill });
+    setActionIndex(0);
+  };
+  const {
+    expandedSkills,
+    setExpandedSkills,
+    closeDetail,
+    handleNamespaceTreeInput,
+  } = useNamespaceTree({ detail, detailNamespace, setDetail, actionIndex, setActionIndex, openSkillDetail });
   // detailPluginDrift / detailFile / detailSkill are now derived from `detail` above.
   const pluginDriftMap = useStore((s) => s.pluginDriftMap);
   const setPluginDriftMap = useStore((s) => s.setPluginDriftMap);
   const [detailPiMarketplace, setDetailPiMarketplace] = useState<PiMarketplace | null>(null);
-  const [detailToolKey, setDetailToolKey] = useState<string | null>(null);
-  const [editingToolId, setEditingToolId] = useState<string | null>(null);
   const [modalVisible, setModalVisible] = useState<"addMarketplace" | "addPiMarketplace" | "sourceSetupWizard" | null>(null);
   const showAddMarketplace = modalVisible === "addMarketplace";
   const showAddPiMarketplace = modalVisible === "addPiMarketplace";
@@ -264,21 +250,14 @@ export function App() {
   const setShowAddMarketplace = (v: boolean) => setModalVisible(v ? "addMarketplace" : null);
   const setShowAddPiMarketplace = (v: boolean) => setModalVisible(v ? "addPiMarketplace" : null);
   const setShowSourceSetupWizard = (v: boolean) => setModalVisible(v ? "sourceSetupWizard" : null);
-  const [toolModal, setToolModal] = useState<{
-    action: ToolModalAction | null; warning: string | null; migrate: boolean;
-    running: boolean; done: boolean; success: boolean;
-  }>({ action: null, warning: null, migrate: false, running: false, done: false, success: false });
-  // Destructure for backward compat within this component
-  const { action: toolModalAction, warning: toolModalWarning, migrate: toolModalMigrate,
-    running: toolModalRunning, done: toolModalDone, success: toolModalSuccess } = toolModal;
-  const setToolModalAction = (v: ToolModalAction | null) => setToolModal((s) => ({ ...s, action: v }));
-  const setToolModalWarning = (v: string | null) => setToolModal((s) => ({ ...s, warning: v }));
-  const setToolModalMigrate = (v: boolean | ((b: boolean) => boolean)) =>
-    setToolModal((s) => ({ ...s, migrate: typeof v === "function" ? v(s.migrate) : v }));
-  const setToolModalRunning = (v: boolean) => setToolModal((s) => ({ ...s, running: v }));
-  const setToolModalDone = (v: boolean) => setToolModal((s) => ({ ...s, done: v }));
-  const setToolModalSuccess = (v: boolean) => setToolModal((s) => ({ ...s, success: v }));
-  const resetToolModal = () => setToolModal({ action: null, warning: null, migrate: false, running: false, done: false, success: false });
+  const {
+    toolModalAction, toolModalWarning, toolModalMigrate,
+    toolModalRunning, toolModalDone, toolModalSuccess,
+    detailTool, setDetailToolKey, editingToolId, setEditingToolId, editingTool,
+    selectedManagedTool, activeToolForModal, toolsHint,
+    handleToolModalInput, handleToolShortcut, handleToolConfigSave,
+    runToolAction, getToolActionCommand,
+  } = useToolActions({ tab, selectedIndex });
   const sortBy = useStore((s) => s.sortBy);
   const sortDir = useStore((s) => s.sortDir);
   const setSortBy = useStore((s) => s.setSortBy);
@@ -348,25 +327,11 @@ export function App() {
     [tools]
   );
 
-  const isBrewManagedTool = (binaryPath: string | null | undefined): boolean =>
-    Boolean(binaryPath && (binaryPath.startsWith("/opt/homebrew/") || binaryPath.startsWith("/usr/local/")));
-
   const showPiFeatures = useMemo(() => {
     const piEnabled = tools.some((tool) => tool.toolId === "pi" && tool.enabled);
     const piInstalled = toolDetection.pi?.installed === true;
     return piEnabled || piInstalled;
   }, [tools, toolDetection]);
-
-  const editingTool = useMemo(() => {
-    const managed = managedTools.find((tool) => `${tool.toolId}:${tool.instanceId}` === editingToolId);
-    if (!managed) return null;
-    return {
-      toolId: managed.toolId,
-      instanceId: managed.instanceId,
-      name: managed.displayName,
-      configDir: managed.configDir,
-    };
-  }, [managedTools, editingToolId]);
 
   // Helper to calculate visible range for section headings
   const getRange = (selectedIdx: number, totalCount: number, maxHeight: number): string => {
@@ -785,85 +750,6 @@ export function App() {
     }
   }, [selectedIndex, maxIndex, setSelectedIndex]);
 
-  const selectedManagedTool = useMemo(() => {
-    if (tab !== "tools") return null;
-    return managedTools[selectedIndex] || null;
-  }, [tab, managedTools, selectedIndex]);
-
-  const detailTool = useMemo(() => {
-    if (!detailToolKey) return null;
-    return managedTools.find((tool) => `${tool.toolId}:${tool.instanceId}` === detailToolKey) || null;
-  }, [detailToolKey, managedTools]);
-
-  const activeToolForModal = detailTool || selectedManagedTool;
-  const pendingToolDetectionCount = useMemo(
-    () => Object.values(toolDetectionPending).filter((isPending) => isPending).length,
-    [toolDetectionPending]
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-
-    if (!toolModalAction || !activeToolForModal || toolModalAction === "uninstall") {
-      setToolModalWarning(null);
-      return;
-    }
-
-    const packageManager = getPackageManager();
-    const binaryPath = toolDetection[activeToolForModal.toolId]?.binaryPath ?? null;
-
-    void detectInstallMethodMismatch(activeToolForModal.toolId, packageManager, binaryPath)
-      .then((mismatch) => {
-        if (!cancelled) {
-          setToolModalWarning(mismatch?.message ?? null);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setToolModalWarning(null);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [toolModalAction, activeToolForModal, toolDetection]);
-
-  const toolsHint = useMemo(() => {
-    if (tab !== "tools") return undefined;
-    if (toolActionInProgress) return "(Tool action running... Esc to cancel)";
-    if (pendingToolDetectionCount > 0) {
-      return `(Checking tool statuses... ${pendingToolDetectionCount} remaining · R refresh)`;
-    }
-
-    const supportsMigration = (detection: typeof toolDetection[string] | undefined) =>
-      detection?.installed === true && isBrewManagedTool(detection.binaryPath);
-
-    if (detailTool) {
-      const detection = toolDetection[detailTool.toolId];
-      if (supportsMigration(detection)) {
-        return "i Install · u Update · d Uninstall · m Migrate · e Edit · Space Toggle · R Refresh · Esc Back";
-      }
-      return "i Install · u Update · d Uninstall · e Edit · Space Toggle · R Refresh · Esc Back";
-    }
-
-    if (!selectedManagedTool) {
-      return "Enter detail · e edit · Space toggle · R refresh · q quit";
-    }
-
-    const detection = toolDetection[selectedManagedTool.toolId];
-    if (!detection?.installed) {
-      return "Enter detail · i Install · e Edit · Space Toggle · R refresh · q quit";
-    }
-    if (supportsMigration(detection)) {
-      return "Enter detail · u Update · d Uninstall · m Migrate · e Edit · Space Toggle · R refresh · q quit";
-    }
-    if (detection.hasUpdate) {
-      return "Enter detail · u Update · d Uninstall · e Edit · Space Toggle · R refresh · q quit";
-    }
-    return "Enter detail · d Uninstall · e Edit · Space Toggle · R refresh · q quit";
-  }, [tab, toolActionInProgress, pendingToolDetectionCount, detailTool, selectedManagedTool, toolDetection]);
-
   const selectedLibraryItem = useMemo(
     ():
       | { kind: "plugin"; plugin: Plugin }
@@ -1056,20 +942,6 @@ export function App() {
     return null;
   }, [detailMarketplace, detailPiMarketplace]);
 
-  // Namespace tree nodes — used for expandable tree rendering and cursor bounds
-  const namespaceTreeNodes = useMemo((): TreeNode[] => {
-    if (detail?.kind !== "namespace" || !detailNamespace) return [];
-    const skillNodes = buildSkillNodes(detailNamespace);
-    return buildTreeNodes(detailNamespace, skillNodes, expandedSkills);
-  }, [detail, detailNamespace, expandedSkills]);
-
-  // Clamp actionIndex when namespace tree nodes change (expand/collapse changes node count)
-  React.useEffect(() => {
-    if (detail?.kind === "namespace" && namespaceTreeNodes.length > 0) {
-      setActionIndex((i) => Math.min(i, namespaceTreeNodes.length - 1));
-    }
-  }, [namespaceTreeNodes.length, detail?.kind]);
-
   // Thin shims around the unified store.refreshDetail() for plugins (which need drift
   // recomputed) and piPackages (which need the legacy mirror updated).
   const refreshDetailPlugin = (plugin: Plugin) => {
@@ -1105,7 +977,6 @@ export function App() {
 
   // ── Extracted input handlers ───────────────────────────────────────────
 
-  const closeDetail = () => { setActionIndex(0); setExpandedSkills(new Set()); };
   const handleEscape = () => {
     const state = useStore.getState();
     // Any kind of item detail open? Close it via the unified setter. Read current
@@ -1253,11 +1124,6 @@ export function App() {
     void driftTimer;
   };
 
-  const openSkillDetail = (skill: import("./lib/install.js").StandaloneSkill) => {
-    setDetail({ kind: "skill", data: skill });
-    setActionIndex(0);
-  };
-
   const toggleInstall = (plugin: Plugin) => plugin.installed ? doUninstall(plugin) : doInstall(plugin);
   const toggleInstallPiPkg = (pkg: PiPackage) => pkg.installed ? doUninstallPiPkg(pkg) : doInstallPiPkg(pkg);
 
@@ -1306,46 +1172,6 @@ export function App() {
 
   /** True when any detail/diff/missing overlay is open — blocks global navigation. */
   const isOverlayOpen = !!(activeDetail || activeMarketplaceDetail || detailTool || diffTarget || missingSummary);
-
-  const handleToolModalInput = (input: string, key: Parameters<Parameters<typeof useInput>[0]>[1]) => {
-    if (toolModalDone) {
-      if (!toolModalSuccess && (input === "m" || input === "M") && toolModalWarning) {
-        setToolModalMigrate((c) => !c);
-        return;
-      }
-      if (!toolModalSuccess && key.return && activeToolForModal) {
-        setToolModalDone(false);
-        void runToolAction(activeToolForModal, toolModalAction!, toolModalMigrate);
-        return;
-      }
-      resetToolModal();
-      return;
-    }
-    if (toolModalRunning) { if (key.escape) cancelToolAction(); return; }
-    if (key.escape) { setToolModal((s) => ({ ...s, action: null, warning: null, migrate: false })); return; }
-    if ((input === "m" || input === "M") && toolModalWarning) { setToolModalMigrate((c) => !c); return; }
-    if (key.return && activeToolForModal) void runToolAction(activeToolForModal, toolModalAction!, toolModalMigrate);
-  };
-
-  /** Returns true if the shortcut was handled. */
-  const handleToolShortcut = (input: string): boolean => {
-    const tool = detailTool || managedTools[selectedIndex];
-    const detection = tool ? toolDetection[tool.toolId] : null;
-    const openModal = (action: "install" | "update" | "uninstall", migrate = false) =>
-      setToolModal({ action, warning: null, migrate, running: false, done: false, success: false });
-
-    if (input === "i" && tool && (!detection || !detection.installed)) { openModal("install"); return true; }
-    if (input === "u" && tool && detection?.installed && detection.hasUpdate) { openModal("update"); return true; }
-    if (input === "d" && tool && detection?.installed) { openModal("uninstall"); return true; }
-    if (input === "m" && tool && detection?.installed) {
-      const path = detection.binaryPath ?? "";
-      if (isBrewManagedTool(path)) openModal("update", true);
-      return true;
-    }
-    if (input === "e" && tool) { setEditingToolId(`${tool.toolId}:${tool.instanceId}`); return true; }
-    if (input === " " && tool) { void toggleToolEnabled(tool.toolId, tool.instanceId); return true; }
-    return false;
-  };
 
   const handleMarketplaceShortcut = (input: string): boolean => {
     if (!selectedMarketplaceRow) return false;
@@ -1535,70 +1361,9 @@ export function App() {
 
     if (handleDiffInput(input, key)) return;
 
-    // Namespace tree: handle right/enter (expand), left (collapse) for skill-header nodes
-    if (detail?.kind === "namespace" && namespaceTreeNodes.length > 0) {
-      const node = namespaceTreeNodes[actionIndex];
-      if (node) {
-        // Enter on skill-header: open the skill detail (identical to standalone skill view)
-        if (key.return && node.type === "skill-header") {
-          if (node.skill) {
-            openSkillDetail(node.skill);
-          }
-          return;
-        }
-        // Right arrow on collapsed skill-header: expand
-        if (key.rightArrow && node.type === "skill-header" && !node.expanded) {
-          const skillName = node.skill!.name;
-          setExpandedSkills((prev) => {
-            const next = new Set(prev);
-            next.add(skillName);
-            return next;
-          });
-          return;
-        }
-        // Right arrow on expanded skill-header: move cursor to first child
-        if (key.rightArrow && node.type === "skill-header" && node.expanded) {
-          const childIdx = actionIndex + 1;
-          if (childIdx < namespaceTreeNodes.length) setActionIndex(childIdx);
-          return;
-        }
-        if (key.leftArrow && node.type === "skill-header" && node.expanded) {
-          setExpandedSkills((prev) => { const next = new Set(prev); next.delete(node.skill!.name); return next; });
-          return;
-        }
-        if (key.leftArrow && node.type === "skill-tool") {
-          // Jump to parent skill-header
-          const parentIdx = namespaceTreeNodes.findIndex((n, i) => i < actionIndex && n.type === "skill-header" && n.skill?.name === node.skill?.name);
-          if (parentIdx >= 0) setActionIndex(parentIdx);
-          return;
-        }
-        // Enter on action nodes: dispatch
-        if (key.return && node.type === "action" && node.action) {
-          void handleNamespaceTreeAction(node);
-          return;
-        }
-        // Enter on skill-tool status rows: open diff if drifted, else no-op
-        if (key.return && node.type === "skill-tool" && node.skill && node.toolInfo) {
-          if (node.toolStatusLabel === "Drifted") {
-            const diffTarget = buildSkillDiffTarget(node.skill, node.toolInfo.toolId, node.toolInfo.instanceId);
-            if (diffTarget) useStore.setState({ diffTarget });
-            else useStore.getState().notify("Skill has no source repo path to diff against.", "warning");
-          }
-          return;
-        }
-      }
-      // Up/down for namespace tree
-      if (key.upArrow) {
-        setActionIndex((i) => Math.max(0, i - 1));
-        return;
-      }
-      if (key.downArrow) {
-        setActionIndex((i) => Math.min(namespaceTreeNodes.length - 1, i + 1));
-        return;
-      }
-      // Don't fall through to handleDetailInput
-      return;
-    }
+    // Namespace tree: handle right/enter (expand), left (collapse), cursor movement,
+    // and action dispatch. Owns (swallows) all keys while a namespace tree is open.
+    if (handleNamespaceTreeInput(input, key)) return;
 
     if (handleDetailInput(input, key)) return;
     if (handleListInput(input, key)) return;
@@ -1758,238 +1523,6 @@ export function App() {
     return copied > 0;
   };
 
-  const refreshDetailNamespace = useCallback(() => {
-    const state = useStore.getState();
-    if (detail?.kind !== "namespace" || !detailNamespace) return;
-
-    const freshSkills = state.standaloneSkills;
-    const updated = groupSkillsByNamespace(freshSkills).find((n) => n.name === detailNamespace.name);
-    if (updated) {
-      setDetail({ kind: "namespace", data: updated });
-    } else {
-      // Namespace no longer exists (fully deleted)
-      if (detail?.kind === "namespace") setDetail(null);
-      closeDetail();
-    }
-  }, [detail, detailNamespace, setDetail, closeDetail]);
-
-  // Handle actions from the namespace tree — routes per-skill and namespace-level ops
-  const handleNamespaceTreeAction = async (node: TreeNode) => {
-    const action = node.action;
-    const skill = node.skill;
-    if (!action) return;
-
-    const store = useStore.getState();
-
-    // Skill-level actions need the StandaloneSkill object
-    if (skill && node.depth > 0) {
-      switch (action.type) {
-        case "install_tool": {
-          const ts = action.toolStatus;
-          if (ts) {
-            await withSpinner(
-              `Syncing ${skill.name} to ${ts.name}...`,
-              async () => { installSkillToInstance(skill, ts.toolId, ts.instanceId); },
-              store.notify, store.clearNotification,
-            );
-          }
-          break;
-        }
-        case "uninstall_tool": {
-          const ts = action.toolStatus;
-          if (ts) {
-            await withSpinner(
-              `Uninstalling ${skill.name} from ${ts.name}...`,
-              async () => { uninstallSkillFromInstance(skill, ts.toolId, ts.instanceId); },
-              store.notify, store.clearNotification,
-            );
-          }
-          break;
-        }
-        case "uninstall": {
-          await withSpinner(
-            `Uninstalling ${skill.name} from all tools...`,
-            async () => { uninstallSkillAllInstances(skill); },
-            store.notify, store.clearNotification,
-          );
-          break;
-        }
-        case "pullback": {
-          const inst = action.instance;
-          if (inst) {
-            await withSpinner(
-              `Pulling ${skill.name} to source...`,
-              async () => {
-                const ok = pullbackSkillToSource(skill, inst.toolId, inst.instanceId);
-                if (!ok) {
-                  store.notify(`Failed to pull ${skill.name} to source repo`, "error");
-                }
-              },
-              store.notify, store.clearNotification,
-            );
-          }
-          break;
-        }
-        case "delete_everywhere": {
-          await withSpinner(
-            `Deleting ${skill.name} everywhere...`,
-            async () => { deleteSkillEverywhere(skill); },
-            store.notify, store.clearNotification,
-          );
-          break;
-        }
-      }
-      await useStore.getState().loadInstalledPlugins({ silent: true });
-      refreshDetailNamespace();
-      return;
-    }
-
-    // Namespace-level actions (depth 0)
-    const ns = detailNamespace;
-    if (!ns) return;
-    switch (action.type) {
-      case "sync": {
-        if (action.id === "sync_missing") {
-          await withSpinner(
-            `Syncing missing skills in ${ns.name}...`,
-            async () => { syncNamespaceToAllMissing(ns); },
-            store.notify, store.clearNotification,
-          );
-        } else {
-          await withSpinner(
-            `Re-syncing drifted skills in ${ns.name}...`,
-            async () => { resyncNamespaceDrifted(ns); },
-            store.notify, store.clearNotification,
-          );
-        }
-        break;
-      }
-      case "install_tool": {
-        // Per-tool namespace sync — install missing + resync drifted for one tool
-        const ts = action.toolStatus;
-        if (ts) {
-          await withSpinner(
-            `Syncing ${ns.name} to ${ts.name}...`,
-            async () => {
-              // Use fresh skills from store (not the stale ns closure)
-              const freshSkills = useStore.getState().standaloneSkills.filter(
-                (s) => s.namespace === ns.name
-              );
-              for (const skill of freshSkills) {
-                const isInstalled = skill.installations.some(
-                  (i) => i.toolId === ts.toolId && i.instanceId === ts.instanceId
-                );
-                if (!isInstalled) {
-                  installSkillToInstance(skill, ts.toolId, ts.instanceId);
-                }
-              }
-              // Re-sync drifted
-              for (const skill of freshSkills) {
-                const inst = skill.installations.find(
-                  (i) => i.toolId === ts.toolId && i.instanceId === ts.instanceId && i.drifted
-                );
-                if (inst) {
-                  installSkillToInstance(skill, ts.toolId, ts.instanceId);
-                }
-              }
-            },
-            store.notify, store.clearNotification,
-          );
-        }
-        break;
-      }
-      case "pullback": {
-        // Per-tool namespace pullback — pull all skills from one tool to source
-        const inst = action.instance;
-        if (inst) {
-          await withSpinner(
-            `Pulling ${ns.name} to source from ${inst.instanceName}...`,
-            async () => {
-              const result = pullbackNamespaceToSource(ns, inst.toolId, inst.instanceId);
-              const parts: string[] = [`${result.pulled} pulled back`];
-              if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
-              store.notify(`Pulled ${ns.name}: ${parts.join(", ")}`, result.errors.length > 0 ? "warning" : "info");
-            },
-            store.notify, store.clearNotification,
-          );
-        }
-        break;
-      }
-      case "track": {
-        // Bulk track all not-in-git skills
-        const notInGit = ns.skills.filter((s) => !s.sourcePath && s.installations.length > 0);
-        if (notInGit.length > 0) {
-          let tracked = 0;
-          let failed = 0;
-          await withSpinner(
-            `Tracking ${notInGit.length} skills in source repo...`,
-            async () => {
-              for (const skill of notInGit) {
-                const first = skill.installations[0];
-                const ok = pullbackSkillToSource(skill, first.toolId, first.instanceId);
-                if (ok) {
-                  tracked += 1;
-                } else {
-                  failed += 1;
-                }
-              }
-            },
-            store.notify, store.clearNotification,
-          );
-          const msg = tracked > 0 ? `Tracked ${tracked} skill${tracked === 1 ? "" : "s"} in source repo` : "No skills tracked";
-          store.notify(msg + (failed > 0 ? ` (${failed} failed)` : ""), failed > 0 ? "warning" : "info");
-        }
-        break;
-      }
-      case "uninstall_tool": {
-        const inst = action.instance;
-        if (inst) {
-          await withSpinner(
-            `Uninstalling ${ns.name} from ${inst.instanceName}...`,
-            async () => { uninstallNamespaceFromInstance(ns, inst.toolId, inst.instanceId); },
-            store.notify, store.clearNotification,
-          );
-        }
-        break;
-      }
-      case "uninstall": {
-        await withSpinner(
-          `Uninstalling all skills in ${ns.name}...`,
-          async () => {
-            const result = uninstallNamespaceAll(ns);
-            const parts: string[] = [`${result.uninstalled} uninstalled`];
-            if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
-            store.notify(`Uninstalled ${ns.name}: ${parts.join(", ")}`, result.errors.length > 0 ? "warning" : "info");
-          },
-          store.notify, store.clearNotification,
-        );
-        break;
-      }
-      case "back": {
-        if (detail?.kind === "namespace") setDetail(null);
-        closeDetail();
-        return;
-      }
-      case "delete_everywhere": {
-        await withSpinner(
-          `Deleting all skills in ${ns.name}...`,
-          async () => {
-            const result = deleteNamespaceEverywhere(ns);
-            const parts: string[] = [`${result.deleted} skills deleted`];
-            if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
-            store.notify(`Deleted ${ns.name}: ${parts.join(", ")}`, result.errors.length > 0 ? "warning" : "info");
-          },
-          store.notify, store.clearNotification,
-        );
-        if (detail?.kind === "namespace") setDetail(null);
-        closeDetail();
-        return;
-      }
-    }
-    await useStore.getState().loadInstalledPlugins({ silent: true });
-    refreshDetailNamespace();
-  };
-
   // Unified action handler for file, plugin, and pi-package detail views
   const handleEntityAction = async (index: number) => {
     if (!activeDetail) return;
@@ -1997,18 +1530,19 @@ export function App() {
     const action = actions[index];
     if (!action) return;
 
-    await handleItemAction(item, action, {
-      closeDetail: () => { setDetail(null); closeDetail(); },
+    await handleItemAction(item, action, buildDetailCallbacks({
+      detail,
+      setDetail,
+      setDetailPluginDrift,
+      closeDetail,
+      openSkillDetail,
       openDiffForFile,
       openMissingSummaryForFile,
-      setDiffTarget: (target) => useStore.setState({ diffTarget: target }),
       installPlugin: doInstall,
       uninstallPlugin: doUninstall,
       updatePlugin: doUpdate,
       trackPluginInSource: doTrackPlugin,
-      removePluginFromGit: async (plugin) => {
-        await doRemovePluginFromGit(plugin);
-      },
+      removePluginFromGit: doRemovePluginFromGit,
       installPluginToInstance: installPluginToInstanceCb,
       uninstallPluginFromInstance: uninstallPluginFromInstanceCb,
       refreshDetailPlugin,
@@ -2019,308 +1553,11 @@ export function App() {
       uninstallPiPackage: doUninstallPiPkg,
       updatePiPackage: doUpdatePiPkg,
       trackPiPackageInSource: doTrackPiPkg,
-      removePiPackageFromGit: async (pkg) => {
-        await doRemovePiPkgFromGit(pkg);
-      },
+      removePiPackageFromGit: doRemovePiPkgFromGit,
       deletePiPackageEverywhere: doDeletePiPkg,
       refreshDetailPiPackage,
       buildPluginDiffTarget: buildPluginDiffTargetCb,
-      // Skill mutations — wrap with spinner since copies may be slow for large skills.
-      uninstallSkillAll: async (skill) => {
-        const store = useStore.getState();
-        await withSpinner(
-          `Uninstalling ${skill.name} from all tools...`,
-          async () => { uninstallSkillAllInstances(skill); },
-          store.notify, store.clearNotification,
-        );
-        await useStore.getState().loadInstalledPlugins({ silent: true });
-      },
-      uninstallSkillFromInstance: async (skill, toolId, instanceId) => {
-        const store = useStore.getState();
-        await withSpinner(
-          `Uninstalling ${skill.name} from ${toolId}...`,
-          async () => { uninstallSkillFromInstance(skill, toolId, instanceId); },
-          store.notify, store.clearNotification,
-        );
-        await useStore.getState().loadInstalledPlugins({ silent: true });
-      },
-      installSkillToInstance: async (skill, toolId, instanceId) => {
-        const store = useStore.getState();
-        await withSpinner(
-          `Syncing ${skill.name} to ${toolId}...`,
-          async () => { installSkillToInstance(skill, toolId, instanceId); },
-          store.notify, store.clearNotification,
-        );
-        await useStore.getState().loadInstalledPlugins({ silent: true });
-      },
-      installSkillToAll: async (skill) => {
-        const store = useStore.getState();
-        // Cover missing AND drifted instances in one action. Uses installSkillToAllNonSynced
-        // which inspects each tool: install if missing, overwrite if drifted, skip if synced.
-        let result: { installed: number; resynced: number; skipped: number; failed: number } = { installed: 0, resynced: 0, skipped: 0, failed: 0 };
-        await withSpinner(
-          `Syncing ${skill.name} from source to all tools...`,
-          async () => { result = installSkillToAllNonSynced(skill); },
-          store.notify, store.clearNotification,
-        );
-        const parts: string[] = [];
-        if (result.installed > 0) parts.push(`installed to ${result.installed}`);
-        if (result.resynced > 0) parts.push(`re-synced ${result.resynced}`);
-        if (result.failed > 0) parts.push(`${result.failed} failed`);
-        store.notify(`${skill.name}: ${parts.join(", ") || "nothing to do"}`, result.failed > 0 ? "warning" : "info");
-        await useStore.getState().loadInstalledPlugins({ silent: true });
-      },
-      pullbackSkillFromInstance: async (skill, toolId, instanceId) => {
-        const store = useStore.getState();
-        await withSpinner(
-          `Pulling ${skill.name} from ${toolId} to source repo...`,
-          async () => {
-            const ok = pullbackSkillToSource(skill, toolId, instanceId);
-            if (!ok) {
-              store.notify(`Failed to pull ${skill.name} to source repo`, "error");
-            }
-          },
-          store.notify, store.clearNotification,
-        );
-        await useStore.getState().loadInstalledPlugins({ silent: true });
-      },
-      removeRedundantSkillInstallations: async (skill, redundant) => {
-        const store = useStore.getState();
-        const paths = redundant.map((i) => i.diskPath).join(", ");
-        await withSpinner(
-          `Removing ${skill.name} from Pi (${redundant.length} redundant copy${redundant.length === 1 ? "" : "ies"})...`,
-          async () => {
-            for (const inst of redundant) {
-              try {
-                rmSync(inst.diskPath, { recursive: true, force: true });
-              } catch { /* skip */ }
-            }
-          },
-          store.notify, store.clearNotification,
-        );
-        store.notify(`Removed redundant Pi copies of ${skill.name}`, "info");
-        await useStore.getState().loadInstalledPlugins({ silent: true });
-      },
-      deleteSkillEverywhere: async (skill) => {
-        const store = useStore.getState();
-        await withSpinner(
-          `Deleting ${skill.name} everywhere...`,
-          async () => {
-            const result = deleteSkillEverywhere(skill);
-            if (result.ok) {
-              const parts = [`${result.tools} tool installs`];
-              if (result.source) parts.push(`source repo (uncommitted — review & commit manually)`);
-              store.notify(`Deleted ${skill.name}: ${parts.join(", ")}`, "info");
-            } else {
-              store.notify(`Delete failed: ${result.error}`, "error");
-            }
-          },
-          store.notify, store.clearNotification,
-        );
-        await useStore.getState().loadInstalledPlugins({ silent: true });
-        if (detail?.kind === "skill") setDetail(null);
-        closeDetail();
-      },
-      // Namespace bulk operations
-      syncNamespace: async (ns) => {
-        const store = useStore.getState();
-        await withSpinner(
-          `Syncing missing skills in ${ns.name}...`,
-          async () => { syncNamespaceToAllMissing(ns); },
-          store.notify, store.clearNotification,
-        );
-        await useStore.getState().loadInstalledPlugins({ silent: true });
-      },
-      resyncNamespace: async (ns) => {
-        const store = useStore.getState();
-        await withSpinner(
-          `Re-syncing drifted skills in ${ns.name}...`,
-          async () => { resyncNamespaceDrifted(ns); },
-          store.notify, store.clearNotification,
-        );
-        await useStore.getState().loadInstalledPlugins({ silent: true });
-      },
-      deleteNamespaceEverywhere: async (ns) => {
-        const store = useStore.getState();
-        await withSpinner(
-          `Deleting all skills in ${ns.name}...`,
-          async () => {
-            const result = deleteNamespaceEverywhere(ns);
-            const parts: string[] = [`${result.deleted} skills deleted`];
-            if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
-            store.notify(`Deleted ${ns.name}: ${parts.join(", ")}`, result.errors.length > 0 ? "warning" : "info");
-          },
-          store.notify, store.clearNotification,
-        );
-        await useStore.getState().loadInstalledPlugins({ silent: true });
-        if (detail?.kind === "namespace") setDetail(null);
-        closeDetail();
-      },
-      uninstallNamespaceAll: async (ns) => {
-        const store = useStore.getState();
-        await withSpinner(
-          `Uninstalling all skills in ${ns.name}...`,
-          async () => {
-            const result = uninstallNamespaceAll(ns);
-            const parts: string[] = [`${result.uninstalled} uninstalled`];
-            if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
-            store.notify(`Uninstalled ${ns.name}: ${parts.join(", ")}`, result.errors.length > 0 ? "warning" : "info");
-          },
-          store.notify, store.clearNotification,
-        );
-        await useStore.getState().loadInstalledPlugins({ silent: true });
-      },
-      uninstallNamespaceFromInstance: async (ns, toolId, instanceId) => {
-        const store = useStore.getState();
-        await withSpinner(
-          `Uninstalling ${ns.name} from ${toolId}...`,
-          async () => {
-            const result = uninstallNamespaceFromInstance(ns, toolId, instanceId);
-            const parts: string[] = [`${result.uninstalled} uninstalled`];
-            if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
-            store.notify(`Uninstalled ${ns.name} from ${toolId}: ${parts.join(", ")}`, result.errors.length > 0 ? "warning" : "info");
-          },
-          store.notify, store.clearNotification,
-        );
-        await useStore.getState().loadInstalledPlugins({ silent: true });
-      },
-      pullbackNamespaceFromInstance: async (ns, toolId, instanceId) => {
-        const store = useStore.getState();
-        await withSpinner(
-          `Pulling back ${ns.name} from ${toolId}...`,
-          async () => {
-            const result = pullbackNamespaceToSource(ns, toolId, instanceId);
-            const parts: string[] = [`${result.pulled} pulled back`];
-            if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
-            store.notify(`Pulled back ${ns.name} from ${toolId}: ${parts.join(", ")}`, result.errors.length > 0 ? "warning" : "info");
-          },
-          store.notify, store.clearNotification,
-        );
-        await useStore.getState().loadInstalledPlugins({ silent: true });
-      },
-      openSkillDetail,
-      openSkillDiff: (skill, toolId, instanceId) => {
-        const diffTarget = buildSkillDiffTarget(skill, toolId, instanceId);
-        if (!diffTarget) {
-          useStore.getState().notify("Skill has no source repo path to diff against.", "warning");
-          return;
-        }
-        useStore.setState({ diffTarget });
-      },
-      deletePluginEverywhere: async (plugin) => {
-        const store = useStore.getState();
-        await withSpinner(
-          `Deleting ${plugin.name} everywhere...`,
-          async () => {
-            const result = await deletePluginEverywhere(plugin);
-            if (result.ok) {
-              const parts = [`${result.tools} tool installs`];
-              if (result.cache) parts.push("plugin cache");
-              store.notify(`Deleted ${plugin.name}: ${parts.join(", ")}`, "info");
-            } else {
-              store.notify(`Delete failed: ${result.error}`, "error");
-            }
-          },
-          store.notify, store.clearNotification,
-        );
-        await useStore.getState().loadInstalledPlugins({ silent: true });
-        if (detail?.kind === "plugin") setDetail(null);
-        setDetailPluginDrift(null);
-        closeDetail();
-      },
-      deleteFileEverywhere: async (file) => {
-        const store = useStore.getState();
-        await withSpinner(
-          `Deleting ${file.name} everywhere...`,
-          async () => {
-            const result = deleteFileEverywhere(file);
-            if (result.ok) {
-              const parts = [`${result.targets} tool targets`];
-              if (result.source) parts.push("source file (uncommitted)");
-              if (result.config) parts.push("config.yaml entry");
-              store.notify(`Deleted ${file.name}: ${parts.join(", ")}`, "info");
-            } else {
-              store.notify(`Delete failed: ${result.error}`, "error");
-            }
-          },
-          store.notify, store.clearNotification,
-        );
-        await useStore.getState().loadFiles({ silent: true });
-        if (detail?.kind === "file") setDetail(null);
-        closeDetail();
-      },
-      removeFileFromGit: async (file) => {
-        const store = useStore.getState();
-        await withSpinner(
-          `Removing ${file.name} from git...`,
-          async () => {
-            const result = removeFileFromGit(file);
-            if (result.ok) {
-              const parts: string[] = [];
-              if (result.source) parts.push("source file");
-              if (result.config) parts.push("config entry");
-              store.notify(
-                `Removed ${file.name} from git: ${parts.join(", ") || "nothing found"}`,
-                "info",
-              );
-              if (result.pushError) {
-                store.notify(`Committed locally but push failed: ${result.pushError}`, "warning");
-              }
-            } else {
-              store.notify(`Remove from git failed: ${result.error}`, "error");
-            }
-          },
-          store.notify, store.clearNotification,
-        );
-        await useStore.getState().loadFiles({ silent: true });
-      },
-      removeSkillFromGit: async (skill) => {
-        const store = useStore.getState();
-        await withSpinner(
-          `Removing ${skill.name} from git...`,
-          async () => {
-            const result = removeSkillFromGit(skill);
-            if (result.ok) {
-              store.notify(
-                result.source
-                  ? `Removed ${skill.name} from git`
-                  : `${skill.name} has no source repo path to remove`,
-                result.source ? "info" : "warning",
-              );
-              if (result.pushError) {
-                store.notify(`Committed locally but push failed: ${result.pushError}`, "warning");
-              }
-            } else {
-              store.notify(`Remove from git failed: ${result.error}`, "error");
-            }
-          },
-          store.notify, store.clearNotification,
-        );
-        await useStore.getState().loadInstalledPlugins({ silent: true });
-      },
-      removeNamespaceFromGit: async (ns) => {
-        const store = useStore.getState();
-        await withSpinner(
-          `Removing ${ns.name} from git...`,
-          async () => {
-            const result = removeNamespaceFromGit(ns);
-            const parts = [`${result.removed} skill${result.removed === 1 ? "" : "s"} removed`];
-            if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
-            store.notify(
-              `Removed ${ns.name} from git: ${parts.join(", ")}`,
-              result.errors.length > 0 ? "warning" : "info",
-            );
-          },
-          store.notify, store.clearNotification,
-        );
-        await useStore.getState().loadInstalledPlugins({ silent: true });
-      },
-      refreshDetailSkill: (skill) => {
-        const refreshed = useStore.getState().standaloneSkills.find((s) => s.name === skill.name);
-        if (refreshed) setDetail({ kind: "skill", data: refreshed });
-        else { if (detail?.kind === "skill") setDetail(null); closeDetail(); }
-      },
-    });
+    }));
   };
 
   const handleMarketplaceDetailAction = (index: number) => {
@@ -2391,32 +1628,6 @@ export function App() {
   const handleAddMarketplace = (name: string, url: string) => {
     addMarketplace(name, url);
     setShowAddMarketplace(false);
-  };
-
-  const handleToolConfigSave = (toolId: string, instanceId: string, configDir: string) => {
-    void updateToolConfigDir(toolId, instanceId, configDir);
-    setEditingToolId(null);
-  };
-
-  const getToolActionCommand = (tool: ManagedToolRow, action: ToolModalAction): string => {
-    const packageManager = getPackageManager();
-    try {
-      const command = getToolLifecycleCommand(tool.toolId, action, packageManager);
-      if (!command) return "Unknown tool";
-      return `${command.cmd} ${command.args.join(" ")}`;
-    } catch (error) {
-      return error instanceof Error ? error.message : String(error);
-    }
-  };
-
-  const runToolAction = async (tool: ManagedToolRow, action: ToolModalAction, migrate = false) => {
-    setToolModal((s) => ({ ...s, running: true, done: false }));
-    const success =
-      action === "install" ? await installToolAction(tool.toolId, { migrate })
-      : action === "update" ? await updateToolAction(tool.toolId, { migrate })
-      : await uninstallToolAction(tool.toolId);
-    setToolModal((s) => ({ ...s, running: false, done: true, success }));
-    await refreshAll({ silent: true });
   };
 
   const handleSourceWizardComplete = async (source: string) => {

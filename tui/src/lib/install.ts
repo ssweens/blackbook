@@ -75,61 +75,27 @@ import {
 import { logError, validatePluginMetadata } from "./validation.js";
 import { getPluginToolStatus } from "./plugin-status.js";
 import { listPiBridgeInstalledPlugins } from "./pi-bridge.js";
+// Per-tool plugin lifecycle logic lives in the adapters, dispatched by toolId.
+// The orchestrators below resolve `getAdapterForTool(instance.toolId)` and call
+// its install/uninstall/update/installComponents/removeComponents methods
+// instead of the old inline `if (isClaude) … else if (isPi) …` chains.
+import { getAdapterForTool } from "./adapters/types.js";
+import {
+  installPluginItemsToInstance,
+  uninstallPluginItemsFromInstance,
+} from "./adapters/managed.js";
+import { removeFromClaudeInstalledPluginsJson } from "./adapters/claude.js";
+import {
+  runPiBridgeMarketplaceRemoveCommand,
+  isPiPluginBridgeReady,
+} from "./adapters/pi-bridge.js";
+// Preserve the historical public surface: these were exported from install.ts
+// before they moved into the adapters. Re-export so external importers (store,
+// tests) keep working unchanged.
+export { removeFromClaudeInstalledPluginsJson, isPiPluginBridgeReady };
 
-/**
- * Extract marketplace and plugin name from a source path.
- * Handles multiple cache formats:
- * - Blackbook cache: ~/.cache/blackbook/plugins/{marketplace}/{plugin}/...
- * - Claude cache: ~/.claude/plugins/cache/{marketplace}/{plugin}/...
- * - Claude cache with hash: ~/.claude/plugins/cache/{marketplace}/{plugin}/{hash}/...
- * Returns null if the path doesn't match any expected pattern.
- */
-function extractPluginInfoFromSource(
-  sourcePath: string,
-): { marketplace: string; pluginName: string } | null {
-  // Try blackbook cache first: ~/.cache/blackbook/plugins/{marketplace}/{plugin}/...
-  const blackbookCacheDir = getPluginsCacheDir();
-  if (sourcePath.startsWith(blackbookCacheDir)) {
-    const relativePath = sourcePath.slice(blackbookCacheDir.length + 1);
-    const parts = relativePath.split("/");
-    // Expected: {marketplace}/{plugin}/{componentType}/{componentName} (4+ parts)
-    if (parts.length >= 4) {
-      return { marketplace: parts[0], pluginName: parts[1] };
-    }
-  }
-
-  // Try Claude cache: ~/.claude/plugins/cache/{marketplace}/{plugin}/...
-  // or ~/.claude*/plugins/cache/{marketplace}/{plugin}/...
-  const claudeCacheMatch = sourcePath.match(
-    /\.claude[^/]*\/plugins\/cache\/([^/]+)\/([^/]+)/,
-  );
-  if (claudeCacheMatch) {
-    return {
-      marketplace: claudeCacheMatch[1],
-      pluginName: claudeCacheMatch[2],
-    };
-  }
-
-  return null;
-}
-
-function readClaudePluginMetadata(pluginDir: string): { version?: string; description?: string; homepage?: string } {
-  for (const rel of [join(".claude-plugin", "plugin.json"), join(".claude-plugin", "manifest.json")]) {
-    const metadataPath = join(pluginDir, rel);
-    try {
-      if (!lstatSync(metadataPath).isFile()) continue;
-      const metadata = JSON.parse(readFileSync(metadataPath, "utf-8"));
-      return {
-        version: typeof metadata.version === "string" ? metadata.version : undefined,
-        description: typeof metadata.description === "string" ? metadata.description : undefined,
-        homepage: typeof metadata.homepage === "string" ? metadata.homepage : undefined,
-      };
-    } catch {
-      // Try the next supported metadata filename.
-    }
-  }
-  return {};
-}
+// extractPluginInfoFromSource and readClaudePluginMetadata now live in the
+// adapters (managed.ts and claude.ts respectively).
 
 // Hash functions imported from modules/hash.ts (single source of truth)
 
@@ -165,352 +131,10 @@ async function ensureGitAvailable(): Promise<void> {
   }
 }
 
-const PI_PLUGINS_PACKAGE_NAME = "@ssweens/pi-plugins";
-const PI_PLUGINS_EXTENSION_DIR = "pi-plugins";
-const PI_SOFT_DEP_REQUIRED_SOURCES = [
-  "npm:pi-subagents",
-  "npm:pi-mcp-adapter",
-] as const;
-const PI_AGENT_DIR = join(homedir(), ".pi", "agent");
-const PI_SETTINGS_DIR = PI_AGENT_DIR;
-
-function resolvePiSettingsPackagePath(source: string): string | null {
-  const trimmed = source.trim();
-  if (!trimmed) return null;
-  if (trimmed.startsWith("npm:")) return null;
-  const expanded = trimmed.startsWith("~") ? join(homedir(), trimmed.slice(1)) : trimmed;
-  return resolve(PI_SETTINGS_DIR, expanded);
-}
-
-function isPiPluginsSource(source: string): boolean {
-  const normalized = normalizePiPackageSource(source);
-  if (normalized === normalizePiPackageSource(`npm:${PI_PLUGINS_PACKAGE_NAME}`)) return true;
-
-  const resolved = resolvePiSettingsPackagePath(source);
-  if (resolved) {
-    try {
-      const pkg = JSON.parse(readFileSync(join(resolved, "package.json"), "utf-8"));
-      return pkg?.name === PI_PLUGINS_PACKAGE_NAME;
-    } catch {
-      return basename(resolved) === PI_PLUGINS_EXTENSION_DIR;
-    }
-  }
-
-  return false;
-}
-
-function resolvePiPluginsPackageRoot(): string | null {
-  const nodeModulesCandidate = join(PI_AGENT_DIR, "npm", "node_modules", "@ssweens", "pi-plugins");
-  if (existsSync(join(nodeModulesCandidate, "package.json"))) return nodeModulesCandidate;
-
-  for (const source of loadPiSettings().packages) {
-    const resolved = resolvePiSettingsPackagePath(source);
-    if (!resolved) continue;
-    if (existsSync(join(resolved, "package.json")) && isPiPluginsSource(source)) return resolved;
-  }
-
-  return null;
-}
-
-export function isPiPluginBridgeReady(): boolean {
-  const settings = loadPiSettings();
-  const installed = new Set(settings.packages.map((s) => normalizePiPackageSource(s)));
-  const hasPiPlugins = settings.packages.some(isPiPluginsSource);
-  const hasSoftDeps = PI_SOFT_DEP_REQUIRED_SOURCES.every((s) => installed.has(normalizePiPackageSource(s)));
-  return hasPiPlugins && hasSoftDeps && resolvePiPluginsPackageRoot() !== null;
-}
-
-function toPiBridgeMarketplaceSource(rawSource: string): string {
-  const s = rawSource.trim();
-  const rawMatch = s.match(/^https?:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/.+$/);
-  if (rawMatch) {
-    const [, owner, repo, ref] = rawMatch;
-    return `https://github.com/${owner}/${repo}#${ref}`;
-  }
-  const ghBlobMatch = s.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/.+$/);
-  if (ghBlobMatch) {
-    const [, owner, repo, ref] = ghBlobMatch;
-    return `https://github.com/${owner}/${repo}#${ref}`;
-  }
-  return s;
-}
-
-async function runPiBridgeMarketplaceRemoveCommand(
-  instance: ToolInstance,
-  marketplaceName: string,
-): Promise<void> {
-  validateMarketplaceName(marketplaceName);
-
-  if (!isPiPluginBridgeReady()) {
-    throw new Error("Pi plugin bridge is not ready. Install: npm:@ssweens/pi-plugins, npm:pi-subagents, npm:pi-mcp-adapter");
-  }
-
-  const piPluginsRoot = resolvePiPluginsPackageRoot();
-  if (!piPluginsRoot) {
-    throw new Error("Pi plugin bridge package @ssweens/pi-plugins was not found in Pi settings or Pi node_modules.");
-  }
-
-  const script = `
-import { removeMarketplace } from ${JSON.stringify(join(piPluginsRoot, "extensions", "pi-plugins", "orchestrators", "marketplace", "remove.ts"))};
-
-const marketplace = ${JSON.stringify(marketplaceName)};
-const cwd = ${JSON.stringify(instance.configDir)};
-const ctx = { ui: { notify: () => {} } };
-const pi = { getAllTools: () => [] };
-
-await removeMarketplace({
-  ctx,
-  pi,
-  scope: "user",
-  cwd,
-  name: marketplace,
-});
-`;
-
-  await execFileAsync("bun", ["-e", script], {
-    timeout: 120000,
-    cwd: instance.configDir,
-  });
-}
-
-async function runPiBridgePluginCommand(
-  instance: ToolInstance,
-  command: string,
-  marketplaceUrl?: string,
-): Promise<void> {
-  if (!isPiPluginBridgeReady()) {
-    throw new Error("Pi plugin bridge is not ready. Install: npm:@ssweens/pi-plugins, npm:pi-subagents, npm:pi-mcp-adapter");
-  }
-
-  const piPluginsRoot = resolvePiPluginsPackageRoot();
-  if (!piPluginsRoot) {
-    throw new Error("Pi plugin bridge package @ssweens/pi-plugins was not found in Pi settings or Pi node_modules.");
-  }
-
-  const match = command.match(/^(?:\/plugin|\/claude:plugin)\s+(install|update|uninstall)\s+([^@\s]+)@([^\s]+)$/);
-  if (!match) {
-    throw new Error(`Unsupported Pi bridge command format: ${command}`);
-  }
-
-  const op = match[1];
-  const plugin = match[2];
-  const marketplace = match[3];
-  const marketplaceSource = marketplaceUrl ? toPiBridgeMarketplaceSource(marketplaceUrl) : "";
-  const bridgeStageRoot = join(getCacheDir(), "pi-bridge-marketplaces");
-
-  const script = `
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import path from 'node:path';
-import { addMarketplace } from ${JSON.stringify(join(piPluginsRoot, "extensions", "pi-plugins", "orchestrators", "marketplace", "add.ts"))};
-import { installPlugin } from ${JSON.stringify(join(piPluginsRoot, "extensions", "pi-plugins", "orchestrators", "plugin", "install.ts"))};
-import { updatePlugins } from ${JSON.stringify(join(piPluginsRoot, "extensions", "pi-plugins", "orchestrators", "plugin", "update.ts"))};
-import { uninstallPlugin } from ${JSON.stringify(join(piPluginsRoot, "extensions", "pi-plugins", "orchestrators", "plugin", "uninstall.ts"))};
-import { locationsFor } from ${JSON.stringify(join(piPluginsRoot, "extensions", "pi-plugins", "persistence", "locations.ts"))};
-import { loadState, saveState } from ${JSON.stringify(join(piPluginsRoot, "extensions", "pi-plugins", "persistence", "state-io.ts"))};
-
-const op = ${JSON.stringify(op)};
-const plugin = ${JSON.stringify(plugin)};
-const marketplace = ${JSON.stringify(marketplace)};
-const marketplaceUrl = ${JSON.stringify(marketplaceUrl ?? "")};
-let marketplaceSource = ${JSON.stringify(marketplaceSource)};
-const cwd = ${JSON.stringify(instance.configDir)};
-const bridgeStageRoot = ${JSON.stringify(bridgeStageRoot)};
-
-const ctx = { ui: { notify: () => {} } };
-const pi = { getAllTools: () => [] };
-
-async function readJsonIfExists(p) {
-  try { return JSON.parse(await readFile(p, 'utf-8')); } catch { return undefined; }
-}
-
-async function readMcpServers(pluginDir, relPath = '.mcp.json') {
-  const cleanRel = String(relPath || '.mcp.json').replace(/^\\.\\//, '');
-  const parsed = await readJsonIfExists(path.join(pluginDir, cleanRel));
-  if (!parsed || typeof parsed !== 'object') return undefined;
-  return parsed.mcpServers && typeof parsed.mcpServers === 'object' ? parsed.mcpServers : parsed;
-}
-
-async function repointExistingMarketplaceToSource(marketplaceSource) {
-  const locations = locationsFor('user', cwd);
-  const state = await loadState(locations.extensionRoot);
-  const existing = state.marketplaces[marketplace];
-  if (!existing) return false;
-
-  state.marketplaces[marketplace] = {
-    ...existing,
-    source: { kind: 'path', raw: marketplaceSource, logical: marketplaceSource },
-    manifestPath: path.join(marketplaceSource, '.claude-plugin', 'marketplace.json'),
-    marketplaceRoot: marketplaceSource,
-    lastUpdatedAt: new Date().toISOString(),
-  };
-  await saveState(locations.extensionRoot, state);
-  return true;
-}
-
-async function piCompatibleMarketplaceSource(source) {
-  if (!source || source.startsWith('http://') || source.startsWith('https://')) return source;
-
-  let marketplaceRoot = source;
-  let manifestPath = source;
-  try {
-    const stat = await import('node:fs/promises').then((fs) => fs.stat(source));
-    if (stat.isDirectory()) {
-      marketplaceRoot = source;
-      manifestPath = path.join(source, '.claude-plugin', 'marketplace.json');
-    } else {
-      marketplaceRoot = path.dirname(path.dirname(source));
-    }
-  } catch {
-    return source;
-  }
-
-  const manifest = await readJsonIfExists(manifestPath);
-  if (!manifest || !Array.isArray(manifest.plugins)) return source;
-
-  const configuredLocalMarketplace = marketplaceUrl !== '' && !marketplaceUrl.startsWith('http://') && !marketplaceUrl.startsWith('https://');
-  if (configuredLocalMarketplace) {
-    // Local marketplaces are already Pi-compatible. Keep the real repository
-    // path as the pi-plugins source so updates track the local checkout instead
-    // of a Blackbook cache copy.
-    return marketplaceRoot;
-  }
-
-  const stageDir = path.join(bridgeStageRoot, marketplace);
-  await rm(stageDir, { recursive: true, force: true });
-  await mkdir(path.join(stageDir, '.claude-plugin'), { recursive: true });
-
-  const stagedManifest = { ...manifest, plugins: [] };
-  for (const entry of manifest.plugins) {
-    const nextEntry = { ...entry };
-    if (typeof entry.source === 'string' && entry.source.startsWith('./')) {
-      const rel = entry.source.replace(/^\\.\\//, '');
-      const sourceDir = path.resolve(marketplaceRoot, rel);
-      const targetDir = path.join(stageDir, rel);
-      await mkdir(path.dirname(targetDir), { recursive: true });
-      await cp(sourceDir, targetDir, { recursive: true, force: true, dereference: true });
-
-      const pluginManifestPath = path.join(targetDir, '.claude-plugin', 'plugin.json');
-      const pluginManifest = await readJsonIfExists(pluginManifestPath);
-      if (pluginManifest && typeof pluginManifest === 'object') {
-        if (typeof pluginManifest.mcpServers === 'string') {
-          nextEntry.mcpServers = await readMcpServers(targetDir, pluginManifest.mcpServers);
-          delete pluginManifest.mcpServers;
-        } else if (pluginManifest.mcpServers && typeof pluginManifest.mcpServers === 'object' && !Array.isArray(pluginManifest.mcpServers)) {
-          nextEntry.mcpServers = pluginManifest.mcpServers;
-        } else if ('mcpServers' in pluginManifest) {
-          delete pluginManifest.mcpServers;
-        }
-        await writeFile(pluginManifestPath, JSON.stringify(pluginManifest, null, 2), 'utf-8');
-      }
-
-      if (!nextEntry.mcpServers) {
-        nextEntry.mcpServers = await readMcpServers(targetDir);
-      }
-      if (nextEntry.mcpServers === undefined) delete nextEntry.mcpServers;
-    }
-    stagedManifest.plugins.push(nextEntry);
-  }
-
-  const stagedManifestPath = path.join(stageDir, '.claude-plugin', 'marketplace.json');
-  await writeFile(stagedManifestPath, JSON.stringify(stagedManifest, null, 2), 'utf-8');
-  return stageDir;
-}
-
-if (op === "install") {
-  if (!marketplaceUrl) {
-    throw new Error("Missing marketplace URL for Pi bridge install on " + marketplace);
-  }
-  if (marketplaceUrl.startsWith('http://') || marketplaceUrl.startsWith('https://')) {
-    const res = await fetch(marketplaceUrl);
-    if (!res.ok) {
-      throw new Error('Failed to fetch marketplace manifest: ' + res.status + ' ' + res.statusText);
-    }
-    const body = await res.text();
-    const stageDir = path.join(bridgeStageRoot, marketplace);
-    const manifestPath = path.join(stageDir, '.claude-plugin', 'marketplace.json');
-    await mkdir(path.dirname(manifestPath), { recursive: true });
-    await writeFile(manifestPath, body, 'utf-8');
-    marketplaceSource = manifestPath;
-  }
-
-  marketplaceSource = await piCompatibleMarketplaceSource(marketplaceSource);
-
-  try {
-    await addMarketplace({
-      ctx,
-      scope: "user",
-      cwd,
-      rawSource: marketplaceSource,
-    });
-  } catch (e) {
-    const msg = String(e?.message || e || "");
-    if (msg.includes("already exists") || msg.includes("duplicate") || msg.includes("already configured")) {
-      await repointExistingMarketplaceToSource(marketplaceSource);
-    } else {
-      throw e;
-    }
-  }
-
-  const outcome = await installPlugin({
-    ctx,
-    pi,
-    scope: "user",
-    cwd,
-    marketplace,
-    plugin,
-    notifications: { mode: "orchestrated" },
-  });
-  if (outcome.status !== "installed" && outcome.status !== "already-installed") {
-    throw new Error("Pi install failed: " + outcome.status + (outcome.cause ? " - " + outcome.cause : ""));
-  }
-} else if (op === "update") {
-  if (marketplaceUrl !== '' && !marketplaceUrl.startsWith('http://') && !marketplaceUrl.startsWith('https://')) {
-    marketplaceSource = await piCompatibleMarketplaceSource(marketplaceSource);
-    await repointExistingMarketplaceToSource(marketplaceSource);
-  }
-
-  await updatePlugins({
-    ctx,
-    pi,
-    scope: "user",
-    cwd,
-    target: { kind: "plugin", plugin, marketplace },
-  });
-} else if (op === "uninstall") {
-  await uninstallPlugin({
-    ctx,
-    pi,
-    scope: "user",
-    cwd,
-    marketplace,
-    plugin,
-  });
-} else {
-  throw new Error("Unsupported op: " + op);
-}
-`;
-
-  await execFileAsync("bun", ["-e", script], {
-    timeout: 120000,
-    cwd: instance.configDir,
-  });
-}
-
-function validateClaudePluginId(pluginId: string): void {
-  const [name, marketplace, extra] = pluginId.split("@");
-  if (!name || extra !== undefined) throw new Error(`Invalid Claude plugin id: ${pluginId}`);
-  validatePluginName(name);
-  if (marketplace) validateMarketplaceName(marketplace);
-}
-
-function claudePluginId(plugin: Pick<Plugin, "name" | "marketplace">): string {
-  return plugin.marketplace ? `${plugin.name}@${plugin.marketplace}` : plugin.name;
-}
-
-function claudeInstalledPluginId(plugin: Pick<Plugin, "name" | "marketplace" | "installedMarketplace">): string {
-  const marketplace = plugin.installedMarketplace ?? plugin.marketplace;
-  return marketplace ? `${plugin.name}@${marketplace}` : plugin.name;
-}
+// Pi bridge resolution (isPiPluginBridgeReady, resolvePiPluginsPackageRoot) and
+// the bridge command runners (runPiBridgeMarketplaceRemoveCommand,
+// runPiBridgePluginCommand) now live in ./adapters/pi-bridge.ts. install.ts
+// imports isPiPluginBridgeReady / runPiBridgeMarketplaceRemoveCommand from there.
 
 export async function removeClaudeMarketplace(marketplaceName: string): Promise<void> {
   validateMarketplaceName(marketplaceName);
@@ -558,19 +182,7 @@ export async function removePiMarketplace(marketplaceName: string): Promise<void
   }
 }
 
-async function execClaudeCommand(
-  instance: ToolInstance,
-  command: "install" | "uninstall" | "enable" | "disable" | "update",
-  pluginId: string,
-): Promise<void> {
-  validateClaudePluginId(pluginId);
-  await execFileAsync("claude", ["plugin", command, pluginId], {
-    env: {
-      ...process.env,
-      CLAUDE_CONFIG_DIR: instance.configDir,
-    },
-  });
-}
+// execClaudeCommand now lives in ./adapters/claude.ts.
 
 function withTempDir<T>(
   prefix: string,
@@ -820,58 +432,54 @@ export async function installPlugin(
     return result;
   }
 
-  const claudeInstances = enabledInstances.filter(
+  // Native tools (Claude CLI, Pi bridge) need no downloaded source; each reports
+  // success/failure through its adapter. Source-based tools (Codex, managed)
+  // share a single download.
+  const nativeInstances = enabledInstances.filter(
+    (instance) => !getAdapterForTool(instance.toolId).usesSource,
+  );
+  const sourceInstances = enabledInstances.filter(
+    (instance) => getAdapterForTool(instance.toolId).usesSource,
+  );
+  // Preserved quirk: if the shared download fails and there is no Claude
+  // instance that could already have succeeded, the whole install hard-errors.
+  const hasClaudeInstance = enabledInstances.some(
     (instance) => instance.toolId === "claude-code",
   );
-  const piInstances = enabledInstances.filter((instance) => instance.toolId === "pi");
-  const nonClaudeInstances = enabledInstances.filter(
-    (instance) => instance.toolId !== "claude-code" && instance.toolId !== "pi",
-  );
 
-  // For Claude instances, use the native CLI
-  for (const instance of claudeInstances) {
-    try {
-      await execClaudeCommand(instance, "install", claudePluginId(plugin));
-      result.linkedInstances[instanceKey(instance)] = 1;
-    } catch (e) {
-      result.errors.push(
-        `Claude install failed for ${instance.name}: ${e instanceof Error ? e.message : "unknown error"}`,
-      );
+  for (const instance of nativeInstances) {
+    const r = await getAdapterForTool(instance.toolId).install(
+      plugin,
+      instance,
+      null,
+      marketplaceUrl,
+    );
+    if (r.errors.length > 0) {
+      result.errors.push(...r.errors);
+    } else {
+      result.linkedInstances[instanceKey(instance)] = r.count;
     }
   }
 
-  // For Pi instances, use Pi bridge plugin commands
-  for (const instance of piInstances) {
-    try {
-      await runPiBridgePluginCommand(instance, `/plugin install ${plugin.name}@${plugin.marketplace}`, marketplaceUrl);
-      result.linkedInstances[instanceKey(instance)] = 1;
-    } catch (e) {
-      result.errors.push(
-        `Pi bridge install failed for ${instance.name}: ${e instanceof Error ? e.message : "unknown error"}`,
-      );
-    }
-  }
-
-  // For non-Claude/Pi instances, download and create symlinks
-  if (nonClaudeInstances.length > 0) {
+  if (sourceInstances.length > 0) {
     const sourcePath = await downloadPlugin(plugin, marketplaceUrl);
 
     if (!sourcePath) {
-      if (claudeInstances.length === 0) {
+      if (!hasClaudeInstance) {
         result.errors.push(`Failed to download plugin ${plugin.name}`);
         return result;
       }
     } else {
-      for (const instance of nonClaudeInstances) {
+      for (const instance of sourceInstances) {
         try {
-          const { count, errors } = installPluginItemsToInstance(
-            plugin.name,
-            sourcePath,
+          const r = await getAdapterForTool(instance.toolId).install(
+            plugin,
             instance,
-            plugin.marketplace,
+            sourcePath,
+            marketplaceUrl,
           );
-          result.linkedInstances[instanceKey(instance)] = count;
-          result.errors.push(...errors);
+          result.linkedInstances[instanceKey(instance)] = r.count;
+          result.errors.push(...r.errors);
         } catch (error) {
           logError(
             `Install failed for ${plugin.name} in ${instance.name}`,
@@ -901,79 +509,14 @@ export async function uninstallPluginFromInstance(
   );
   if (!instance) return false;
 
-  if (instance.toolId === "pi") {
-    // Await the bridge so a failure is observed (no unhandled rejection) and the
-    // caller learns the truth instead of a false success.
-    try {
-      await runPiBridgePluginCommand(instance, `/plugin uninstall ${plugin.name}@${plugin.marketplace}`);
-      return true;
-    } catch (error) {
-      logError(`Pi bridge uninstall failed for ${plugin.name} in ${instance.name}`, error);
-      return false;
-    }
-  }
-
-  if (instance.toolId === "claude-code") {
-    // Claude installs go through the native CLI, so uninstall must too — the CLI
-    // owns the plugin cache dir, settings.json enabledPlugins, and hook/MCP
-    // registrations. JSON surgery alone leaves Claude's own state desynced.
-    let cliOk = false;
-    try {
-      await execClaudeCommand(instance, "uninstall", claudeInstalledPluginId(plugin));
-      cliOk = true;
-    } catch (error) {
-      logError(`Claude uninstall failed for ${plugin.name} in ${instance.name}`, error);
-    }
-    // Best-effort safety net: clear any leftover installed_plugins.json entry.
-    try {
-      removeFromClaudeInstalledPluginsJson(instance, plugin.name, plugin.installedMarketplace ?? plugin.marketplace);
-    } catch (error) {
-      logError(`Failed to clean Claude installed_plugins.json for ${plugin.name}`, error);
-    }
-    return cliOk;
-  }
-
-  const removed = uninstallPluginItemsFromInstance(plugin.name, instance) > 0;
-  return removed;
+  // Each tool's adapter owns its uninstall (Claude native CLI + json cleanup,
+  // Pi bridge, managed/Codex file-copy). count > 0 means "removed".
+  const r = await getAdapterForTool(instance.toolId).uninstall(plugin, instance);
+  return r.count > 0;
 }
 
-/**
- * Remove a plugin entry from Claude's `installed_plugins.json` for the given instance.
- * This file is the authoritative "what plugins are installed" record for Claude Code;
- * our scanner reads it, so we MUST keep it in sync on uninstall.
- */
-export function removeFromClaudeInstalledPluginsJson(
-  instance: ToolInstance,
-  pluginName: string,
-  marketplace: string,
-): void {
-  if (instance.toolId !== "claude-code") return;
-  const path = join(instance.configDir, "plugins", "installed_plugins.json");
-  if (!existsSync(path)) return;
-  try {
-    const content = readFileSync(path, "utf-8");
-    const data = JSON.parse(content);
-    if (!data?.plugins || typeof data.plugins !== "object") return;
-    const key = `${pluginName}@${marketplace}`;
-    let changed = false;
-    if (key in data.plugins) {
-      delete data.plugins[key];
-      changed = true;
-    }
-    // Also remove any bare-name entries (older Claude versions)
-    if (pluginName in data.plugins) {
-      delete data.plugins[pluginName];
-      changed = true;
-    }
-    if (changed) {
-      // Atomic write (temp-file + rename): a real Claude Code process may read
-      // this file concurrently, so it must never observe a truncated/partial write.
-      atomicWriteFileSync(path, JSON.stringify(data, null, 2) + "\n");
-    }
-  } catch (error) {
-    logError(`Failed to update ${path}`, error);
-  }
-}
+// removeFromClaudeInstalledPluginsJson now lives in ./adapters/claude.ts and is
+// re-exported above for API compatibility.
 
 export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
   validatePluginMetadata(plugin);
@@ -984,35 +527,11 @@ export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
     return false;
   }
 
-  // Uninstall from all enabled instances using the same method.
+  // Uninstall from all enabled instances via their adapters.
   for (const instance of enabledInstances) {
     if (isConfigOnlyInstance(instance)) continue;
-
-    if (instance.toolId === "pi") {
-      try {
-        await runPiBridgePluginCommand(instance, `/plugin uninstall ${plugin.name}@${plugin.marketplace}`);
-        removedCount += 1;
-      } catch (error) {
-        logError(`Pi bridge uninstall failed for ${plugin.name} in ${instance.name}`, error);
-      }
-      continue;
-    }
-
-    if (instance.toolId === "claude-code") {
-      // Claude installs go through the native CLI; uninstall must too so Claude's
-      // own cache/settings/registrations are cleaned. JSON surgery is a fallback.
-      try {
-        await execClaudeCommand(instance, "uninstall", claudeInstalledPluginId(plugin));
-        removedCount += 1;
-      } catch (error) {
-        logError(`Claude uninstall failed for ${plugin.name} in ${instance.name}`, error);
-      }
-      // Best-effort safety net for any leftover installed_plugins.json entry.
-      removeFromClaudeInstalledPluginsJson(instance, plugin.name, plugin.installedMarketplace ?? plugin.marketplace);
-      continue;
-    }
-
-    removedCount += uninstallPluginItemsFromInstance(plugin.name, instance);
+    const r = await getAdapterForTool(instance.toolId).uninstall(plugin, instance);
+    removedCount += r.count;
   }
 
   try {
@@ -1048,39 +567,9 @@ export interface AssetSyncResult {
   errors: string[];
 }
 
-function copyWithBackup(
-  src: string,
-  dest: string,
-  instanceScope: string,
-  pluginName: string,
-  itemKind: string,
-  itemName: string,
-): { dest: string; backup: string | null } {
-  let backupPath: string | null = null;
-
-  if (existsSync(dest) || isSymlink(dest)) {
-    backupPath = buildBackupPath(instanceScope, pluginName, itemKind, itemName);
-    const tempBackup = `${backupPath}.new.${Date.now()}`;
-    // dest lives in the tool's config dir; tempBackup under the cache dir — a
-    // cross-device move on setups where those trees are separate mounts.
-    renameOrCopy(dest, tempBackup);
-    if (existsSync(backupPath) || isSymlink(backupPath)) {
-      rmSync(backupPath, { recursive: true, force: true });
-    }
-    renameSync(tempBackup, backupPath);
-  }
-
-  mkdirSync(dirname(dest), { recursive: true });
-
-  const srcStat = lstatSync(src);
-  if (srcStat.isDirectory()) {
-    cpSync(src, dest, { recursive: true });
-  } else {
-    copyFileSync(src, dest);
-  }
-
-  return { dest, backup: backupPath };
-}
+// copyWithBackup and installPluginItemsToInstance / uninstallPluginItemsFromInstance
+// now live in ./adapters/managed.ts (the file-copy engine). install.ts imports
+// the latter two for the standalone-delete path and the managed update swap.
 
 // Matches the transient temp name copyWithBackup uses while swapping a user's
 // original file into the backup cache: `${backupPath}.new.${Date.now()}`.
@@ -1157,233 +646,8 @@ export function reconcileStaleInstallArtifacts(): {
   return { restored, needsReview };
 }
 
-function installPluginItemsToInstance(
-  pluginName: string,
-  sourcePath: string,
-  instance: ToolInstance,
-  marketplace?: string,
-): { count: number; items: InstalledItem[]; errors: string[] } {
-  if (!instance.enabled) return { count: 0, items: [], errors: [] };
-
-  validatePluginName(pluginName);
-  const errors: string[] = [];
-  const items: InstalledItem[] = [];
-  const componentConfig = marketplace
-    ? getPluginComponentConfig(marketplace, pluginName)
-    : null;
-  const appliedKeys: string[] = [];
-
-  const manifest = loadMigratedManifest();
-  const key = instanceKey(instance);
-  if (!manifest.tools[key]) {
-    manifest.tools[key] = { items: {} };
-  }
-  const toolManifest = manifest.tools[key];
-
-  const rollback = () => {
-    for (const appliedKey of appliedKeys.reverse()) {
-      const item = toolManifest.items[appliedKey];
-      if (!item) continue;
-      try {
-        if (existsSync(item.dest) || isSymlink(item.dest)) {
-          const stat = lstatSync(item.dest);
-          if (stat.isDirectory() && !stat.isSymbolicLink()) {
-            rmSync(item.dest, { recursive: true });
-          } else {
-            unlinkSync(item.dest);
-          }
-        }
-        if (
-          item.backup &&
-          (existsSync(item.backup) || isSymlink(item.backup))
-        ) {
-          // Restoring from cache dir back into the tool's config dir — may cross
-          // filesystems.
-          renameOrCopy(item.backup, item.dest);
-        }
-      } catch (error) {
-        logError(`Failed to rollback ${item.dest}`, error);
-      }
-      if (item.previous) {
-        toolManifest.items[appliedKey] = item.previous;
-      } else {
-        delete toolManifest.items[appliedKey];
-      }
-    }
-  };
-
-  const installItem = (
-    kind: "skill" | "command" | "agent",
-    name: string,
-    src: string,
-    dest: string,
-  ) => {
-    validateItemName(kind, name);
-    const key = buildManifestItemKey(pluginName, kind, name);
-    const previous = toolManifest.items[key] || null;
-    const result = copyWithBackup(src, dest, instanceKey(instance), pluginName, kind, name);
-    const item: InstalledItem = {
-      kind,
-      name,
-      source: src,
-      dest: result.dest,
-      backup: result.backup,
-      owner: pluginName,
-      previous,
-    };
-    toolManifest.items[key] = item;
-    items.push(item);
-    appliedKeys.push(key);
-    // Persist immediately: copyWithBackup has already moved the user's original
-    // file into the backup cache and copied plugin content into place. If we
-    // deferred the manifest write to the end of the loop, a crash here would
-    // strand that backup with no manifest record — uninstall could never find
-    // it to restore. saveManifest is a small atomic local JSON write, cheap
-    // enough to call per item.
-    saveManifest(manifest);
-  };
-
-  try {
-    if (instance.skillsSubdir) {
-      const skillsDir = join(sourcePath, "skills");
-      if (existsSync(skillsDir)) {
-        for (const entry of readdirSync(skillsDir)) {
-          const src = safePath(skillsDir, entry);
-          if (existsSync(join(src, "SKILL.md"))) {
-            if (componentConfig?.disabledSkills.includes(entry)) continue;
-            const baseDest = instance.pluginFlatInstall
-              ? join(instance.configDir, instance.skillsSubdir)
-              : join(instance.configDir, instance.skillsSubdir, pluginName);
-            const dest = safePath(baseDest, entry);
-            installItem("skill", entry, src, dest);
-          }
-        }
-      }
-    }
-
-    if (instance.commandsSubdir) {
-      const commandsDir = join(sourcePath, "commands");
-      if (existsSync(commandsDir)) {
-        for (const entry of readdirSync(commandsDir)) {
-          if (entry.endsWith(".md")) {
-            const name = entry.replace(/\.md$/, "");
-            if (componentConfig?.disabledCommands.includes(name)) continue;
-            const src = safePath(commandsDir, entry);
-            const baseDest = instance.pluginFlatInstall
-              ? join(instance.configDir, instance.commandsSubdir)
-              : join(instance.configDir, instance.commandsSubdir, pluginName);
-            const dest = safePath(baseDest, entry);
-            installItem("command", name, src, dest);
-          }
-        }
-      }
-    }
-
-    if (instance.agentsSubdir) {
-      const agentsDir = join(sourcePath, "agents");
-      if (existsSync(agentsDir)) {
-        for (const entry of readdirSync(agentsDir)) {
-          if (entry.endsWith(".md")) {
-            const name = entry.replace(/\.md$/, "");
-            if (componentConfig?.disabledAgents.includes(name)) continue;
-            const src = safePath(agentsDir, entry);
-            const baseDest = instance.pluginFlatInstall
-              ? join(instance.configDir, instance.agentsSubdir)
-              : join(instance.configDir, instance.agentsSubdir, pluginName);
-            const dest = safePath(baseDest, entry);
-            installItem("agent", name, src, dest);
-          }
-        }
-      }
-    }
-  } catch (error) {
-    const message = `Install failed for ${pluginName} in ${instance.name}`;
-    logError(message, error);
-    errors.push(
-      `${message}: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    rollback();
-    // Persist the rolled-back state: earlier items were already saved to disk
-    // per-item above, and rollback has reverted them in memory + restored the
-    // files, so the on-disk manifest must reflect the reverted state too.
-    saveManifest(manifest);
-    return { count: 0, items: [], errors };
-  }
-
-  // Manifest is already persisted per-item inside installItem; this final save
-  // is a no-op safety net for the success path.
-  if (items.length > 0) {
-    saveManifest(manifest);
-  }
-
-  return { count: items.length, items, errors };
-}
-
-function uninstallPluginItemsFromInstance(
-  pluginName: string,
-  instance: ToolInstance,
-): number {
-  validatePluginName(pluginName);
-  let manifest: Manifest;
-  try {
-    manifest = loadMigratedManifest();
-  } catch (error) {
-    logError("Failed to load manifest during uninstall", error);
-    return 0;
-  }
-  const key = instanceKey(instance);
-  const toolManifest = manifest.tools[key];
-  if (!toolManifest) return 0;
-
-  let removed = 0;
-  const keysToRemove: string[] = [];
-  const processedDests = new Set<string>();
-
-  for (const [entryKey, item] of Object.entries(toolManifest.items)) {
-    const owner = item.owner || "";
-    if (owner === pluginName || (!owner && item.source.includes(pluginName))) {
-      const dest = item.dest;
-      const backup = item.backup;
-
-      // Only do file operations once per dest (handles duplicate entries)
-      if (!processedDests.has(dest)) {
-        processedDests.add(dest);
-        try {
-          if (existsSync(dest) || isSymlink(dest)) {
-            const stat = lstatSync(dest);
-            if (stat.isDirectory() && !stat.isSymbolicLink()) {
-              rmSync(dest, { recursive: true });
-            } else {
-              unlinkSync(dest);
-            }
-            removed++;
-          }
-
-          if (backup && (existsSync(backup) || isSymlink(backup))) {
-            // Cache dir -> tool config dir restore; may cross filesystems.
-            renameOrCopy(backup, dest);
-          }
-        } catch (error) {
-          logError(`Failed to uninstall ${item.kind}:${item.name}`, error);
-        }
-      }
-
-      // Always update manifest for matching entries (even duplicates)
-      if (item.previous) {
-        toolManifest.items[entryKey] = item.previous;
-      } else {
-        keysToRemove.push(entryKey);
-      }
-    }
-  }
-
-  for (const entryKey of keysToRemove) {
-    delete toolManifest.items[entryKey];
-  }
-  saveManifest(manifest);
-
-  return removed;
-}
+// installPluginItemsToInstance and uninstallPluginItemsFromInstance now live in
+// ./adapters/managed.ts and are imported at the top of this file.
 
 export async function enablePlugin(
   plugin: Plugin,
@@ -1423,23 +687,19 @@ export async function enablePlugin(
     return result;
   }
 
-  // Enable (install) to all enabled instances using the same method
+  // Enable (install) to all enabled instances via each adapter's component
+  // surface (Pi bridge install; everyone else — including Claude here — file-copy).
   for (const instance of enabledInstances) {
     if (isConfigOnlyInstance(instance)) continue;
     try {
-      if (instance.toolId === "pi") {
-        await runPiBridgePluginCommand(instance, `/plugin install ${plugin.name}@${plugin.marketplace}`, marketplaceUrl);
-        result.linkedInstances[instanceKey(instance)] = 1;
-        continue;
-      }
-      const { count, errors } = installPluginItemsToInstance(
-        plugin.name,
-        sourcePath,
+      const r = await getAdapterForTool(instance.toolId).installComponents(
+        plugin,
         instance,
-        plugin.marketplace,
+        sourcePath,
+        marketplaceUrl,
       );
-      result.linkedInstances[instanceKey(instance)] = count;
-      result.errors.push(...errors);
+      result.linkedInstances[instanceKey(instance)] = r.count;
+      result.errors.push(...r.errors);
     } catch (error) {
       logError(`Enable failed for ${plugin.name} in ${instance.name}`, error);
       result.errors.push(
@@ -1471,20 +731,12 @@ export async function disablePlugin(plugin: Plugin): Promise<EnableResult> {
     return result;
   }
 
-  // Disable (uninstall) from all enabled instances using the same method
+  // Disable (uninstall) from all enabled instances via each adapter's component
+  // surface (Pi bridge uninstall; everyone else file-copy removal).
   for (const instance of enabledInstances) {
     if (isConfigOnlyInstance(instance)) continue;
-    if (instance.toolId === "pi") {
-      try {
-        await runPiBridgePluginCommand(instance, `/plugin uninstall ${plugin.name}@${plugin.marketplace}`);
-        result.linkedInstances[instanceKey(instance)] = 1;
-      } catch {
-        result.linkedInstances[instanceKey(instance)] = 0;
-      }
-      continue;
-    }
-    const removed = uninstallPluginItemsFromInstance(plugin.name, instance);
-    result.linkedInstances[instanceKey(instance)] = removed;
+    result.linkedInstances[instanceKey(instance)] =
+      await getAdapterForTool(instance.toolId).removeComponents(plugin, instance);
   }
 
   result.success = Object.values(result.linkedInstances).some((n) => n > 0);
@@ -1520,38 +772,27 @@ export async function updatePlugin(
     return result;
   }
 
-  const claudeInstances = targetInstances.filter((instance) => instance.toolId === "claude-code");
-  const piInstances = targetInstances.filter((instance) => instance.toolId === "pi");
-  const managedInstances = targetInstances.filter((instance) => instance.toolId !== "claude-code" && instance.toolId !== "pi");
+  // Native tools (Claude CLI, Pi bridge) update in place through their adapter,
+  // each using the marketplace key it already knows about. Source-based tools
+  // (Codex, managed) swap the installed copy after a verified re-download below.
+  const nativeTargets = targetInstances.filter(
+    (instance) => !getAdapterForTool(instance.toolId).usesSource,
+  );
+  const managedInstances = targetInstances.filter(
+    (instance) => getAdapterForTool(instance.toolId).usesSource,
+  );
 
-  // Claude-native plugins should be reinstalled through Claude's own plugin
-  // manager, using an explicit marketplace-qualified id to avoid ambiguity when
-  // the same plugin name exists in multiple marketplaces.
-  for (const instance of claudeInstances) {
-    try {
-      // Use Claude's "update" command with the marketplace key Claude already
-      // knows about (the installed marketplace), not the Blackbook-selected
-      // "newest" marketplace which Claude may not recognize.
-      await execClaudeCommand(instance, "update", claudeInstalledPluginId(plugin));
-      result.linkedInstances[instanceKey(instance)] = 1;
-    } catch (error) {
-      logError(`Claude update failed for ${plugin.name} in ${instance.name}`, error);
-      result.errors.push(
-        `Claude update failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`,
-      );
-    }
-  }
-
-  // Update Pi bridge-managed plugin instances.
-  for (const instance of piInstances) {
-    try {
-      await runPiBridgePluginCommand(instance, `/plugin update ${plugin.name}@${plugin.marketplace}`, marketplaceUrl);
-      result.linkedInstances[instanceKey(instance)] = 1;
-    } catch (error) {
-      logError(`Pi bridge update failed for ${plugin.name} in ${instance.name}`, error);
-      result.errors.push(
-        `Pi bridge update failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`,
-      );
+  for (const instance of nativeTargets) {
+    const r = await getAdapterForTool(instance.toolId).update(
+      plugin,
+      instance,
+      null,
+      marketplaceUrl,
+    );
+    if (r.errors.length > 0) {
+      result.errors.push(...r.errors);
+    } else {
+      result.linkedInstances[instanceKey(instance)] = r.count;
     }
   }
 
@@ -1896,436 +1137,16 @@ export function togglePluginComponent(
   return { success: true };
 }
 
-function getInstalledPluginsForClaudeInstance(
-  instance: ToolInstance,
-): Plugin[] {
-  const plugins: Plugin[] = [];
-
-  // Read installed_plugins.json for the authoritative list of installed plugins
-  const installedPluginsPath = join(
-    instance.configDir,
-    "plugins/installed_plugins.json",
-  );
-  const installedPluginKeys = new Set<string>();
-  const installedPluginRecords = new Map<string, { version?: string; installPath?: string }>();
-
-  try {
-    if (lstatSync(installedPluginsPath).isFile()) {
-      const content = readFileSync(installedPluginsPath, "utf-8");
-      const data = JSON.parse(content);
-      if (data.plugins && typeof data.plugins === "object") {
-        // Keys are in format "pluginName@marketplace". Values are usually arrays
-        // of install records containing version/installPath metadata.
-        for (const [key, value] of Object.entries(data.plugins)) {
-          installedPluginKeys.add(key);
-          const records = Array.isArray(value) ? value : [value];
-          const first = records.find((r) => r && typeof r === "object") as Record<string, unknown> | undefined;
-          installedPluginRecords.set(key, {
-            version: typeof first?.version === "string" ? first.version : undefined,
-            installPath: typeof first?.installPath === "string" ? first.installPath : undefined,
-          });
-        }
-      }
-    }
-  } catch {
-    // Ignore if file doesn't exist or can't be read
-  }
-
-  // If no installed_plugins.json or it's empty, fall back to scanning cache
-  // (for backwards compatibility with older Claude versions)
-  const claudePluginsDir = join(instance.configDir, "plugins/cache");
-  // Don't early-return — even without plugins/cache, we still need to
-  // scan skills/commands/agents directories below
-
-  // Only scan cache subdirs for marketplaces that are still configured
-  const configuredMarketplaceNames = new Set(
-    parseMarketplaces().map((m) => m.name)
-  );
-
-  if (existsSync(claudePluginsDir)) try {
-    const marketplaceDirs = readdirSync(claudePluginsDir);
-
-    for (const marketplace of marketplaceDirs) {
-      const marketplaceConfigured = configuredMarketplaceNames.has(marketplace);
-      const hasInstalledRecordForMarketplace = [...installedPluginKeys].some((key) => key.endsWith(`@${marketplace}`));
-      if (!marketplaceConfigured && !hasInstalledRecordForMarketplace) continue;
-      const mpDir = join(claudePluginsDir, marketplace);
-
-      try {
-        const stat = lstatSync(mpDir);
-        if (!stat.isDirectory()) continue;
-      } catch (error) {
-        logError(`Failed to stat ${mpDir}`, error);
-        continue;
-      }
-
-      const pluginDirs = readdirSync(mpDir);
-
-      for (const pluginName of pluginDirs) {
-        // Check if this plugin is actually installed (in installed_plugins.json)
-        // If we have installed_plugins.json data, use it as the filter
-        if (installedPluginKeys.size > 0) {
-          const pluginKey = `${pluginName}@${marketplace}`;
-          if (!installedPluginKeys.has(pluginKey)) {
-            continue; // Skip plugins that are cached but not installed
-          }
-        }
-
-        const pluginDir = join(mpDir, pluginName);
-
-        try {
-          const stat = lstatSync(pluginDir);
-          if (!stat.isDirectory()) continue;
-        } catch (error) {
-          logError(`Failed to stat ${pluginDir}`, error);
-          continue;
-        }
-
-        let contentDir = pluginDir;
-        const subDirs = readdirSync(pluginDir).filter((d) => {
-          const p = join(pluginDir, d);
-          try {
-            return lstatSync(p).isDirectory() && !d.startsWith(".");
-          } catch (error) {
-            logError(`Failed to stat ${p}`, error);
-            return false;
-          }
-        });
-
-        const isVersionDir = (d: string) => /^[a-f0-9]+$/.test(d) || /^\d+\.\d+/.test(d) || d === "unknown";
-        if (subDirs.length > 0 && subDirs.every(isVersionDir)) {
-          subDirs.sort();
-          contentDir = join(pluginDir, subDirs[subDirs.length - 1]);
-        }
-
-        const { skills, commands, agents, hooks, hasMcp } = scanPluginContents(contentDir);
-        const metadata = readClaudePluginMetadata(contentDir);
-        const pluginKey = `${pluginName}@${marketplace}`;
-        const installedRecord = installedPluginRecords.get(pluginKey);
-        const installedVersion = installedRecord?.version ?? metadata.version;
-
-        plugins.push({
-          name: pluginName,
-          marketplace,
-          version: metadata.version,
-          installedVersion,
-          latestVersion: metadata.version,
-          description: metadata.description || "",
-          source: contentDir,
-          skills,
-          commands,
-          agents,
-          hooks,
-          hasMcp,
-          hasLsp: false,
-          homepage: metadata.homepage || "",
-          installed: true,
-          scope: "user",
-        });
-      }
-    }
-  } catch (error) {
-    logError("Failed to scan Claude plugins directory", error);
-  }
-
-  return plugins;
-}
-
-function getInstalledPluginsForPiInstance(): Plugin[] {
-  return listPiBridgeInstalledPlugins().map((plugin) => ({
-    name: plugin.name,
-    marketplace: plugin.marketplace,
-    version: plugin.version,
-    installedVersion: plugin.version,
-    latestVersion: plugin.version,
-    description: "",
-    source: plugin.resolvedSource ?? "",
-    skills: plugin.skills,
-    commands: plugin.commands,
-    agents: plugin.agents,
-    hooks: plugin.hooks,
-    hasMcp: plugin.hasMcp,
-    hasLsp: false,
-    homepage: "",
-    installed: true,
-    scope: "user",
-  }));
-}
-
+// getInstalledPluginsForClaudeInstance and getInstalledPluginsForPiInstance now
+// live in ./adapters/claude.ts and ./adapters/pi-bridge.ts. The managed manifest
+// scan lives in ./adapters/managed.ts. This dispatches to whichever applies.
 export function getInstalledPluginsForInstance(
   instance: ToolInstance,
 ): Plugin[] {
   if (!instance.enabled) return [];
-  if (instance.toolId === "claude-code") {
-    return getInstalledPluginsForClaudeInstance(instance);
-  }
-  if (instance.toolId === "pi") {
-    return getInstalledPluginsForPiInstance();
-  }
-
-  // Load manifest to get authoritative source paths
-  // Manifest may have items under both "toolId" and "toolId:instanceId" keys
-  const manifest = loadMigratedManifest();
-  const toolKeys = [
-    instance.toolId,
-    `${instance.toolId}:${instance.instanceId}`,
-  ];
-  const toolManifest: Record<string, InstalledItem> = {};
-  for (const key of toolKeys) {
-    const items = manifest.tools[key]?.items || {};
-    Object.assign(toolManifest, items);
-  }
-
-  // Build map of dest path -> source path from manifest
-  const destToSource = new Map<string, string>();
-  for (const item of Object.values(toolManifest)) {
-    if (item.dest && item.source) {
-      destToSource.set(item.dest, item.source);
-    }
-  }
-
-  // Collect all components and group by actual plugin name (from source path)
-  interface ComponentInfo {
-    type: "skill" | "command" | "agent";
-    name: string;
-    source: string;
-  }
-
-  const components: ComponentInfo[] = [];
-
-  // Helper to get source: prefer manifest, fall back to symlink resolution, then itemPath
-  function getSource(itemPath: string): string {
-    // First try manifest
-    const manifestSource = destToSource.get(itemPath);
-    if (manifestSource) return manifestSource;
-
-    // Then try symlink resolution
-    try {
-      const stat = lstatSync(itemPath);
-      if (stat.isSymbolicLink()) {
-        return realpathSync(itemPath);
-      }
-    } catch {
-      // Ignore errors
-    }
-
-    // Fall back to item path itself
-    return itemPath;
-  }
-
-  // Scan skills
-  if (instance.skillsSubdir) {
-    const skillsDir = join(instance.configDir, instance.skillsSubdir);
-    try {
-      if (lstatSync(skillsDir).isDirectory()) {
-        if (instance.pluginFlatInstall) {
-          for (const item of readdirSync(skillsDir)) {
-            const itemPath = join(skillsDir, item);
-            try {
-              const stat = lstatSync(itemPath);
-              if (stat.isDirectory() || stat.isSymbolicLink()) {
-                if (existsSync(join(itemPath, "SKILL.md"))) {
-                  const source = getSource(itemPath);
-                  components.push({ type: "skill", name: item, source });
-                }
-              }
-            } catch (error) {
-              logError(`Failed to stat skill entry ${itemPath}`, error);
-            }
-          }
-        } else {
-          // Namespaced: skills/<plugin>/<skill>/SKILL.md
-          for (const pluginDirName of readdirSync(skillsDir)) {
-            const pluginDir = join(skillsDir, pluginDirName);
-            try {
-              const pluginStat = lstatSync(pluginDir);
-              if (!pluginStat.isDirectory() && !pluginStat.isSymbolicLink()) continue;
-              for (const skillName of readdirSync(pluginDir)) {
-                const skillPath = join(pluginDir, skillName);
-                try {
-                  const stat = lstatSync(skillPath);
-                  if (stat.isDirectory() || stat.isSymbolicLink()) {
-                    if (existsSync(join(skillPath, "SKILL.md"))) {
-                      const source = getSource(skillPath);
-                      components.push({ type: "skill", name: skillName, source });
-                    }
-                  }
-                } catch (error) {
-                  logError(`Failed to stat skill entry ${skillPath}`, error);
-                }
-              }
-            } catch (error) {
-              logError(`Failed to stat plugin dir ${pluginDir}`, error);
-            }
-          }
-        }
-      }
-    } catch {
-      // Ignore if skills directory doesn't exist
-    }
-  }
-
-  // Scan commands
-  if (instance.commandsSubdir) {
-    const commandsDir = join(instance.configDir, instance.commandsSubdir);
-    try {
-      if (lstatSync(commandsDir).isDirectory()) {
-        if (instance.pluginFlatInstall) {
-          for (const item of readdirSync(commandsDir)) {
-            if (item.endsWith(".md")) {
-              const name = item.replace(/\.md$/, "");
-              const itemPath = join(commandsDir, item);
-              const source = getSource(itemPath);
-              components.push({ type: "command", name, source });
-            }
-          }
-        } else {
-          // Namespaced: commands/<plugin>/<command>.md
-          for (const pluginDirName of readdirSync(commandsDir)) {
-            const pluginDir = join(commandsDir, pluginDirName);
-            try {
-              const pluginStat = lstatSync(pluginDir);
-              if (!pluginStat.isDirectory() && !pluginStat.isSymbolicLink()) continue;
-              for (const item of readdirSync(pluginDir)) {
-                if (item.endsWith(".md")) {
-                  const name = item.replace(/\.md$/, "");
-                  const itemPath = join(pluginDir, item);
-                  const source = getSource(itemPath);
-                  components.push({ type: "command", name, source });
-                }
-              }
-            } catch (error) {
-              logError(`Failed to stat plugin dir ${pluginDir}`, error);
-            }
-          }
-        }
-      }
-    } catch {
-      // Ignore if commands directory doesn't exist
-    }
-  }
-
-  // Scan agents
-  if (instance.agentsSubdir) {
-    const agentsDir = join(instance.configDir, instance.agentsSubdir);
-    try {
-      if (lstatSync(agentsDir).isDirectory()) {
-        if (instance.pluginFlatInstall) {
-          for (const item of readdirSync(agentsDir)) {
-            if (item.endsWith(".md")) {
-              const name = item.replace(/\.md$/, "");
-              const itemPath = join(agentsDir, item);
-              const source = getSource(itemPath);
-              components.push({ type: "agent", name, source });
-            }
-          }
-        } else {
-          // Namespaced: agents/<plugin>/<agent>.md
-          for (const pluginDirName of readdirSync(agentsDir)) {
-            const pluginDir = join(agentsDir, pluginDirName);
-            try {
-              const pluginStat = lstatSync(pluginDir);
-              if (!pluginStat.isDirectory() && !pluginStat.isSymbolicLink()) continue;
-              for (const item of readdirSync(pluginDir)) {
-                if (item.endsWith(".md")) {
-                  const name = item.replace(/\.md$/, "");
-                  const itemPath = join(pluginDir, item);
-                  const source = getSource(itemPath);
-                  components.push({ type: "agent", name, source });
-                }
-              }
-            } catch (error) {
-              logError(`Failed to stat plugin dir ${pluginDir}`, error);
-            }
-          }
-        }
-      }
-    } catch {
-      // Ignore if agents directory doesn't exist
-    }
-  }
-
-  // Group components by plugin (using source path to determine actual plugin)
-  // Key format: "marketplace:pluginName" or "local:componentName" for truly local items
-  const pluginGroups = new Map<
-    string,
-    {
-      marketplace: string;
-      pluginName: string;
-      source: string;
-      skills: string[];
-      commands: string[];
-      agents: string[];
-    }
-  >();
-
-  for (const component of components) {
-    const pluginInfo = extractPluginInfoFromSource(component.source);
-
-    let key: string;
-    let marketplace: string;
-    let pluginName: string;
-
-    if (!pluginInfo) continue; // no known plugin source — skip rather than fake a local entry
-    key = `${pluginInfo.marketplace}:${pluginInfo.pluginName}`;
-    marketplace = pluginInfo.marketplace;
-    pluginName = pluginInfo.pluginName;
-
-    let group = pluginGroups.get(key);
-    if (!group) {
-      group = {
-        marketplace,
-        pluginName,
-        source: component.source,
-        skills: [],
-        commands: [],
-        agents: [],
-      };
-      pluginGroups.set(key, group);
-    }
-
-    // Add component to appropriate list
-    switch (component.type) {
-      case "skill":
-        if (!group.skills.includes(component.name)) {
-          group.skills.push(component.name);
-        }
-        break;
-      case "command":
-        if (!group.commands.includes(component.name)) {
-          group.commands.push(component.name);
-        }
-        break;
-      case "agent":
-        if (!group.agents.includes(component.name)) {
-          group.agents.push(component.name);
-        }
-        break;
-    }
-  }
-
-  // Convert groups to Plugin objects
-  const plugins: Plugin[] = [];
-  for (const group of pluginGroups.values()) {
-    plugins.push({
-      name: group.pluginName,
-      marketplace: group.marketplace,
-      description: "",
-      source: group.source,
-      skills: group.skills,
-      commands: group.commands,
-      agents: group.agents,
-      hooks: [],
-      hasMcp: false,
-      hasLsp: false,
-      homepage: "",
-      installed: true,
-      scope: "user",
-    });
-  }
-
-  return plugins;
+  return getAdapterForTool(instance.toolId).listInstalled(instance);
 }
+
 
 export interface SkillInstallation {
   toolId: string;
@@ -3607,20 +2428,16 @@ export async function syncPluginInstances(
   let stagedStandaloneRoot: string | null = null;
 
   try {
-    // Sync (install) to all missing instances using the same method
+    // Sync (install) to all missing instances via each adapter's component
+    // surface (Pi bridge install; everyone else file-copy).
     for (const instance of missingInstances) {
       try {
-        if (instance.toolId === "pi") {
-          await runPiBridgePluginCommand(instance, `/plugin install ${plugin.name}@${plugin.marketplace}`, marketplaceUrl);
-          result.syncedInstances[instanceKey(instance)] = 1;
-          continue;
-        }
-
-        let { count, errors } = installPluginItemsToInstance(
-          plugin.name,
-          sourcePath,
+        const adapter = getAdapterForTool(instance.toolId);
+        let { count, errors } = await adapter.installComponents(
+          plugin,
           instance,
-          plugin.marketplace,
+          sourcePath,
+          marketplaceUrl,
         );
 
         // Fallback for standalone component source paths discovered from installed
@@ -3630,11 +2447,11 @@ export async function syncPluginInstances(
             stagedStandaloneRoot = buildStandalonePluginRoot(plugin, sourcePath);
           }
           if (stagedStandaloneRoot) {
-            const fallback = installPluginItemsToInstance(
-              plugin.name,
-              stagedStandaloneRoot,
+            const fallback = await adapter.installComponents(
+              plugin,
               instance,
-              plugin.marketplace,
+              stagedStandaloneRoot,
+              marketplaceUrl,
             );
             count += fallback.count;
             errors = errors.concat(fallback.errors);

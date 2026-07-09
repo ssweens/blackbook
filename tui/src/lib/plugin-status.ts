@@ -3,19 +3,20 @@
  */
 
 import { existsSync, lstatSync, unlinkSync, rmSync, renameSync } from "fs";
-import { execFileSync } from "child_process";
 import { join } from "path";
 import type { Plugin, ToolInstance } from "./types.js";
 import { getToolInstances, getEnabledToolInstances, setPluginComponentEnabled } from "./config.js";
-import { safePath, validatePluginMetadata, logError } from "./validation.js";
+import { validatePluginMetadata, logError } from "./validation.js";
 import { loadManifest, saveManifest, type Manifest } from "./manifest.js";
 import { getPluginSourcePath, instanceKey, createSymlink, isSymlink, buildManifestItemKey, migrateManifestKeys } from "./plugin-helpers.js";
 import { countGetPluginToolStatus } from "./perf.js";
 import { getPiBridgeInstalledPluginIds as loadPiBridgeInstalledPluginIds } from "./pi-bridge.js";
-// isPiPluginBridgeReady and isConfigOnlyInstance are canonicalized in install.ts,
-// the single home for Pi-bridge resolution logic (it also operates the bridge).
-// Imported here so the status check and the install path never diverge.
-import { isPiPluginBridgeReady, isConfigOnlyInstance } from "./install.js";
+// isConfigOnlyInstance is canonicalized in install.ts. Per-tool status logic
+// (supports/isInstalled) now lives in the adapters, dispatched by toolId.
+import { isConfigOnlyInstance } from "./install.js";
+import { getAdapterForTool, type InstalledContext } from "./adapters/types.js";
+import { fetchClaudeInstalledPluginIds } from "./adapters/claude.js";
+import { fetchCodexInstalledPluginIds } from "./adapters/codex.js";
 
 export interface ToolInstallStatus {
   toolId: string;
@@ -26,29 +27,6 @@ export interface ToolInstallStatus {
   enabled: boolean;
   supportReason?: string;
   installedVersion?: string;
-}
-
-/**
- * Whether Blackbook's own manifest records a file-copy install of `pluginName`
- * for this instance. Codex is materialized via file-copy (like OpenCode/Amp),
- * so `codex plugin list` alone never sees Blackbook-installed plugins; this
- * lets the status check recognize them. Checks both the bare toolId key and the
- * `toolId:instanceId` key, matching getInstalledPluginsForInstance().
- */
-function manifestHasPluginForInstance(
-  manifest: Manifest,
-  instance: ToolInstance,
-  pluginName: string,
-): boolean {
-  const keys = [instance.toolId, `${instance.toolId}:${instance.instanceId}`];
-  for (const key of keys) {
-    const items = manifest.tools[key]?.items;
-    if (!items) continue;
-    for (const item of Object.values(items)) {
-      if ((item.owner || "") === pluginName) return true;
-    }
-  }
-  return false;
 }
 
 // ── Status Cache ────────────────────────────────────────────────────────────
@@ -69,48 +47,14 @@ let piBridgeInstalledPluginIds = new Set<string>();
 function getCodexInstalledPluginIds(): Set<string> {
   if (codexInstalledCacheGeneration === statusCacheGeneration) return codexInstalledPluginIds;
   codexInstalledCacheGeneration = statusCacheGeneration;
-  codexInstalledPluginIds = new Set<string>();
-  try {
-    const output = execFileSync("codex", ["plugin", "list"], {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    for (const line of output.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("Marketplace ") || trimmed.startsWith("PLUGIN ")) continue;
-      const match = trimmed.match(/^([^\s]+)\s+(.+)$/);
-      if (!match) continue;
-      const pluginId = match[1];
-      const statusCell = match[2].toLowerCase();
-      if (!pluginId.includes("@")) continue;
-      if (statusCell.startsWith("installed") || statusCell.includes("installed,")) {
-        codexInstalledPluginIds.add(pluginId);
-      }
-    }
-  } catch {
-    // If codex isn't available or list fails, treat as empty.
-  }
+  codexInstalledPluginIds = fetchCodexInstalledPluginIds();
   return codexInstalledPluginIds;
 }
 
 function getClaudeInstalledPluginIds(): Set<string> {
   if (claudeInstalledCacheGeneration === statusCacheGeneration) return claudeInstalledPluginIds;
   claudeInstalledCacheGeneration = statusCacheGeneration;
-  claudeInstalledPluginIds = new Set<string>();
-  try {
-    const output = execFileSync("claude", ["plugin", "list"], {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    for (const raw of output.split(/\r?\n/)) {
-      const line = raw.trim();
-      if (!line.startsWith("❯ ")) continue;
-      const id = line.slice(2).trim();
-      if (id.includes("@")) claudeInstalledPluginIds.add(id);
-    }
-  } catch {
-    // unavailable/failed CLI -> empty set
-  }
+  claudeInstalledPluginIds = fetchClaudeInstalledPluginIds();
   return claudeInstalledPluginIds;
 }
 
@@ -150,9 +94,22 @@ function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
   }
   const instances = getToolInstances().filter((i) => i.kind === "tool");
 
-  // Loaded lazily on first Codex instance: Codex installs are file-copy based,
-  // so its installed-ness must also consult Blackbook's own manifest.
+  // Shared, lazily-resolved state for the adapters' installed-checks. The Codex
+  // manifest is loaded at most once per call (its file-copy installs must also
+  // consult Blackbook's own manifest, not just `codex plugin list`).
   let manifest: Manifest | null = null;
+  const ctx: InstalledContext = {
+    getClaudeInstalledIds: getClaudeInstalledPluginIds,
+    getPiBridgeInstalledIds: getPiBridgeInstalledPluginIds,
+    getCodexInstalledIds: getCodexInstalledPluginIds,
+    getManifest: () => {
+      if (manifest === null) {
+        manifest = loadManifest();
+        migrateManifestKeys(manifest);
+      }
+      return manifest;
+    },
+  };
 
   for (const instance of instances) {
     const hasSkills = plugin.skills.length > 0;
@@ -164,63 +121,23 @@ function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
     const canInstallCommands = hasCommands && instance.commandsSubdir !== null;
     const canInstallAgents = hasAgents && instance.agentsSubdir !== null;
 
-    const isClaude = instance.toolId === "claude-code";
-    const isPi = instance.toolId === "pi";
-    const isOpenCode = instance.toolId === "opencode";
-    const isAmp = instance.toolId === "amp-code";
-    const isCodex = instance.toolId === "openai-codex";
-
-    const baseSupported = canInstallSkills || canInstallCommands || canInstallAgents ||
-      (isClaude && (plugin.hasMcp || plugin.hasLsp || hasHooks));
-
-    let supported = isCodex ? true : baseSupported;
-    let supportReason: string | undefined;
-
-    if (isOpenCode || isAmp) {
-      supported = false;
-      supportReason = "Plugin support is blocked for this tool until native plugin checks are implemented";
-    } else if (isPi) {
-      const piBridgeReady = isPiPluginBridgeReady();
-      supported = piBridgeReady && baseSupported;
-      if (!piBridgeReady) {
-        supportReason = "Pi bridge missing (install: @ssweens/pi-plugins, pi-subagents, pi-mcp-adapter)";
-      }
-    }
+    const adapter = getAdapterForTool(instance.toolId);
+    const { supported, reason: supportReason } = adapter.supports({
+      plugin,
+      instance,
+      canInstallSkills,
+      canInstallCommands,
+      canInstallAgents,
+      hasHooks,
+    });
 
     let installed = false;
-    let installedVersion: string | undefined;
+    const installedVersion: string | undefined = undefined;
     const enabled = instance.enabled;
 
     if (enabled && supported) {
       // Tool-specific plugin checks only. No skill/command/agent filesystem proxy scans.
-      if (isClaude) {
-        const ids = getClaudeInstalledPluginIds();
-        const id1 = `${plugin.name}@${plugin.marketplace}`;
-        const id2 = plugin.installedMarketplace ? `${plugin.name}@${plugin.installedMarketplace}` : "";
-        installed = ids.has(id1) || (id2 ? ids.has(id2) : false);
-      } else if (isPi) {
-        // Pi bridge state is authoritative; avoid file-based proxy checks.
-        const ids = getPiBridgeInstalledPluginIds();
-        const id1 = `${plugin.name}@${plugin.marketplace}`;
-        const id2 = plugin.installedMarketplace ? `${plugin.name}@${plugin.installedMarketplace}` : "";
-        installed = ids.has(id1) || (id2 ? ids.has(id2) : false);
-      } else if (isCodex) {
-        // Installed if EITHER Codex's native plugin manager knows about it OR
-        // Blackbook's own file-copy manifest records it for this instance.
-        const ids = getCodexInstalledPluginIds();
-        const id1 = `${plugin.name}@${plugin.marketplace}`;
-        const id2 = plugin.installedMarketplace ? `${plugin.name}@${plugin.installedMarketplace}` : "";
-        const nativeInstalled = ids.has(id1) || (id2 ? ids.has(id2) : false);
-        if (nativeInstalled) {
-          installed = true;
-        } else {
-          if (manifest === null) {
-            manifest = loadManifest();
-            migrateManifestKeys(manifest);
-          }
-          installed = manifestHasPluginForInstance(manifest, instance, plugin.name);
-        }
-      }
+      installed = adapter.isInstalled(plugin, instance, ctx);
     }
 
     statuses.push({
