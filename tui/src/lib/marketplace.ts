@@ -697,6 +697,17 @@ export function loadPiSettings(): PiSettings {
 
 function getGlobalNodeModulesPath(manager: PackageManager): string | null {
   try {
+    if (manager === "pi") {
+      // pi keeps its own managed npm install under ~/.pi/agent/npm/ — that's
+      // the canonical home for user-scope pi packages, and the only place
+      // `pi install` / `pi update` ever writes. Global npm/pnpm/bun installs
+      // of pi packages are zombies: pi prefers its managed copy and won't
+      // see global ones, so we must scan both to detect them.
+      const piPath = join(homedir(), ".pi", "agent", "npm", "node_modules");
+      if (!existsSync(piPath)) return null;
+      return piPath;
+    }
+
     if (manager === "bun") {
       const bunPath = join(homedir(), ".bun", "install", "global", "node_modules");
       if (!existsSync(bunPath)) return null;
@@ -789,7 +800,7 @@ export interface PiPackageInstallInfo {
 }
 
 export function getGlobalPiPackageInstallInfo(preferredManager: PackageManager = getPackageManager()): Map<string, PiPackageInstallInfo> {
-  const order: PackageManager[] = [preferredManager, "npm", "pnpm", "bun"].filter(
+  const order: PackageManager[] = [preferredManager, "pi", "npm", "pnpm", "bun"].filter(
     (m, i, arr): m is PackageManager => arr.indexOf(m as PackageManager) === i,
   ) as PackageManager[];
 
@@ -810,7 +821,15 @@ export function getGlobalPiPackageInstallInfo(preferredManager: PackageManager =
 
     const preferredHas = viaManagers.includes(preferredManager);
     const via = preferredHas ? preferredManager : viaManagers[0]!;
-    const version = byManager.get(via)?.get(name) ?? null;
+    // pi's managed install is the canonical home for user-scope pi packages
+    // (the only place `pi install` / `pi update` writes). When both the pi
+    // managed install and a global manager install exist, prefer the pi
+    // version — the global one is a zombie pi doesn't actually use, and
+    // reporting its version as the "installed" one would falsely flag
+    // successful pi updates as out of date.
+    const piHas = viaManagers.includes("pi");
+    const versionSource = piHas ? "pi" : via;
+    const version = byManager.get(versionSource)?.get(name) ?? null;
 
     result.set(name, {
       version,

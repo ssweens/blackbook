@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Pi package install detection now scans pi's managed install at `~/.pi/agent/npm/node_modules/` (the only place `pi install` / `pi update` ever writes) in addition to global npm/pnpm/bun. Previously Blackbook only knew about global installs, so a successful `pi update` of an npm package would still report "Update command completed, but it still appears out of date" when a stale global install of the same package was on disk — the global version was being read as the "installed" one even though pi never uses it. When both a pi-managed and a global install of the same package exist, the pi-managed version is now reported as installed, and any extra global managers are still listed in `viaManagers` so uninstall cleans them up.
+- Uninstalling a Pi package now also runs `pi remove <name>` when the package is detected as installed via pi's managed location, so removal covers the actual install path instead of leaving it behind.
+
+### Fixed
 - Pi bridge installs, updates, uninstalls, and marketplace removals now keep local marketplace/plugin state aligned with pi-plugins. Local marketplace sources stay pointed at the real source-repo directory (for example `/Users/ssweens/src/playbook`) instead of repointing pi-plugins state at Blackbook's compatibility cache.
 - Installed-tab plugin rows now include repo-prescribed marketplace plugins even before they are installed locally, so `source_repo` / marketplace entries show up as `in git` instead of disappearing until install.
 - Pi bridge plugin detection, per-tool status, and diff views now share one resolver path instead of mixing bridge state with guessed `~/.pi/agent/skills|prompts` paths.

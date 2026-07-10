@@ -108,4 +108,21 @@ describe("removePiPackage", () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain("still appears installed via bun");
   });
+
+  it("cleans up the pi-managed install with `pi remove` when only that is detected", async () => {
+    mockExecFile([
+      { command: "pi", args: ["remove", "npm:pi-powerline-footer"] },
+      { command: "pi", args: ["remove", "pi-powerline-footer"] },
+    ]);
+    installInfoMock
+      .mockReturnValueOnce(detected("pi-powerline-footer", ["pi"]))
+      .mockReturnValueOnce(new Map());
+
+    await expect(
+      removePiPackage(pkg({ installedVia: "pi", installedViaManagers: ["pi"] })),
+    ).resolves.toEqual({ success: true });
+    // First call is the user-facing `pi remove <source>`, second is the
+    // detected-managers sweep that targets the per-package install path.
+    expect(execFileMock).toHaveBeenCalledTimes(2);
+  });
 });

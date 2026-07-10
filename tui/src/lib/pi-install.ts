@@ -74,6 +74,7 @@ function getNpmPackageName(pkg: PiPackage): string {
 function getUninstallCommand(manager: PackageManager, packageName: string): { command: string; args: string[] } {
   if (manager === "bun") return { command: "bun", args: ["remove", "-g", packageName] };
   if (manager === "pnpm") return { command: "pnpm", args: ["remove", "--global", packageName] };
+  if (manager === "pi") return { command: "pi", args: ["remove", packageName] };
   return { command: "npm", args: ["uninstall", "-g", packageName] };
 }
 

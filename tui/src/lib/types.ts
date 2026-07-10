@@ -22,7 +22,7 @@ export interface ToolInstance {
   pluginFlatInstall: boolean;
 }
 
-export type PackageManager = "npm" | "bun" | "pnpm";
+export type PackageManager = "npm" | "bun" | "pnpm" | "pi";
 
 export interface ToolDetectionResult {
   toolId: string;
