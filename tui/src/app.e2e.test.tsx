@@ -497,7 +497,7 @@ describe("App E2E — Tab Navigation", () => {
       useStore.setState({ tab: "marketplaces" });
       await waitForFrame(stdout.lastFrame, (f) => f.includes("[5] Marketplaces"));
       useStore.setState({ tab: "settings" });
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("[6] Settings"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("[7] Settings"));
     } finally {
       unmount();
     }
@@ -1506,7 +1506,7 @@ describe("App E2E — Settings Tab", () => {
     useStore.setState({ tab: "settings" });
     const { stdout, unmount } = render(<App />);
     try {
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("[6] Settings"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("[7] Settings"));
     } finally {
       unmount();
     }

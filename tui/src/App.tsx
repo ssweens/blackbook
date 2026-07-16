@@ -35,6 +35,8 @@ import { MarketplacesTab } from "./tabs/MarketplacesTab.js";
 import { SyncTab } from "./tabs/SyncTab.js";
 import { DiscoverTab } from "./tabs/DiscoverTab.js";
 import { InstalledTab } from "./tabs/InstalledTab.js";
+import { ProjectsTab } from "./tabs/ProjectsTab.js";
+import { AddProjectModal } from "./components/AddProjectModal.js";
 import { getPluginToolStatus } from "./lib/plugin-status.js";
 import {
   syncPluginInstances,
@@ -64,7 +66,7 @@ import { useNamespaceTree } from "./lib/use-namespace-tree.js";
 import { buildDetailCallbacks } from "./lib/detail-callbacks.js";
 import { getSyncItemKey, sortAndFilterPiPackages } from "./lib/derived.js";
 
-const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces", "settings"];
+const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces", "projects", "settings"];
 
 interface TabContentProps {
   tab: Tab;
@@ -100,6 +102,8 @@ function TabContent({ tab, searchFocused, onSearchFocus, onSearchBlur }: TabCont
       return <ToolsTab contentHeight={contentHeight} />;
     case "sync":
       return <SyncTab contentHeight={contentHeight} />;
+    case "projects":
+      return <ProjectsTab contentHeight={contentHeight} />;
     case "settings":
       return <SettingsTab />;
   }
@@ -227,6 +231,10 @@ export function App() {
   const togglePiMarketplaceEnabled = useStore((s) => s.togglePiMarketplaceEnabled);
   const addPiMarketplace = useStore((s) => s.addPiMarketplace);
   const removePiMarketplace = useStore((s) => s.removePiMarketplace);
+  const projects = useStore((s) => s.projects);
+  const loadProjects = useStore((s) => s.loadProjects);
+  const addProject = useStore((s) => s.addProject);
+  const removeProject = useStore((s) => s.removeProject);
 
   const [actionIndex, setActionIndex] = useState(0);
   const openSkillDetail = (skill: import("./lib/install.js").StandaloneSkill) => {
@@ -243,7 +251,7 @@ export function App() {
   const pluginDriftMap = useStore((s) => s.pluginDriftMap);
   const setPluginDriftMap = useStore((s) => s.setPluginDriftMap);
   const [detailPiMarketplace, setDetailPiMarketplace] = useState<PiMarketplace | null>(null);
-  const [modalVisible, setModalVisible] = useState<"addMarketplace" | "addPiMarketplace" | "sourceSetupWizard" | null>(null);
+  const [modalVisible, setModalVisible] = useState<"addMarketplace" | "addPiMarketplace" | "addProject" | "sourceSetupWizard" | null>(null);
   const showAddMarketplace = modalVisible === "addMarketplace";
   const showAddPiMarketplace = modalVisible === "addPiMarketplace";
   const showSourceSetupWizard = modalVisible === "sourceSetupWizard";
@@ -374,6 +382,9 @@ export function App() {
           refreshManagedTools();
           await refreshToolDetection();
           break;
+        case "projects":
+          await loadProjects();
+          break;
         case "sync":
         default:
           // Sync: load plugins/tools first (fast), then files in background (slow).
@@ -409,6 +420,7 @@ export function App() {
       : tab === "marketplaces" ? state.marketplaces.length > 0 || state.piMarketplaces.length > 0
       : tab === "installed" ? state.installedPluginsLoaded || state.filesLoaded || state.piPackagesLoaded
       : tab === "tools" ? state.managedTools.length > 0 && Object.keys(state.toolDetection).length > 0
+      : tab === "projects" ? state.projectsLoaded
       : tab === "settings";
     if (initialTabAlreadyHydrated) return;
 
@@ -753,8 +765,11 @@ export function App() {
     if (tab === "sync") {
       return Math.max(0, syncPreview.length - 1);
     }
+    if (tab === "projects") {
+      return Math.max(0, projects.length - 1);
+    }
     return Math.max(0, libraryCount - 1);
-  }, [discoverSubView, tab, marketplaceBrowsePlugins, filteredPlugins, filteredPiPackages, marketplaceRows, managedTools, syncPreview, libraryCount]);
+  }, [discoverSubView, tab, marketplaceBrowsePlugins, filteredPlugins, filteredPiPackages, marketplaceRows, managedTools, syncPreview, projects, libraryCount]);
 
   useEffect(() => {
     if (selectedIndex > maxIndex) {
@@ -1004,7 +1019,7 @@ export function App() {
 
   type OverlayKind =
     | "sourceSetupWizard" | "diff" | "missingSummary" | "editToolModal"
-    | "addMarketplace" | "addPiMarketplace" | "toolActionModal"
+    | "addMarketplace" | "addPiMarketplace" | "addProject" | "toolActionModal"
     | "toolDetail" | "itemDetail" | "marketplaceDetail";
   interface OverlayEntry {
     kind: OverlayKind;
@@ -1019,6 +1034,7 @@ export function App() {
     { kind: "editToolModal", active: !!editingToolId, inputMode: "modal" },
     { kind: "addMarketplace", active: modalVisible === "addMarketplace", inputMode: "modal" },
     { kind: "addPiMarketplace", active: modalVisible === "addPiMarketplace", inputMode: "modal" },
+    { kind: "addProject", active: modalVisible === "addProject", inputMode: "modal" },
     { kind: "toolActionModal", active: !!(toolModalAction && activeToolForModal), inputMode: "modal" },
     { kind: "toolDetail", active: !!detailTool, inputMode: "detail", escClose: () => setDetailToolKey(null) },
     { kind: "itemDetail", active: !!activeDetail, inputMode: "detail", escClose: closeItemDetail },
@@ -1473,6 +1489,19 @@ export function App() {
       }
     }
 
+    // Projects tab: 'a' registers a project directory, 'd' removes the selected one.
+    if (tab === "projects" && !isOverlayOpen) {
+      if (input === "a") {
+        setModalVisible("addProject");
+        return;
+      }
+      if (input === "d") {
+        const target = projects[selectedIndex];
+        if (target) void removeProject(target.path);
+        return;
+      }
+    }
+
     // Sort shortcuts (s to cycle sort, r to reverse) - only when search not focused
     if ((tab === "discover" || tab === "installed") && !isOverlayOpen && !searchFocused) {
       if (input === "s") {
@@ -1704,7 +1733,9 @@ export function App() {
           ? "Marketplaces"
           : tab === "tools"
             ? "Tools"
-            : "Sync";
+            : tab === "projects"
+              ? "Projects"
+              : "Sync";
 
   useEffect(() => {
     if (!globalRefreshInProgress) {
@@ -1719,6 +1750,11 @@ export function App() {
   const handleAddMarketplace = (name: string, url: string) => {
     addMarketplace(name, url);
     setShowAddMarketplace(false);
+  };
+
+  const handleAddProject = (path: string) => {
+    setModalVisible(null);
+    void addProject(path);
   };
 
   const handleSourceWizardComplete = async (source: string) => {
@@ -1824,6 +1860,8 @@ export function App() {
         return <AddMarketplaceModal onSubmit={handleAddMarketplace} onCancel={() => setModalVisible(null)} />;
       case "addPiMarketplace":
         return <AddMarketplaceModal type="pi" onSubmit={(name, source) => { void addPiMarketplace(name, source); setModalVisible(null); }} onCancel={() => setModalVisible(null)} />;
+      case "addProject":
+        return <AddProjectModal onSubmit={handleAddProject} onCancel={() => setModalVisible(null)} />;
       case "toolActionModal":
         return (
           <ToolActionModal
