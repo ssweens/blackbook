@@ -11,7 +11,7 @@ import {
 import { join } from "path";
 import { tmpdir } from "os";
 import { spawnSync } from "child_process";
-import { atomicWriteFileSync, renameOrCopy, withFileLockSync } from "./fs-utils.js";
+import { atomicWriteFileSync, renameOrCopy, withFileLockSync, isSyncNoise } from "./fs-utils.js";
 
 // ESM module namespaces are not configurable, so `fs.renameSync` cannot be spied
 // directly. Mock the module with a pass-through by default (so every other test
@@ -191,5 +191,32 @@ describe("withFileLockSync", () => {
     expect(innerAttempted).toBe(true);
     // Outer released cleanly.
     expect(existsSync(lockPath)).toBe(false);
+  });
+});
+
+describe("isSyncNoise", () => {
+  it("treats OS/tooling files as noise regardless of directory flag", () => {
+    for (const name of [".DS_Store", "Thumbs.db", "desktop.ini"]) {
+      expect(isSyncNoise(name, false)).toBe(true);
+    }
+  });
+
+  it("treats compiled-python files as noise", () => {
+    expect(isSyncNoise("module.pyc", false)).toBe(true);
+    expect(isSyncNoise("module.pyo", false)).toBe(true);
+  });
+
+  it("treats .git and __pycache__ as noise only when they are directories", () => {
+    expect(isSyncNoise(".git", true)).toBe(true);
+    expect(isSyncNoise("__pycache__", true)).toBe(true);
+    // A regular file named ".git" (e.g. a gitlink) is meaningful content.
+    expect(isSyncNoise(".git", false)).toBe(false);
+  });
+
+  it("keeps meaningful content — including .gitignore and SKILL.md", () => {
+    expect(isSyncNoise("SKILL.md", false)).toBe(false);
+    expect(isSyncNoise(".gitignore", false)).toBe(false);
+    expect(isSyncNoise("references", true)).toBe(false);
+    expect(isSyncNoise("script.py", false)).toBe(false);
   });
 });

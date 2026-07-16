@@ -159,3 +159,53 @@ All previously identified remaining contract gaps are now closed in the primary 
 - [x] Verify direct `desk` Pi install succeeds and Pi state records `desk` as installed.
 - [x] Visually verify in tmux Installed tab: `desk Plugin · desk ✔ installed`.
 - [x] Run quality gates: `pnpm typecheck`, `pnpm build`.
+
+## Adoption backlog from skills-manager evaluation (2026-07-15)
+
+Context: evaluated https://github.com/xingkongliang/skills-manager (v1.28.3, Tauri 2 + Rust, skills-only manager, 3k stars). Decision: keep blackbook as the integration point and adopt the ideas below — do NOT merge into or fork upstream (their scope is deliberately skills-only; config sync doesn't fit their symlink-first architecture). Skipped their tool adapter matrix (no interest in more tools right now). Reference clone inspected at session scratchpad; reference reads: `docs/skill-format-detection-spec.md`, `src-tauri/src/core/merge/`.
+
+Order of work: hardening pass first (see next section), then features roughly in listed order.
+
+### Hardening pass (pre-feature) — lessons from skills-manager's merge/backup engine
+
+Source: deep read of their `core/merge/` + `git_backup.rs`/`auto_backup.rs`/`file_watcher.rs`/`content_hash.rs`. Scope guard: do NOT import their git ref choreography, commit-trailer state machine, or canonical-JSON convergence machinery — that complexity exists for multi-writer peer convergence over a shared remote, which blackbook's source→targets copy topology doesn't have. Port the decision-table/safety disciplines only.
+
+Already covered in blackbook (verified, no action): atomic state writes with single-lock read-modify-write and corrupt-state preservation (`state.ts`); backups before overwrite with retention; per-instance state keys (attribution analog); skill detection already `SKILL.md`-only per their format spec.
+
+- [x] **Content-hash scope for directory-synced units** (2026-07-15) — added one canonical `isSyncNoise(name, isDir)` predicate in `fs-utils.ts` (`.DS_Store`/`Thumbs.db`/`desktop.ini`, `*.pyc`/`*.pyo`, `.git`/`__pycache__` dirs) and routed all four directory walkers through it: the live `directory-sync.ts` check (had NO filter — the actual bug), `diff.ts` (had a partial local filter, now shared + extended), and both `hash.ts` walkers (dead today but exported/tested, fixed for future-safety). Root cause was an inconsistency: `diff.ts` filtered `.DS_Store` but `directory-sync.check` did not, so source-side noise showed as a drift row in the Sync tab whose diff (`d`) was empty. Verified on the live module: source `.DS_Store` → before `drifted: Target file missing: .DS_Store`, after `ok`. Tests: `isSyncNoise` unit tests + directory-sync + hashDirectory regressions. Sorted paths + `/` normalization already present; exec-bit folding N/A (blackbook doesn't track mode). Full suite 673 pass / 1 pre-existing unrelated failure (see note).
+- [ ] **Unmanaged-target overwrite guard** — never silently clobber a target file that exists but has no state entry (`never-synced`). The `state.ts` corrupt-file comment documents this exact hazard. Verify the bulk-sync path always backs up + surfaces these; consider requiring explicit confirm for never-synced-but-exists.
+- [ ] **Stage-then-rename for directory copies** — extract/copy to a staging sibling on the same volume, then one rename into place, so mid-copy failure leaves the original intact. Explicitly handle nested/overlapping source-vs-target paths (remove-first vs place-first ordering).
+- [ ] **Backup timing completeness** — snapshot the pre-state before *every* destructive op, including pullback (back up the source-repo file before overwriting it) and plugin uninstall. When recovery can't distinguish user-edit from our own debris, keep both.
+- [ ] **Partial-write leftover tolerance** — scans/syncs must skip-and-clean `*.tmp`-style leftovers from a crashed write rather than erroring or counting them as drift; validate the delta being applied, not the whole world (grandfather pre-existing dirt or every future sync bricks).
+- [ ] **Case-folded path collision detection** — when planning installs/syncs, group by case/whitespace-folded path key with a deterministic winner, so case-insensitive filesystems (macOS/Windows) can't nondeterministically clobber.
+- [ ] **Both-changed isolation regression test** — one conflicted file must never abort or block the rest of a batch sync; conflicts keep-target + flag, everything else proceeds. Verify current `syncTools()` behavior and pin with a test.
+- [ ] **Keep sync planning pure** — the `(state, sourceHash, targetHash) → action` decision should stay a zero-I/O function with deterministic tie-breaks, unit-tested apart from the copy engine (mostly true today via `detectDrift`; confirm no planning logic has leaked into apply paths).
+- [ ] **Adversarial test checklist from their real incidents** — add cases for: overlapping/nested paths, ignored/unknown files sitting where incoming content lands, case-folding renames, crash mid-write, external edit arriving during our own write window.
+- [ ] (Deferred to CLI backlog) **Two-tier locking** — fail-fast for background work, bounded-wait (~20s) for foreground user actions; lock file must live outside any directory that gets renamed/recreated.
+
+### Backlog: Presets
+- [ ] Named groups of plugins/standalone skills; activate/deactivate per tool instance in one action
+- [ ] Config representation in `config.yaml` (e.g. `presets: <name>: [plugin refs...]`), synced via source repo like everything else
+- [ ] TUI: preset row/pills with active ✓ / partial (count badge) / inactive states
+- [ ] Applying a preset is a one-time install/enable action, not a live sync (matches skills-manager semantics)
+
+### Backlog: Project-local workspaces
+- [ ] Manage `<project>/.claude/skills` (and per-tool equivalents) alongside global config dirs
+- [ ] Compare project-local skills against source repo copies; sync in both directions (reuse three-way state keyed per project path)
+- [ ] Recursive scanner must follow the skill-format detection policy: `SKILL.md` is the only skill marker; never treat `README.md`/`CLAUDE.md` as markers; support nested/namespace layouts without recursion short-circuiting (see spec read below)
+
+### Backlog: Generalized adoption ("track in source repo" for everything)
+- [ ] Extend the Pi-only `Track in source repo` flow to any unmanaged skill/command/agent found in a tool's config dir
+- [ ] Installed tab: badge unmanaged items (`not in git`) uniformly across component types
+- [ ] One action: copy into `<source_repo>` + register in marketplace/config as appropriate
+
+### Backlog: Symlink as opt-in sync strategy
+- [ ] Per-file/per-plugin `sync_mode: copy | symlink` (default copy)
+- [ ] Symlink for skill/plugin dirs on tools that tolerate it — drift becomes impossible by construction, no state entry needed
+- [ ] Keep copy + three-way state + pullback for config files (tools rewrite those in place)
+- [ ] Drift/diff views must recognize symlinked targets and report "linked" instead of hashing through the link
+
+### Backlog: Headless CLI mode
+- [ ] Non-TUI entrypoint sharing `tui/src/lib/` core: `blackbook status|sync|install|uninstall|list` with `--tool`/`--json` flags
+- [ ] `--json` machine-readable output so agents/scripts can drive blackbook (model: skills-manager's `skills-manager-cli` sharing the Rust core)
+- [ ] Non-interactive confirmations (`--yes`, `--dry-run`)

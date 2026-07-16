@@ -3,6 +3,7 @@ import { join } from "path";
 import type { Module, CheckResult, ApplyResult } from "./types.js";
 import { hashFileAsync } from "./hash.js";
 import { createBackup, pruneBackups } from "./backup.js";
+import { isSyncNoise } from "../fs-utils.js";
 
 export interface DirectorySyncParams {
   sourcePath: string;
@@ -16,6 +17,7 @@ export interface DirectorySyncParams {
 function listFilesRecursive(dir: string, prefix = ""): string[] {
   const results: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (isSyncNoise(entry.name, entry.isDirectory())) continue;
     const relPath = prefix ? `${prefix}/${entry.name}` : entry.name;
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {

@@ -17,6 +17,23 @@ const LOCK_RETRY_COUNT = 5;
 const LOCK_RETRY_DELAY_MS = 50;
 const LOCK_STALE_MS = 30_000;
 
+// Machine-generated artifacts that must never count as managed content. If a
+// directory walk includes these, a synced dir reads as permanently "changed"
+// the first time a tool, Finder, or Python writes into it — phantom drift that
+// shows up in the Sync tab but produces an empty diff. Every directory walker
+// used for drift/diff/hashing routes through `isSyncNoise` so the walkers agree
+// on what "content" means. Keep the list tight: only entries that are both
+// machine-generated AND never meaningful skill/config content.
+const SYNC_NOISE_FILES = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
+const SYNC_NOISE_DIRS = new Set([".git", "__pycache__"]);
+
+/** True if a directory entry is regenerated noise to exclude from sync content. */
+export function isSyncNoise(name: string, isDirectory: boolean): boolean {
+  if (isDirectory) return SYNC_NOISE_DIRS.has(name);
+  if (SYNC_NOISE_FILES.has(name)) return true;
+  return name.endsWith(".pyc") || name.endsWith(".pyo");
+}
+
 function sleepSync(ms: number): void {
   const buffer = new SharedArrayBuffer(4);
   const view = new Int32Array(buffer);

@@ -63,6 +63,21 @@ describe("hashDirectory", () => {
 
     expect(hash1).not.toBe(hash2);
   });
+
+  it("ignores regenerated noise so it does not change the hash", () => {
+    const dir = join(TMP, "dir4");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "a.txt"), "content");
+    const clean = hashDirectory(dir);
+
+    writeFileSync(join(dir, ".DS_Store"), "\0\0macos");
+    mkdirSync(join(dir, "__pycache__"), { recursive: true });
+    writeFileSync(join(dir, "__pycache__", "mod.cpython-312.pyc"), "bytecode");
+    mkdirSync(join(dir, ".git"), { recursive: true });
+    writeFileSync(join(dir, ".git", "HEAD"), "ref: refs/heads/main");
+
+    expect(hashDirectory(dir)).toBe(clean);
+  });
 });
 
 describe("hashString", () => {

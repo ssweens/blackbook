@@ -69,6 +69,26 @@ describe("directorySyncModule.check", () => {
     expect(result.status).toBe("drifted");
   });
 
+  it("ignores regenerated noise in source so it is not phantom drift", async () => {
+    // A skill/config dir browsed in Finder or run through Python accumulates
+    // .DS_Store and __pycache__/*.pyc. These must not read as "drifted" against
+    // a target that legitimately lacks them.
+    mkdirSync(join(SRC, "dir"), { recursive: true });
+    mkdirSync(join(TGT, "dir"), { recursive: true });
+    writeFileSync(join(SRC, "dir", "a.txt"), "content");
+    writeFileSync(join(TGT, "dir", "a.txt"), "content");
+    writeFileSync(join(SRC, "dir", ".DS_Store"), "\0\0macos");
+    mkdirSync(join(SRC, "dir", "__pycache__"), { recursive: true });
+    writeFileSync(join(SRC, "dir", "__pycache__", "mod.cpython-312.pyc"), "bytecode");
+
+    const result = await directorySyncModule.check({
+      sourcePath: join(SRC, "dir"),
+      targetPath: join(TGT, "dir"),
+      owner: "test",
+    });
+    expect(result.status).toBe("ok");
+  });
+
   it("returns 'missing' when source does not exist", async () => {
     const result = await directorySyncModule.check({
       sourcePath: join(SRC, "nonexistent"),

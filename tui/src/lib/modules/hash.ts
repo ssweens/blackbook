@@ -1,6 +1,7 @@
 import { readFileSync, lstatSync, realpathSync, readdirSync, createReadStream } from "fs";
 import { createHash } from "crypto";
 import { join } from "path";
+import { isSyncNoise } from "../fs-utils.js";
 
 export function hashBuffer(buffer: Buffer): string {
   return createHash("sha256").update(buffer).digest("hex");
@@ -44,6 +45,7 @@ export function hashDirectory(dir: string): string {
     const children = readdirSync(current);
     children.sort();
     for (const child of children) {
+      if (isSyncNoise(child, false)) continue;
       const fullPath = join(current, child);
       const relPath = prefix ? `${prefix}/${child}` : child;
       const stat = lstatSync(fullPath);
@@ -51,11 +53,13 @@ export function hashDirectory(dir: string): string {
         const resolved = realpathSync(fullPath);
         const resolvedStat = lstatSync(resolved);
         if (resolvedStat.isDirectory()) {
+          if (isSyncNoise(child, true)) continue;
           walk(resolved, relPath);
         } else if (resolvedStat.isFile()) {
           entries.push(relPath);
         }
       } else if (stat.isDirectory()) {
+        if (isSyncNoise(child, true)) continue;
         walk(fullPath, relPath);
       } else if (stat.isFile()) {
         entries.push(relPath);
@@ -85,6 +89,7 @@ export async function hashDirectoryAsync(dir: string): Promise<string> {
     const children = readdirSync(current);
     children.sort();
     for (const child of children) {
+      if (isSyncNoise(child, false)) continue;
       const fullPath = join(current, child);
       const relPath = prefix ? `${prefix}/${child}` : child;
       const stat = lstatSync(fullPath);
@@ -92,11 +97,13 @@ export async function hashDirectoryAsync(dir: string): Promise<string> {
         const resolved = realpathSync(fullPath);
         const resolvedStat = lstatSync(resolved);
         if (resolvedStat.isDirectory()) {
+          if (isSyncNoise(child, true)) continue;
           await walk(resolved, relPath);
         } else if (resolvedStat.isFile()) {
           entries.push(relPath);
         }
       } else if (stat.isDirectory()) {
+        if (isSyncNoise(child, true)) continue;
         await walk(fullPath, relPath);
       } else if (stat.isFile()) {
         entries.push(relPath);

@@ -20,6 +20,7 @@ import type {
   MissingSummary,
 } from "./types.js";
 import { getToolInstances } from "./config.js";
+import { isSyncNoise } from "./fs-utils.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Binary detection
@@ -267,17 +268,13 @@ export function computeFileDetail(summary: DiffFileSummary): DiffFileDetail {
 // Recursively list files in a directory
 // ─────────────────────────────────────────────────────────────────────────────
 
-// OS/tooling noise that should never appear in diff results
-const SKIP_NAMES = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
-const SKIP_DIRS  = new Set([".git"]);
-
 function listFilesRecursive(dir: string, base: string = ""): string[] {
   if (!existsSync(dir)) return [];
   const entries = readdirSync(dir, { withFileTypes: true });
   const files: string[] = [];
   for (const entry of entries) {
-    if (SKIP_NAMES.has(entry.name)) continue;
-    if (entry.isDirectory() && SKIP_DIRS.has(entry.name)) continue;
+    // Exclude regenerated noise so drift/diff agree on what "content" is.
+    if (isSyncNoise(entry.name, entry.isDirectory())) continue;
     const relPath = base ? join(base, entry.name) : entry.name;
     if (entry.isDirectory()) {
       files.push(...listFilesRecursive(join(dir, entry.name), relPath));
