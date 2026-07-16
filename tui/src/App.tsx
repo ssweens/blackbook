@@ -1047,8 +1047,14 @@ export function App() {
   }
   const overlayEntries: OverlayEntry[] = [
     { kind: "sourceSetupWizard", active: showSourceSetupWizard, inputMode: "modal" },
-    { kind: "diff", active: !!diffTarget, inputMode: "detail" },
-    { kind: "missingSummary", active: !!missingSummary, inputMode: "detail" },
+    // diff/missingSummary self-handle Esc via their own useInput (multi-step back
+    // nav, then close). Without an escClose here, .find() below would skip past
+    // them (they have none) to the next entry that DOES have one — itemDetail —
+    // and close the detail UNDERNEATH in the same keypress as the diff's own
+    // self-close. The no-op escClose makes the walk stop here and do nothing at
+    // the App level, deferring entirely to the component's own handler.
+    { kind: "diff", active: !!diffTarget, inputMode: "detail", escClose: () => {} },
+    { kind: "missingSummary", active: !!missingSummary, inputMode: "detail", escClose: () => {} },
     { kind: "editToolModal", active: !!editingToolId, inputMode: "modal" },
     { kind: "addMarketplace", active: modalVisible === "addMarketplace", inputMode: "modal" },
     { kind: "addPiMarketplace", active: modalVisible === "addPiMarketplace", inputMode: "modal" },
@@ -1107,11 +1113,15 @@ export function App() {
 
   const handleEscape = () => {
     // Topmost App-owned overlay closes first, in registry (render z-order)
-    // priority. Overlays with their own Esc handling (diff, missingSummary,
-    // wizard, edit+add modals, toolActionModal) carry no escClose and are skipped
-    // here — they self-close via their own useInput, exactly as before. The three
-    // escClose overlays (toolDetail / itemDetail / marketplaceDetail) are mutually
-    // exclusive in practice, so this z-order walk matches the old fixed cascade.
+    // priority. Modal-mode overlays (wizard, edit+add modals, toolActionModal)
+    // never reach here — they return early above. diff/missingSummary DO reach
+    // here (they are "detail" mode) but carry a no-op escClose specifically so
+    // this walk stops AT them rather than falling through to whatever detail
+    // overlay (toolDetail / itemDetail / marketplaceDetail) sits underneath —
+    // otherwise one Esc would close both layers at once (a diff opened from
+    // within an item detail would dump you on the list instead of back on the
+    // detail). Those three real escClose overlays are mutually exclusive with
+    // each other in practice, but NOT with diff/missingSummary layered on top.
     const overlay = overlayEntries.find((e) => e.active && e.escClose);
     if (overlay) { overlay.escClose!(); return; }
     // List sub-views below are NOT render overlays (they render inside TabContent),
@@ -1453,8 +1463,13 @@ export function App() {
       return;
     }
 
-    // Manual refresh: git pull source repo + reload everything
-    if (input === "R") {
+    // Manual refresh: git pull source repo + reload everything. Settings owns its
+    // own "R" (a read-only remote fetch that recomputes the on-screen repo status
+    // — ahead/behind, changed files) — falls through so SettingsPanel's useInput
+    // gets it below, instead of this pull+refreshAll leaving that widget stale
+    // (Settings already has an explicit, confirm-gated pull/reset menu action for
+    // actually mutating the repo, so this isn't a loss of capability).
+    if (input === "R" && tab !== "settings") {
       void pullSourceRepo()
         .then(() => refreshTabData(tab))
         .catch((error) => {
@@ -1485,7 +1500,7 @@ export function App() {
       }
     }
 
-    // Number keys 1-6 for tab navigation
+    // Number keys 1-7 for tab navigation
     if (!isOverlayOpen) {
       const tabIdx = parseInt(input, 10);
       if (tabIdx >= 1 && tabIdx <= TABS.length) {

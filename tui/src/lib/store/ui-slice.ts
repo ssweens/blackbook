@@ -44,7 +44,11 @@ export type UiSlice = Pick<
 >;
 
 export const createUiSlice: SliceCreator<UiSlice> = (set, get) => ({
-  tab: "installed",
+  // Sync is the documented, deliberately-chosen default (README: "Blackbook
+  // opens on the Sync tab by default", added in the "sync-first tab order"
+  // change) — it silently regressed to "installed" as an incidental line in an
+  // unrelated later commit.
+  tab: "sync",
   search: "",
   selectedIndex: 0,
   loading: false,

@@ -20,7 +20,7 @@ const HINTS: Record<Tab, string> = {
 
 export const HintBar = React.memo(function HintBar({ tab, hasDetail, toolsHint }: HintBarProps) {
   const hint = hasDetail
-    ? "ctrl+p to navigate · Enter to select · p pullback (if available) · Esc to back"
+    ? "↑/↓ to navigate · Enter to select · p pullback (if available) · Esc to back"
     : tab === "tools" && toolsHint
       ? toolsHint
       : HINTS[tab];
