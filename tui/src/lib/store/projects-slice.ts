@@ -115,7 +115,7 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
       return false;
     }
     await get().loadProjects({ silent: true });
-    notify(`Pushed ${name} into project`, "success");
+    notify(`Pushed ${name} into workspace`, "success");
     return true;
   },
 
@@ -156,7 +156,7 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
       return false;
     }
     await get().loadProjects({ silent: true });
-    notify(`Removed ${name} from project`, "success");
+    notify(`Removed ${name} from workspace`, "success");
     return true;
   },
 });

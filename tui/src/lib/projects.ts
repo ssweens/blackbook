@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, statSync } from "fs";
 import { join, basename } from "path";
+import { homedir } from "os";
 import { loadConfig } from "./config/loader.js";
 import { expandPath } from "./config/path.js";
 import { getConfigRepoPath } from "./config.js";
@@ -48,6 +49,12 @@ export interface ProjectInfo {
   skills: ProjectSkill[];
   /** Source-repo skills not yet present in this project (candidates to add). */
   available: AvailableSkill[];
+  /**
+   * The always-present global `~/.agents/skills` workspace. Not stored in
+   * config, cannot be removed; the shared location every `.agents`-aware tool
+   * reads, so skills sync once instead of fanning into each tool's own dir.
+   */
+  synthetic?: boolean;
 }
 
 /** True if `dir` is a skill directory (contains SKILL.md). */
@@ -133,31 +140,47 @@ export function scanProjectSkills(
   return [...enabled, ...disabled].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Load registered projects from config and scan each against the source repo. */
+/** Scan one `.agents/skills` root (a project dir or `$HOME`) into a ProjectInfo. */
+function buildProjectInfo(
+  path: string,
+  name: string,
+  sourceIndex: Map<string, string>,
+  synthetic = false,
+): ProjectInfo {
+  const exists = isDirectory(path);
+  const skills = exists ? scanProjectSkills(path, sourceIndex) : [];
+  const present = new Set(skills.map((s) => s.name));
+  const available: AvailableSkill[] = [];
+  for (const [skillName, sourcePath] of sourceIndex) {
+    if (!present.has(skillName)) available.push({ name: skillName, sourcePath });
+  }
+  available.sort((a, b) => a.name.localeCompare(b.name));
+  return {
+    path,
+    name,
+    exists,
+    hasAgentsDir: exists && existsSync(join(path, PROJECT_SKILLS_SUBDIR)),
+    skills,
+    available,
+    synthetic,
+  };
+}
+
+/**
+ * All skill workspaces: the always-present global `~/.agents/skills` first,
+ * then the registered project directories. Each is scanned against the source
+ * repo for drift.
+ */
 export function getProjects(): ProjectInfo[] {
   const { config } = loadConfig();
   const sourceRepo = getConfigRepoPath();
   const sourceIndex = sourceRepo ? indexSourceSkills(sourceRepo) : new Map<string, string>();
 
-  return config.projects.map((entry) => {
-    const path = expandPath(entry.path);
-    const exists = isDirectory(path);
-    const skills = exists ? scanProjectSkills(path, sourceIndex) : [];
-    const present = new Set(skills.map((s) => s.name));
-    const available: AvailableSkill[] = [];
-    for (const [name, sourcePath] of sourceIndex) {
-      if (!present.has(name)) available.push({ name, sourcePath });
-    }
-    available.sort((a, b) => a.name.localeCompare(b.name));
-    return {
-      path,
-      name: entry.name ?? basename(path),
-      exists,
-      hasAgentsDir: exists && existsSync(join(path, PROJECT_SKILLS_SUBDIR)),
-      skills,
-      available,
-    };
-  });
+  const global = buildProjectInfo(homedir(), "Global", sourceIndex, true);
+  const registered = config.projects.map((entry) =>
+    buildProjectInfo(expandPath(entry.path), entry.name ?? basename(expandPath(entry.path)), sourceIndex),
+  );
+  return [global, ...registered];
 }
 
 /** A row in the drill-in skill list: an existing project skill or an addable one. */

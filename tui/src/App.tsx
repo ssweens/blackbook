@@ -1558,7 +1558,8 @@ export function App() {
       }
       if (input === "d") {
         const target = projects[selectedIndex];
-        if (target) void removeProject(target.path);
+        // The synthetic global workspace isn't registered — can't be removed.
+        if (target && !target.synthetic) void removeProject(target.path);
         return;
       }
     }

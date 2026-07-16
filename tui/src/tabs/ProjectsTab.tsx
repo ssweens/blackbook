@@ -54,7 +54,7 @@ export function ProjectsTab({ contentHeight }: ProjectsTabProps) {
           </Text>
           <Text color="gray" wrap="truncate">
             {"  "}
-            {project.path}/.agents/skills
+            {project.synthetic ? "~/.agents/skills" : `${project.path}/.agents/skills`}
           </Text>
         </Box>
         {rows.length === 0 ? (
@@ -104,15 +104,16 @@ export function ProjectsTab({ contentHeight }: ProjectsTabProps) {
         const summary = !p.exists
           ? "missing dir"
           : `${p.skills.length} skill${p.skills.length === 1 ? "" : "s"}${drifted ? ` · ${drifted} drifted` : ""} · ${p.available.length} available`;
+        const location = p.synthetic ? "~/.agents/skills (global)" : p.path;
         return (
           <Box key={p.path}>
-            <Text color={isSel ? "cyan" : "white"}>
+            <Text color={isSel ? "cyan" : p.synthetic ? "magenta" : "white"}>
               {isSel ? "❯ " : "  "}
               {p.name}
             </Text>
             <Text color="gray" wrap="truncate">
               {"  "}
-              {p.path} · {summary}
+              {location} · {summary}
             </Text>
           </Box>
         );
