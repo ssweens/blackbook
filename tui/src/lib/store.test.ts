@@ -1452,6 +1452,79 @@ describe("Store syncTools with file items", () => {
     expect(steps[0].label).toContain("settings.json");
   });
 
+  it("syncs safe instances while skipping a conflicted one in the same file", async () => {
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: { files: [], settings: { source_repo: "~/dotfiles", package_manager: "pnpm", backup_retention: 3 }, tools: {}, plugins: {}, configs: [] } as any,
+      configPath: "/tmp/config.yaml",
+      errors: [],
+    });
+    vi.mocked(expandConfigPath).mockImplementation((p: string) => p);
+    vi.mocked(resolveSourcePath).mockImplementation((source: string) => source);
+    vi.mocked(runApply).mockResolvedValue({
+      steps: [{ label: "CLAUDE.md:claude-code:default", check: { status: "missing", message: "" }, apply: { changed: true, message: "copied" } }],
+      summary: { ok: 0, missing: 0, drifted: 0, failed: 0, changed: 1 },
+    });
+
+    await useStore.getState().syncTools([
+      {
+        kind: "file",
+        file: {
+          name: "CLAUDE.md", source: "CLAUDE.md", target: "CLAUDE.md", kind: "file",
+          instances: [
+            { toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/c", targetRelPath: "CLAUDE.md", sourcePath: "/s/CLAUDE.md", targetPath: "/c/CLAUDE.md", status: "missing", message: "" },
+            { toolId: "opencode", instanceId: "default", instanceName: "OpenCode", configDir: "/o", targetRelPath: "CLAUDE.md", sourcePath: "/s/CLAUDE.md", targetPath: "/o/CLAUDE.md", status: "drifted", driftKind: "both-changed", message: "conflict" },
+          ],
+        },
+        missingInstances: ["Claude"],
+        driftedInstances: ["OpenCode"],
+      },
+    ]);
+
+    // The conflicted (both-changed) instance is skipped; the safe one still syncs.
+    const steps = vi.mocked(runApply).mock.calls[0][0];
+    expect(steps).toHaveLength(1);
+    expect(steps[0].label).toContain("claude-code");
+  });
+
+  it("continues the batch when one file item reports an error", async () => {
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: { files: [], settings: { source_repo: "~/dotfiles", package_manager: "pnpm", backup_retention: 3 }, tools: {}, plugins: {}, configs: [] } as any,
+      configPath: "/tmp/config.yaml",
+      errors: [],
+    });
+    vi.mocked(expandConfigPath).mockImplementation((p: string) => p);
+    vi.mocked(resolveSourcePath).mockImplementation((source: string) => source);
+    vi.mocked(runApply)
+      .mockResolvedValueOnce({
+        steps: [{ label: "A.md:claude-code:default", check: { status: "missing", message: "" }, apply: { changed: false, message: "boom", error: "boom" } }],
+        summary: { ok: 0, missing: 0, drifted: 0, failed: 0, changed: 0 },
+      })
+      .mockResolvedValueOnce({
+        steps: [{ label: "B.md:claude-code:default", check: { status: "missing", message: "" }, apply: { changed: true, message: "ok" } }],
+        summary: { ok: 0, missing: 0, drifted: 0, failed: 0, changed: 1 },
+      });
+
+    const mkFile = (name: string) => ({
+      kind: "file" as const,
+      file: {
+        name, source: name, target: name, kind: "file" as const,
+        instances: [
+          { toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/c", targetRelPath: name, sourcePath: `/s/${name}`, targetPath: `/c/${name}`, status: "missing" as const, message: "" },
+        ],
+      },
+      missingInstances: ["Claude"],
+      driftedInstances: [],
+    });
+
+    await useStore.getState().syncTools([mkFile("A.md"), mkFile("B.md")]);
+
+    // The first item's error does not abort the second — both are processed.
+    expect(runApply).toHaveBeenCalledTimes(2);
+    const { notifications } = useStore.getState();
+    expect(notifications.find((n) => n.type === "error")?.message).toContain("boom");
+    expect(notifications.find((n) => n.type === "success")?.message).toContain("Synced");
+  });
+
   it("uses directory-sync module when syncing directory entries", async () => {
     const sourceRoot = mkdtempSync(join(tmpdir(), "blackbook-sync-src-"));
     const sourceDir = join(sourceRoot, "read");
