@@ -90,10 +90,17 @@ export const fileCopyModule: Module<FileCopyParams> = {
         return { status: "drifted", message: "Both source and target changed (conflict)", diff, driftKind };
       }
 
-      // source-changed or never-synced: standard forward sync
       const oldText = readTextSafe(targetPath);
       const newText = readTextSafe(sourcePath);
       const diff = createTwoFilesPatch("target", "source", oldText, newText, "", "", { context: 3 });
+      if (driftKind === "never-synced") {
+        // Target exists but was never tracked (first-time adoption, or state was
+        // lost). Forward-syncing overwrites content Blackbook didn't place, so it
+        // is gated out of the default bulk sync like a conflict — see the
+        // syncTools filter. A backup is always taken before overwrite.
+        return { status: "drifted", message: "Untracked target (sync overwrites it)", diff, driftKind };
+      }
+      // source-changed: standard forward sync
       return { status: "drifted", message: "Source changed", diff, driftKind };
     }
 

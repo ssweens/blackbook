@@ -276,8 +276,9 @@ async function handleSyncAction(
       driftedInstances: item._file.instances
         .filter((i) => i.status === "drifted")
         .map((i) => i.instanceName),
-      // "Sync to tool" is an explicit push: force-sync even both-changed instances.
-      forceBothChanged: true,
+      // "Sync to tool" is an explicit push: force-sync even conflicted and
+      // untracked-target instances.
+      forceOverwrite: true,
     };
     await callbacks.syncFiles([syncItem]);
     return true;

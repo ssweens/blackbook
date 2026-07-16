@@ -152,8 +152,12 @@ export type SyncPreviewItem =
       file: FileStatus;
       missingInstances: string[];
       driftedInstances: string[];
-      /** When true, allow syncing instances with driftKind "both-changed" (force overwrite target with source) */
-      forceBothChanged?: boolean;
+      /**
+       * When true, force-overwrite risky instances that the default bulk sync
+       * skips: "both-changed" conflicts and "never-synced" untracked existing
+       * targets. Set by an explicit per-item push ("Sync to tool").
+       */
+      forceOverwrite?: boolean;
     }
   | {
       kind: "skill";

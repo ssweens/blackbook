@@ -37,8 +37,11 @@ export function SyncPreview({ item }: SyncPreviewProps) {
   if (item.kind === "file") {
     const bothChangedInstances = item.file.instances.filter((i) => i.driftKind === "both-changed").map((i) => i.instanceName);
     const targetChangedInstances = item.file.instances.filter((i) => i.driftKind === "target-changed").map((i) => i.instanceName);
+    const untrackedInstances = item.file.instances
+      .filter((i) => i.status === "drifted" && i.driftKind === "never-synced")
+      .map((i) => i.instanceName);
     const sourceChangedInstances = item.file.instances
-      .filter((i) => i.status === "drifted" && i.driftKind !== "target-changed" && i.driftKind !== "both-changed")
+      .filter((i) => i.status === "drifted" && i.driftKind !== "target-changed" && i.driftKind !== "both-changed" && i.driftKind !== "never-synced")
       .map((i) => i.instanceName);
 
     return (
@@ -74,6 +77,12 @@ export function SyncPreview({ item }: SyncPreviewProps) {
             <>
               <Text color="gray">{(item.missingInstances.length > 0 || sourceChangedInstances.length > 0 || targetChangedInstances.length > 0) ? " · " : ""}Both drifted: </Text>
               <Text color="red">{bothChangedInstances.join(", ")}</Text>
+            </>
+          )}
+          {untrackedInstances.length > 0 && (
+            <>
+              <Text color="gray">{(item.missingInstances.length > 0 || sourceChangedInstances.length > 0 || targetChangedInstances.length > 0 || bothChangedInstances.length > 0) ? " · " : ""}Untracked: </Text>
+              <Text color="red">{untrackedInstances.join(", ")}</Text>
             </>
           )}
         </Box>

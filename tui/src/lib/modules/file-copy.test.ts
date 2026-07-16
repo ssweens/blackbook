@@ -255,6 +255,36 @@ describe("fileCopyModule three-way state detection", () => {
     expect(check.message).toContain("conflict");
   });
 
+  it("labels a never-synced target that already exists as untracked", async () => {
+    // No prior apply() → no state entry. Target exists on disk and differs from
+    // source: this is adopting a pre-existing (or state-lost) target, which the
+    // bulk sync gates behind an explicit push.
+    const srcFile = join(SRC, "s.json");
+    const tgtFile = join(TGT, "s.json");
+    writeFileSync(srcFile, "source version");
+    writeFileSync(tgtFile, "pre-existing tool version");
+
+    const check = await fileCopyModule.check({
+      sourcePath: srcFile,
+      targetPath: tgtFile,
+      owner: "test",
+      stateKey,
+    });
+
+    expect(check.status).toBe("drifted");
+    expect(check.driftKind).toBe("never-synced");
+    expect(check.message).toContain("Untracked");
+    // A brand-new target (missing on disk) is a safe install, not "drifted".
+    const freshCheck = await fileCopyModule.check({
+      sourcePath: srcFile,
+      targetPath: join(TGT, "does-not-exist.json"),
+      owner: "test",
+      stateKey,
+    });
+    expect(freshCheck.status).toBe("missing");
+    expect(freshCheck.driftKind).toBe("never-synced");
+  });
+
   it("returns in-sync when nothing changed since last sync", async () => {
     const srcFile = join(SRC, "s.json");
     const tgtFile = join(TGT, "s.json");

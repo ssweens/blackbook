@@ -1410,6 +1410,48 @@ describe("Store syncTools with file items", () => {
     expect(successNote?.message).toContain("Synced 1");
   });
 
+  it("gates a never-synced target that already exists out of the default sync", async () => {
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: { files: [], settings: { source_repo: "~/dotfiles", package_manager: "pnpm", backup_retention: 3 }, tools: {}, plugins: {}, configs: [] } as any,
+      configPath: "/tmp/config.yaml",
+      errors: [],
+    });
+    vi.mocked(expandConfigPath).mockImplementation((p: string) => p);
+    vi.mocked(resolveSourcePath).mockImplementation((source: string) => source);
+    vi.mocked(runApply).mockResolvedValue({
+      steps: [],
+      summary: { ok: 0, missing: 0, drifted: 0, failed: 0, changed: 1 },
+    });
+
+    const untrackedInstance = {
+      toolId: "claude-code", instanceId: "default", instanceName: "Claude",
+      configDir: "/home/user/.claude", targetRelPath: "settings.json",
+      sourcePath: "/home/user/dotfiles/settings.json", targetPath: "/home/user/.claude/settings.json",
+      status: "drifted" as const, driftKind: "never-synced" as const, message: "Untracked target (sync overwrites it)",
+    };
+    const fileItem = (force: boolean) => ({
+      kind: "file" as const,
+      file: {
+        name: "settings.json", source: "settings.json", target: "settings.json", kind: "file" as const,
+        instances: [untrackedInstance],
+      },
+      missingInstances: [],
+      driftedInstances: ["Claude"],
+      forceOverwrite: force,
+    });
+
+    // Default bulk sync: the untracked target is skipped, so runApply gets no steps.
+    await useStore.getState().syncTools([fileItem(false)]);
+    expect(runApply).not.toHaveBeenCalled();
+
+    // Explicit push (forceOverwrite): the instance is now included.
+    await useStore.getState().syncTools([fileItem(true)]);
+    expect(runApply).toHaveBeenCalledTimes(1);
+    const steps = vi.mocked(runApply).mock.calls[0][0];
+    expect(steps).toHaveLength(1);
+    expect(steps[0].label).toContain("settings.json");
+  });
+
   it("uses directory-sync module when syncing directory entries", async () => {
     const sourceRoot = mkdtempSync(join(tmpdir(), "blackbook-sync-src-"));
     const sourceDir = join(sourceRoot, "read");

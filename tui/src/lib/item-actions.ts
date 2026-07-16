@@ -288,6 +288,9 @@ export function getFileActions(file: FileStatus): FileAction[] {
       } else if (inst.driftKind === "both-changed") {
         statusLabel = "Both drifted";
         statusColor = "red";
+      } else if (inst.driftKind === "never-synced") {
+        statusLabel = "Untracked target";
+        statusColor = "red";
       }
 
       actions.push({ label: inst.instanceName, type: "diff", instance: summary, statusColor, statusLabel });

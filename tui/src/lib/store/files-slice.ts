@@ -558,15 +558,23 @@ export const createFilesSlice: SliceCreator<FilesSlice> = (set, get) => ({
           continue;
         }
 
-        // Only forward-sync instances (skip conflicts and pullback targets unless forceBothChanged)
-        const forceBothChanged = item.forceBothChanged ?? false;
+        // Only forward-sync safe instances by default. Risky overwrites run only
+        // on an explicit per-item push (forceOverwrite).
+        const forceOverwrite = item.forceOverwrite ?? false;
         const steps: OrchestratorStep[] = item.file.instances
           .filter((i) => {
             if (i.status !== "missing" && i.status !== "drifted") return false;
-            // Allow both-changed instances when forceBothChanged is true
-            if (i.driftKind === "both-changed" && forceBothChanged) return true;
-            // Skip both-changed and target-changed by default (conflicts and pullback targets)
+            // "Untracked target": the tool file exists but was never tracked (or
+            // state was lost), so a forward sync overwrites content Blackbook
+            // didn't place. Treat it like a conflict — gate it behind an explicit
+            // push. A never-synced instance whose target is MISSING is a safe new
+            // install (status "missing") and is not gated here.
+            const untrackedTarget = i.status === "drifted" && i.driftKind === "never-synced";
+            // An explicit push overwrites conflicts and untracked targets alike.
+            if ((i.driftKind === "both-changed" || untrackedTarget) && forceOverwrite) return true;
+            // Skip conflicts and pullback targets by default.
             if (i.driftKind === "both-changed" || i.driftKind === "target-changed") return false;
+            if (untrackedTarget) return false;
             return true;
           })
           .map((i) => {

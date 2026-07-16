@@ -109,8 +109,11 @@ export const SyncList = React.memo(function SyncList({
           const missingCount = item.missingInstances.length;
           const targetChangedCount = item.file.instances.filter((i) => i.driftKind === "target-changed").length;
           const bothChangedCount = item.file.instances.filter((i) => i.driftKind === "both-changed").length;
+          const untrackedCount = item.file.instances.filter(
+            (i) => i.status === "drifted" && i.driftKind === "never-synced",
+          ).length;
           const sourceChangedCount = item.file.instances.filter(
-            (i) => i.status === "drifted" && i.driftKind !== "target-changed" && i.driftKind !== "both-changed",
+            (i) => i.status === "drifted" && i.driftKind !== "target-changed" && i.driftKind !== "both-changed" && i.driftKind !== "never-synced",
           ).length;
 
           const parts: string[] = [];
@@ -118,6 +121,7 @@ export const SyncList = React.memo(function SyncList({
           if (sourceChangedCount > 0) parts.push(`Source drifted: ${sourceChangedCount}`);
           if (targetChangedCount > 0) parts.push(`Target drifted: ${targetChangedCount}`);
           if (bothChangedCount > 0) parts.push(`Both drifted: ${bothChangedCount}`);
+          if (untrackedCount > 0) parts.push(`Untracked: ${untrackedCount}`);
           statusLabel = parts.join(" · ");
         }
 
