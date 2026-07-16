@@ -201,7 +201,7 @@ export interface PluginComponentConfig {
   disabledAgents: string[];
 }
 
-export type Tab = "discover" | "installed" | "marketplaces" | "tools" | "sync" | "settings";
+export type Tab = "discover" | "installed" | "marketplaces" | "tools" | "sync" | "projects" | "settings";
 
 export interface Notification {
   id: string;
@@ -247,6 +247,9 @@ export interface AppState {
   // Pi packages state
   piPackages: PiPackage[];
   piPackagesLoaded: boolean;
+  // Projects state (per-project `.agents/skills` management)
+  projects: import("./projects.js").ProjectInfo[];
+  projectsLoaded: boolean;
   piMarketplaces: PiMarketplace[];
   managedItems: import("./managed-item.js").ManagedItem[];
   // Sort state

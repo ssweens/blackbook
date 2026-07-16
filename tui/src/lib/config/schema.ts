@@ -89,6 +89,21 @@ export const PiPackageEntrySchema = z.union([
 export type PiPackageEntry = z.infer<typeof PiPackageEntrySchema>;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Projects
+// A registered project directory. Blackbook manages its shared, tool-agnostic
+// `.agents/skills` folder as a sync target against the source repo. A project is
+// just a directory — no git linkage, no per-tool matrix (see tasks/todo.md).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const ProjectEntrySchema = z.object({
+  path: z.string().min(1),
+  // Display name; defaults to the directory basename when omitted.
+  name: z.string().optional(),
+});
+
+export type ProjectEntry = z.infer<typeof ProjectEntrySchema>;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Top-level config schema
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -107,6 +122,7 @@ export const ConfigSchema = z.object({
   configs: z.array(ConfigEntrySchema).default([]),
   plugins: z.record(z.string(), z.record(z.string(), PluginComponentSchema)).default({}),
   pi_packages: z.array(PiPackageEntrySchema).default([]),
+  projects: z.array(ProjectEntrySchema).default([]),
 });
 
 export type BlackbookConfig = z.infer<typeof ConfigSchema>;

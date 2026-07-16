@@ -1654,6 +1654,7 @@ describe("Repo-prescribed Pi packages", () => {
           configs: [],
           plugins: {},
           pi_packages: [{ source: "npm:pi-subagents", description: "Team subagent package" }],
+          projects: [],
         }
         : {
           settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
@@ -1664,6 +1665,7 @@ describe("Repo-prescribed Pi packages", () => {
           configs: [],
           plugins: {},
           pi_packages: [],
+          projects: [],
         },
       configPath: configPath ?? "/tmp/blackbook/config.yaml",
       errors: [],
@@ -1717,6 +1719,7 @@ describe("Repo-prescribed Pi packages", () => {
           configs: [],
           plugins: {},
           pi_packages: [{ source: "npm:pi-mcp-adapter", name: "pi-mcp-adapter" }],
+          projects: [],
         }
         : {
           settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
@@ -1727,6 +1730,7 @@ describe("Repo-prescribed Pi packages", () => {
           configs: [],
           plugins: {},
           pi_packages: [],
+          projects: [],
         },
       configPath: configPath ?? "/tmp/blackbook/config.yaml",
       errors: [],
@@ -1775,6 +1779,7 @@ describe("Repo-prescribed Pi packages", () => {
         configs: [],
         plugins: {},
         pi_packages: [],
+        projects: [],
       },
       configPath: "/tmp/blackbook/config.yaml",
       errors: [],
@@ -1815,6 +1820,7 @@ describe("Repo-prescribed Pi packages", () => {
         configs: [],
         plugins: {},
         pi_packages: [],
+        projects: [],
       },
       configPath: "/tmp/blackbook/config.yaml",
       errors: [],
@@ -1847,6 +1853,7 @@ describe("Repo-prescribed Pi packages", () => {
         configs: [],
         plugins: {},
         pi_packages: [],
+        projects: [],
       },
       configPath: "/tmp/blackbook/config.yaml",
       errors: [],
@@ -1904,6 +1911,7 @@ describe("Repo-prescribed Pi packages", () => {
         configs: [],
         plugins: {},
         pi_packages: [],
+        projects: [],
       },
       configPath: "/tmp/blackbook/config.yaml",
       errors: [],
@@ -1933,6 +1941,7 @@ describe("Repo-prescribed Pi packages", () => {
         configs: [],
         plugins: {},
         pi_packages: [{ source: "npm:pi-web-access", name: "pi-web-access" }],
+        projects: [],
       },
       configPath: "/tmp/blackbook/config.yaml",
       errors: [],
@@ -1993,6 +2002,7 @@ describe("Repo-prescribed Pi packages", () => {
         configs: [],
         plugins: {},
         pi_packages: [],
+        projects: [],
       },
       configPath: "/tmp/blackbook/config.yaml",
       errors: [],
@@ -2051,6 +2061,7 @@ describe("Repo-prescribed Pi packages", () => {
           configs: [],
           plugins: {},
           pi_packages: [],
+          projects: [],
         }
         : {
           settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
@@ -2061,6 +2072,7 @@ describe("Repo-prescribed Pi packages", () => {
           configs: [],
           plugins: {},
           pi_packages: [],
+          projects: [],
         },
       configPath: configPath ?? "/tmp/blackbook/config.yaml",
       errors: [],
@@ -2108,6 +2120,7 @@ describe("Repo-prescribed Pi packages", () => {
         { source: "npm:pi-delete-me", name: "Delete Me" },
         { source: "npm:pi-keep-me", name: "Keep Me" },
       ],
+      projects: [],
     };
     const sourceConfig = {
       ...localConfig,
@@ -2169,6 +2182,7 @@ describe("Repo-prescribed Pi packages", () => {
           configs: [],
           plugins: {},
           pi_packages: [{ source: "npm:pi-ask-user", name: "Ask User" }],
+          projects: [],
         }
         : {
           settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
@@ -2179,6 +2193,7 @@ describe("Repo-prescribed Pi packages", () => {
           configs: [],
           plugins: {},
           pi_packages: [],
+          projects: [],
         },
       configPath: configPath ?? "/tmp/blackbook/config.yaml",
       errors: [],
@@ -2657,6 +2672,8 @@ describe("composed store shape", () => {
     "pluginDriftMap",
     "currentSection",
     "discoverSubView",
+    "projects",
+    "projectsLoaded",
   ] as const;
 
   const EXPECTED_ACTIONS = [
@@ -2716,6 +2733,9 @@ describe("composed store shape", () => {
     "closeDiff",
     "closeMissingSummary",
     "pullbackFileInstance",
+    "loadProjects",
+    "addProject",
+    "removeProject",
   ] as const;
 
   it("exposes every expected state field", () => {

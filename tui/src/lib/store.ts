@@ -11,6 +11,7 @@ import { createToolsSlice } from "./store/tools-slice.js";
 import { createPluginsSlice } from "./store/plugins-slice.js";
 import { createPiSlice } from "./store/pi-slice.js";
 import { createFilesSlice } from "./store/files-slice.js";
+import { createProjectsSlice } from "./store/projects-slice.js";
 
 export type { Store } from "./store/types.js";
 export type { InstallStatus } from "./plugin-merge.js";
@@ -34,6 +35,7 @@ export const useStore = create<import("./store/types.js").Store>((rawSet, get) =
     ...createPluginsSlice(set, get),
     ...createPiSlice(set, get),
     ...createFilesSlice(set, get),
+    ...createProjectsSlice(set, get),
   };
 });
 

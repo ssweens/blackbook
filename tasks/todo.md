@@ -192,10 +192,14 @@ Already covered in blackbook (verified, no action): atomic state writes with sin
 - [ ] TUI: preset row/pills with active ✓ / partial (count badge) / inactive states
 - [ ] Applying a preset is a one-time install/enable action, not a live sync (matches skills-manager semantics)
 
-### Backlog: Project-local workspaces
-- [ ] Manage `<project>/.claude/skills` (and per-tool equivalents) alongside global config dirs
-- [ ] Compare project-local skills against source repo copies; sync in both directions (reuse three-way state keyed per project path)
-- [ ] Recursive scanner must follow the skill-format detection policy: `SKILL.md` is the only skill marker; never treat `README.md`/`CLAUDE.md` as markers; support nested/namespace layouts without recursion short-circuiting (see spec read below)
+### Project layer (2026-07-16 — direction pivoted with user)
+Decisions: additive NEW layer alongside global/agent management; a project is a plain directory (NO git linkage); scope is the shared, tool-agnostic **`.agents/skills`** dir only for now (NOT a per-tool matrix). Model copied from skills-manager (analyzed 2026-07-16): filesystem-derived association (no stored skill↔project table — scan live + drift via existing engine); `-disabled` sibling-dir enable/disable; three add modes (pick-dir / scan-root / adopt); five sync verbs keyed off drift. Presets deferred/reframed as "profiles" applied to projects.
+
+- [x] **Foundation (data layer)** (2026-07-16) — `projects: [{path, name?}]` config schema + writer + merge (generic); `lib/projects.ts` scans `<project>/.agents/skills` (+`-disabled`) and classifies each skill in-sync/drifted/project-only vs the source-repo skill index (reuses noise-filtered `hashDirectory`); `store/projects-slice.ts` with loadProjects/addProject/removeProject (config-backed, path stored raw for `~` portability, dedupe by expanded). Tab type extended (not yet exposed). Module tests: source index (flat+namespaced), status classification, empty cases. Slice + tab UI verified in the next commit.
+- [ ] **Projects tab (read-only inventory)** — ProjectsTab component + App.tsx wiring (TABS, TabContent, navigation, add/remove input overlay, refresh); visual verification. List projects + per-project skill inventory with drift status.
+- [ ] **Provisioning** — push (source→project), pull (project→source), enable/disable (`-disabled`), delete, reusing the sync engine with the `project_newer`-style guard.
+- [ ] **Width** — extend beyond skills as project-scoping needs arise.
+- Deferred: git-awareness (skills-manager doesn't do it; optional nicety), per-tool project dirs (only `.agents` for now).
 
 ### Backlog: Generalized adoption ("track in source repo" for everything)
 - [ ] Extend the Pi-only `Track in source repo` flow to any unmanaged skill/command/agent found in a tool's config dir

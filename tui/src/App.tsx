@@ -285,6 +285,7 @@ export function App() {
     discover: false,
     installed: false,
     marketplaces: false,
+    projects: false,
     settings: false,
   });
 

@@ -58,6 +58,10 @@ export interface Actions {
   trackPiPackageInSource: (pkg: PiPackage) => Promise<boolean>;
   removePiPackageFromGit: (pkg: PiPackage) => Promise<boolean>;
   deletePiPackageEverywhere: (pkg: PiPackage) => Promise<boolean>;
+  // Project actions (per-project `.agents/skills` management)
+  loadProjects: (options?: { silent?: boolean }) => Promise<void>;
+  addProject: (path: string) => Promise<boolean>;
+  removeProject: (path: string) => Promise<boolean>;
   setDetailPiPackage: (pkg: PiPackage | null) => Promise<void>;
   togglePiMarketplaceEnabled: (name: string) => Promise<void>;
   addPiMarketplace: (name: string, source: string) => Promise<void>;
