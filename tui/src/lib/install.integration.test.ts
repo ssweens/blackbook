@@ -29,6 +29,7 @@ import {
   syncPluginInstances,
   getStandaloneSkills,
   installSkillToInstance,
+  pullbackSkillToSource,
   migrateLegacyStandaloneSkillLayout,
   buildManifestItemKey,
   buildBackupPath,
@@ -38,6 +39,7 @@ import {
   reconcileStaleInstallArtifacts,
 } from "./install.js";
 import * as manifestModule from "./manifest.js";
+import { listBackups } from "./modules/backup.js";
 import { togglePluginComponent } from "./plugin-status.js";
 import type { FileStatus } from "./types.js";
 import { invalidatePluginToolStatusCache } from "./plugin-status.js";
@@ -1276,6 +1278,63 @@ describe("standalone skill scanning compatibility", () => {
 
     expect(existsSync(join(namespacedSkillDir, "SKILL.md"))).toBe(true);
     expect(existsSync(flatSkillDir)).toBe(false);
+  });
+
+  it("backs up an existing (drifted) install before overwriting it", () => {
+    const skillName = "arrangement-production-architecture";
+    const sourceRepo = configureSourceRepoWithSsmpSkill(skillName);
+    const sourceSkillDir = join(sourceRepo, "skills", "ssmp", skillName);
+
+    const piInstance = getInstance("pi");
+    const skill = {
+      name: skillName, namespace: "ssmp", installations: [],
+      diskPath: sourceSkillDir, toolId: "", instanceId: "", instanceName: "",
+      sourcePath: sourceSkillDir,
+    } as any;
+
+    // Pre-existing install carrying user edits at the namespaced target.
+    const targetDir = join(piInstance.configDir, piInstance.skillsSubdir!, "ssmp", skillName);
+    mkdirSync(targetDir, { recursive: true });
+    writeFileSync(join(targetDir, "SKILL.md"), "# user-edited local version\n");
+
+    expect(installSkillToInstance(skill, "pi", piInstance.instanceId)).toBe(true);
+
+    // Target overwritten with the source copy…
+    expect(readFileSync(join(targetDir, "SKILL.md"), "utf-8")).toContain("source copy");
+    // …and the user's prior version was backed up recoverably.
+    const backups = listBackups(`skill:${skillName}`);
+    expect(backups.length).toBeGreaterThan(0);
+    expect(readFileSync(join(backups[0], skillName, "SKILL.md"), "utf-8")).toContain("user-edited");
+  });
+
+  it("backs up the source-repo skill before pullback overwrites it", () => {
+    const skillName = "mixing-fundamentals";
+    const sourceRepo = configureSourceRepoWithSsmpSkill(skillName);
+    const sourceSkillDir = join(sourceRepo, "skills", "ssmp", skillName);
+    // Distinct "old" source content we expect to be preserved on pullback.
+    writeFileSync(join(sourceSkillDir, "SKILL.md"), "# old source, perhaps uncommitted\n");
+
+    const piInstance = getInstance("pi");
+    // A disk install holding the newer content to be pulled back.
+    const diskDir = join(piInstance.configDir, piInstance.skillsSubdir!, "ssmp", skillName);
+    mkdirSync(diskDir, { recursive: true });
+    writeFileSync(join(diskDir, "SKILL.md"), "# newer disk version\n");
+
+    const skill = {
+      name: skillName, namespace: "ssmp", sourcePath: sourceSkillDir,
+      installations: [
+        { toolId: "pi", instanceId: piInstance.instanceId, instanceName: "Pi", diskPath: diskDir, drifted: true },
+      ],
+    } as any;
+
+    expect(pullbackSkillToSource(skill, "pi", piInstance.instanceId)).toBe(true);
+
+    // Source now holds the disk version…
+    expect(readFileSync(join(sourceSkillDir, "SKILL.md"), "utf-8")).toContain("newer disk version");
+    // …and the prior source content was backed up before removal.
+    const backups = listBackups(`skill-source:${skillName}`);
+    expect(backups.length).toBeGreaterThan(0);
+    expect(readFileSync(join(backups[0], skillName, "SKILL.md"), "utf-8")).toContain("old source");
   });
 });
 

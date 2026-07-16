@@ -15,6 +15,7 @@ import {
 import { promisify } from "util";
 import { execFile, execFileSync } from "child_process";
 import { hashBuffer, hashFile, hashPath, hashString, hashDirectory } from "./modules/hash.js";
+import { createBackup, pruneBackups } from "./modules/backup.js";
 
 const execFileAsync = promisify(execFile);
 import { join, dirname, resolve, basename } from "path";
@@ -2005,6 +2006,12 @@ export function pullbackSkillToSource(
 
   try {
     mkdirSync(dirname(targetPath), { recursive: true });
+    // Back up the source-repo skill before removing it. Git recovers committed
+    // content, but uncommitted local edits would otherwise be lost outright.
+    if (existsSync(targetPath)) {
+      createBackup(targetPath, `skill-source:${skill.name}`);
+      pruneBackups(`skill-source:${skill.name}`);
+    }
     rmSync(targetPath, { recursive: true, force: true });
     cpSync(inst.diskPath, targetPath, { recursive: true, dereference: true });
   } catch (err) {
@@ -2068,6 +2075,13 @@ export function installSkillToInstance(
   const targetDir = getStandaloneSkillTargetDir(skill, target);
   if (!targetDir) return false;
   try {
+    // Back up any existing install before overwriting — this runs on the drifted
+    // branch (overwrite disk with source), so the target may hold user edits.
+    // Mirrors directory-sync/file-copy, which always back up first.
+    if (existsSync(targetDir)) {
+      createBackup(targetDir, `skill:${skill.name}`);
+      pruneBackups(`skill:${skill.name}`);
+    }
     mkdirSync(dirname(targetDir), { recursive: true });
     cpSync(sourcePath, targetDir, { recursive: true });
     return true;
