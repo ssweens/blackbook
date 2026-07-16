@@ -6,6 +6,7 @@ import {
   existsSync,
   writeFileSync,
   readFileSync,
+  readdirSync,
   utimesSync,
 } from "fs";
 import { join } from "path";
@@ -194,6 +195,21 @@ describe("withFileLockSync", () => {
   });
 });
 
+describe("atomicWriteFileSync", () => {
+  it("removes the temp file when the rename fails, leaving no orphan", () => {
+    renameSyncMock.mockImplementationOnce(() => {
+      throw eaccesError();
+    });
+
+    expect(() => atomicWriteFileSync(target, "payload")).toThrow(/EACCES/);
+
+    // No `.<ts>.<pid>.tmp` orphan left behind, and the target was not created.
+    const leftover = readdirSync(dir).filter((n) => n.endsWith(".tmp"));
+    expect(leftover).toEqual([]);
+    expect(existsSync(target)).toBe(false);
+  });
+});
+
 describe("isSyncNoise", () => {
   it("treats OS/tooling files as noise regardless of directory flag", () => {
     for (const name of [".DS_Store", "Thumbs.db", "desktop.ini"]) {
@@ -218,5 +234,13 @@ describe("isSyncNoise", () => {
     expect(isSyncNoise(".gitignore", false)).toBe(false);
     expect(isSyncNoise("references", true)).toBe(false);
     expect(isSyncNoise("script.py", false)).toBe(false);
+  });
+
+  it("treats a stranded atomic-write temp as noise but not real .tmp content", () => {
+    // Exact shape produced by atomicWriteFileSync: `.<ms>.<pid>.tmp`.
+    expect(isSyncNoise(".1720000000000.48213.tmp", false)).toBe(true);
+    // A legitimate content file that merely ends in .tmp must NOT be swallowed.
+    expect(isSyncNoise("draft.tmp", false)).toBe(false);
+    expect(isSyncNoise("notes.tmp", false)).toBe(false);
   });
 });

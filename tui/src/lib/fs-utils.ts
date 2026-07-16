@@ -31,6 +31,11 @@ const SYNC_NOISE_DIRS = new Set([".git", "__pycache__"]);
 export function isSyncNoise(name: string, isDirectory: boolean): boolean {
   if (isDirectory) return SYNC_NOISE_DIRS.has(name);
   if (SYNC_NOISE_FILES.has(name)) return true;
+  // A hard crash between openSync and renameSync in atomicWriteFileSync can
+  // strand its temp file `.<ms>.<pid>.tmp` in a synced dir; ignore it here so no
+  // scanner reads it as phantom drift. Anchored to the exact shape so it can't
+  // swallow a legitimate *.tmp content file.
+  if (/^\.\d+\.\d+\.tmp$/.test(name)) return true;
   return name.endsWith(".pyc") || name.endsWith(".pyo");
 }
 
@@ -174,12 +179,23 @@ export function atomicWriteFileSync(path: string, content: string | Buffer): voi
   const tempPath = join(dir, `.${Date.now()}.${process.pid}.tmp`);
   const fd = openSync(tempPath, "w");
   try {
-    writeFileSync(fd, content);
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
+    try {
+      writeFileSync(fd, content);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tempPath, path);
+  } catch (err) {
+    // A failed write/rename must not leave the temp behind — scanners would read
+    // it as phantom drift. Best-effort cleanup, then surface the real error.
+    try {
+      rmSync(tempPath, { force: true });
+    } catch {
+      /* ignore cleanup failure; the original error is what matters */
+    }
+    throw err;
   }
-  renameSync(tempPath, path);
 }
 
 export function withFileLockSync<T>(path: string, fn: () => T): T {
