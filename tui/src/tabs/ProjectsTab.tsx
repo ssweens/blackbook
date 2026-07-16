@@ -1,7 +1,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { useStore } from "../lib/store.js";
-import type { ProjectSkillStatus } from "../lib/projects.js";
+import { buildProjectSkillRows, type ProjectSkillStatus } from "../lib/projects.js";
 
 const STATUS_META: Record<ProjectSkillStatus, { glyph: string; color: string; label: string }> = {
   "in-sync": { glyph: "✓", color: "green", label: "in sync" },
@@ -18,6 +18,7 @@ export function ProjectsTab({ contentHeight }: ProjectsTabProps) {
   const loading = useStore((s) => s.loading);
   const projects = useStore((s) => s.projects);
   const projectsLoaded = useStore((s) => s.projectsLoaded);
+  const projectDetailPath = useStore((s) => s.projectDetailPath);
 
   if (projects.length === 0) {
     return (
@@ -33,10 +34,68 @@ export function ProjectsTab({ contentHeight }: ProjectsTabProps) {
     );
   }
 
-  const selected = projects[Math.min(selectedIndex, projects.length - 1)];
-  // Cap the skill list so the detail box never blows the chrome-row budget.
-  const maxSkillRows = Math.max(1, contentHeight - projects.length - 6);
+  // Drill-in: per-skill list for one project.
+  if (projectDetailPath) {
+    const project = projects.find((p) => p.path === projectDetailPath);
+    if (!project) {
+      return (
+        <Box marginY={1}>
+          <Text color="gray">Project no longer available. Press Esc to go back.</Text>
+        </Box>
+      );
+    }
+    const rows = buildProjectSkillRows(project);
+    const maxRows = Math.max(1, contentHeight - 4);
+    return (
+      <Box flexDirection="column">
+        <Box>
+          <Text color="cyan" bold>
+            {project.name}
+          </Text>
+          <Text color="gray" wrap="truncate">
+            {"  "}
+            {project.path}/.agents/skills
+          </Text>
+        </Box>
+        {rows.length === 0 ? (
+          <Text color="gray">No skills here and none available in the source repo.</Text>
+        ) : (
+          rows.slice(0, maxRows).map((row, i) => {
+            const isSel = i === selectedIndex;
+            const marker = isSel ? "❯ " : "  ";
+            if (row.kind === "available") {
+              return (
+                <Box key={`a:${row.available.name}`}>
+                  <Text color={isSel ? "cyan" : "gray"}>{marker}</Text>
+                  <Text color="blue">+ </Text>
+                  <Text color={isSel ? "white" : "gray"}>{row.available.name}</Text>
+                  <Text color="gray">{"  "}available — p to add</Text>
+                </Box>
+              );
+            }
+            const m = STATUS_META[row.skill.status];
+            return (
+              <Box key={`s:${row.skill.name}`}>
+                <Text color={isSel ? "cyan" : "gray"}>{marker}</Text>
+                <Text color={m.color}>{m.glyph} </Text>
+                <Text color={row.skill.enabled ? "white" : "gray"}>
+                  {row.skill.name}
+                  {row.skill.enabled ? "" : " (disabled)"}
+                </Text>
+                <Text color="gray">
+                  {"  "}
+                  {m.label}
+                </Text>
+              </Box>
+            );
+          })
+        )}
+        {rows.length > maxRows && <Text color="gray">…and {rows.length - maxRows} more</Text>}
+      </Box>
+    );
+  }
 
+  // Project list.
   return (
     <Box flexDirection="column">
       {projects.map((p, i) => {
@@ -44,7 +103,7 @@ export function ProjectsTab({ contentHeight }: ProjectsTabProps) {
         const drifted = p.skills.filter((s) => s.status === "drifted").length;
         const summary = !p.exists
           ? "missing dir"
-          : `${p.skills.length} skill${p.skills.length === 1 ? "" : "s"}${drifted ? ` · ${drifted} drifted` : ""}`;
+          : `${p.skills.length} skill${p.skills.length === 1 ? "" : "s"}${drifted ? ` · ${drifted} drifted` : ""} · ${p.available.length} available`;
         return (
           <Box key={p.path}>
             <Text color={isSel ? "cyan" : "white"}>
@@ -58,44 +117,9 @@ export function ProjectsTab({ contentHeight }: ProjectsTabProps) {
           </Box>
         );
       })}
-
-      {selected && (
-        <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="gray" paddingX={1}>
-          <Box>
-            <Text color="white" bold>
-              {selected.name}
-            </Text>
-            <Text color="gray">
-              {"  "}.agents/skills · {selected.availableCount} available to add
-            </Text>
-          </Box>
-          {selected.skills.length === 0 ? (
-            <Text color="gray">
-              No skills in .agents/skills{selected.hasAgentsDir ? "" : " (directory not present)"}.
-            </Text>
-          ) : (
-            selected.skills.slice(0, maxSkillRows).map((s) => {
-              const m = STATUS_META[s.status];
-              return (
-                <Box key={s.name}>
-                  <Text color={m.color}>{m.glyph} </Text>
-                  <Text color={s.enabled ? "white" : "gray"}>
-                    {s.name}
-                    {s.enabled ? "" : " (disabled)"}
-                  </Text>
-                  <Text color="gray">
-                    {"  "}
-                    {m.label}
-                  </Text>
-                </Box>
-              );
-            })
-          )}
-          {selected.skills.length > maxSkillRows && (
-            <Text color="gray">…and {selected.skills.length - maxSkillRows} more</Text>
-          )}
-        </Box>
-      )}
+      <Box marginTop={1}>
+        <Text color="gray">Enter to open a project · a add · d remove</Text>
+      </Box>
     </Box>
   );
 }

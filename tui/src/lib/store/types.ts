@@ -62,6 +62,12 @@ export interface Actions {
   loadProjects: (options?: { silent?: boolean }) => Promise<void>;
   addProject: (path: string) => Promise<boolean>;
   removeProject: (path: string) => Promise<boolean>;
+  setProjectDetailPath: (path: string | null) => void;
+  // Per-skill provisioning within a project (drill-in actions)
+  pushProjectSkill: (projectPath: string, name: string, sourceSkillDir: string) => Promise<boolean>;
+  pullProjectSkill: (projectPath: string, name: string, projectSkillDir: string, sourceSkillDir?: string) => Promise<boolean>;
+  toggleProjectSkill: (projectPath: string, name: string, currentlyEnabled: boolean) => Promise<boolean>;
+  removeProjectSkill: (name: string, skillDir: string) => Promise<boolean>;
   setDetailPiPackage: (pkg: PiPackage | null) => Promise<void>;
   togglePiMarketplaceEnabled: (name: string) => Promise<void>;
   addPiMarketplace: (name: string, source: string) => Promise<void>;

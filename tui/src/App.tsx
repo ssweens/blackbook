@@ -65,6 +65,7 @@ import { useToolActions } from "./lib/use-tool-actions.js";
 import { useNamespaceTree } from "./lib/use-namespace-tree.js";
 import { buildDetailCallbacks } from "./lib/detail-callbacks.js";
 import { getSyncItemKey, sortAndFilterPiPackages } from "./lib/derived.js";
+import { buildProjectSkillRows } from "./lib/projects.js";
 
 const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces", "projects", "settings"];
 
@@ -235,6 +236,12 @@ export function App() {
   const loadProjects = useStore((s) => s.loadProjects);
   const addProject = useStore((s) => s.addProject);
   const removeProject = useStore((s) => s.removeProject);
+  const projectDetailPath = useStore((s) => s.projectDetailPath);
+  const setProjectDetailPath = useStore((s) => s.setProjectDetailPath);
+  const pushProjectSkill = useStore((s) => s.pushProjectSkill);
+  const pullProjectSkill = useStore((s) => s.pullProjectSkill);
+  const toggleProjectSkill = useStore((s) => s.toggleProjectSkill);
+  const removeProjectSkill = useStore((s) => s.removeProjectSkill);
 
   const [actionIndex, setActionIndex] = useState(0);
   const openSkillDetail = (skill: import("./lib/install.js").StandaloneSkill) => {
@@ -766,10 +773,14 @@ export function App() {
       return Math.max(0, syncPreview.length - 1);
     }
     if (tab === "projects") {
+      if (projectDetailPath) {
+        const p = projects.find((pr) => pr.path === projectDetailPath);
+        return Math.max(0, (p ? p.skills.length + p.available.length : 0) - 1);
+      }
       return Math.max(0, projects.length - 1);
     }
     return Math.max(0, libraryCount - 1);
-  }, [discoverSubView, tab, marketplaceBrowsePlugins, filteredPlugins, filteredPiPackages, marketplaceRows, managedTools, syncPreview, projects, libraryCount]);
+  }, [discoverSubView, tab, marketplaceBrowsePlugins, filteredPlugins, filteredPiPackages, marketplaceRows, managedTools, syncPreview, projects, projectDetailPath, libraryCount]);
 
   useEffect(() => {
     if (selectedIndex > maxIndex) {
@@ -1096,6 +1107,11 @@ export function App() {
     if (overlay) { overlay.escClose!(); return; }
     // List sub-views below are NOT render overlays (they render inside TabContent),
     // so they live outside the registry — handled here exactly as before.
+    if (tab === "projects" && projectDetailPath) {
+      setProjectDetailPath(null);
+      setSelectedIndex(0);
+      return;
+    }
     if (discoverSubView) {
       if (marketplaceBrowseContext) {
         // The browse action now actually switches to the Discover tab (see
@@ -1115,6 +1131,18 @@ export function App() {
   };
 
   const handleEnterOnList = () => {
+    // Projects tab: Enter drills into the selected project's skill list.
+    if (tab === "projects") {
+      if (!projectDetailPath) {
+        const target = projects[selectedIndex];
+        if (target) {
+          setProjectDetailPath(target.path);
+          setSelectedIndex(0);
+        }
+      }
+      return;
+    }
+
     // Marketplaces tab
     if (tab === "marketplaces") {
       if (!selectedMarketplaceRow) return;
@@ -1489,8 +1517,41 @@ export function App() {
       }
     }
 
-    // Projects tab: 'a' registers a project directory, 'd' removes the selected one.
+    // Projects tab shortcuts.
     if (tab === "projects" && !isOverlayOpen) {
+      const detailProject = projectDetailPath ? projects.find((p) => p.path === projectDetailPath) : null;
+      if (detailProject) {
+        // Drilled into a project — per-skill provisioning on the highlighted row.
+        const row = buildProjectSkillRows(detailProject)[selectedIndex];
+        if (!row) return;
+        if (input === "p") {
+          // Push source → project (add an available skill, or reset a present one).
+          if (row.kind === "available") {
+            void pushProjectSkill(detailProject.path, row.available.name, row.available.sourcePath);
+          } else if (row.skill.sourcePath) {
+            void pushProjectSkill(detailProject.path, row.skill.name, row.skill.sourcePath);
+          } else {
+            notify(`${row.skill.name} has no source-repo copy to push from`, "warning");
+          }
+          return;
+        }
+        if (row.kind === "present") {
+          if (input === "u") {
+            void pullProjectSkill(detailProject.path, row.skill.name, row.skill.diskPath, row.skill.sourcePath);
+            return;
+          }
+          if (input === "e") {
+            void toggleProjectSkill(detailProject.path, row.skill.name, row.skill.enabled);
+            return;
+          }
+          if (input === "d") {
+            void removeProjectSkill(row.skill.name, row.skill.diskPath);
+            return;
+          }
+        }
+        return;
+      }
+      // Project list.
       if (input === "a") {
         setModalVisible("addProject");
         return;

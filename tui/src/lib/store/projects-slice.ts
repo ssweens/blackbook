@@ -1,8 +1,15 @@
 import { statSync } from "fs";
 import type { Store, SliceCreator } from "./types.js";
 import { getProjects } from "../projects.js";
+import {
+  pushSkillToProject,
+  pullSkillToSource,
+  toggleProjectSkill as toggleProjectSkillFs,
+  deleteProjectSkill as deleteProjectSkillFs,
+} from "../project-actions.js";
 import { loadConfig as loadYamlConfig } from "../config/loader.js";
 import { saveConfig as saveYamlConfig } from "../config/writer.js";
+import { getConfigRepoPath } from "../config.js";
 import { expandPath } from "../config/path.js";
 
 export type ProjectsSlice = Pick<
@@ -10,11 +17,21 @@ export type ProjectsSlice = Pick<
   // state
   | "projects"
   | "projectsLoaded"
+  | "projectDetailPath"
   // actions
   | "loadProjects"
   | "addProject"
   | "removeProject"
+  | "setProjectDetailPath"
+  | "pushProjectSkill"
+  | "pullProjectSkill"
+  | "toggleProjectSkill"
+  | "removeProjectSkill"
 >;
+
+function backupRetention(): number | undefined {
+  return loadYamlConfig().config.settings.backup_retention;
+}
 
 function isDirectory(path: string): boolean {
   try {
@@ -27,6 +44,9 @@ function isDirectory(path: string): boolean {
 export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
   projects: [],
   projectsLoaded: false,
+  projectDetailPath: null,
+
+  setProjectDetailPath: (path) => set({ projectDetailPath: path }),
 
   loadProjects: async (options) => {
     const silent = options?.silent === true;
@@ -84,6 +104,59 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
 
     await get().loadProjects({ silent: true });
     notify(`Removed project ${expanded}`, "success");
+    return true;
+  },
+
+  pushProjectSkill: async (projectPath, name, sourceSkillDir) => {
+    const { notify } = get();
+    const result = await pushSkillToProject(projectPath, sourceSkillDir, name, backupRetention());
+    if (!result.ok) {
+      notify(`Push failed: ${result.error}`, "error");
+      return false;
+    }
+    await get().loadProjects({ silent: true });
+    notify(`Pushed ${name} into project`, "success");
+    return true;
+  },
+
+  pullProjectSkill: async (projectPath, name, projectSkillDir, sourceSkillDir) => {
+    const { notify } = get();
+    const sourceRepo = getConfigRepoPath();
+    if (!sourceRepo) {
+      notify("No source repo configured — can't pull", "error");
+      return false;
+    }
+    const result = await pullSkillToSource(sourceRepo, projectSkillDir, name, sourceSkillDir, backupRetention());
+    if (!result.ok) {
+      notify(`Pull failed: ${result.error}`, "error");
+      return false;
+    }
+    await get().loadProjects({ silent: true });
+    notify(`Pulled ${name} to source repo`, "success");
+    return true;
+  },
+
+  toggleProjectSkill: async (projectPath, name, currentlyEnabled) => {
+    const { notify } = get();
+    const result = toggleProjectSkillFs(projectPath, name, currentlyEnabled);
+    if (!result.ok) {
+      notify(`Toggle failed: ${result.error}`, "error");
+      return false;
+    }
+    await get().loadProjects({ silent: true });
+    notify(`${currentlyEnabled ? "Disabled" : "Enabled"} ${name}`, "success");
+    return true;
+  },
+
+  removeProjectSkill: async (name, skillDir) => {
+    const { notify } = get();
+    const result = deleteProjectSkillFs(skillDir, name, backupRetention());
+    if (!result.ok) {
+      notify(`Delete failed: ${result.error}`, "error");
+      return false;
+    }
+    await get().loadProjects({ silent: true });
+    notify(`Removed ${name} from project`, "success");
     return true;
   },
 });

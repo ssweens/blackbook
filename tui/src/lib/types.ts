@@ -250,6 +250,8 @@ export interface AppState {
   // Projects state (per-project `.agents/skills` management)
   projects: import("./projects.js").ProjectInfo[];
   projectsLoaded: boolean;
+  /** When set, the Projects tab is drilled into this project's skill list. */
+  projectDetailPath: string | null;
   piMarketplaces: PiMarketplace[];
   managedItems: import("./managed-item.js").ManagedItem[];
   // Sort state

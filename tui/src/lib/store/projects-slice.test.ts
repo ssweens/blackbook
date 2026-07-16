@@ -36,7 +36,7 @@ beforeEach(() => {
 
 describe("projects-slice", () => {
   it("loadProjects populates from getProjects and marks loaded", async () => {
-    getProjectsMock.mockReturnValue([{ path: "/p", name: "p", exists: true, hasAgentsDir: true, skills: [], availableCount: 0 }]);
+    getProjectsMock.mockReturnValue([{ path: "/p", name: "p", exists: true, hasAgentsDir: true, skills: [], available: [] }]);
     const { get } = makeStore();
     await get().loadProjects();
     expect(get().projects).toHaveLength(1);

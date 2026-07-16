@@ -2674,6 +2674,7 @@ describe("composed store shape", () => {
     "discoverSubView",
     "projects",
     "projectsLoaded",
+    "projectDetailPath",
   ] as const;
 
   const EXPECTED_ACTIONS = [
@@ -2736,6 +2737,11 @@ describe("composed store shape", () => {
     "loadProjects",
     "addProject",
     "removeProject",
+    "setProjectDetailPath",
+    "pushProjectSkill",
+    "pullProjectSkill",
+    "toggleProjectSkill",
+    "removeProjectSkill",
   ] as const;
 
   it("exposes every expected state field", () => {

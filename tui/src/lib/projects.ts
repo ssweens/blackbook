@@ -28,6 +28,13 @@ export interface ProjectSkill {
   sourcePath?: string;
 }
 
+/** A source-repo skill not yet present in a project (a candidate to add). */
+export interface AvailableSkill {
+  name: string;
+  /** Source-repo skill directory. */
+  sourcePath: string;
+}
+
 export interface ProjectInfo {
   /** Expanded absolute project directory. */
   path: string;
@@ -40,7 +47,7 @@ export interface ProjectInfo {
   /** Skills found in the project's `.agents/skills` (enabled + disabled). */
   skills: ProjectSkill[];
   /** Source-repo skills not yet present in this project (candidates to add). */
-  availableCount: number;
+  available: AvailableSkill[];
 }
 
 /** True if `dir` is a skill directory (contains SKILL.md). */
@@ -137,19 +144,33 @@ export function getProjects(): ProjectInfo[] {
     const exists = isDirectory(path);
     const skills = exists ? scanProjectSkills(path, sourceIndex) : [];
     const present = new Set(skills.map((s) => s.name));
-    let availableCount = 0;
-    for (const name of sourceIndex.keys()) {
-      if (!present.has(name)) availableCount += 1;
+    const available: AvailableSkill[] = [];
+    for (const [name, sourcePath] of sourceIndex) {
+      if (!present.has(name)) available.push({ name, sourcePath });
     }
+    available.sort((a, b) => a.name.localeCompare(b.name));
     return {
       path,
       name: entry.name ?? basename(path),
       exists,
       hasAgentsDir: exists && existsSync(join(path, PROJECT_SKILLS_SUBDIR)),
       skills,
-      availableCount,
+      available,
     };
   });
+}
+
+/** A row in the drill-in skill list: an existing project skill or an addable one. */
+export type ProjectSkillRow =
+  | { kind: "present"; skill: ProjectSkill }
+  | { kind: "available"; available: AvailableSkill };
+
+/** Flatten a project's present skills followed by its available-to-add skills. */
+export function buildProjectSkillRows(project: ProjectInfo): ProjectSkillRow[] {
+  return [
+    ...project.skills.map((skill) => ({ kind: "present" as const, skill })),
+    ...project.available.map((available) => ({ kind: "available" as const, available })),
+  ];
 }
 
 function isDirectory(path: string): boolean {

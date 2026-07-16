@@ -79,6 +79,7 @@ export const createUiSlice: SliceCreator<UiSlice> = (set, get) => ({
             discoverSubView: null,
             currentSection: "plugins",
             detail: null,
+            projectDetailPath: null,
           }
     ),
   setSortBy: (by) => set({ sortBy: by }),
