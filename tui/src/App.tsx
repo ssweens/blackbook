@@ -38,6 +38,7 @@ import { InstalledTab } from "./tabs/InstalledTab.js";
 import { ProjectsTab } from "./tabs/ProjectsTab.js";
 import { AddProjectModal } from "./components/AddProjectModal.js";
 import { AdoptModal } from "./components/AdoptModal.js";
+import { ProfilePickerModal } from "./components/ProfilePickerModal.js";
 import { getPluginToolStatus } from "./lib/plugin-status.js";
 import {
   syncPluginInstances,
@@ -245,6 +246,9 @@ export function App() {
   const removeProjectSkill = useStore((s) => s.removeProjectSkill);
   const adoptUnmanagedSkills = useStore((s) => s.adoptUnmanagedSkills);
   const unmanagedSkills = useMemo(() => collectUnmanagedSkills(projects), [projects]);
+  const profiles = useStore((s) => s.profiles);
+  const applyProfile = useStore((s) => s.applyProfile);
+  const [profileTargetPath, setProfileTargetPath] = useState<string | null>(null);
 
   const [actionIndex, setActionIndex] = useState(0);
   const openSkillDetail = (skill: import("./lib/install.js").StandaloneSkill) => {
@@ -261,7 +265,7 @@ export function App() {
   const pluginDriftMap = useStore((s) => s.pluginDriftMap);
   const setPluginDriftMap = useStore((s) => s.setPluginDriftMap);
   const [detailPiMarketplace, setDetailPiMarketplace] = useState<PiMarketplace | null>(null);
-  const [modalVisible, setModalVisible] = useState<"addMarketplace" | "addPiMarketplace" | "addProject" | "adoptSkills" | "sourceSetupWizard" | null>(null);
+  const [modalVisible, setModalVisible] = useState<"addMarketplace" | "addPiMarketplace" | "addProject" | "adoptSkills" | "applyProfile" | "sourceSetupWizard" | null>(null);
   const showAddMarketplace = modalVisible === "addMarketplace";
   const showAddPiMarketplace = modalVisible === "addPiMarketplace";
   const showSourceSetupWizard = modalVisible === "sourceSetupWizard";
@@ -1033,7 +1037,7 @@ export function App() {
 
   type OverlayKind =
     | "sourceSetupWizard" | "diff" | "missingSummary" | "editToolModal"
-    | "addMarketplace" | "addPiMarketplace" | "addProject" | "adoptSkills" | "toolActionModal"
+    | "addMarketplace" | "addPiMarketplace" | "addProject" | "adoptSkills" | "applyProfile" | "toolActionModal"
     | "toolDetail" | "itemDetail" | "marketplaceDetail";
   interface OverlayEntry {
     kind: OverlayKind;
@@ -1050,6 +1054,7 @@ export function App() {
     { kind: "addPiMarketplace", active: modalVisible === "addPiMarketplace", inputMode: "modal" },
     { kind: "addProject", active: modalVisible === "addProject", inputMode: "modal" },
     { kind: "adoptSkills", active: modalVisible === "adoptSkills", inputMode: "modal" },
+    { kind: "applyProfile", active: modalVisible === "applyProfile", inputMode: "modal" },
     { kind: "toolActionModal", active: !!(toolModalAction && activeToolForModal), inputMode: "modal" },
     { kind: "toolDetail", active: !!detailTool, inputMode: "detail", escClose: () => setDetailToolKey(null) },
     { kind: "itemDetail", active: !!activeDetail, inputMode: "detail", escClose: closeItemDetail },
@@ -1523,6 +1528,15 @@ export function App() {
 
     // Projects tab shortcuts.
     if (tab === "projects" && !isOverlayOpen) {
+      // Apply a profile to the current workspace (works in list or drill-in).
+      if (input === "P") {
+        const target = projectDetailPath ? projects.find((p) => p.path === projectDetailPath) : projects[selectedIndex];
+        if (target) {
+          setProfileTargetPath(target.path);
+          setModalVisible("applyProfile");
+        }
+        return;
+      }
       const detailProject = projectDetailPath ? projects.find((p) => p.path === projectDetailPath) : null;
       if (detailProject) {
         // Drilled into a project — per-skill provisioning on the highlighted row.
@@ -1941,6 +1955,17 @@ export function App() {
             onCancel={() => setModalVisible(null)}
           />
         );
+      case "applyProfile": {
+        const target = projects.find((p) => p.path === profileTargetPath);
+        return (
+          <ProfilePickerModal
+            profiles={profiles}
+            workspaceName={target?.name ?? "workspace"}
+            onApply={(name) => { setModalVisible(null); if (profileTargetPath) void applyProfile(profileTargetPath, name); }}
+            onCancel={() => setModalVisible(null)}
+          />
+        );
+      }
       case "toolActionModal":
         return (
           <ToolActionModal

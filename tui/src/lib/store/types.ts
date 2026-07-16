@@ -70,6 +70,8 @@ export interface Actions {
   removeProjectSkill: (name: string, skillDir: string) => Promise<boolean>;
   /** Adopt every unmanaged `.agents/skills` skill across all workspaces into the source repo. */
   adoptUnmanagedSkills: () => Promise<boolean>;
+  /** Apply a named profile (skill bundle) to a workspace — pushes its skills in. */
+  applyProfile: (workspacePath: string, name: string) => Promise<boolean>;
   setDetailPiPackage: (pkg: PiPackage | null) => Promise<void>;
   togglePiMarketplaceEnabled: (name: string) => Promise<void>;
   addPiMarketplace: (name: string, source: string) => Promise<void>;

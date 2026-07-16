@@ -104,6 +104,15 @@ export const ProjectEntrySchema = z.object({
 export type ProjectEntry = z.infer<typeof ProjectEntrySchema>;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Profiles
+// A named, reusable set of source-repo skills. Applying a profile to a workspace
+// pushes all its skills into that workspace's `.agents/skills` in one action (a
+// one-time provision, not a live sync).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const ProfilesSchema = z.record(z.string(), z.array(z.string())).default({});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Top-level config schema
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -123,6 +132,7 @@ export const ConfigSchema = z.object({
   plugins: z.record(z.string(), z.record(z.string(), PluginComponentSchema)).default({}),
   pi_packages: z.array(PiPackageEntrySchema).default([]),
   projects: z.array(ProjectEntrySchema).default([]),
+  profiles: ProfilesSchema,
 });
 
 export type BlackbookConfig = z.infer<typeof ConfigSchema>;

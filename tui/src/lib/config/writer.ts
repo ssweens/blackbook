@@ -29,6 +29,7 @@ export function saveConfig(config: BlackbookConfig, configPath?: string): void {
     doc.set("plugins", config.plugins);
     doc.set("pi_packages", config.pi_packages);
     doc.set("projects", config.projects);
+    doc.set("profiles", config.profiles);
 
     content = doc.toString();
   } else {
@@ -76,6 +77,10 @@ function serializeConfig(config: BlackbookConfig): string {
 
   if (config.projects.length > 0) {
     obj.projects = config.projects;
+  }
+
+  if (Object.keys(config.profiles).length > 0) {
+    obj.profiles = config.profiles;
   }
 
   return stringify(obj, {

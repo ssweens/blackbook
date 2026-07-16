@@ -1655,6 +1655,7 @@ describe("Repo-prescribed Pi packages", () => {
           plugins: {},
           pi_packages: [{ source: "npm:pi-subagents", description: "Team subagent package" }],
           projects: [],
+          profiles: {},
         }
         : {
           settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
@@ -1666,6 +1667,7 @@ describe("Repo-prescribed Pi packages", () => {
           plugins: {},
           pi_packages: [],
           projects: [],
+          profiles: {},
         },
       configPath: configPath ?? "/tmp/blackbook/config.yaml",
       errors: [],
@@ -1720,6 +1722,7 @@ describe("Repo-prescribed Pi packages", () => {
           plugins: {},
           pi_packages: [{ source: "npm:pi-mcp-adapter", name: "pi-mcp-adapter" }],
           projects: [],
+          profiles: {},
         }
         : {
           settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
@@ -1731,6 +1734,7 @@ describe("Repo-prescribed Pi packages", () => {
           plugins: {},
           pi_packages: [],
           projects: [],
+          profiles: {},
         },
       configPath: configPath ?? "/tmp/blackbook/config.yaml",
       errors: [],
@@ -1780,6 +1784,7 @@ describe("Repo-prescribed Pi packages", () => {
         plugins: {},
         pi_packages: [],
         projects: [],
+        profiles: {},
       },
       configPath: "/tmp/blackbook/config.yaml",
       errors: [],
@@ -1821,6 +1826,7 @@ describe("Repo-prescribed Pi packages", () => {
         plugins: {},
         pi_packages: [],
         projects: [],
+        profiles: {},
       },
       configPath: "/tmp/blackbook/config.yaml",
       errors: [],
@@ -1854,6 +1860,7 @@ describe("Repo-prescribed Pi packages", () => {
         plugins: {},
         pi_packages: [],
         projects: [],
+        profiles: {},
       },
       configPath: "/tmp/blackbook/config.yaml",
       errors: [],
@@ -1912,6 +1919,7 @@ describe("Repo-prescribed Pi packages", () => {
         plugins: {},
         pi_packages: [],
         projects: [],
+        profiles: {},
       },
       configPath: "/tmp/blackbook/config.yaml",
       errors: [],
@@ -1942,6 +1950,7 @@ describe("Repo-prescribed Pi packages", () => {
         plugins: {},
         pi_packages: [{ source: "npm:pi-web-access", name: "pi-web-access" }],
         projects: [],
+        profiles: {},
       },
       configPath: "/tmp/blackbook/config.yaml",
       errors: [],
@@ -2003,6 +2012,7 @@ describe("Repo-prescribed Pi packages", () => {
         plugins: {},
         pi_packages: [],
         projects: [],
+        profiles: {},
       },
       configPath: "/tmp/blackbook/config.yaml",
       errors: [],
@@ -2062,6 +2072,7 @@ describe("Repo-prescribed Pi packages", () => {
           plugins: {},
           pi_packages: [],
           projects: [],
+          profiles: {},
         }
         : {
           settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
@@ -2073,6 +2084,7 @@ describe("Repo-prescribed Pi packages", () => {
           plugins: {},
           pi_packages: [],
           projects: [],
+          profiles: {},
         },
       configPath: configPath ?? "/tmp/blackbook/config.yaml",
       errors: [],
@@ -2121,6 +2133,7 @@ describe("Repo-prescribed Pi packages", () => {
         { source: "npm:pi-keep-me", name: "Keep Me" },
       ],
       projects: [],
+      profiles: {},
     };
     const sourceConfig = {
       ...localConfig,
@@ -2183,6 +2196,7 @@ describe("Repo-prescribed Pi packages", () => {
           plugins: {},
           pi_packages: [{ source: "npm:pi-ask-user", name: "Ask User" }],
           projects: [],
+          profiles: {},
         }
         : {
           settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
@@ -2194,6 +2208,7 @@ describe("Repo-prescribed Pi packages", () => {
           plugins: {},
           pi_packages: [],
           projects: [],
+          profiles: {},
         },
       configPath: configPath ?? "/tmp/blackbook/config.yaml",
       errors: [],
@@ -2675,6 +2690,7 @@ describe("composed store shape", () => {
     "projects",
     "projectsLoaded",
     "projectDetailPath",
+    "profiles",
   ] as const;
 
   const EXPECTED_ACTIONS = [
@@ -2743,6 +2759,7 @@ describe("composed store shape", () => {
     "toggleProjectSkill",
     "removeProjectSkill",
     "adoptUnmanagedSkills",
+    "applyProfile",
   ] as const;
 
   it("exposes every expected state field", () => {

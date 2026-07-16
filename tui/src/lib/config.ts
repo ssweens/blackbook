@@ -223,6 +223,7 @@ function buildInitialYamlConfig(): BlackbookConfig {
     plugins: {},
     pi_packages: [],
     projects: [],
+    profiles: {},
   };
 }
 

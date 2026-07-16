@@ -5,18 +5,21 @@ import { createProjectsSlice } from "./projects-slice.js";
 // the full composed store.
 const getProjectsMock = vi.fn();
 const collectUnmanagedMock = vi.fn();
+const indexSourceSkillsMock = vi.fn();
 const loadConfigMock = vi.fn();
 const saveConfigMock = vi.fn();
 const statSyncMock = vi.fn();
+const pushSkillMock = vi.fn();
 const pullSkillMock = vi.fn();
 const commitMock = vi.fn();
 
 vi.mock("../projects.js", () => ({
   getProjects: () => getProjectsMock(),
   collectUnmanagedSkills: (...a: unknown[]) => collectUnmanagedMock(...a),
+  indexSourceSkills: (...a: unknown[]) => indexSourceSkillsMock(...a),
 }));
 vi.mock("../project-actions.js", () => ({
-  pushSkillToProject: vi.fn(),
+  pushSkillToProject: (...a: unknown[]) => pushSkillMock(...a),
   pullSkillToSource: (...a: unknown[]) => pullSkillMock(...a),
   toggleProjectSkill: vi.fn(),
   deleteProjectSkill: vi.fn(),
@@ -47,8 +50,12 @@ beforeEach(() => {
   loadConfigMock.mockReset();
   saveConfigMock.mockReset();
   statSyncMock.mockReset();
+  indexSourceSkillsMock.mockReset();
+  pushSkillMock.mockReset();
   pullSkillMock.mockReset();
   commitMock.mockReset();
+  // Default config so loadProjects() (called after mutations) can read profiles.
+  loadConfigMock.mockReturnValue({ config: { projects: [], profiles: {}, settings: { backup_retention: 3 } }, configPath: "/cfg" });
 });
 
 describe("projects-slice", () => {
@@ -135,5 +142,34 @@ describe("projects-slice", () => {
     expect(ok).toBe(false);
     expect(pullSkillMock).not.toHaveBeenCalled();
     expect(commitMock).not.toHaveBeenCalled();
+  });
+
+  it("applyProfile pushes each profile skill that exists in source, skipping the rest", async () => {
+    // Profiles come from store state, populated by loadProjects from config.
+    loadConfigMock.mockReturnValue({
+      config: { projects: [], profiles: { web: ["a", "b", "missing"] }, settings: { backup_retention: 3 } },
+      configPath: "/cfg",
+    });
+    indexSourceSkillsMock.mockReturnValue(new Map([["a", "/src/skills/a"], ["b", "/src/skills/b"]]));
+    pushSkillMock.mockResolvedValue({ ok: true });
+    getProjectsMock.mockReturnValue([]);
+    const { get } = makeStore();
+    await get().loadProjects(); // populates state.profiles
+
+    const ok = await get().applyProfile("/ws", "web");
+    expect(ok).toBe(true);
+    // 'a' and 'b' pushed; 'missing' skipped (not in source index).
+    expect(pushSkillMock).toHaveBeenCalledTimes(2);
+    expect(pushSkillMock).toHaveBeenCalledWith("/ws", "/src/skills/a", "a", 3);
+    expect(pushSkillMock).toHaveBeenCalledWith("/ws", "/src/skills/b", "b", 3);
+  });
+
+  it("applyProfile warns and no-ops for an empty/unknown profile", async () => {
+    getProjectsMock.mockReturnValue([]);
+    const { get } = makeStore();
+    await get().loadProjects(); // profiles = {} (default mock)
+    const ok = await get().applyProfile("/ws", "nope");
+    expect(ok).toBe(false);
+    expect(pushSkillMock).not.toHaveBeenCalled();
   });
 });

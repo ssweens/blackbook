@@ -1,7 +1,7 @@
 import { statSync } from "fs";
 import type { Store, SliceCreator } from "./types.js";
 import { join } from "path";
-import { getProjects, collectUnmanagedSkills } from "../projects.js";
+import { getProjects, collectUnmanagedSkills, indexSourceSkills } from "../projects.js";
 import {
   pushSkillToProject,
   pullSkillToSource,
@@ -20,6 +20,7 @@ export type ProjectsSlice = Pick<
   | "projects"
   | "projectsLoaded"
   | "projectDetailPath"
+  | "profiles"
   // actions
   | "loadProjects"
   | "addProject"
@@ -30,6 +31,7 @@ export type ProjectsSlice = Pick<
   | "toggleProjectSkill"
   | "removeProjectSkill"
   | "adoptUnmanagedSkills"
+  | "applyProfile"
 >;
 
 function backupRetention(): number | undefined {
@@ -48,6 +50,7 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
   projects: [],
   projectsLoaded: false,
   projectDetailPath: null,
+  profiles: {},
 
   setProjectDetailPath: (path) => set({ projectDetailPath: path }),
 
@@ -57,7 +60,11 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
     // Scanning is synchronous but can hit the disk for many skills; yield so the
     // UI can paint a loading state first.
     await new Promise<void>((r) => setImmediate(r));
-    set({ projects: getProjects(), projectsLoaded: true });
+    set({
+      projects: getProjects(),
+      profiles: loadYamlConfig().config.profiles ?? {},
+      projectsLoaded: true,
+    });
   },
 
   addProject: async (path) => {
@@ -197,5 +204,41 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
       notify(`Adopted ${adoptedPaths.length} skill(s) into the source repo`, "success");
     }
     return adoptedPaths.length > 0;
+  },
+
+  applyProfile: async (workspacePath, name) => {
+    const { notify } = get();
+    const sourceRepo = getConfigRepoPath();
+    if (!sourceRepo) {
+      notify("No source repo configured — can't apply a profile", "error");
+      return false;
+    }
+    const skills = get().profiles[name];
+    if (!skills || skills.length === 0) {
+      notify(`Profile "${name}" is empty`, "warning");
+      return false;
+    }
+
+    const sourceIndex = indexSourceSkills(sourceRepo);
+    const retention = backupRetention();
+    let applied = 0;
+    const missing: string[] = [];
+    for (const skillName of skills) {
+      const sourceSkillDir = sourceIndex.get(skillName);
+      if (!sourceSkillDir) {
+        missing.push(skillName);
+        continue;
+      }
+      const result = await pushSkillToProject(workspacePath, sourceSkillDir, skillName, retention);
+      if (result.ok) applied += 1;
+    }
+
+    await get().loadProjects({ silent: true });
+    if (missing.length > 0) {
+      notify(`Applied ${applied}; not in source repo: ${missing.slice(0, 3).join(", ")}`, "error");
+    } else {
+      notify(`Applied profile "${name}" (${applied} skill${applied === 1 ? "" : "s"})`, "success");
+    }
+    return applied > 0;
   },
 });

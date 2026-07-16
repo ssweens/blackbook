@@ -26,6 +26,7 @@ function makeConfig(overrides: Partial<BlackbookConfig> = {}): BlackbookConfig {
     plugins: overrides.plugins ?? {},
     pi_packages: overrides.pi_packages ?? [],
     projects: overrides.projects ?? [],
+    profiles: overrides.profiles ?? {},
   };
 }
 
