@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { indexSourceSkills, scanProjectSkills } from "./projects.js";
+import { indexSourceSkills, scanProjectSkills, collectUnmanagedSkills, type ProjectInfo } from "./projects.js";
 
 let root: string;
 let sourceRepo: string;
@@ -73,5 +73,39 @@ describe("scanProjectSkills", () => {
   it("returns nothing when the project has no .agents/skills", () => {
     mkdirSync(project, { recursive: true });
     expect(scanProjectSkills(project, new Map())).toEqual([]);
+  });
+});
+
+describe("collectUnmanagedSkills", () => {
+  const mk = (name: string, workspace: string, skills: { name: string; status: string; diskPath: string }[]): ProjectInfo =>
+    ({
+      path: `/${workspace}`,
+      name: workspace,
+      exists: true,
+      hasAgentsDir: true,
+      available: [],
+      skills: skills.map((s) => ({ ...s, enabled: true })),
+    }) as ProjectInfo;
+
+  it("collects project-only skills across workspaces, deduped by name", () => {
+    const projects = [
+      mk("Global", "Global", [
+        { name: "db", status: "in-sync", diskPath: "/Global/.agents/skills/db" },
+        { name: "loose", status: "project-only", diskPath: "/Global/.agents/skills/loose" },
+      ]),
+      mk("proj", "proj", [
+        { name: "loose", status: "project-only", diskPath: "/proj/.agents/skills/loose" }, // dup name
+        { name: "onlyhere", status: "project-only", diskPath: "/proj/.agents/skills/onlyhere" },
+      ]),
+    ];
+    const unmanaged = collectUnmanagedSkills(projects);
+    expect(unmanaged.map((u) => u.name)).toEqual(["loose", "onlyhere"]);
+    // First workspace wins for a duplicate name (Global before proj).
+    expect(unmanaged.find((u) => u.name === "loose")?.fromPath).toBe("/Global/.agents/skills/loose");
+  });
+
+  it("returns nothing when every skill is in-sync or drifted (all managed)", () => {
+    const projects = [mk("Global", "Global", [{ name: "db", status: "in-sync", diskPath: "/x" }])];
+    expect(collectUnmanagedSkills(projects)).toEqual([]);
   });
 });

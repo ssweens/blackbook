@@ -1,12 +1,14 @@
 import { statSync } from "fs";
 import type { Store, SliceCreator } from "./types.js";
-import { getProjects } from "../projects.js";
+import { join } from "path";
+import { getProjects, collectUnmanagedSkills } from "../projects.js";
 import {
   pushSkillToProject,
   pullSkillToSource,
   toggleProjectSkill as toggleProjectSkillFs,
   deleteProjectSkill as deleteProjectSkillFs,
 } from "../project-actions.js";
+import { commitAndPushSourceRepo } from "../install.js";
 import { loadConfig as loadYamlConfig } from "../config/loader.js";
 import { saveConfig as saveYamlConfig } from "../config/writer.js";
 import { getConfigRepoPath } from "../config.js";
@@ -27,6 +29,7 @@ export type ProjectsSlice = Pick<
   | "pullProjectSkill"
   | "toggleProjectSkill"
   | "removeProjectSkill"
+  | "adoptUnmanagedSkills"
 >;
 
 function backupRetention(): number | undefined {
@@ -158,5 +161,41 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
     await get().loadProjects({ silent: true });
     notify(`Removed ${name} from workspace`, "success");
     return true;
+  },
+
+  adoptUnmanagedSkills: async () => {
+    const { notify } = get();
+    const sourceRepo = getConfigRepoPath();
+    if (!sourceRepo) {
+      notify("No source repo configured — can't adopt", "error");
+      return false;
+    }
+    const unmanaged = collectUnmanagedSkills(get().projects);
+    if (unmanaged.length === 0) {
+      notify("No unmanaged skills to adopt", "info");
+      return false;
+    }
+
+    const retention = backupRetention();
+    const adoptedPaths: string[] = [];
+    const failures: string[] = [];
+    for (const skill of unmanaged) {
+      const result = await pullSkillToSource(sourceRepo, skill.fromPath, skill.name, undefined, retention);
+      if (result.ok) adoptedPaths.push(join(sourceRepo, "skills", skill.name));
+      else failures.push(skill.name);
+    }
+
+    if (adoptedPaths.length > 0) {
+      // Durable: commit the newly-adopted skills to the source repo (best-effort push).
+      commitAndPushSourceRepo(sourceRepo, adoptedPaths, `chore: adopt ${adoptedPaths.length} skill(s) into library`);
+    }
+
+    await get().loadProjects({ silent: true });
+    if (failures.length > 0) {
+      notify(`Adopted ${adoptedPaths.length}; failed: ${failures.slice(0, 3).join(", ")}`, "error");
+    } else {
+      notify(`Adopted ${adoptedPaths.length} skill(s) into the source repo`, "success");
+    }
+    return adoptedPaths.length > 0;
   },
 });

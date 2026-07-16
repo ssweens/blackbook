@@ -183,6 +183,34 @@ export function getProjects(): ProjectInfo[] {
   return [global, ...registered];
 }
 
+/** An unmanaged skill: present in some workspace's `.agents/skills` but not in the source repo. */
+export interface UnmanagedSkill {
+  name: string;
+  /** The workspace skill directory to adopt from. */
+  fromPath: string;
+  /** Display name of the workspace it was found in. */
+  workspace: string;
+}
+
+/**
+ * Collect skills that live in a workspace's `.agents/skills` but aren't in the
+ * source repo (status "project-only"), deduped by name (first workspace wins).
+ * This is the input to the Adopt sweep.
+ */
+export function collectUnmanagedSkills(projects: ProjectInfo[]): UnmanagedSkill[] {
+  const seen = new Set<string>();
+  const out: UnmanagedSkill[] = [];
+  for (const project of projects) {
+    for (const skill of project.skills) {
+      if (skill.status === "project-only" && !seen.has(skill.name)) {
+        seen.add(skill.name);
+        out.push({ name: skill.name, fromPath: skill.diskPath, workspace: project.name });
+      }
+    }
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /** A row in the drill-in skill list: an existing project skill or an addable one. */
 export type ProjectSkillRow =
   | { kind: "present"; skill: ProjectSkill }

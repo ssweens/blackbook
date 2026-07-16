@@ -2742,6 +2742,7 @@ describe("composed store shape", () => {
     "pullProjectSkill",
     "toggleProjectSkill",
     "removeProjectSkill",
+    "adoptUnmanagedSkills",
   ] as const;
 
   it("exposes every expected state field", () => {

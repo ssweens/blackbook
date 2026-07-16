@@ -37,6 +37,7 @@ import { DiscoverTab } from "./tabs/DiscoverTab.js";
 import { InstalledTab } from "./tabs/InstalledTab.js";
 import { ProjectsTab } from "./tabs/ProjectsTab.js";
 import { AddProjectModal } from "./components/AddProjectModal.js";
+import { AdoptModal } from "./components/AdoptModal.js";
 import { getPluginToolStatus } from "./lib/plugin-status.js";
 import {
   syncPluginInstances,
@@ -65,7 +66,7 @@ import { useToolActions } from "./lib/use-tool-actions.js";
 import { useNamespaceTree } from "./lib/use-namespace-tree.js";
 import { buildDetailCallbacks } from "./lib/detail-callbacks.js";
 import { getSyncItemKey, sortAndFilterPiPackages } from "./lib/derived.js";
-import { buildProjectSkillRows } from "./lib/projects.js";
+import { buildProjectSkillRows, collectUnmanagedSkills } from "./lib/projects.js";
 
 const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces", "projects", "settings"];
 
@@ -242,6 +243,8 @@ export function App() {
   const pullProjectSkill = useStore((s) => s.pullProjectSkill);
   const toggleProjectSkill = useStore((s) => s.toggleProjectSkill);
   const removeProjectSkill = useStore((s) => s.removeProjectSkill);
+  const adoptUnmanagedSkills = useStore((s) => s.adoptUnmanagedSkills);
+  const unmanagedSkills = useMemo(() => collectUnmanagedSkills(projects), [projects]);
 
   const [actionIndex, setActionIndex] = useState(0);
   const openSkillDetail = (skill: import("./lib/install.js").StandaloneSkill) => {
@@ -258,7 +261,7 @@ export function App() {
   const pluginDriftMap = useStore((s) => s.pluginDriftMap);
   const setPluginDriftMap = useStore((s) => s.setPluginDriftMap);
   const [detailPiMarketplace, setDetailPiMarketplace] = useState<PiMarketplace | null>(null);
-  const [modalVisible, setModalVisible] = useState<"addMarketplace" | "addPiMarketplace" | "addProject" | "sourceSetupWizard" | null>(null);
+  const [modalVisible, setModalVisible] = useState<"addMarketplace" | "addPiMarketplace" | "addProject" | "adoptSkills" | "sourceSetupWizard" | null>(null);
   const showAddMarketplace = modalVisible === "addMarketplace";
   const showAddPiMarketplace = modalVisible === "addPiMarketplace";
   const showSourceSetupWizard = modalVisible === "sourceSetupWizard";
@@ -1030,7 +1033,7 @@ export function App() {
 
   type OverlayKind =
     | "sourceSetupWizard" | "diff" | "missingSummary" | "editToolModal"
-    | "addMarketplace" | "addPiMarketplace" | "addProject" | "toolActionModal"
+    | "addMarketplace" | "addPiMarketplace" | "addProject" | "adoptSkills" | "toolActionModal"
     | "toolDetail" | "itemDetail" | "marketplaceDetail";
   interface OverlayEntry {
     kind: OverlayKind;
@@ -1046,6 +1049,7 @@ export function App() {
     { kind: "addMarketplace", active: modalVisible === "addMarketplace", inputMode: "modal" },
     { kind: "addPiMarketplace", active: modalVisible === "addPiMarketplace", inputMode: "modal" },
     { kind: "addProject", active: modalVisible === "addProject", inputMode: "modal" },
+    { kind: "adoptSkills", active: modalVisible === "adoptSkills", inputMode: "modal" },
     { kind: "toolActionModal", active: !!(toolModalAction && activeToolForModal), inputMode: "modal" },
     { kind: "toolDetail", active: !!detailTool, inputMode: "detail", escClose: () => setDetailToolKey(null) },
     { kind: "itemDetail", active: !!activeDetail, inputMode: "detail", escClose: closeItemDetail },
@@ -1556,6 +1560,11 @@ export function App() {
         setModalVisible("addProject");
         return;
       }
+      if (input === "A") {
+        // Adopt sweep: capture unmanaged .agents/skills across all workspaces.
+        setModalVisible("adoptSkills");
+        return;
+      }
       if (input === "d") {
         const target = projects[selectedIndex];
         // The synthetic global workspace isn't registered — can't be removed.
@@ -1924,6 +1933,14 @@ export function App() {
         return <AddMarketplaceModal type="pi" onSubmit={(name, source) => { void addPiMarketplace(name, source); setModalVisible(null); }} onCancel={() => setModalVisible(null)} />;
       case "addProject":
         return <AddProjectModal onSubmit={handleAddProject} onCancel={() => setModalVisible(null)} />;
+      case "adoptSkills":
+        return (
+          <AdoptModal
+            skills={unmanagedSkills}
+            onConfirm={() => { setModalVisible(null); void adoptUnmanagedSkills(); }}
+            onCancel={() => setModalVisible(null)}
+          />
+        );
       case "toolActionModal":
         return (
           <ToolActionModal

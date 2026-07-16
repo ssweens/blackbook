@@ -4,11 +4,25 @@ import { createProjectsSlice } from "./projects-slice.js";
 // Mock the slice's direct dependencies so we can exercise it in isolation from
 // the full composed store.
 const getProjectsMock = vi.fn();
+const collectUnmanagedMock = vi.fn();
 const loadConfigMock = vi.fn();
 const saveConfigMock = vi.fn();
 const statSyncMock = vi.fn();
+const pullSkillMock = vi.fn();
+const commitMock = vi.fn();
 
-vi.mock("../projects.js", () => ({ getProjects: () => getProjectsMock() }));
+vi.mock("../projects.js", () => ({
+  getProjects: () => getProjectsMock(),
+  collectUnmanagedSkills: (...a: unknown[]) => collectUnmanagedMock(...a),
+}));
+vi.mock("../project-actions.js", () => ({
+  pushSkillToProject: vi.fn(),
+  pullSkillToSource: (...a: unknown[]) => pullSkillMock(...a),
+  toggleProjectSkill: vi.fn(),
+  deleteProjectSkill: vi.fn(),
+}));
+vi.mock("../install.js", () => ({ commitAndPushSourceRepo: (...a: unknown[]) => commitMock(...a) }));
+vi.mock("../config.js", () => ({ getConfigRepoPath: () => "/src" }));
 vi.mock("../config/loader.js", () => ({ loadConfig: () => loadConfigMock() }));
 vi.mock("../config/writer.js", () => ({ saveConfig: (...a: unknown[]) => saveConfigMock(...a) }));
 vi.mock("../config/path.js", () => ({ expandPath: (p: string) => p }));
@@ -29,9 +43,12 @@ function makeStore() {
 
 beforeEach(() => {
   getProjectsMock.mockReset();
+  collectUnmanagedMock.mockReset();
   loadConfigMock.mockReset();
   saveConfigMock.mockReset();
   statSyncMock.mockReset();
+  pullSkillMock.mockReset();
+  commitMock.mockReset();
 });
 
 describe("projects-slice", () => {
@@ -90,5 +107,33 @@ describe("projects-slice", () => {
     const ok = await get().removeProject("/missing");
     expect(ok).toBe(false);
     expect(saveConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("adoptUnmanagedSkills pulls each unmanaged skill and commits once", async () => {
+    loadConfigMock.mockReturnValue({ config: { settings: { backup_retention: 3 }, projects: [] }, configPath: "/cfg" });
+    collectUnmanagedMock.mockReturnValue([
+      { name: "a", fromPath: "/w/a", workspace: "Global" },
+      { name: "b", fromPath: "/w/b", workspace: "proj" },
+    ]);
+    pullSkillMock.mockResolvedValue({ ok: true });
+    getProjectsMock.mockReturnValue([]);
+    const { get } = makeStore();
+
+    const ok = await get().adoptUnmanagedSkills();
+    expect(ok).toBe(true);
+    expect(pullSkillMock).toHaveBeenCalledTimes(2);
+    expect(commitMock).toHaveBeenCalledTimes(1);
+    // Committed the two adopted source paths.
+    const [, paths] = commitMock.mock.calls[0];
+    expect(paths).toEqual(["/src/skills/a", "/src/skills/b"]);
+  });
+
+  it("adoptUnmanagedSkills no-ops (no commit) when there is nothing unmanaged", async () => {
+    collectUnmanagedMock.mockReturnValue([]);
+    const { get } = makeStore();
+    const ok = await get().adoptUnmanagedSkills();
+    expect(ok).toBe(false);
+    expect(pullSkillMock).not.toHaveBeenCalled();
+    expect(commitMock).not.toHaveBeenCalled();
   });
 });
