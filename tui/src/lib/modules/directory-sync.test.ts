@@ -181,4 +181,88 @@ describe("directorySyncModule.apply", () => {
     expect(result.changed).toBe(true);
     expect(existsSync(join(TGT, "empty"))).toBe(true);
   });
+
+  it("copies nested subdirectories", async () => {
+    mkdirSync(join(SRC, "dir", "sub", "deep"), { recursive: true });
+    writeFileSync(join(SRC, "dir", "top.txt"), "top");
+    writeFileSync(join(SRC, "dir", "sub", "deep", "leaf.txt"), "leaf");
+
+    const result = await directorySyncModule.apply({
+      sourcePath: join(SRC, "dir"),
+      targetPath: join(TGT, "dir"),
+      owner: "test",
+    });
+    expect(result.changed).toBe(true);
+    expect(readFileSync(join(TGT, "dir", "top.txt"), "utf-8")).toBe("top");
+    expect(readFileSync(join(TGT, "dir", "sub", "deep", "leaf.txt"), "utf-8")).toBe("leaf");
+  });
+
+  it("preserves unmanaged target-only files (merge semantics)", async () => {
+    mkdirSync(join(SRC, "dir"), { recursive: true });
+    mkdirSync(join(TGT, "dir"), { recursive: true });
+    writeFileSync(join(SRC, "dir", "managed.txt"), "from source");
+    writeFileSync(join(TGT, "dir", "local-only.txt"), "user file");
+
+    await directorySyncModule.apply({
+      sourcePath: join(SRC, "dir"),
+      targetPath: join(TGT, "dir"),
+      owner: "test",
+    });
+    expect(readFileSync(join(TGT, "dir", "managed.txt"), "utf-8")).toBe("from source");
+    // The unmanaged target file survives the sync.
+    expect(existsSync(join(TGT, "dir", "local-only.txt"))).toBe(true);
+  });
+
+  it("does not propagate regenerated noise from source into target", async () => {
+    mkdirSync(join(SRC, "dir"), { recursive: true });
+    writeFileSync(join(SRC, "dir", "a.txt"), "content");
+    writeFileSync(join(SRC, "dir", ".DS_Store"), "\0macos");
+
+    await directorySyncModule.apply({
+      sourcePath: join(SRC, "dir"),
+      targetPath: join(TGT, "dir"),
+      owner: "test",
+    });
+    expect(existsSync(join(TGT, "dir", "a.txt"))).toBe(true);
+    expect(existsSync(join(TGT, "dir", ".DS_Store"))).toBe(false);
+  });
+
+  it("refuses to sync when source and target overlap", async () => {
+    mkdirSync(join(SRC, "dir", "nested"), { recursive: true });
+    writeFileSync(join(SRC, "dir", "a.txt"), "x");
+
+    // Identical paths.
+    const same = await directorySyncModule.apply({
+      sourcePath: join(SRC, "dir"),
+      targetPath: join(SRC, "dir"),
+      owner: "test",
+    });
+    expect(same.changed).toBe(false);
+    expect(same.error).toMatch(/overlap/i);
+
+    // Target nested inside source.
+    const nested = await directorySyncModule.apply({
+      sourcePath: join(SRC, "dir"),
+      targetPath: join(SRC, "dir", "nested"),
+      owner: "test",
+    });
+    expect(nested.changed).toBe(false);
+    expect(nested.error).toMatch(/overlap/i);
+  });
+
+  it("tolerates a stranded atomic-write temp in the source (check stays ok)", async () => {
+    mkdirSync(join(SRC, "dir"), { recursive: true });
+    mkdirSync(join(TGT, "dir"), { recursive: true });
+    writeFileSync(join(SRC, "dir", "a.txt"), "content");
+    writeFileSync(join(TGT, "dir", "a.txt"), "content");
+    // Orphan left by a crashed atomic write — must not read as drift.
+    writeFileSync(join(SRC, "dir", ".1720000000000.4821.tmp"), "partial");
+
+    const result = await directorySyncModule.check({
+      sourcePath: join(SRC, "dir"),
+      targetPath: join(TGT, "dir"),
+      owner: "test",
+    });
+    expect(result.status).toBe("ok");
+  });
 });

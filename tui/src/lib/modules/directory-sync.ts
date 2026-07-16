@@ -1,9 +1,17 @@
-import { existsSync, mkdirSync, cpSync, readdirSync, statSync } from "fs";
-import { join } from "path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "fs";
+import { join, dirname, resolve, sep } from "path";
 import type { Module, CheckResult, ApplyResult } from "./types.js";
 import { hashFileAsync } from "./hash.js";
 import { createBackup, pruneBackups } from "./backup.js";
-import { isSyncNoise } from "../fs-utils.js";
+import { isSyncNoise, atomicWriteFileSync } from "../fs-utils.js";
+
+/** True if `a` and `b` are the same directory or one is nested inside the other. */
+function pathsOverlap(a: string, b: string): boolean {
+  const ra = resolve(a);
+  const rb = resolve(b);
+  if (ra === rb) return true;
+  return ra.startsWith(rb + sep) || rb.startsWith(ra + sep);
+}
 
 export interface DirectorySyncParams {
   sourcePath: string;
@@ -97,13 +105,31 @@ export const directorySyncModule: Module<DirectorySyncParams> = {
       return { changed: false, message: `Source directory not found: ${sourcePath}`, error: `Source directory not found: ${sourcePath}` };
     }
 
-    // Create backup before overwriting
+    // Reject an overlapping/nested source↔target. Unlike the old cpSync, the
+    // per-file copy below has no built-in self-copy guard, so a nested pair would
+    // walk freshly-written files back into the copy and grow without bound.
+    if (pathsOverlap(sourcePath, targetPath)) {
+      const msg = `Source and target directories overlap: ${sourcePath} ↔ ${targetPath}`;
+      return { changed: false, message: msg, error: msg };
+    }
+
+    // Back up the existing target before we touch it.
     const backup = createBackup(targetPath, owner);
     pruneBackups(owner, params.backupRetention);
 
-    // Recursive copy (native node:fs)
+    // Copy each managed (source) file with an atomic per-file write (temp
+    // sibling + fsync + rename via atomicWriteFileSync), mirroring glob-copy.
+    // No file is ever left half-written on a mid-sync crash, and merge semantics
+    // are preserved — unmanaged target-only files stay in place, matching
+    // check(), which only compares files that exist in source. listFilesRecursive
+    // already skips regenerated noise, so it is neither hashed nor propagated.
     mkdirSync(targetPath, { recursive: true });
-    cpSync(sourcePath, targetPath, { recursive: true, force: true });
+    for (const relPath of listFilesRecursive(sourcePath)) {
+      const src = join(sourcePath, relPath);
+      const dest = join(targetPath, relPath);
+      mkdirSync(dirname(dest), { recursive: true });
+      atomicWriteFileSync(dest, readFileSync(src));
+    }
 
     return {
       changed: true,
