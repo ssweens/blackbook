@@ -536,9 +536,10 @@ export const createFilesSlice: SliceCreator<FilesSlice> = (set, get) => ({
     ];
   },
 
-  syncTools: async (items) => {
+  syncTools: async (items, options) => {
     invalidatePluginToolStatusCache();
     const { notify } = get();
+    const toolFilter = options?.toolFilter;
     if (items.length === 0) {
       notify("All enabled instances are in sync.", "success");
       return;
@@ -562,7 +563,8 @@ export const createFilesSlice: SliceCreator<FilesSlice> = (set, get) => ({
       if (item.kind === "plugin") {
         const marketplaceUrl = marketplaces.find((m) => m.name === item.plugin.marketplace)?.url;
         const statuses = getPluginToolStatus(item.plugin)
-          .filter((status) => status.enabled && status.supported && !status.installed);
+          .filter((status) => status.enabled && status.supported && !status.installed)
+          .filter((status) => !toolFilter || toolFilter(status.toolId, status.instanceId));
         if (statuses.length === 0) continue;
 
         const result = await syncPluginInstances(item.plugin, marketplaceUrl, statuses);
@@ -581,6 +583,7 @@ export const createFilesSlice: SliceCreator<FilesSlice> = (set, get) => ({
         const forceOverwrite = item.forceOverwrite ?? false;
         const steps: OrchestratorStep[] = item.file.instances
           .filter((i) => {
+            if (toolFilter && !toolFilter(i.toolId, i.instanceId)) return false;
             if (i.status !== "missing" && i.status !== "drifted") return false;
             // "Untracked target": the tool file exists but was never tracked (or
             // state was lost), so a forward sync overwrites content Blackbook
@@ -614,6 +617,7 @@ export const createFilesSlice: SliceCreator<FilesSlice> = (set, get) => ({
           }
         }
       } else if (item.kind === "piPackage") {
+        if (toolFilter && !toolFilter("pi")) continue;
         const success = await get().installPiPackage(item.piPackage);
         if (success) {
           syncedItems += 1;
@@ -621,6 +625,7 @@ export const createFilesSlice: SliceCreator<FilesSlice> = (set, get) => ({
           errors.push(`Failed to install ${item.piPackage.name}`);
         }
       } else if (item.kind === "tool") {
+        if (toolFilter && !toolFilter(item.toolId)) continue;
         const success = await get().updateToolAction(item.toolId);
         if (success) {
           syncedItems += 1;
@@ -643,7 +648,11 @@ export const createFilesSlice: SliceCreator<FilesSlice> = (set, get) => ({
           item.skill.installations.map((i) => `${i.toolId}:${i.instanceId}`),
         );
         const toolInstances = getToolInstances().filter(
-          (i) => i.kind === "tool" && i.enabled && !!i.skillsSubdir,
+          (i) =>
+            i.kind === "tool" &&
+            i.enabled &&
+            !!i.skillsSubdir &&
+            (!toolFilter || toolFilter(i.toolId, i.instanceId)),
         );
         let any = false;
         for (const inst of toolInstances) {

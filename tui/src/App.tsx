@@ -475,9 +475,15 @@ export function App() {
     }
   }, [files, detailFile]);
 
-  // Manual-only mode: skip expensive background drift scans.
-  // Drift is still computed on-demand when opening plugin detail.
+  // Manual-only mode: skip expensive background drift scans. Reset drift
+  // state once at cold start only — not if it was already populated when the
+  // app mounted (e.g. tests seeding it directly, or a future on-demand
+  // computation), since that would wipe drift data meant to be shown.
+  // Deliberately mount-once (checks pluginDriftMap's value only at the moment
+  // this runs); `setPluginDriftMap` is a stable store action, so this never
+  // re-fires on its own.
   useEffect(() => {
+    if (Object.keys(pluginDriftMap).length > 0) return;
     setPluginDriftMap({});
   }, [setPluginDriftMap]);
 

@@ -46,7 +46,10 @@ export interface Actions {
   toggleToolEnabled: (toolId: string, instanceId: string) => Promise<void>;
   updateToolConfigDir: (toolId: string, instanceId: string, configDir: string) => Promise<void>;
   getSyncPreview: () => SyncPreviewItem[];
-  syncTools: (items: SyncPreviewItem[]) => Promise<void>;
+  syncTools: (
+    items: SyncPreviewItem[],
+    options?: { toolFilter?: (toolId: string, instanceId?: string) => boolean },
+  ) => Promise<void>;
   notify: (message: string, type?: Notification["type"], options?: { spinner?: boolean }) => string;
   clearNotification: (id: string) => void;
   // Pi package actions

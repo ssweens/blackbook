@@ -12,6 +12,7 @@ import {
   updatePlugin,
   uninstallPlugin,
   removePiMarketplace,
+  installSkillToInstance,
 } from "./install.js";
 import { getSkillActions } from "./item-actions.js";
 import { getConfigPath as getYamlConfigPath, loadConfig as loadYamlConfig } from "./config/loader.js";
@@ -61,6 +62,7 @@ vi.mock("./install.js", async (importOriginal) => {
     updatePlugin: vi.fn(),
     uninstallPlugin: vi.fn().mockResolvedValue(true),
     removePiMarketplace: vi.fn().mockResolvedValue(undefined),
+    installSkillToInstance: vi.fn(),
   };
 });
 
@@ -1595,6 +1597,124 @@ describe("Store syncTools with file items", () => {
     const { notifications } = useStore.getState();
     const errorNote = notifications.find((n) => n.type === "error");
     expect(errorNote?.message).toContain("bad config");
+  });
+});
+
+describe("Store syncTools with toolFilter", () => {
+  beforeEach(() => {
+    useStore.setState({ notifications: [] });
+    vi.mocked(loadYamlConfig).mockReset();
+    vi.mocked(runApply).mockReset();
+    vi.mocked(expandConfigPath).mockReset();
+    vi.mocked(resolveSourcePath).mockReset();
+    vi.mocked(getPluginToolStatus).mockReset();
+    vi.mocked(syncPluginInstances).mockReset();
+    vi.mocked(getToolInstances).mockReset();
+    vi.mocked(installSkillToInstance).mockReset();
+    vi.mocked(getAllInstalledPlugins).mockReset();
+    vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [], byTool: {} });
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: { files: [], settings: { source_repo: "~/dotfiles", package_manager: "pnpm", backup_retention: 3 }, tools: {}, plugins: {}, configs: [], marketplaces: {} } as any,
+      configPath: "/tmp/config.yaml",
+      errors: [],
+    });
+  });
+
+  it("scopes a file item's sync to only the matching tool instance", async () => {
+    vi.mocked(loadYamlConfig).mockReturnValue({
+      config: { files: [], settings: { source_repo: "~/dotfiles", package_manager: "pnpm", backup_retention: 3 }, tools: {}, plugins: {}, configs: [] } as any,
+      configPath: "/tmp/config.yaml",
+      errors: [],
+    });
+    vi.mocked(expandConfigPath).mockImplementation((p: string) => p);
+    vi.mocked(resolveSourcePath).mockImplementation((source: string) => source);
+    vi.mocked(runApply).mockResolvedValue({
+      steps: [{ label: "CLAUDE.md:claude-code:default", check: { status: "missing", message: "" }, apply: { changed: true, message: "copied" } }],
+      summary: { ok: 0, missing: 0, drifted: 0, failed: 0, changed: 1 },
+    });
+
+    await useStore.getState().syncTools(
+      [
+        {
+          kind: "file",
+          file: {
+            name: "CLAUDE.md", source: "CLAUDE.md", target: "CLAUDE.md", kind: "file",
+            instances: [
+              { toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/c", targetRelPath: "CLAUDE.md", sourcePath: "/s/CLAUDE.md", targetPath: "/c/CLAUDE.md", status: "missing", message: "" },
+              { toolId: "opencode", instanceId: "default", instanceName: "OpenCode", configDir: "/o", targetRelPath: "CLAUDE.md", sourcePath: "/s/CLAUDE.md", targetPath: "/o/CLAUDE.md", status: "missing", message: "" },
+            ],
+          },
+          missingInstances: ["Claude", "OpenCode"],
+          driftedInstances: [],
+        },
+      ],
+      { toolFilter: (toolId) => toolId === "claude-code" },
+    );
+
+    const steps = vi.mocked(runApply).mock.calls[0][0];
+    expect(steps).toHaveLength(1);
+    expect(steps[0].label).toContain("claude-code");
+  });
+
+  it("scopes a plugin item's sync to only the matching tool instance", async () => {
+    const plugin = createMockPlugin({ name: "scoped-plugin" });
+    vi.mocked(getPluginToolStatus).mockReturnValue([
+      { toolId: "claude-code", instanceId: "default", name: "Claude", installed: false, supported: true, enabled: true },
+      { toolId: "opencode", instanceId: "default", name: "OpenCode", installed: false, supported: true, enabled: true },
+    ]);
+    vi.mocked(syncPluginInstances).mockResolvedValue({ success: true, syncedInstances: {}, errors: [] });
+
+    await useStore.getState().syncTools(
+      [{ kind: "plugin", plugin, missingInstances: ["Claude", "OpenCode"] }],
+      { toolFilter: (toolId) => toolId === "claude-code" },
+    );
+
+    expect(syncPluginInstances).toHaveBeenCalledTimes(1);
+    const statuses = vi.mocked(syncPluginInstances).mock.calls[0][2];
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0].toolId).toBe("claude-code");
+  });
+
+  it("scopes a skill item's sync to only the matching tool instance", async () => {
+    vi.mocked(getToolInstances).mockReturnValue([
+      createMockTool({ toolId: "claude-code", instanceId: "default", name: "Claude" }),
+      createMockTool({ toolId: "opencode", instanceId: "default", name: "OpenCode" }),
+    ]);
+    vi.mocked(installSkillToInstance).mockReturnValue(true);
+
+    const skill = {
+      name: "test-skill",
+      installations: [],
+      diskPath: "/src/skills/test-skill",
+      toolId: "",
+      instanceName: "",
+      instanceId: "",
+    } as any;
+
+    await useStore.getState().syncTools(
+      [{ kind: "skill", skill, driftedInstances: [], missingInstances: ["Claude", "OpenCode"] }],
+      { toolFilter: (toolId) => toolId === "claude-code" },
+    );
+
+    expect(installSkillToInstance).toHaveBeenCalledTimes(1);
+    expect(installSkillToInstance).toHaveBeenCalledWith(skill, "claude-code", "default");
+  });
+
+  it("skips tool and piPackage items that don't match the filter", async () => {
+    const updateToolAction = vi.fn().mockResolvedValue(true);
+    const installPiPackage = vi.fn().mockResolvedValue(true);
+    useStore.setState({ tools: [], updateToolAction, installPiPackage } as any);
+
+    await useStore.getState().syncTools(
+      [
+        { kind: "tool", toolId: "amp-code", name: "Amp", installedVersion: "1.0.0", latestVersion: "1.1.0" },
+        { kind: "piPackage", piPackage: { name: "pkg", description: "", version: "1", source: "npm:pkg", sourceType: "npm", marketplace: "npm", installed: false } as any },
+      ],
+      { toolFilter: (toolId) => toolId === "claude-code" },
+    );
+
+    expect(updateToolAction).not.toHaveBeenCalled();
+    expect(installPiPackage).not.toHaveBeenCalled();
   });
 });
 
