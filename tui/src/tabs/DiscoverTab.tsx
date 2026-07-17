@@ -38,6 +38,12 @@ export function DiscoverTab({ contentHeight, searchFocused, onSearchFocus, onSea
   const marketplaces = useStore((s) => s.marketplaces);
   const piPackages = useStore((s) => s.piPackages);
   const subViewIndex = selectedIndex;
+  // Single source of truth for the sub-view list height — previously the
+  // "(showing X-Y of N)" range label hardcoded 12 while the ItemList it
+  // describes rendered at Math.max(4, contentHeight - 9), so on anything but a
+  // ~21-row terminal the label showed the wrong window (misleading about
+  // scroll position, worse the taller the terminal).
+  const listMaxHeight = Math.max(4, contentHeight - 9);
 
   const allPlugins = useMemo(() => marketplaces.flatMap((m) => m.plugins), [marketplaces]);
 
@@ -118,10 +124,10 @@ export function DiscoverTab({ contentHeight, searchFocused, onSearchFocus, onSea
         </Box>
         <Box marginBottom={1} marginTop={1}>
           <Text color="cyan" bold>Plugins </Text>
-          <Text color="gray" dimColor>{getRange(subViewIndex, managedPlugins.length, 12)}</Text>
+          <Text color="gray" dimColor>{getRange(subViewIndex, managedPlugins.length, listMaxHeight)}</Text>
           <Text color="gray"> · Press Esc to go back</Text>
         </Box>
-        <ItemList items={managedPlugins} selectedIndex={subViewIndex} maxHeight={Math.max(4, contentHeight - 9)} columns={PLUGIN_COLUMNS} />
+        <ItemList items={managedPlugins} selectedIndex={subViewIndex} maxHeight={listMaxHeight} columns={PLUGIN_COLUMNS} />
         <Box marginTop={1}>
           <PluginPreview plugin={filteredPlugins[subViewIndex] ?? null} />
         </Box>
@@ -151,10 +157,10 @@ export function DiscoverTab({ contentHeight, searchFocused, onSearchFocus, onSea
         </Box>
         <Box marginBottom={1} marginTop={1}>
           <Text color="cyan" bold>Pi Packages </Text>
-          <Text color="gray" dimColor>{getRange(subViewIndex, managedPiPackages.length, 12)}</Text>
+          <Text color="gray" dimColor>{getRange(subViewIndex, managedPiPackages.length, listMaxHeight)}</Text>
           <Text color="gray"> · Press Esc to go back</Text>
         </Box>
-        <ItemList items={managedPiPackages} selectedIndex={subViewIndex} maxHeight={Math.max(4, contentHeight - 9)} columns={PLUGIN_COLUMNS} />
+        <ItemList items={managedPiPackages} selectedIndex={subViewIndex} maxHeight={listMaxHeight} columns={PLUGIN_COLUMNS} />
         <Box marginTop={1}>
           <PiPackagePreview pkg={filteredPiPackages[subViewIndex] ?? null} />
         </Box>
