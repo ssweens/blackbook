@@ -3,8 +3,8 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 535
-- **Test Files:** 44
+- **Total Tests:** 757 (746 passing, 10 skipped — see CLI Mode section, 1 pre-existing failure unrelated to recent work: `install.integration.test.ts` "updatePlugin > updates only instances where plugin is already installed")
+- **Test Files:** 62
 
 ## Critical Paths
 - [x] Plugin discovery list loads
@@ -161,6 +161,13 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [ ] Settings persist to config.yaml after change
 - [ ] Settings tab keyboard guard allows tab navigation but delegates up/down/enter to panel
 - [x] Source repo actions include Pull latest entry and upstream state visibility logic is unit tested
+
+## CLI Mode (tui/src/lib/cli/)
+- [x] `--tool` resolution: matches by toolId, display name, or `toolId:instanceId` (case-insensitive); disambiguates multiple instances of one tool; clear error listing known tools when nothing matches (tool-filter.test.ts)
+- [x] `status`/`list`/`sync`/`install`/`uninstall` output formatting (text + `--json`) for every `SyncPreviewItem` kind, list sections, sync summaries, and install/uninstall results (format.test.ts)
+- [x] `syncTools`'s optional `toolFilter` param correctly scopes plugin/skill/file/tool/piPackage branches to one tool instance; `undefined` filter is a no-op regression guard (store.test.ts)
+- [x] Live-verified via the built `dist/cli.js` against a real scratch fixture: `status`, `list`, `sync --dry-run`, `sync --tool <x>` (confirmed only that tool's instance changes on disk), `sync --yes`, `install`/`uninstall` round-trip, unknown-name and bad-`--tool` error exit codes, bare `blackbook` still launches the TUI
+- [~] `cli.integration.test.ts` (spawns the real CLI via `tsx`, asserts on real stdout/disk state) is written but `describe.skip`ped — reproducible environment-specific issue where fixture data written from within the running vitest process is invisible to a `spawnSync`'d child in this environment; not a code defect (see `tasks/todo.md` for the full investigation). The behavior it would cover is proven by the live `dist/cli.js` verification above instead.
 
 ## Gaps (Low Priority)
 - [ ] End-to-end TUI navigation across all tabs (discover → installed → tools → sync → settings)

@@ -108,6 +108,25 @@ Blackbook opens on the **Sync** tab by default.
 
 Blackbook hydrates the initial tab on startup. Refresh/load data on the current tab with `R`. A loading indicator is shown while refresh is in progress.
 
+### CLI Mode
+
+Running `blackbook` with a recognized subcommand skips the interactive TUI entirely and runs non-interactively, exiting with a status code — useful for scripts and agents. Bare `blackbook` (no subcommand) still launches the TUI as above.
+
+```bash
+blackbook status [--tool <id>] [--json]      # what's out of sync
+blackbook list [--tool <id>] [--json]        # everything tracked, with install state
+blackbook sync [--tool <id>] [--yes] [--dry-run] [--json]
+blackbook install <name>[@marketplace] [--json]
+blackbook uninstall <name>[@marketplace] [--json]
+```
+
+- `--tool <id>` scopes to one tool instance — matches a tool ID, display name, or `toolId:instanceId` (case-insensitive) when disambiguating multiple instances of the same tool.
+- `--json` switches to machine-readable output on stdout (diagnostic/progress messages go to stderr).
+- `sync` only auto-resolves the same "safe" subset the TUI's default bulk sync does (missing instances); `--yes` also force-overwrites conflicts and untracked existing targets. `--dry-run` prints what would sync without changing anything.
+- `install`/`uninstall` resolve `<name>` against marketplace plugins first, then standalone skills, applying to all enabled tools.
+- Exit code `0` on success, non-zero on any reported error (bad `--tool` value, unknown plugin/skill name, failed install, sync errors).
+- CLI commands skip the TUI's background tool-binary version checks (network-dependent, only feeds "tool" status items) — a scriptable command shouldn't pay for that round-trip on every invocation.
+
 ## Configuration
 
 Blackbook uses YAML configuration files:
