@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.1] - 2026-07-16
+
+### Fixed
+- Plugin drift "changed" list badges (Installed/Discover tabs) never populated during normal use — `pluginDriftMap` was permanently `{}`, since nothing wrote real data into it (the detail-view drift mechanism only ever updates the one open detail, not the shared map feeding list badges). Restored the background batch computation that used to populate it, fixing the structural flaw that got it disabled in the first place: the original effect ran `Promise.all` across every installed plugin with no cross-plugin throttling (up to `8×N` concurrent git subprocesses for N plugins, which is what starved input responsiveness and led to it being deleted outright rather than fixed). New `computeAllPluginsDrift()` bounds cross-plugin concurrency the same way `computePluginDrift()` already bounds per-plugin concurrency, capping the worst case at 16 concurrent git subprocesses regardless of how many plugins are installed. The detail-view on-demand computation (deferred 300ms after opening a plugin detail) was already correct and needed no changes — an earlier diagnosis this same day incorrectly concluded it had been removed by a revert.
+
 ## [0.25.0] - 2026-07-16
 
 ### Added

@@ -194,7 +194,7 @@ export function resolvePluginSourcePaths(
  * plugin with many components can stall stdin readable events long enough
  * that the next user keypress (most commonly Esc) appears unresponsive.
  */
-async function mapLimit<T, R>(
+export async function mapLimit<T, R>(
   items: T[],
   limit: number,
   fn: (item: T) => Promise<R>,
@@ -290,4 +290,27 @@ export async function computePluginDrift(
     });
 
   return drift;
+}
+
+/**
+ * Batch drift computation for every installed plugin (list-view "changed"
+ * badges). `computePluginDrift` already bounds concurrency *within* one
+ * plugin (4 components × 2 tool-instances = up to 8 concurrent git
+ * subprocesses), but that bound does nothing to stop N plugins from all
+ * running at once — for 10 installed plugins that's up to 80 concurrent
+ * spawns, which is what previously stalled stdin responsiveness badly enough
+ * that background computation was disabled outright. `concurrency` bounds
+ * how many plugins' drift is computed at once, capping the worst case at
+ * `concurrency * 8` regardless of how many plugins are installed.
+ */
+export async function computeAllPluginsDrift(
+  plugins: Plugin[],
+  concurrency = 2,
+): Promise<Record<string, PluginDrift>> {
+  const entries = await mapLimit(
+    plugins,
+    concurrency,
+    async (plugin): Promise<[string, PluginDrift]> => [plugin.name, await computePluginDrift(plugin)],
+  );
+  return Object.fromEntries(entries);
 }

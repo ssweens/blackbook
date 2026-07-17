@@ -3,8 +3,8 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 757 (746 passing, 10 skipped — see CLI Mode section, 1 pre-existing failure unrelated to recent work: `install.integration.test.ts` "updatePlugin > updates only instances where plugin is already installed")
-- **Test Files:** 62
+- **Total Tests:** 763 (752 passing, 10 skipped — see CLI Mode section, 1 pre-existing failure unrelated to recent work: `install.integration.test.ts` "updatePlugin > updates only instances where plugin is already installed")
+- **Test Files:** 63
 
 ## Critical Paths
 - [x] Plugin discovery list loads
@@ -168,6 +168,11 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] `syncTools`'s optional `toolFilter` param correctly scopes plugin/skill/file/tool/piPackage branches to one tool instance; `undefined` filter is a no-op regression guard (store.test.ts)
 - [x] Live-verified via the built `dist/cli.js` against a real scratch fixture: `status`, `list`, `sync --dry-run`, `sync --tool <x>` (confirmed only that tool's instance changes on disk), `sync --yes`, `install`/`uninstall` round-trip, unknown-name and bad-`--tool` error exit codes, bare `blackbook` still launches the TUI
 - [~] `cli.integration.test.ts` (spawns the real CLI via `tsx`, asserts on real stdout/disk state) is written but `describe.skip`ped — reproducible environment-specific issue where fixture data written from within the running vitest process is invisible to a `spawnSync`'d child in this environment; not a code defect (see `tasks/todo.md` for the full investigation). The behavior it would cover is proven by the live `dist/cli.js` verification above instead.
+
+## Plugin Drift (tui/src/lib/plugin-drift.ts)
+- [x] `mapLimit` (the cross-item concurrency bound used by both `computePluginDrift`'s per-plugin bounding and the new cross-plugin bounding): preserves input order regardless of resolution order, never exceeds the given concurrency limit, handles empty input, handles limit greater than item count (plugin-drift.test.ts — this module had zero test coverage before this change)
+- [x] `computeAllPluginsDrift` keys results by plugin name for every plugin; returns `{}` for an empty list (plugin-drift.test.ts)
+- [x] Live-verified in tmux: a plugin installed with real on-disk drift (edited installed skill copy vs. source) shows a `drifted` list badge on the Installed tab without ever opening its detail view; rapid tab-switching stays responsive with the background computation running
 
 ## Gaps (Low Priority)
 - [ ] End-to-end TUI navigation across all tabs (discover → installed → tools → sync → settings)

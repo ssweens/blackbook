@@ -45,7 +45,7 @@ import {
   uninstallPluginFromInstance,
   groupSkillsByNamespace,
 } from "./lib/install.js";
-import { resolvePluginSourcePaths, type PluginDrift } from "./lib/plugin-drift.js";
+import { resolvePluginSourcePaths, computeAllPluginsDrift, type PluginDrift } from "./lib/plugin-drift.js";
 import { resolveInstalledPluginComponentPath } from "./lib/pi-bridge.js";
 import { computeItemDrift } from "./lib/item-drift.js";
 import { buildFileDiffTarget } from "./lib/diff.js";
@@ -475,17 +475,22 @@ export function App() {
     }
   }, [files, detailFile]);
 
-  // Manual-only mode: skip expensive background drift scans. Reset drift
-  // state once at cold start only — not if it was already populated when the
-  // app mounted (e.g. tests seeding it directly, or a future on-demand
-  // computation), since that would wipe drift data meant to be shown.
-  // Deliberately mount-once (checks pluginDriftMap's value only at the moment
-  // this runs); `setPluginDriftMap` is a stable store action, so this never
-  // re-fires on its own.
+  // Compute drift for every installed plugin (list-view "changed" badges).
+  // computeAllPluginsDrift bounds cross-plugin concurrency (on top of
+  // computePluginDrift's own per-plugin component/instance bound) so this
+  // can't saturate libuv with concurrent git subprocesses the way an earlier,
+  // unbounded version of this effect once did. Fires whenever the installed
+  // list actually changes — effectiveInstalledPlugins is a stable useMemo,
+  // so this doesn't re-run on unrelated re-renders/keystrokes.
   useEffect(() => {
-    if (Object.keys(pluginDriftMap).length > 0) return;
-    setPluginDriftMap({});
-  }, [setPluginDriftMap]);
+    if (effectiveInstalledPlugins.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const map = await computeAllPluginsDrift(effectiveInstalledPlugins);
+      if (!cancelled) setPluginDriftMap(map);
+    })();
+    return () => { cancelled = true; };
+  }, [effectiveInstalledPlugins]);
 
   useEffect(() => {
     if (!syncArmed) return;
