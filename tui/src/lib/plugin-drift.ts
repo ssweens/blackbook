@@ -18,7 +18,7 @@ import type { Plugin } from "./types.js";
 import { loadManifest } from "./manifest.js";
 import { buildManifestItemKey, instanceKey } from "./plugin-helpers.js";
 import { getToolInstances, parseMarketplaces } from "./config.js";
-import { expandTilde } from "./path-utils.js";
+import { resolveLocalPathRaw } from "./path-utils.js";
 import { resolveInstalledPluginComponentPath } from "./pi-bridge.js";
 
 const execFileAsync = promisify(execFile);
@@ -115,13 +115,12 @@ function resolvePluginSource(
 
   for (const mp of uniqueSources) {
     const mpUrl = mp.url;
-    // Only local marketplaces have a source repo we can inspect.
-    if (!mpUrl.startsWith("/") && !mpUrl.startsWith("~") && !mpUrl.startsWith("./") && !mpUrl.startsWith("../")) {
-      continue;
-    }
-
-    // Resolve the marketplace file path.
-    let normalizedUrl = expandTilde(mpUrl);
+    // Only local marketplaces have a source repo we can inspect — matches
+    // /, ~, ./, ../, and file:// (raw: doesn't collapse a file target to its
+    // directory, since the directory-vs-file branch below needs the raw
+    // target to try alternate filenames when it's a directory).
+    const normalizedUrl = resolveLocalPathRaw(mpUrl);
+    if (normalizedUrl === null) continue;
 
     // Determine the marketplace JSON file path.
     let marketplaceFile: string;

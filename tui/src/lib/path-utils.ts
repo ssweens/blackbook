@@ -22,38 +22,54 @@ export function expandTilde(p: string): string {
 }
 
 /**
+ * Normalize a URL/path string to an absolute file-system path, without
+ * collapsing a file target down to its containing directory. Handles
+ * `file://` URLs, `~`-prefixed paths, and relative paths. Returns null if
+ * the URL is a non-local remote URL.
+ *
+ * Prefer `resolveLocalPath` unless the caller specifically needs to know
+ * whether the raw target is itself a file (e.g. to try alternate filenames
+ * when it's a directory instead) — that's the one thing collapsing to a
+ * directory up front would lose.
+ */
+export function resolveLocalPathRaw(urlOrPath: string, isLocal = false): string | null {
+  if (!urlOrPath) return null;
+
+  if (urlOrPath.startsWith("file://")) {
+    try {
+      return fileURLToPath(urlOrPath);
+    } catch {
+      return null;
+    }
+  }
+
+  const looksLocal =
+    isLocal ||
+    urlOrPath.startsWith("/") ||
+    urlOrPath.startsWith("~") ||
+    urlOrPath.startsWith("./") ||
+    urlOrPath.startsWith("../");
+
+  if (!looksLocal && urlOrPath.includes("://")) return null;
+
+  let normalized = expandTilde(urlOrPath);
+  if (!normalized.startsWith("/")) normalized = resolve(process.cwd(), normalized);
+  return normalized;
+}
+
+/**
  * Normalize a URL/path string to an absolute file-system path.
  * Handles `file://` URLs, `~`-prefixed paths, and relative paths.
  * Returns null if the URL is a non-local remote URL.
  */
 export function resolveLocalPath(urlOrPath: string, isLocal = false): string | null {
-  if (!urlOrPath) return null;
-
-  let normalized: string;
-  if (urlOrPath.startsWith("file://")) {
-    try {
-      normalized = fileURLToPath(urlOrPath);
-    } catch {
-      return null;
-    }
-  } else {
-    const looksLocal =
-      isLocal ||
-      urlOrPath.startsWith("/") ||
-      urlOrPath.startsWith("~") ||
-      urlOrPath.startsWith("./") ||
-      urlOrPath.startsWith("../");
-
-    if (!looksLocal && urlOrPath.includes("://")) return null;
-
-    normalized = expandTilde(urlOrPath);
-    if (!normalized.startsWith("/")) normalized = resolve(process.cwd(), normalized);
-  }
+  const normalized = resolveLocalPathRaw(urlOrPath, isLocal);
+  if (normalized === null) return null;
 
   // If pointing at a file, return its directory — applies to file:// URLs too,
   // since a marketplace URL commonly points at marketplace.json itself.
   if (existsSync(normalized) && lstatSync(normalized).isFile()) {
-    normalized = dirname(normalized);
+    return dirname(normalized);
   }
 
   return normalized;

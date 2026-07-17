@@ -3,7 +3,7 @@ import { homedir, tmpdir } from "os";
 import { join } from "path";
 import { pathToFileURL } from "url";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
-import { expandTilde, resolveLocalPath } from "./path-utils.js";
+import { expandTilde, resolveLocalPath, resolveLocalPathRaw } from "./path-utils.js";
 
 describe("expandTilde", () => {
   it("expands a bare tilde to the home directory", () => {
@@ -73,5 +73,40 @@ describe("resolveLocalPath", () => {
 
   it("returns null for an empty string", () => {
     expect(resolveLocalPath("")).toBeNull();
+  });
+});
+
+describe("resolveLocalPathRaw", () => {
+  let testDir: string;
+  let marketplaceJsonPath: string;
+
+  beforeEach(() => {
+    testDir = mkdtempSync(join(tmpdir(), "resolve-local-path-raw-"));
+    marketplaceJsonPath = join(testDir, ".claude-plugin", "marketplace.json");
+    mkdirSync(join(testDir, ".claude-plugin"), { recursive: true });
+    writeFileSync(marketplaceJsonPath, "{}");
+  });
+
+  afterEach(() => {
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it("does not collapse a bare absolute path pointing at a file to its directory", () => {
+    // Unlike resolveLocalPath — callers that need to know the raw target is a
+    // file (to try alternate filenames when it's a directory instead) use
+    // this instead of resolveLocalPath specifically to avoid that collapse.
+    expect(resolveLocalPathRaw(marketplaceJsonPath)).toBe(marketplaceJsonPath);
+  });
+
+  it("does not collapse a file:// URL pointing at a file to its directory", () => {
+    expect(resolveLocalPathRaw(pathToFileURL(marketplaceJsonPath).href)).toBe(marketplaceJsonPath);
+  });
+
+  it("returns null for a remote (non-local) URL", () => {
+    expect(resolveLocalPathRaw("https://github.com/owner/repo.git")).toBeNull();
+  });
+
+  it("returns null for an empty string", () => {
+    expect(resolveLocalPathRaw("")).toBeNull();
   });
 });

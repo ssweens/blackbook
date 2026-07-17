@@ -16,23 +16,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          version: 9
+          bun-version: latest
 
+      # npm publish --provenance needs npm's own registry-url/OIDC setup, so
+      # Node.js + npm stay for that step even though install/build use bun.
       - uses: actions/setup-node@v4
         with:
           node-version: '23'
-          cache: 'pnpm'
-          cache-dependency-path: tui/pnpm-lock.yaml
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
-        run: pnpm install
+        run: bun install
         working-directory: tui
 
       - name: Build
-        run: pnpm build
+        run: bun run build
         working-directory: tui
 
       - name: Copy files for publish

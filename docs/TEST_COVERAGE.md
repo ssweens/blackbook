@@ -3,7 +3,7 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 763 (752 passing, 10 skipped — see CLI Mode section, 1 pre-existing failure unrelated to recent work: `install.integration.test.ts` "updatePlugin > updates only instances where plugin is already installed")
+- **Total Tests:** 772 (761 passing, 10 skipped — see CLI Mode section, 1 pre-existing failure unrelated to recent work: `install.integration.test.ts` "updatePlugin > updates only instances where plugin is already installed")
 - **Test Files:** 63
 
 ## Critical Paths
@@ -173,6 +173,10 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] `mapLimit` (the cross-item concurrency bound used by both `computePluginDrift`'s per-plugin bounding and the new cross-plugin bounding): preserves input order regardless of resolution order, never exceeds the given concurrency limit, handles empty input, handles limit greater than item count (plugin-drift.test.ts — this module had zero test coverage before this change)
 - [x] `computeAllPluginsDrift` keys results by plugin name for every plugin; returns `{}` for an empty list (plugin-drift.test.ts)
 - [x] Live-verified in tmux: a plugin installed with real on-disk drift (edited installed skill copy vs. source) shows a `drifted` list badge on the Installed tab without ever opening its detail view; rapid tab-switching stays responsive with the background computation running
+- [x] `resolvePluginSourcePaths` resolves a plugin's real source dir from a local marketplace given a bare path, a `file://` URL to the marketplace's directory, and a `file://` URL pointing directly at `marketplace.json`; returns `null` for an unknown plugin or a remote (non-local) marketplace (plugin-drift.test.ts)
+
+## Path Utils (tui/src/lib/path-utils.ts)
+- [x] `resolveLocalPathRaw` (the `file://`/`~`/relative-path normalizer shared by `resolveLocalPath` and `plugin-drift.ts`'s local-marketplace resolution): does not collapse a file target to its directory for either a bare path or a `file://` URL, matching the one place `resolveLocalPath` isn't the right choice; returns `null` for a remote URL or empty string (path-utils.test.ts)
 
 ## Gaps (Low Priority)
 - [ ] End-to-end TUI navigation across all tabs (discover → installed → tools → sync → settings)

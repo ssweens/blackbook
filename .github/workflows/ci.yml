@@ -13,28 +13,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          version: 9
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '23'
-          cache: 'pnpm'
-          cache-dependency-path: tui/pnpm-lock.yaml
+          bun-version: latest
 
       - name: Install dependencies
-        run: pnpm install
+        run: bun install
         working-directory: tui
 
       - name: Type check
-        run: pnpm typecheck
+        run: bun run typecheck
         working-directory: tui
 
       - name: Run tests
-        run: pnpm test
+        run: bun run test
         working-directory: tui
 
       - name: Build
-        run: pnpm build
+        run: bun run build
         working-directory: tui

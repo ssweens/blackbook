@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.2] - 2026-07-17
+
+### Fixed
+- `.github/workflows/ci.yml` and `release.yml` still referenced `pnpm`/`tui/pnpm-lock.yaml` from before `tui/` moved to bun in May 2026 — CI was running (or failing) against a stale/nonexistent lockfile reference instead of the actual toolchain. Both workflows now use `oven-sh/setup-bun` and `bun install`/`bun run <script>`; `release.yml` keeps `actions/setup-node` alongside bun since `npm publish --provenance` needs npm's own registry-url/OIDC setup for provenance, which bun's publish flow doesn't provide.
+- `plugin-drift.ts`'s local-marketplace detection (used to locate a plugin's real source for drift comparison) didn't recognize `file://` marketplace URLs — the same class of gap fixed for plugin installs in 0.25.0, in a different function that fix didn't touch. Drift silently never showed for plugins registered via a `file://`-scheme marketplace. Fixed by extracting a `resolveLocalPathRaw` helper (shared with `resolveLocalPath`) in `path-utils.ts` and routing through it.
+
 ## [0.25.1] - 2026-07-16
 
 ### Fixed
