@@ -50,6 +50,13 @@ const SETTINGS_DEFS: SettingDef[] = [
     type: "boolean",
     description: "Track and sync tool config files (settings.json, etc.)",
   },
+  {
+    key: "skill_sync_mode",
+    label: "Skill Sync Mode",
+    type: "enum",
+    enumValues: ["copy", "symlink"],
+    description: "How skill/plugin-component installs land on disk. Symlinked installs can't drift and need no resync — never applies to config files.",
+  },
 ];
 
 function formatValue(def: SettingDef, value: unknown): string {

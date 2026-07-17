@@ -11,6 +11,7 @@ import {
   readdirSync,
 } from "fs";
 import { join } from "path";
+import { pathToFileURL } from "url";
 import { tmpdir } from "os";
 import {
   enablePlugin,
@@ -1143,6 +1144,58 @@ describe("syncPluginInstances", () => {
     expect(existsSync(join(targetDir, "SKILL.md"))).toBe(true);
   });
 
+  it("resolves local marketplace plugin sources when the marketplace URL is a file:// URL", async () => {
+    const pluginName = "eval-model-fileurl";
+    const skillName = "eval-model-fileurl";
+    const marketplace = "playbook-fileurl";
+
+    const repoRoot = join(TEST_ROOT, "playbook-repo-fileurl");
+    const marketplaceDir = join(repoRoot, ".claude-plugin");
+    const marketplaceJsonPath = join(marketplaceDir, "marketplace.json");
+    const pluginSourceDir = join(repoRoot, "plugins", pluginName);
+
+    mkdirSync(marketplaceDir, { recursive: true });
+    writeFileSync(marketplaceJsonPath, JSON.stringify({ name: marketplace, plugins: [] }));
+
+    mkdirSync(join(pluginSourceDir, "skills", skillName), { recursive: true });
+    writeFileSync(join(pluginSourceDir, "skills", skillName, "SKILL.md"), "# Eval Model");
+
+    const plugin: Plugin = {
+      name: pluginName,
+      marketplace,
+      description: "Eval model skill",
+      source: `./plugins/${pluginName}`,
+      skills: [skillName],
+      commands: [],
+      agents: [],
+      hooks: [],
+      hasMcp: false,
+      hasLsp: false,
+      homepage: "",
+      installed: true,
+      scope: "user",
+    };
+
+    const opencodeInstance = getInstance("opencode");
+    const targetDir = join(opencodeInstance.configDir, opencodeInstance.skillsSubdir!, pluginName, skillName);
+    rmSync(targetDir, { recursive: true, force: true });
+
+    const result = await syncPluginInstances(plugin, pathToFileURL(marketplaceJsonPath).href, [
+      {
+        toolId: "opencode",
+        instanceId: opencodeInstance.instanceId,
+        name: opencodeInstance.name,
+        installed: false,
+        supported: true,
+        enabled: true,
+      },
+    ]);
+
+    expect(result.success).toBe(true);
+    expect(result.syncedInstances[`opencode:${opencodeInstance.instanceId}`]).toBeGreaterThan(0);
+    expect(existsSync(join(targetDir, "SKILL.md"))).toBe(true);
+  });
+
   it("syncs standalone installed skill sources (no package root) to missing instances", async () => {
     const standaloneSource = join(TEST_ROOT, "standalone-skill-source", TEST_SKILL_NAME);
     mkdirSync(standaloneSource, { recursive: true });
@@ -1258,6 +1311,38 @@ describe("standalone skill scanning compatibility", () => {
 
     expect(existsSync(namespacedPath)).toBe(true);
     expect(existsSync(flatPath)).toBe(false);
+  });
+
+  it("symlinks instead of copying when skill_sync_mode is 'symlink'", () => {
+    const skillName = "symlink-mode-skill";
+    const sourceRepo = configureSourceRepoWithSsmpSkill(skillName);
+    const sourceSkillDir = join(sourceRepo, "skills", "ssmp", skillName);
+
+    const configPath = getYamlConfigPath();
+    const loaded = loadYamlConfig(configPath);
+    saveYamlConfig(
+      { ...loaded.config, settings: { ...loaded.config.settings, skill_sync_mode: "symlink" } },
+      configPath,
+    );
+
+    const piInstance = getInstance("pi");
+    const skill = {
+      name: skillName, namespace: "ssmp", installations: [],
+      diskPath: sourceSkillDir, toolId: "", instanceId: "", instanceName: "",
+      sourcePath: sourceSkillDir,
+    } as any;
+
+    const ok = installSkillToInstance(skill, "pi", piInstance.instanceId);
+    expect(ok).toBe(true);
+
+    const targetDir = join(piInstance.configDir, piInstance.skillsSubdir!, "ssmp", skillName);
+    expect(lstatSync(targetDir).isSymbolicLink()).toBe(true);
+    expect(realpathSync(targetDir)).toBe(realpathSync(sourceSkillDir));
+
+    // Genuinely linked, not copied: editing the source is immediately visible
+    // through the target, with no separate on-disk copy to fall out of sync.
+    writeFileSync(join(sourceSkillDir, "SKILL.md"), `# ${skillName}\n\nedited after install\n`);
+    expect(readFileSync(join(targetDir, "SKILL.md"), "utf-8")).toContain("edited after install");
   });
 
   it("migrates legacy flat standalone skills to namespaced paths", () => {

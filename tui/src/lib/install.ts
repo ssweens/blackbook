@@ -16,6 +16,7 @@ import { promisify } from "util";
 import { execFile, execFileSync } from "child_process";
 import { hashBuffer, hashFile, hashPath, hashString, hashDirectory } from "./modules/hash.js";
 import { createBackup, pruneBackups } from "./modules/backup.js";
+import { applySymlinkSync } from "./modules/symlink-create.js";
 
 const execFileAsync = promisify(execFile);
 import { join, dirname, resolve, basename } from "path";
@@ -30,6 +31,7 @@ import {
   getPluginComponentConfig,
   setPluginComponentEnabled,
   parseMarketplaces,
+  getSkillSyncMode,
 } from "./config.js";
 import { loadPiSettings, normalizePiPackageSource } from "./marketplace.js";
 import { loadConfig as loadYamlConfig } from "./config/loader.js";
@@ -43,7 +45,7 @@ import type {
   FileStatus,
 } from "./types.js";
 import { atomicWriteFileSync, renameOrCopy, withFileLockSync } from "./fs-utils.js";
-import { expandTilde, scanPluginContents } from "./path-utils.js";
+import { resolveLocalPath, scanPluginContents } from "./path-utils.js";
 import {
   safePath,
   validateGitRef,
@@ -238,28 +240,16 @@ export async function downloadPlugin(
 
   const source = plugin.source;
 
-  // Handle local marketplace (path-based)
-  const isLocalMarketplace =
-    marketplaceUrl.startsWith("/") ||
-    marketplaceUrl.startsWith("./") ||
-    marketplaceUrl.startsWith("../") ||
-    marketplaceUrl.startsWith("~");
+  // Handle local marketplace (path-based, including file:// URLs — matches
+  // the file:// handling marketplace.ts and path-utils.ts already do).
+  const localMarketplaceBase = resolveLocalPath(marketplaceUrl);
 
   if (
-    isLocalMarketplace &&
+    localMarketplaceBase &&
     typeof source === "string" &&
     source.startsWith("./")
   ) {
-    // Resolve marketplace base directory
-    let marketplaceBase = marketplaceUrl;
-    marketplaceBase = expandTilde(marketplaceBase);
-    if (!marketplaceBase.startsWith("/")) {
-      marketplaceBase = resolve(process.cwd(), marketplaceBase);
-    }
-    // If marketplace points to a file, use its directory
-    if (existsSync(marketplaceBase) && lstatSync(marketplaceBase).isFile()) {
-      marketplaceBase = dirname(marketplaceBase);
-    }
+    let marketplaceBase = localMarketplaceBase;
 
     // Source paths in marketplace.json are relative to repo root.
     // If marketplace base is .claude-plugin/, step up to repo root.
@@ -2074,6 +2064,16 @@ export function installSkillToInstance(
   if (!target || !target.skillsSubdir) return false;
   const targetDir = getStandaloneSkillTargetDir(skill, target);
   if (!targetDir) return false;
+
+  // Opt-in: symlink the whole skill directory instead of copying it. A
+  // symlinked skill can't drift (the target IS the source) and needs no
+  // resync. applySymlinkSync backs up any existing real content first, same
+  // as the copy path below.
+  if (getSkillSyncMode() === "symlink") {
+    const result = applySymlinkSync({ sourcePath, targetPath: targetDir, owner: `skill:${skill.name}` });
+    return !result.error;
+  }
+
   try {
     // Back up any existing install before overwriting — this runs on the drifted
     // branch (overwrite disk with source), so the target may hold user edits.

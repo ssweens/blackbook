@@ -19,6 +19,7 @@ import {
   realpathSync,
   copyFileSync,
   cpSync,
+  symlinkSync,
 } from "fs";
 import { join, dirname } from "path";
 import type { Plugin, InstalledItem, ToolInstance } from "../types.js";
@@ -40,7 +41,7 @@ import {
   validatePluginName,
   logError,
 } from "../validation.js";
-import { getPluginComponentConfig } from "../config.js";
+import { getPluginComponentConfig, getSkillSyncMode } from "../config.js";
 import type {
   ToolAdapter,
   PerInstanceResult,
@@ -114,6 +115,17 @@ function copyWithBackup(
   }
 
   mkdirSync(dirname(dest), { recursive: true });
+
+  // Opt-in: symlink instead of copy. The backup step above already moved any
+  // existing dest out of the way (a rename, not a copy), so dest is guaranteed
+  // absent here — a plain symlinkSync is all that's needed, for a directory
+  // (skill) or a single file (command/agent) alike; unlike cpSync/copyFileSync,
+  // symlinkSync doesn't care which. A symlinked item can't drift and never
+  // needs a resync.
+  if (getSkillSyncMode() === "symlink") {
+    symlinkSync(src, dest);
+    return { dest, backup: backupPath };
+  }
 
   const srcStat = lstatSync(src);
   if (srcStat.isDirectory()) {

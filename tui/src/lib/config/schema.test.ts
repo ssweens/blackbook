@@ -5,10 +5,16 @@ describe("ConfigSchema", () => {
   it("accepts empty object and fills defaults", () => {
     const result = ConfigSchema.parse({});
     expect(result.settings.package_manager).toBe("npm");
+    expect(result.settings.skill_sync_mode).toBe("copy");
     expect(result.marketplaces).toEqual({});
     expect(result.tools).toEqual({});
     expect(result.files).toEqual([]);
     expect(result.plugins).toEqual({});
+  });
+
+  it("accepts skill_sync_mode: symlink as an explicit opt-in", () => {
+    const result = ConfigSchema.parse({ settings: { skill_sync_mode: "symlink" } });
+    expect(result.settings.skill_sync_mode).toBe("symlink");
   });
 
   it("accepts a full config", () => {

@@ -214,6 +214,7 @@ function buildInitialYamlConfig(): BlackbookConfig {
       config_management: false,
       disabled_marketplaces: [],
       disabled_pi_marketplaces: [],
+      skill_sync_mode: "copy",
     },
     marketplaces: { ...DEFAULT_INITIAL_MARKETPLACES },
     pi_marketplaces: {},
@@ -507,6 +508,12 @@ export function getAssetsRepoPath(): string | null {
 export function getPackageManager(): PackageManager {
   const { config } = loadYamlConfig();
   return config.settings.package_manager;
+}
+
+/** Opt-in sync strategy for skill/plugin-component installs — never applies to config files. */
+export function getSkillSyncMode(): "copy" | "symlink" {
+  const { config } = loadYamlConfig();
+  return config.settings.skill_sync_mode;
 }
 
 /**

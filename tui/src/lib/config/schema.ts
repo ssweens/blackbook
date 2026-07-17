@@ -54,6 +54,12 @@ export const SettingsSchema = z.object({
   config_management: z.boolean().default(false),
   disabled_marketplaces: z.array(z.string()).default([]),
   disabled_pi_marketplaces: z.array(z.string()).default([]),
+  // Opt-in: symlink skill/plugin-component dirs into a tool instead of copying
+  // them. A symlinked install can't drift (the target IS the source), so it
+  // needs no state tracking or resync — but only for skills/components, never
+  // for config files (settings.json etc.), which tools rewrite in place; those
+  // always stay copy + three-way state + pullback regardless of this setting.
+  skill_sync_mode: z.enum(["copy", "symlink"]).default("copy"),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;

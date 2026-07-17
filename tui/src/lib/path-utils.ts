@@ -29,23 +29,29 @@ export function expandTilde(p: string): string {
 export function resolveLocalPath(urlOrPath: string, isLocal = false): string | null {
   if (!urlOrPath) return null;
 
+  let normalized: string;
   if (urlOrPath.startsWith("file://")) {
-    try { return fileURLToPath(urlOrPath); } catch { return null; }
+    try {
+      normalized = fileURLToPath(urlOrPath);
+    } catch {
+      return null;
+    }
+  } else {
+    const looksLocal =
+      isLocal ||
+      urlOrPath.startsWith("/") ||
+      urlOrPath.startsWith("~") ||
+      urlOrPath.startsWith("./") ||
+      urlOrPath.startsWith("../");
+
+    if (!looksLocal && urlOrPath.includes("://")) return null;
+
+    normalized = expandTilde(urlOrPath);
+    if (!normalized.startsWith("/")) normalized = resolve(process.cwd(), normalized);
   }
 
-  const looksLocal =
-    isLocal ||
-    urlOrPath.startsWith("/") ||
-    urlOrPath.startsWith("~") ||
-    urlOrPath.startsWith("./") ||
-    urlOrPath.startsWith("../");
-
-  if (!looksLocal && urlOrPath.includes("://")) return null;
-
-  let normalized = expandTilde(urlOrPath);
-  if (!normalized.startsWith("/")) normalized = resolve(process.cwd(), normalized);
-
-  // If pointing at a file, return its directory
+  // If pointing at a file, return its directory — applies to file:// URLs too,
+  // since a marketplace URL commonly points at marketplace.json itself.
   if (existsSync(normalized) && lstatSync(normalized).isFile()) {
     normalized = dirname(normalized);
   }

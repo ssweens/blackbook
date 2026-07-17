@@ -1,7 +1,9 @@
-import { describe, it, expect } from "vitest";
-import { homedir } from "os";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { homedir, tmpdir } from "os";
 import { join } from "path";
-import { expandTilde } from "./path-utils.js";
+import { pathToFileURL } from "url";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
+import { expandTilde, resolveLocalPath } from "./path-utils.js";
 
 describe("expandTilde", () => {
   it("expands a bare tilde to the home directory", () => {
@@ -24,5 +26,52 @@ describe("expandTilde", () => {
 
   it("leaves a relative path unchanged", () => {
     expect(expandTilde("foo/bar")).toBe("foo/bar");
+  });
+});
+
+describe("resolveLocalPath", () => {
+  let testDir: string;
+  let marketplaceJsonPath: string;
+
+  beforeEach(() => {
+    testDir = mkdtempSync(join(tmpdir(), "resolve-local-path-"));
+    marketplaceJsonPath = join(testDir, ".claude-plugin", "marketplace.json");
+    mkdirSync(join(testDir, ".claude-plugin"), { recursive: true });
+    writeFileSync(marketplaceJsonPath, "{}");
+  });
+
+  afterEach(() => {
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it("returns a bare absolute directory path unchanged", () => {
+    expect(resolveLocalPath(testDir)).toBe(testDir);
+  });
+
+  it("resolves a bare absolute path pointing at a file to its directory", () => {
+    expect(resolveLocalPath(marketplaceJsonPath)).toBe(join(testDir, ".claude-plugin"));
+  });
+
+  it("resolves a file:// URL pointing at a directory to that directory", () => {
+    expect(resolveLocalPath(pathToFileURL(testDir).href)).toBe(testDir);
+  });
+
+  it("resolves a file:// URL pointing at a file to its directory", () => {
+    // Regression: the file:// branch used to return fileURLToPath() directly,
+    // skipping the "if it's a file, use its directory" step that the bare-path
+    // branch applies — so a file:// marketplace URL pointing at
+    // marketplace.json (the common case) resolved to the file itself instead
+    // of its containing directory.
+    expect(resolveLocalPath(pathToFileURL(marketplaceJsonPath).href)).toBe(
+      join(testDir, ".claude-plugin"),
+    );
+  });
+
+  it("returns null for a remote (non-local) URL", () => {
+    expect(resolveLocalPath("https://github.com/owner/repo.git")).toBeNull();
+  });
+
+  it("returns null for an empty string", () => {
+    expect(resolveLocalPath("")).toBeNull();
   });
 });

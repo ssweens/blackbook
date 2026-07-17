@@ -1646,7 +1646,7 @@ describe("Repo-prescribed Pi packages", () => {
     vi.mocked(loadYamlConfig).mockImplementation((configPath?: string) => ({
       config: configPath === sourceRepoConfigPath
         ? {
-          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
           marketplaces: {},
           pi_marketplaces: {},
           tools: {},
@@ -1658,7 +1658,7 @@ describe("Repo-prescribed Pi packages", () => {
           profiles: {},
         }
         : {
-          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
           marketplaces: {},
           pi_marketplaces: {},
           tools: {},
@@ -1713,7 +1713,7 @@ describe("Repo-prescribed Pi packages", () => {
     vi.mocked(loadYamlConfig).mockImplementation((configPath?: string) => ({
       config: configPath === sourceRepoConfigPath
         ? {
-          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
           marketplaces: {},
           pi_marketplaces: {},
           tools: {},
@@ -1725,7 +1725,7 @@ describe("Repo-prescribed Pi packages", () => {
           profiles: {},
         }
         : {
-          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
           marketplaces: {},
           pi_marketplaces: {},
           tools: {},
@@ -1775,7 +1775,7 @@ describe("Repo-prescribed Pi packages", () => {
 
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: {
-        settings: { source_repo: "https://github.com/example/playbook.git", package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+        settings: { source_repo: "https://github.com/example/playbook.git", package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
         marketplaces: {},
         pi_marketplaces: {},
         tools: {},
@@ -1817,7 +1817,7 @@ describe("Repo-prescribed Pi packages", () => {
   it("includes installed non-npm Pi packages from settings when not marketplace-listed", async () => {
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: {
-        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
         marketplaces: {},
         pi_marketplaces: {},
         tools: {},
@@ -1851,7 +1851,7 @@ describe("Repo-prescribed Pi packages", () => {
   it("does not duplicate installed git package when source uses equivalent git forms", async () => {
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: {
-        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
         marketplaces: {},
         pi_marketplaces: {},
         tools: {},
@@ -1910,7 +1910,7 @@ describe("Repo-prescribed Pi packages", () => {
     // warning) and showed the package twice in every list.
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: {
-        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
         marketplaces: {},
         pi_marketplaces: {},
         tools: {},
@@ -1941,7 +1941,7 @@ describe("Repo-prescribed Pi packages", () => {
   it("keeps separate rows for same package name across npm and local sources", async () => {
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: {
-        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
         marketplaces: {},
         pi_marketplaces: {},
         tools: {},
@@ -2003,7 +2003,7 @@ describe("Repo-prescribed Pi packages", () => {
   it("does not duplicate installed npm package when source differs only by case", async () => {
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: {
-        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
         marketplaces: {},
         pi_marketplaces: {},
         tools: {},
@@ -2063,7 +2063,7 @@ describe("Repo-prescribed Pi packages", () => {
     vi.mocked(loadYamlConfig).mockImplementation((configPath?: string) => ({
       config: configPath === sourceConfigPath
         ? {
-          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
           marketplaces: {},
           pi_marketplaces: {},
           tools: {},
@@ -2075,7 +2075,7 @@ describe("Repo-prescribed Pi packages", () => {
           profiles: {},
         }
         : {
-          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
           marketplaces: {},
           pi_marketplaces: {},
           tools: {},
@@ -2121,7 +2121,7 @@ describe("Repo-prescribed Pi packages", () => {
     writeFileSync(sourceConfigPath, "pi_packages: []\n");
 
     const localConfig = {
-      settings: { source_repo: sourceRepo, package_manager: "npm" as const, backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+      settings: { source_repo: sourceRepo, package_manager: "npm" as const, backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" as const },
       marketplaces: {},
       pi_marketplaces: {},
       tools: {},
@@ -2187,7 +2187,7 @@ describe("Repo-prescribed Pi packages", () => {
     vi.mocked(loadYamlConfig).mockImplementation((configPath?: string) => ({
       config: configPath === sourceConfigPath
         ? {
-          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
           marketplaces: {},
           pi_marketplaces: {},
           tools: {},
@@ -2199,7 +2199,7 @@ describe("Repo-prescribed Pi packages", () => {
           profiles: {},
         }
         : {
-          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [] },
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
           marketplaces: {},
           pi_marketplaces: {},
           tools: {},
