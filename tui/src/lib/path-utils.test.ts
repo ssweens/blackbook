@@ -3,7 +3,7 @@ import { homedir, tmpdir } from "os";
 import { join } from "path";
 import { pathToFileURL } from "url";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
-import { expandTilde, resolveLocalPath, resolveLocalPathRaw } from "./path-utils.js";
+import { expandTilde, resolveInstanceSubdirPath, resolveLocalPath, resolveLocalPathRaw } from "./path-utils.js";
 
 describe("expandTilde", () => {
   it("expands a bare tilde to the home directory", () => {
@@ -26,6 +26,36 @@ describe("expandTilde", () => {
 
   it("leaves a relative path unchanged", () => {
     expect(expandTilde("foo/bar")).toBe("foo/bar");
+  });
+});
+
+describe("resolveInstanceSubdirPath", () => {
+  it("joins a relative subdir onto configDir, unchanged from today's behavior", () => {
+    expect(resolveInstanceSubdirPath("/home/user/.codex", "skills")).toBe(
+      join("/home/user/.codex", "skills"),
+    );
+  });
+
+  it("joins extra path segments after a relative subdir", () => {
+    expect(resolveInstanceSubdirPath("/home/user/.codex", "skills", "my-plugin", "my-skill")).toBe(
+      join("/home/user/.codex", "skills", "my-plugin", "my-skill"),
+    );
+  });
+
+  it("treats an absolute subdir as a full override, ignoring configDir", () => {
+    expect(resolveInstanceSubdirPath("/home/user/.codex", "/shared/skills")).toBe("/shared/skills");
+  });
+
+  it("expands a ~-prefixed subdir and ignores configDir", () => {
+    expect(resolveInstanceSubdirPath("/home/user/.codex", "~/.agents/skills")).toBe(
+      join(homedir(), ".agents", "skills"),
+    );
+  });
+
+  it("joins extra path segments after an absolute/tilde override", () => {
+    expect(resolveInstanceSubdirPath("/home/user/.codex", "~/.agents/skills", "my-plugin", "my-skill")).toBe(
+      join(homedir(), ".agents", "skills", "my-plugin", "my-skill"),
+    );
   });
 });
 

@@ -38,9 +38,9 @@ describe("loadPlaybook", () => {
 });
 
 describe("getAllPlaybooks", () => {
-  it("loads all 6 built-in playbooks", () => {
+  it("loads all 7 built-in playbooks", () => {
     const playbooks = getAllPlaybooks();
-    expect(playbooks.size).toBe(6);
+    expect(playbooks.size).toBe(7);
     for (const toolId of getBuiltinToolIds()) {
       expect(playbooks.has(toolId)).toBe(true);
     }

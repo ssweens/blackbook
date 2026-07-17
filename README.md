@@ -39,15 +39,23 @@ Everything is a plugin. Plugins can include skills, commands, agents, hooks, MCP
 
 | Tool | Config Directory | Skills | Commands | Agents | Config Sync |
 |------|------------------|--------|----------|--------|-------------|
-| Claude Code | `~/.claude` | ✓ | ✓ | ✓ | ✓ |
-| OpenAI Codex | `~/.codex` | ✓ | — | — | ✓ |
-| OpenCode | `~/.config/opencode` | ✓ | ✓ | ✓ | ✓ |
-| Amp Code | `~/.config/amp` | ✓ | ✓ | ✓ | ✓ |
-| Pi | `~/.pi/agent` | ✓ | ✓* | — | ✓ |
+| Claude Code | `~/.claude` | ✓ (own dir) | ✓ | ✓ | ✓ |
+| OpenAI Codex | `~/.codex` | ✓ (shared, see below) | — | — | ✓ |
+| OpenCode | `~/.config/opencode` | ✓ (shared, see below) | ✓ | ✓ | ✓ |
+| Amp Code | `~/.config/amp` | ✓ (shared, see below) | ✓ | ✓ | ✓ |
+| Pi | `~/.pi/agent` | ✓ (shared, see below) | ✓* | — | ✓ |
 
 \* Pi marketplace plugins are bridge-managed. Blackbook treats installed Pi plugin resources as namespaced generated artifacts: skills under `${TMPDIR}/pi-plugins-user-skills/<plugin>-<skill>/`, prompts under `${TMPDIR}/pi-plugins-user-prompts/<plugin>:<command>.md`, and agents under `~/.pi/agent/agents/pi-plugins-<plugin>-<agent>.md`.
 
 > Pi plugin lifecycle in Blackbook is bridge-backed. Blackbook does not project Claude-style plugins directly into `~/.pi/agent/skills` / `prompts`; it follows the Pi bridge backend's generated resource layout and state.
+
+### Shared `.agents/skills`
+
+Codex, OpenCode, Amp, and Pi all natively read skills from the emerging `.agents/skills` convention (project-level `.agents/skills/` and global `~/.agents/skills/`) in addition to — or instead of — a tool-specific directory. Codex in particular has no separate `.codex/skills` at all. Rather than installing a separate copy into each tool's own directory, Blackbook installs standalone skills and plugin-bundled skill components for these four tools straight into the shared `~/.agents/skills`, once. They also all show up as a dedicated `.agents` entry in the Tools tab, which owns the shared location independently of which specific tool binaries are installed.
+
+Claude Code does not support `.agents/skills`, so its skills stay in `~/.claude/skills` as before.
+
+Because Codex/OpenCode/Amp/Pi's skill installs now resolve to the same physical files, uninstalling a skill from one of them may remove it for the others too — the per-tool uninstall action is labeled accordingly when this applies. Upgrading from an older Blackbook version: existing skill installs under each tool's own directory (e.g. `~/.codex/skills`, `~/.config/opencode/skills`) are no longer tracked by Blackbook and are not automatically migrated or deleted — remove them manually once `~/.agents/skills` is populated via a normal sync.
 
 ## Installation
 

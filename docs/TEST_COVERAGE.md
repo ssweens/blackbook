@@ -3,7 +3,7 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 772 (761 passing, 10 skipped — see CLI Mode section, 1 pre-existing failure unrelated to recent work: `install.integration.test.ts` "updatePlugin > updates only instances where plugin is already installed")
+- **Total Tests:** 780 (769 passing, 10 skipped — see CLI Mode section, 1 pre-existing failure unrelated to recent work: `install.integration.test.ts` "updatePlugin > updates only instances where plugin is already installed")
 - **Test Files:** 63
 
 ## Critical Paths
@@ -177,6 +177,14 @@ This project tracks coverage by critical user journeys and system boundaries.
 
 ## Path Utils (tui/src/lib/path-utils.ts)
 - [x] `resolveLocalPathRaw` (the `file://`/`~`/relative-path normalizer shared by `resolveLocalPath` and `plugin-drift.ts`'s local-marketplace resolution): does not collapse a file target to its directory for either a bare path or a `file://` URL, matching the one place `resolveLocalPath` isn't the right choice; returns `null` for a remote URL or empty string (path-utils.test.ts)
+- [x] `resolveInstanceSubdirPath` (the component-subdir resolver backing the `.agents/skills` shared-location redirect): absolute and `~`-prefixed subdirs override `configDir` entirely (with extra path segments still appended); relative subdirs join onto `configDir` unchanged from prior behavior (path-utils.test.ts)
+
+## `.agents` Shared Skills Redirect
+- [x] `resolveInstalledPluginComponentPath` (pi-bridge.ts) treats a `~`-prefixed or absolute `manifestDest` as a full override ignoring `configDir`, matching `resolveInstanceSubdirPath`'s semantics; a relative `manifestDest` still joins onto `configDir` as before (pi-bridge.test.ts)
+- [x] `getAllPlaybooks()` loads all 7 built-in playbooks including the new `agents` pseudo-tool (playbooks.test.ts)
+- [x] Live-verified in tmux (sandboxed HOME/XDG env, real git source repo, `bun src/cli.tsx`): a standalone skill and a plugin-bundled skill component both install to the shared `~/.agents/skills` once, with OpenCode's and Codex's own config dirs staying empty (no per-tool duplication); Claude Code (unredirected) gets its own independent copy under `~/.claude/skills`, unaffected by the shared installs/uninstalls; uninstalling from a sibling instance (not the first/primary installer) only clears that instance's own tracking and leaves the shared file in place for the instance still relying on it; uninstalling from every instance eventually removes the shared file once the true owner is processed
+- [x] Managed adapter (`adapters/managed.ts`) install: a second/third instance sharing the same physical `~/.agents/skills` file detects the first instance's manifest entry for the same plugin+item and skips re-backing-up/re-copying it (marked `sharedInstall: true`) instead of treating the sibling's just-installed content as foreign pre-existing content to back up (install.integration.test.ts — "installs same-named skills from different plugins independently", "restores backup when disabling", "backs up and restores across a simulated cross-device (EXDEV) boundary")
+- [x] Managed adapter uninstall: a `sharedInstall: true` entry never touches the filesystem (no delete, no restore) — only the instance that owns the real backup/absence is responsible for the shared file's lifecycle, preventing a sibling's uninstall from resurrecting content a prior instance's uninstall had just correctly restored or deleted (install.integration.test.ts — "returns correct removal counts", "restores backup when disabling", "backs up and restores across a simulated cross-device (EXDEV) boundary")
 
 ## Gaps (Low Priority)
 - [ ] End-to-end TUI navigation across all tabs (discover → installed → tools → sync → settings)

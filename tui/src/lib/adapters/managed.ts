@@ -22,6 +22,7 @@ import {
   symlinkSync,
 } from "fs";
 import { join, dirname } from "path";
+import { resolveInstanceSubdirPath } from "../path-utils.js";
 import type { Plugin, InstalledItem, ToolInstance } from "../types.js";
 import type { Manifest } from "../manifest.js";
 import { loadManifest, saveManifest } from "../manifest.js";
@@ -53,6 +54,29 @@ function loadMigratedManifest(): Manifest {
   const manifest = loadManifest();
   migrateManifestKeys(manifest);
   return manifest;
+}
+
+/**
+ * Find another instance's manifest entry for this plugin item that already
+ * points at `dest`. Several playbooks (Codex/OpenCode/Amp/Pi's `skills`
+ * component) share one physical `~/.agents/skills` location, so installing
+ * the same plugin to a second sharer sees the first sharer's just-written
+ * file as "pre-existing" — backing it up would create a self-referential
+ * backup that uninstall later "restores", resurrecting content that was
+ * meant to be deleted. Detecting the sibling install lets the caller skip
+ * that spurious backup instead.
+ */
+function findSiblingInstall(
+  manifest: Manifest,
+  dest: string,
+  pluginName: string,
+): InstalledItem | null {
+  for (const toolManifest of Object.values(manifest.tools)) {
+    for (const item of Object.values(toolManifest.items)) {
+      if (item.dest === dest && (item.owner || "") === pluginName) return item;
+    }
+  }
+  return null;
 }
 
 /**
@@ -206,16 +230,14 @@ export function installPluginItemsToInstance(
     validateItemName(kind, name);
     const key = buildManifestItemKey(pluginName, kind, name);
     const previous = toolManifest.items[key] || null;
-    const result = copyWithBackup(src, dest, instanceKey(instance), pluginName, kind, name);
-    const item: InstalledItem = {
-      kind,
-      name,
-      source: src,
-      dest: result.dest,
-      backup: result.backup,
-      owner: pluginName,
-      previous,
-    };
+    const sibling = findSiblingInstall(manifest, dest, pluginName);
+    let item: InstalledItem;
+    if (sibling) {
+      item = { kind, name, source: src, dest, backup: null, owner: pluginName, previous, sharedInstall: true };
+    } else {
+      const result = copyWithBackup(src, dest, instanceKey(instance), pluginName, kind, name);
+      item = { kind, name, source: src, dest: result.dest, backup: result.backup, owner: pluginName, previous };
+    }
     toolManifest.items[key] = item;
     items.push(item);
     appliedKeys.push(key);
@@ -237,8 +259,8 @@ export function installPluginItemsToInstance(
           if (existsSync(join(src, "SKILL.md"))) {
             if (componentConfig?.disabledSkills.includes(entry)) continue;
             const baseDest = instance.pluginFlatInstall
-              ? join(instance.configDir, instance.skillsSubdir)
-              : join(instance.configDir, instance.skillsSubdir, pluginName);
+              ? resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir)
+              : resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir, pluginName);
             const dest = safePath(baseDest, entry);
             installItem("skill", entry, src, dest);
           }
@@ -255,8 +277,8 @@ export function installPluginItemsToInstance(
             if (componentConfig?.disabledCommands.includes(name)) continue;
             const src = safePath(commandsDir, entry);
             const baseDest = instance.pluginFlatInstall
-              ? join(instance.configDir, instance.commandsSubdir)
-              : join(instance.configDir, instance.commandsSubdir, pluginName);
+              ? resolveInstanceSubdirPath(instance.configDir, instance.commandsSubdir)
+              : resolveInstanceSubdirPath(instance.configDir, instance.commandsSubdir, pluginName);
             const dest = safePath(baseDest, entry);
             installItem("command", name, src, dest);
           }
@@ -273,8 +295,8 @@ export function installPluginItemsToInstance(
             if (componentConfig?.disabledAgents.includes(name)) continue;
             const src = safePath(agentsDir, entry);
             const baseDest = instance.pluginFlatInstall
-              ? join(instance.configDir, instance.agentsSubdir)
-              : join(instance.configDir, instance.agentsSubdir, pluginName);
+              ? resolveInstanceSubdirPath(instance.configDir, instance.agentsSubdir)
+              : resolveInstanceSubdirPath(instance.configDir, instance.agentsSubdir, pluginName);
             const dest = safePath(baseDest, entry);
             installItem("agent", name, src, dest);
           }
@@ -330,6 +352,20 @@ export function uninstallPluginItemsFromInstance(
     if (owner === pluginName || (!owner && item.source.includes(pluginName))) {
       const dest = item.dest;
       const backup = item.backup;
+
+      // A shared-install entry (see InstalledItem.sharedInstall) never made
+      // its own backup — the instance that owns dest's real backup/absence
+      // is responsible for its filesystem lifecycle. Touching it here would
+      // race with that owner's own uninstall: deleting content it just
+      // restored, or restoring content it correctly deleted.
+      if (item.sharedInstall) {
+        if (item.previous) {
+          toolManifest.items[entryKey] = item.previous;
+        } else {
+          keysToRemove.push(entryKey);
+        }
+        continue;
+      }
 
       // Only do file operations once per dest (handles duplicate entries)
       if (!processedDests.has(dest)) {
@@ -429,7 +465,7 @@ export function listInstalledForManagedInstance(instance: ToolInstance): Plugin[
 
   // Scan skills
   if (instance.skillsSubdir) {
-    const skillsDir = join(instance.configDir, instance.skillsSubdir);
+    const skillsDir = resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir);
     try {
       if (lstatSync(skillsDir).isDirectory()) {
         if (instance.pluginFlatInstall) {
@@ -481,7 +517,7 @@ export function listInstalledForManagedInstance(instance: ToolInstance): Plugin[
 
   // Scan commands
   if (instance.commandsSubdir) {
-    const commandsDir = join(instance.configDir, instance.commandsSubdir);
+    const commandsDir = resolveInstanceSubdirPath(instance.configDir, instance.commandsSubdir);
     try {
       if (lstatSync(commandsDir).isDirectory()) {
         if (instance.pluginFlatInstall) {
@@ -521,7 +557,7 @@ export function listInstalledForManagedInstance(instance: ToolInstance): Plugin[
 
   // Scan agents
   if (instance.agentsSubdir) {
-    const agentsDir = join(instance.configDir, instance.agentsSubdir);
+    const agentsDir = resolveInstanceSubdirPath(instance.configDir, instance.agentsSubdir);
     try {
       if (lstatSync(agentsDir).isDirectory()) {
         if (instance.pluginFlatInstall) {

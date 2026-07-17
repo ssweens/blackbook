@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "fs";
 import { homedir, tmpdir } from "os";
 import { join } from "path";
 import type { Plugin, ToolInstance } from "./types.js";
-import { scanPluginContents } from "./path-utils.js";
+import { resolveInstanceSubdirPath, scanPluginContents } from "./path-utils.js";
 
 const PI_AGENT_DIR = join(homedir(), ".pi", "agent");
 const PI_BRIDGE_STATE_PATHS = [
@@ -124,7 +124,7 @@ export function resolveInstalledPluginComponentPath(
   }
 
   if (manifestDest) {
-    return manifestDest.startsWith("/") ? manifestDest : join(instance.configDir, manifestDest);
+    return resolveInstanceSubdirPath(instance.configDir, manifestDest);
   }
 
   const subdir = kind === "skill"
@@ -135,6 +135,6 @@ export function resolveInstalledPluginComponentPath(
   if (!subdir) return null;
 
   return kind === "skill"
-    ? join(instance.configDir, subdir, name)
-    : join(instance.configDir, subdir, `${name}.md`);
+    ? resolveInstanceSubdirPath(instance.configDir, subdir, name)
+    : resolveInstanceSubdirPath(instance.configDir, subdir, `${name}.md`);
 }

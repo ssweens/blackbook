@@ -193,6 +193,17 @@ export interface InstalledItem {
   backup: string | null;
   owner?: string;
   previous?: InstalledItem | null;
+  /**
+   * True when `dest` is a physical location shared with another instance
+   * (e.g. the Codex/OpenCode/Amp/Pi `skills` component all resolving to the
+   * same ~/.agents/skills file) and this entry's instance was not the first
+   * to install there — so it never made its own backup. Uninstalling a
+   * shared entry must not touch the filesystem: the instance that actually
+   * owns the backup (or lack thereof) is responsible for the file's
+   * lifecycle, so a sibling deleting or restoring it would fight that
+   * instance's own uninstall/restore.
+   */
+  sharedInstall?: boolean;
 }
 
 export interface PluginComponentConfig {

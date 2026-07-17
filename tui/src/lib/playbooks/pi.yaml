@@ -5,11 +5,16 @@ default_instances:
     name: Pi
     config_dir: ~/.pi/agent
 structure:
-  - skills/
   - prompts/
 components:
   skills:
-    install_dir: skills/
+    # Pi reads standalone skills from the shared `.agents/skills` convention
+    # (in addition to its own ~/.pi/agent/skills), so blackbook installs
+    # there directly instead of duplicating into Pi's own config dir. Pi's
+    # plugin-bundled skill components are unaffected — those go through a
+    # separate bridge mechanism (see pi-bridge.ts) that doesn't consume this
+    # field.
+    install_dir: ~/.agents/skills
     strategy: symlink
   commands:
     install_dir: prompts/

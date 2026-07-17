@@ -170,6 +170,13 @@ function buildProjectInfo(
  * All skill workspaces: the always-present global `~/.agents/skills` first,
  * then the registered project directories. Each is scanned against the source
  * repo for drift.
+ *
+ * Note: `~/.agents/skills` is now ALSO tracked as the `agents` pseudo-tool's
+ * instance through the normal sync/skill engine (see
+ * `playbooks/agents.yaml` and its `install_dir` redirect for Codex/OpenCode/
+ * Amp/Pi's `skills` component) — the same directory shows up twice, once
+ * here as the synthetic "Global" workspace and once as a regular tool
+ * instance. Left as an accepted overlap for now rather than consolidated.
  */
 export function getProjects(): ProjectInfo[] {
   const { config } = loadConfig();

@@ -4,6 +4,7 @@
 
 import { existsSync, lstatSync, unlinkSync, rmSync, renameSync } from "fs";
 import { join } from "path";
+import { resolveInstanceSubdirPath } from "./path-utils.js";
 import type { Plugin, ToolInstance } from "./types.js";
 import { getToolInstances, getEnabledToolInstances, setPluginComponentEnabled } from "./config.js";
 import { validatePluginMetadata, logError } from "./validation.js";
@@ -204,8 +205,8 @@ export function togglePluginComponent(
 
       const suffix = kind === "skill" ? componentName : `${componentName}.md`;
       const destPath = instance.pluginFlatInstall
-        ? join(instance.configDir, subdir, suffix)
-        : join(instance.configDir, subdir, plugin.name, suffix);
+        ? resolveInstanceSubdirPath(instance.configDir, subdir, suffix)
+        : resolveInstanceSubdirPath(instance.configDir, subdir, plugin.name, suffix);
 
       try {
         if (existsSync(destPath) || isSymlink(destPath)) {
@@ -254,8 +255,8 @@ export function togglePluginComponent(
       if (!existsSync(src)) continue;
 
       const dest = instance.pluginFlatInstall
-        ? join(instance.configDir, subdir, suffix)
-        : join(instance.configDir, subdir, plugin.name, suffix);
+        ? resolveInstanceSubdirPath(instance.configDir, subdir, suffix)
+        : resolveInstanceSubdirPath(instance.configDir, subdir, plugin.name, suffix);
       const destRel = instance.pluginFlatInstall
         ? join(subdir, suffix)
         : join(subdir, plugin.name, suffix);

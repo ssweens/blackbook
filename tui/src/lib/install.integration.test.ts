@@ -40,6 +40,7 @@ import {
   reconcileStaleInstallArtifacts,
 } from "./install.js";
 import * as manifestModule from "./manifest.js";
+import { resolveInstanceSubdirPath } from "./path-utils.js";
 import { listBackups } from "./modules/backup.js";
 import { togglePluginComponent } from "./plugin-status.js";
 import type { FileStatus } from "./types.js";
@@ -81,12 +82,21 @@ const TEST_ROOT = join(tmpdir(), `blackbook-integration-${Date.now()}`);
 const TEST_CONFIG_HOME = join(TEST_ROOT, "config");
 const TEST_CACHE_HOME = join(TEST_ROOT, "cache");
 const TEST_TOOL_DIR = join(TEST_ROOT, "tools");
+// Some playbooks (Codex/OpenCode/Amp/Pi's `skills` component) point at an
+// absolute `~/.agents/skills` override rather than a path relative to the
+// tool's own configDir. That override expands via the real os.homedir(),
+// so HOME must be sandboxed here too — otherwise these tests write into the
+// developer's actual ~/.agents/skills instead of the test fixture.
+const TEST_HOME = join(TEST_ROOT, "home");
+const ORIGINAL_HOME = process.env.HOME;
 
 function setupTestEnvironment(): void {
   process.env.XDG_CONFIG_HOME = TEST_CONFIG_HOME;
   process.env.XDG_CACHE_HOME = TEST_CACHE_HOME;
+  process.env.HOME = TEST_HOME;
   rmSync(TEST_ROOT, { recursive: true, force: true });
   mkdirSync(TEST_TOOL_DIR, { recursive: true });
+  mkdirSync(TEST_HOME, { recursive: true });
 
   for (const toolId of TOOL_IDS) {
     const toolDir = join(TEST_TOOL_DIR, toolId);
@@ -99,6 +109,8 @@ function setupTestEnvironment(): void {
 }
 
 function cleanupTestEnvironment(): void {
+  if (ORIGINAL_HOME === undefined) delete process.env.HOME;
+  else process.env.HOME = ORIGINAL_HOME;
   rmSync(TEST_ROOT, { recursive: true, force: true });
 }
 
@@ -187,8 +199,8 @@ function cleanupAllTestArtifacts(): void {
   for (const instance of instances) {
     if (instance.skillsSubdir) {
       // Flat paths (legacy) and namespaced paths
-      const flatSkillPath = join(instance.configDir, instance.skillsSubdir, TEST_SKILL_NAME);
-      const nsSkillPath = join(instance.configDir, instance.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
+      const flatSkillPath = resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir, TEST_SKILL_NAME);
+      const nsSkillPath = resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
       for (const skillPath of [flatSkillPath, nsSkillPath]) {
         rmSync(skillPath, { recursive: true, force: true });
         rmSync(`${skillPath}.bak`, { recursive: true, force: true });
@@ -197,7 +209,7 @@ function cleanupAllTestArtifacts(): void {
         }
       }
       // Also clean up plugin namespace dir if empty
-      const nsPluginDir = join(instance.configDir, instance.skillsSubdir, TEST_PLUGIN_NAME);
+      const nsPluginDir = resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir, TEST_PLUGIN_NAME);
       try {
         if (existsSync(nsPluginDir) && readdirSync(nsPluginDir).length === 0) {
           rmSync(nsPluginDir, { recursive: true, force: true });
@@ -315,8 +327,8 @@ describe("enablePlugin", () => {
       const instance = getInstance(toolId);
       if (instance.skillsSubdir) {
         const skillPath = instance.pluginFlatInstall
-          ? join(instance.configDir, instance.skillsSubdir, TEST_SKILL_NAME)
-          : join(instance.configDir, instance.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
+          ? resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir, TEST_SKILL_NAME)
+          : resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
         expect(existsSync(skillPath), `skill should exist for ${toolId}`).toBe(true);
         expect(existsSync(join(skillPath, "SKILL.md"))).toBe(true);
 
@@ -327,7 +339,14 @@ describe("enablePlugin", () => {
   });
 
   it("skips disabled tools", async () => {
+    // OpenCode/Amp/Codex/Pi all share the same ~/.agents/skills location, so
+    // disabling only OpenCode isn't enough to prove the skill was skipped —
+    // one of the other three would still have written the file there.
+    // Disable every tool sharing that location to isolate the assertion.
     updateToolInstanceConfig("opencode", "default", { enabled: false });
+    updateToolInstanceConfig("amp-code", "default", { enabled: false });
+    updateToolInstanceConfig("openai-codex", "default", { enabled: false });
+    updateToolInstanceConfig("pi", "default", { enabled: false });
     createTestPluginInCache();
     const plugin = createTestPlugin();
 
@@ -339,8 +358,8 @@ describe("enablePlugin", () => {
     const opencode = getInstance("opencode");
     if (opencode.skillsSubdir) {
       const skillPath = opencode.pluginFlatInstall
-        ? join(opencode.configDir, opencode.skillsSubdir, TEST_SKILL_NAME)
-        : join(opencode.configDir, opencode.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
+        ? resolveInstanceSubdirPath(opencode.configDir, opencode.skillsSubdir, TEST_SKILL_NAME)
+        : resolveInstanceSubdirPath(opencode.configDir, opencode.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
       expect(existsSync(skillPath)).toBe(false);
     }
   });
@@ -458,15 +477,15 @@ describe("updatePlugin", () => {
     writeFileSync(join(pluginSourceDir, "skills", skillName, "SKILL.md"), "# Updated Skill");
 
     const opencode = getInstance("opencode");
-    const opencodeSkillDir = join(opencode.configDir, opencode.skillsSubdir!, pluginName, skillName);
+    const opencodeSkillDir = resolveInstanceSubdirPath(opencode.configDir, opencode.skillsSubdir!, pluginName, skillName);
     mkdirSync(opencodeSkillDir, { recursive: true });
     writeFileSync(join(opencodeSkillDir, "SKILL.md"), "# Old Skill");
 
 
     const amp = getInstance("amp-code");
     const codex = getInstance("openai-codex");
-    const ampSkillDir = join(amp.configDir, amp.skillsSubdir!, pluginName, skillName);
-    const codexSkillDir = join(codex.configDir, codex.skillsSubdir!, pluginName, skillName);
+    const ampSkillDir = resolveInstanceSubdirPath(amp.configDir, amp.skillsSubdir!, pluginName, skillName);
+    const codexSkillDir = resolveInstanceSubdirPath(codex.configDir, codex.skillsSubdir!, pluginName, skillName);
     rmSync(ampSkillDir, { recursive: true, force: true });
     rmSync(codexSkillDir, { recursive: true, force: true });
 
@@ -509,8 +528,8 @@ describe("backup and rollback behavior", () => {
     createPluginInCache(pluginBName, skillName, undefined, "Plugin B");
 
     const instance = getInstance("opencode");
-    const skillPathA = join(instance.configDir, instance.skillsSubdir!, pluginAName, skillName);
-    const skillPathB = join(instance.configDir, instance.skillsSubdir!, pluginBName, skillName);
+    const skillPathA = resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir!, pluginAName, skillName);
+    const skillPathB = resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir!, pluginBName, skillName);
 
     const pluginA = createPluginWithName(pluginAName, skillName);
     const pluginB = createPluginWithName(pluginBName, skillName);
@@ -534,6 +553,19 @@ describe("backup and rollback behavior", () => {
   });
 
   it("rolls back partial installs when a later step fails", async () => {
+    // Codex and the shared .agents pseudo-tool only declare a `skills`
+    // component (no `commands`), so they'd never hit the commands failure
+    // below and would legitimately keep their install — but since they now
+    // share the same physical ~/.agents/skills file as OpenCode, their
+    // success would clobber OpenCode's rolled-back state. Disable every
+    // instance except OpenCode (which has both skills and commands, so a
+    // commands failure genuinely aborts its own skill install too) to keep
+    // this a single-instance rollback test.
+    updateToolInstanceConfig("amp-code", "default", { enabled: false });
+    updateToolInstanceConfig("openai-codex", "default", { enabled: false });
+    updateToolInstanceConfig("pi", "default", { enabled: false });
+    updateToolInstanceConfig("agents", "default", { enabled: false });
+
     const skillName = "rollback-skill";
     const commandName = "rollback-command";
     const pluginName = "rollback-plugin";
@@ -543,7 +575,7 @@ describe("backup and rollback behavior", () => {
     chmodSync(commandsDir, 0o000);
 
     const instance = getInstance("opencode");
-    const skillPath = join(instance.configDir, instance.skillsSubdir!, pluginName, skillName);
+    const skillPath = resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir!, pluginName, skillName);
     mkdirSync(skillPath, { recursive: true });
     writeFileSync(join(skillPath, "SKILL.md"), "original");
 
@@ -588,7 +620,7 @@ describe("plugin completeness across instances", () => {
 
     const plugin = createTestPlugin();
     if (primary.skillsSubdir) {
-      const skillPath = join(primary.configDir, primary.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
+      const skillPath = resolveInstanceSubdirPath(primary.configDir, primary.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
       mkdirSync(skillPath, { recursive: true });
       writeFileSync(join(skillPath, "SKILL.md"), "# Test Skill");
     }
@@ -614,7 +646,7 @@ describe("plugin completeness across instances", () => {
 
     const plugin = createTestPlugin();
     if (primary.skillsSubdir) {
-      const skillPath = join(primary.configDir, primary.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
+      const skillPath = resolveInstanceSubdirPath(primary.configDir, primary.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
       mkdirSync(skillPath, { recursive: true });
       writeFileSync(join(skillPath, "SKILL.md"), "# Test Skill");
     }
@@ -644,8 +676,8 @@ describe("disablePlugin", () => {
       const instance = getInstance(toolId);
       if (instance.skillsSubdir) {
         const skillPath = instance.pluginFlatInstall
-          ? join(instance.configDir, instance.skillsSubdir, TEST_SKILL_NAME)
-          : join(instance.configDir, instance.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
+          ? resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir, TEST_SKILL_NAME)
+          : resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
         expect(existsSync(skillPath)).toBe(true);
       }
     }
@@ -658,8 +690,8 @@ describe("disablePlugin", () => {
       const instance = getInstance(toolId);
       if (instance.skillsSubdir) {
         const skillPath = instance.pluginFlatInstall
-          ? join(instance.configDir, instance.skillsSubdir, TEST_SKILL_NAME)
-          : join(instance.configDir, instance.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
+          ? resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir, TEST_SKILL_NAME)
+          : resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
         expect(existsSync(skillPath), `skill should be removed for ${toolId}`).toBe(false);
       }
     }
@@ -716,9 +748,15 @@ describe("disablePlugin", () => {
     const opencodeKey = `${getInstance("opencode").toolId}:${getInstance("opencode").instanceId}`;
     const ampKey = `${getInstance("amp-code").toolId}:${getInstance("amp-code").instanceId}`;
     const codexKey = `${getInstance("openai-codex").toolId}:${getInstance("openai-codex").instanceId}`;
+    // OpenCode/Amp/Codex's skill component all share the same physical
+    // ~/.agents/skills file. Instances are processed in playbook order
+    // (opencode, then amp-code, then openai-codex), so only the first to
+    // touch the shared skill actually removes a file there — the rest find
+    // it already gone and only remove their own per-tool command/agent
+    // files (Codex has neither, so it removes nothing).
     expect(result.linkedInstances[opencodeKey]).toBe(3);
-    expect(result.linkedInstances[ampKey]).toBe(3);
-    expect(result.linkedInstances[codexKey]).toBe(1);
+    expect(result.linkedInstances[ampKey]).toBe(2);
+    expect(result.linkedInstances[codexKey]).toBe(0);
   });
 });
 
@@ -733,7 +771,7 @@ describe("backup and restore", () => {
 
   it("backs up existing skill directory before overwriting", async () => {
     const instance = getInstance("opencode");
-    const skillPath = join(instance.configDir, instance.skillsSubdir!, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
+    const skillPath = resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir!, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
 
     mkdirSync(skillPath, { recursive: true });
     writeFileSync(join(skillPath, "SKILL.md"), "# Original Content\n\nExisting user skill.");
@@ -781,7 +819,7 @@ describe("backup and restore", () => {
 
   it("restores backup when disabling", async () => {
     const instance = getInstance("opencode");
-    const skillPath = join(instance.configDir, instance.skillsSubdir!, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
+    const skillPath = resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir!, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
 
     mkdirSync(skillPath, { recursive: true });
     writeFileSync(join(skillPath, "SKILL.md"), "# Original Content\n\nExisting user skill.");
@@ -818,7 +856,7 @@ describe("backup and restore", () => {
 
   it("backs up and restores across a simulated cross-device (EXDEV) boundary", async () => {
     const instance = getInstance("opencode");
-    const skillPath = join(instance.configDir, instance.skillsSubdir!, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
+    const skillPath = resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir!, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
 
     mkdirSync(skillPath, { recursive: true });
     writeFileSync(join(skillPath, "SKILL.md"), "# Original Content\n\nExisting user skill.");
@@ -857,7 +895,7 @@ describe("backup and restore", () => {
 
   it("overwrites existing backup (single backup per item)", async () => {
     const instance = getInstance("opencode");
-    const skillPath = join(instance.configDir, instance.skillsSubdir!, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
+    const skillPath = resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir!, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
     // Backup paths are now scoped by tool instance + plugin, so a stale backup
     // from a prior install of the SAME item still gets overwritten (single
     // backup per item), while different instances/plugins never collide.
@@ -1072,7 +1110,7 @@ describe("syncPluginInstances", () => {
     };
 
     const opencodeInstance = getInstance("opencode");
-    const targetDir = join(opencodeInstance.configDir, opencodeInstance.skillsSubdir!, pluginName, skillName);
+    const targetDir = resolveInstanceSubdirPath(opencodeInstance.configDir, opencodeInstance.skillsSubdir!, pluginName, skillName);
     rmSync(targetDir, { recursive: true, force: true });
 
     const result = await syncPluginInstances(plugin, marketplaceDir, [
@@ -1125,7 +1163,7 @@ describe("syncPluginInstances", () => {
     };
 
     const opencodeInstance = getInstance("opencode");
-    const targetDir = join(opencodeInstance.configDir, opencodeInstance.skillsSubdir!, pluginName, skillName);
+    const targetDir = resolveInstanceSubdirPath(opencodeInstance.configDir, opencodeInstance.skillsSubdir!, pluginName, skillName);
     rmSync(targetDir, { recursive: true, force: true });
 
     const result = await syncPluginInstances(plugin, marketplaceJsonPath, [
@@ -1177,7 +1215,7 @@ describe("syncPluginInstances", () => {
     };
 
     const opencodeInstance = getInstance("opencode");
-    const targetDir = join(opencodeInstance.configDir, opencodeInstance.skillsSubdir!, pluginName, skillName);
+    const targetDir = resolveInstanceSubdirPath(opencodeInstance.configDir, opencodeInstance.skillsSubdir!, pluginName, skillName);
     rmSync(targetDir, { recursive: true, force: true });
 
     const result = await syncPluginInstances(plugin, pathToFileURL(marketplaceJsonPath).href, [
@@ -1218,8 +1256,8 @@ describe("syncPluginInstances", () => {
     };
 
     const opencodeInstance = getInstance("opencode");
-    const target = join(opencodeInstance.configDir, opencodeInstance.skillsSubdir!, TEST_SKILL_NAME, TEST_SKILL_NAME, "SKILL.md");
-    rmSync(join(opencodeInstance.configDir, opencodeInstance.skillsSubdir!, TEST_SKILL_NAME, TEST_SKILL_NAME), { recursive: true, force: true });
+    const target = resolveInstanceSubdirPath(opencodeInstance.configDir, opencodeInstance.skillsSubdir!, TEST_SKILL_NAME, TEST_SKILL_NAME, "SKILL.md");
+    rmSync(resolveInstanceSubdirPath(opencodeInstance.configDir, opencodeInstance.skillsSubdir!, TEST_SKILL_NAME, TEST_SKILL_NAME), { recursive: true, force: true });
 
     const result = await syncPluginInstances(plugin, undefined, [
       {
@@ -1269,7 +1307,7 @@ describe("standalone skill scanning compatibility", () => {
     expect(piInstance.skillsSubdir).toBeTruthy();
     expect(piInstance.pluginFlatInstall).toBe(false);
 
-    const flatSkillDir = join(piInstance.configDir, piInstance.skillsSubdir!, skillName);
+    const flatSkillDir = resolveInstanceSubdirPath(piInstance.configDir, piInstance.skillsSubdir!, skillName);
     mkdirSync(flatSkillDir, { recursive: true });
     writeFileSync(join(flatSkillDir, "SKILL.md"), "# ambient-texture-drones\n\nsource copy\n");
 
@@ -1306,8 +1344,8 @@ describe("standalone skill scanning compatibility", () => {
     const ok = installSkillToInstance(skill, "pi", piInstance.instanceId);
     expect(ok).toBe(true);
 
-    const namespacedPath = join(piInstance.configDir, piInstance.skillsSubdir!, "ssmp", skillName, "SKILL.md");
-    const flatPath = join(piInstance.configDir, piInstance.skillsSubdir!, skillName, "SKILL.md");
+    const namespacedPath = resolveInstanceSubdirPath(piInstance.configDir, piInstance.skillsSubdir!, "ssmp", skillName, "SKILL.md");
+    const flatPath = resolveInstanceSubdirPath(piInstance.configDir, piInstance.skillsSubdir!, skillName, "SKILL.md");
 
     expect(existsSync(namespacedPath)).toBe(true);
     expect(existsSync(flatPath)).toBe(false);
@@ -1335,7 +1373,7 @@ describe("standalone skill scanning compatibility", () => {
     const ok = installSkillToInstance(skill, "pi", piInstance.instanceId);
     expect(ok).toBe(true);
 
-    const targetDir = join(piInstance.configDir, piInstance.skillsSubdir!, "ssmp", skillName);
+    const targetDir = resolveInstanceSubdirPath(piInstance.configDir, piInstance.skillsSubdir!, "ssmp", skillName);
     expect(lstatSync(targetDir).isSymbolicLink()).toBe(true);
     expect(realpathSync(targetDir)).toBe(realpathSync(sourceSkillDir));
 
@@ -1350,8 +1388,8 @@ describe("standalone skill scanning compatibility", () => {
     configureSourceRepoWithSsmpSkill(skillName);
 
     const piInstance = getInstance("pi");
-    const flatSkillDir = join(piInstance.configDir, piInstance.skillsSubdir!, skillName);
-    const namespacedSkillDir = join(piInstance.configDir, piInstance.skillsSubdir!, "ssmp", skillName);
+    const flatSkillDir = resolveInstanceSubdirPath(piInstance.configDir, piInstance.skillsSubdir!, skillName);
+    const namespacedSkillDir = resolveInstanceSubdirPath(piInstance.configDir, piInstance.skillsSubdir!, "ssmp", skillName);
 
     mkdirSync(flatSkillDir, { recursive: true });
     writeFileSync(join(flatSkillDir, "SKILL.md"), "# ambient-texture-drones\n\nlegacy flat\n");
@@ -1378,7 +1416,7 @@ describe("standalone skill scanning compatibility", () => {
     } as any;
 
     // Pre-existing install carrying user edits at the namespaced target.
-    const targetDir = join(piInstance.configDir, piInstance.skillsSubdir!, "ssmp", skillName);
+    const targetDir = resolveInstanceSubdirPath(piInstance.configDir, piInstance.skillsSubdir!, "ssmp", skillName);
     mkdirSync(targetDir, { recursive: true });
     writeFileSync(join(targetDir, "SKILL.md"), "# user-edited local version\n");
 
@@ -1401,7 +1439,7 @@ describe("standalone skill scanning compatibility", () => {
 
     const piInstance = getInstance("pi");
     // A disk install holding the newer content to be pulled back.
-    const diskDir = join(piInstance.configDir, piInstance.skillsSubdir!, "ssmp", skillName);
+    const diskDir = resolveInstanceSubdirPath(piInstance.configDir, piInstance.skillsSubdir!, "ssmp", skillName);
     mkdirSync(diskDir, { recursive: true });
     writeFileSync(join(diskDir, "SKILL.md"), "# newer disk version\n");
 
@@ -1558,15 +1596,20 @@ describe("manifest key migration (item 2)", () => {
 
 describe("P1 data-integrity behavior", () => {
   it("scopes backups per tool instance so they never collide (item 1)", async () => {
+    // OpenCode and Codex now share the same physical ~/.agents/skills
+    // location by design (see the .agents pseudo-tool), so they can no
+    // longer serve as the "two independent instances" half of this test —
+    // use Claude Code instead, whose skills stay in its own ~/.claude/skills.
+    updateToolInstanceConfig("claude-code", "default", { enabled: true });
     const opencode = getInstance("opencode");
-    const codex = getInstance("openai-codex");
+    const claude = getInstance("claude-code");
 
-    const ocSkill = join(opencode.configDir, opencode.skillsSubdir!, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
-    const cxSkill = join(codex.configDir, codex.skillsSubdir!, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
+    const ocSkill = resolveInstanceSubdirPath(opencode.configDir, opencode.skillsSubdir!, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
+    const claudeSkill = resolveInstanceSubdirPath(claude.configDir, claude.skillsSubdir!, TEST_SKILL_NAME);
     mkdirSync(ocSkill, { recursive: true });
     writeFileSync(join(ocSkill, "SKILL.md"), "# Opencode Original");
-    mkdirSync(cxSkill, { recursive: true });
-    writeFileSync(join(cxSkill, "SKILL.md"), "# Codex Original");
+    mkdirSync(claudeSkill, { recursive: true });
+    writeFileSync(join(claudeSkill, "SKILL.md"), "# Claude Original");
 
     createTestPluginInCache();
     await enablePlugin(createTestPlugin());
@@ -1574,14 +1617,14 @@ describe("P1 data-integrity behavior", () => {
     const manifest = loadManifest();
     const key = buildManifestItemKey(TEST_PLUGIN_NAME, "skill", TEST_SKILL_NAME);
     const ocBackup = manifest.tools[`opencode:${opencode.instanceId}`]?.items[key]?.backup ?? "";
-    const cxBackup = manifest.tools[`openai-codex:${codex.instanceId}`]?.items[key]?.backup ?? "";
+    const claudeBackup = manifest.tools[`claude-code:${claude.instanceId}`]?.items[key]?.backup ?? "";
 
     expect(ocBackup).toBeTruthy();
-    expect(cxBackup).toBeTruthy();
+    expect(claudeBackup).toBeTruthy();
     // Distinct backup locations — the second instance did not clobber the first.
-    expect(ocBackup).not.toBe(cxBackup);
+    expect(ocBackup).not.toBe(claudeBackup);
     expect(readFileSync(join(ocBackup, "SKILL.md"), "utf-8")).toContain("Opencode Original");
-    expect(readFileSync(join(cxBackup, "SKILL.md"), "utf-8")).toContain("Codex Original");
+    expect(readFileSync(join(claudeBackup, "SKILL.md"), "utf-8")).toContain("Claude Original");
   });
 
   it("updatePlugin leaves the installed copy untouched when the download fails (item 3)", async () => {
@@ -1699,7 +1742,7 @@ describe("P1 data-integrity behavior", () => {
     await enablePlugin(plugin);
 
     const opencode = getInstance("opencode");
-    const namespaceDir = join(opencode.configDir, opencode.skillsSubdir!, TEST_PLUGIN_NAME);
+    const namespaceDir = resolveInstanceSubdirPath(opencode.configDir, opencode.skillsSubdir!, TEST_PLUGIN_NAME);
     // Make the parent directory read-only so removing the installed skill fails.
     chmodSync(namespaceDir, 0o500);
     try {

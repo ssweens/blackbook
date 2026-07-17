@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-07-17
+
+### Added
+- `.agents` pseudo-tool: a new Tools-tab entry (`~/.agents`, config-only — no binary to install/update) that owns the shared `~/.agents/skills` location independently of which specific tool binaries are present.
+- `resolveInstanceSubdirPath`/`isSharedSubdirPath` (`path-utils.ts`): a component's `install_dir` can now be an absolute or `~`-prefixed path, resolved as a full override instead of joined onto the tool's own `config_dir`.
+
+### Changed
+- **Breaking:** Codex, OpenCode, Amp, and Pi's `skills` component now installs to the shared `~/.agents/skills` (which all four read natively — Codex has no separate `.codex/skills` at all) instead of duplicating into each tool's own directory. Commands/agents components are unaffected; Claude Code is unaffected (still `~/.claude/skills`, since it doesn't support the `.agents` convention). Existing installs under the old per-tool directories are no longer tracked by Blackbook — they are not auto-migrated or deleted; remove them manually once `~/.agents/skills` is populated via a normal sync.
+- Per-instance "Uninstall from `<tool>`" labels (plugin components and standalone skills) now note when the target is the shared `.agents/skills` location, since removing it there can affect the other tools sharing it.
+
+### Fixed
+- Plugin-component installs to two instances sharing the same physical `~/.agents/skills` file no longer create a spurious backup of the first instance's own just-installed content — the second/third installer detects the existing manifest entry for the same plugin+item and skips re-backing-up/re-writing it. Without this, uninstalling the plugin from all instances in one pass could restore that spurious backup after a sibling instance's uninstall step had already correctly deleted the file, leaving stale content behind instead of a clean removal.
+
 ## [0.25.2] - 2026-07-17
 
 ### Fixed

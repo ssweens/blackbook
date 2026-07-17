@@ -5,12 +5,14 @@ default_instances:
     name: Amp
     config_dir: ~/.config/amp
 structure:
-  - skills/
   - commands/
   - agents/
 components:
   skills:
-    install_dir: skills/
+    # Amp reads skills from the shared `.agents/skills` convention, so
+    # blackbook installs there directly instead of duplicating into Amp's
+    # own config dir.
+    install_dir: ~/.agents/skills
     strategy: symlink
   commands:
     install_dir: commands/

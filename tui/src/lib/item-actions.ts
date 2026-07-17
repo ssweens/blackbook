@@ -14,6 +14,7 @@ import { getToolInstances } from "./config.js";
 import { resolvePluginSourcePaths, type PluginDrift } from "./plugin-drift.js";
 import { buildFileDiffTarget } from "./diff.js";
 import { resolveInstalledPluginComponentPath } from "./pi-bridge.js";
+import { isSharedSubdirPath } from "./path-utils.js";
 import { loadManifest } from "./manifest.js";
 import { buildManifestItemKey, instanceKey } from "./plugin-helpers.js";
 import type { ItemAction } from "../components/ItemDetail.js";
@@ -188,9 +189,12 @@ export function buildPluginActions(
         : undefined;
 
       if (status.installed) {
+        const shared = isSharedSubdirPath(inst?.skillsSubdir);
         actions.push({
           id: `uninstall_${status.toolId}:${status.instanceId}`,
-          label: `Uninstall from ${status.name}`,
+          label: shared
+            ? `Uninstall from ${status.name} (shared skills location — may affect other tools)`
+            : `Uninstall from ${status.name}`,
           type: "uninstall_tool",
           toolStatus: status,
           instance,
@@ -393,6 +397,7 @@ import type { StandaloneSkill } from "./install.js";
  */
 export function getSkillActions(skill: StandaloneSkill): ItemAction[] {
   const actions: ItemAction[] = [];
+  const allInstances = getToolInstances();
 
   for (const inst of skill.installations) {
     // Status combines presence + drift in one label so the user sees the
@@ -518,9 +523,15 @@ export function getSkillActions(skill: StandaloneSkill): ItemAction[] {
 
   if (skill.installations.length > 1) {
     for (const inst of skill.installations) {
+      const toolInstance = allInstances.find(
+        (t) => t.toolId === inst.toolId && t.instanceId === inst.instanceId,
+      );
+      const shared = isSharedSubdirPath(toolInstance?.skillsSubdir);
       actions.push({
         id: `uninstall_tool_${inst.toolId}_${inst.instanceId}`,
-        label: `Uninstall from ${inst.instanceName}`,
+        label: shared
+          ? `Uninstall from ${inst.instanceName} (shared skills location — removes it for other tools too)`
+          : `Uninstall from ${inst.instanceName}`,
         type: "uninstall_tool",
         toolStatus: {
           toolId: inst.toolId,

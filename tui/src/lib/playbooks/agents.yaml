@@ -1,0 +1,15 @@
+id: agents
+name: .agents
+kind: tool
+default_instances:
+  - id: default
+    name: .agents (shared)
+    config_dir: ~/.agents
+structure:
+  - skills/
+components:
+  skills:
+    install_dir: skills/
+    strategy: symlink
+config_files: []
+syncable: false

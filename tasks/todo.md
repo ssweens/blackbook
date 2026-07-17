@@ -1,3 +1,24 @@
+## Shared `.agents/skills` redirect + `.agents` pseudo-tool (v0.26.0) ✅ DONE
+
+### Problem
+- Blackbook installed skills into each tool's own proprietary directory (`~/.codex/skills`, `~/.config/opencode/skills`, `~/.config/amp/skills`, `~/.pi/agent/skills`) even though Codex, OpenCode, Amp, and Pi all natively read the emerging `.agents/skills` convention (Codex has no `.codex/skills` at all) — real, unnecessary duplication.
+
+### Fix
+- New `resolveInstanceSubdirPath` (`path-utils.ts`): a component's `install_dir` can be an absolute/`~`-prefixed override, resolved directly instead of joined onto the tool's own `config_dir`. Swapped every `join(configDir, subdir, ...)` call site in `install.ts`, `adapters/managed.ts`, `plugin-status.ts`, and `pi-bridge.ts`'s `resolveInstalledPluginComponentPath` to use it.
+- Codex/OpenCode/Amp/Pi's `skills` component `install_dir` changed from `skills/` to `~/.agents/skills` in their playbooks. Claude Code untouched (no `.agents/skills` support).
+- New `agents.yaml` pseudo-tool playbook (`kind: tool`, `config_dir: ~/.agents`, `skills` component only, no lifecycle/binary) registered in `BUILTIN_TOOL_IDS` — shows up as a normal Tools-tab row, not added to `tool-registry.ts` (no binary to manage).
+- Managed adapter (`adapters/managed.ts`) install path: detects when a physical `dest` is already tracked by another instance's manifest entry for the same plugin+item (`findSiblingInstall`) and skips re-backing-up/re-copying it, marking the entry `sharedInstall: true`. Uninstall skips filesystem operations entirely for `sharedInstall: true` entries — only the instance that owns the real backup/absence touches the file. Without this, two instances sharing a physical file would each back up the other's just-installed content, and a sibling's uninstall could resurrect content a prior instance's uninstall had already correctly restored/deleted.
+- Per-instance "Uninstall from `<tool>`" UI copy (`item-actions.ts`) notes when the target is the shared location.
+
+### Validation
+- Full test suite green (780 tests, 769 passing, 10 skipped, 1 pre-existing unrelated failure) — see `docs/TEST_COVERAGE.md`.
+- Live-verified in tmux with a sandboxed HOME/XDG fixture (bare `bun src/cli.tsx`): standalone skill + plugin skill component both land in shared `~/.agents/skills` once; OpenCode/Codex's own dirs stay empty; Claude Code keeps its own independent copy; sibling-uninstall vs. primary-uninstall behavior confirmed on real disk state.
+- **Caught and fixed during verification:** `install.integration.test.ts` didn't sandbox `HOME`, only `XDG_CONFIG_HOME`/`XDG_CACHE_HOME` — once `skillsSubdir` became `~`-prefixed for 4 tools, the test suite's real installs briefly wrote test fixtures into the developer's actual `~/.agents/skills` (confirmed no real user content was lost — timestamps and content diffed against the real source; cleaned up with explicit user confirmation). Fixed by adding a sandboxed `HOME` to the test's `setupTestEnvironment`/`cleanupTestEnvironment`.
+
+### Notes
+- No automated migration of old per-tool skill installs — documented in README as a manual cleanup step post-upgrade.
+- The existing synthetic "Global" `~/.agents/skills` Projects-tab workspace (`projects.ts`) now overlaps with the `agents` pseudo-tool tracking the same directory through the normal sync engine — left as an accepted, documented overlap rather than consolidated this pass.
+
 ## Universal Action Contract Convergence - Phase 2 (v0.23.0) ✅ DONE
 
 ### Completed

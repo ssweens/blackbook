@@ -22,6 +22,31 @@ export function expandTilde(p: string): string {
 }
 
 /**
+ * Resolve a tool instance's component subdirectory (skills/commands/agents)
+ * against its config directory. Most playbooks declare a subdir relative to
+ * the tool's own config_dir (e.g. `"skills/"`), but a playbook can also
+ * point a component at a shared absolute location (e.g. `"~/.agents/skills"`,
+ * used to redirect skill installs to a directory multiple tools read
+ * natively instead of each tool's own proprietary one) — in that case the
+ * absolute/`~`-prefixed subdir is used directly and `configDir` is ignored.
+ */
+export function resolveInstanceSubdirPath(configDir: string, subdir: string, ...rest: string[]): string {
+  const base = subdir.startsWith("/") || subdir.startsWith("~") ? expandTilde(subdir) : join(configDir, subdir);
+  return join(base, ...rest);
+}
+
+/**
+ * Whether a component subdir is an absolute/`~`-prefixed override — i.e. it
+ * resolves to a location shared with any other instance declaring the same
+ * override (e.g. Codex/OpenCode/Amp/Pi's `skills` component all pointing at
+ * `~/.agents/skills`), rather than a path unique to this instance's own
+ * configDir.
+ */
+export function isSharedSubdirPath(subdir: string | null | undefined): boolean {
+  return !!subdir && (subdir.startsWith("/") || subdir.startsWith("~"));
+}
+
+/**
  * Normalize a URL/path string to an absolute file-system path, without
  * collapsing a file target down to its containing directory. Handles
  * `file://` URLs, `~`-prefixed paths, and relative paths. Returns null if

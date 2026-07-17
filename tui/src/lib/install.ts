@@ -45,7 +45,7 @@ import type {
   FileStatus,
 } from "./types.js";
 import { atomicWriteFileSync, renameOrCopy, withFileLockSync } from "./fs-utils.js";
-import { resolveLocalPath, scanPluginContents } from "./path-utils.js";
+import { resolveInstanceSubdirPath, resolveLocalPath, scanPluginContents } from "./path-utils.js";
 import {
   safePath,
   validateGitRef,
@@ -875,8 +875,8 @@ export function linkPluginToInstance(
 
     if (instance.skillsSubdir) {
       const baseTarget = instance.pluginFlatInstall
-        ? join(instance.configDir, instance.skillsSubdir)
-        : join(instance.configDir, instance.skillsSubdir, plugin.name);
+        ? resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir)
+        : resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir, plugin.name);
       const target = safePath(baseTarget, skill);
       const result = createSymlink(source, target, {
         instanceScope: scope,
@@ -911,8 +911,8 @@ export function linkPluginToInstance(
 
     if (instance.commandsSubdir) {
       const baseTarget = instance.pluginFlatInstall
-        ? join(instance.configDir, instance.commandsSubdir)
-        : join(instance.configDir, instance.commandsSubdir, plugin.name);
+        ? resolveInstanceSubdirPath(instance.configDir, instance.commandsSubdir)
+        : resolveInstanceSubdirPath(instance.configDir, instance.commandsSubdir, plugin.name);
       const target = safePath(baseTarget, `${cmd}.md`);
       const result = createSymlink(source, target, {
         instanceScope: scope,
@@ -947,8 +947,8 @@ export function linkPluginToInstance(
 
     if (instance.agentsSubdir) {
       const baseTarget = instance.pluginFlatInstall
-        ? join(instance.configDir, instance.agentsSubdir)
-        : join(instance.configDir, instance.agentsSubdir, plugin.name);
+        ? resolveInstanceSubdirPath(instance.configDir, instance.agentsSubdir)
+        : resolveInstanceSubdirPath(instance.configDir, instance.agentsSubdir, plugin.name);
       const target = safePath(baseTarget, `${agent}.md`);
       const result = createSymlink(source, target, {
         instanceScope: scope,
@@ -1030,8 +1030,8 @@ export function togglePluginComponent(
 
       const suffix = kind === "skill" ? componentName : `${componentName}.md`;
       const destPath = instance.pluginFlatInstall
-        ? join(instance.configDir, subdir, suffix)
-        : join(instance.configDir, subdir, plugin.name, suffix);
+        ? resolveInstanceSubdirPath(instance.configDir, subdir, suffix)
+        : resolveInstanceSubdirPath(instance.configDir, subdir, plugin.name, suffix);
 
       try {
         if (existsSync(destPath) || isSymlink(destPath)) {
@@ -1087,8 +1087,8 @@ export function togglePluginComponent(
       if (!existsSync(src)) continue;
 
       const dest = instance.pluginFlatInstall
-        ? join(instance.configDir, subdir, suffix)
-        : join(instance.configDir, subdir, plugin.name, suffix);
+        ? resolveInstanceSubdirPath(instance.configDir, subdir, suffix)
+        : resolveInstanceSubdirPath(instance.configDir, subdir, plugin.name, suffix);
       const destRel = instance.pluginFlatInstall
         ? join(subdir, suffix)
         : join(subdir, plugin.name, suffix);
@@ -1316,7 +1316,7 @@ export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSki
 
   for (const instance of instances) {
     if (!instance.skillsSubdir) continue;
-    const skillsDir = join(instance.configDir, instance.skillsSubdir);
+    const skillsDir = resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir);
     if (!existsSync(skillsDir)) continue;
 
     try {
@@ -2038,14 +2038,14 @@ function getStandaloneSkillTargetDir(
   if (!target.skillsSubdir) return "";
   // Claude/user-flat tools keep standalone skills as skills/<name>.
   if (target.pluginFlatInstall) {
-    return join(target.configDir, target.skillsSubdir, skill.name);
+    return resolveInstanceSubdirPath(target.configDir, target.skillsSubdir, skill.name);
   }
   // Non-flat tools prefer namespaced layout when namespace is known.
   if (skill.namespace) {
-    return join(target.configDir, target.skillsSubdir, skill.namespace, skill.name);
+    return resolveInstanceSubdirPath(target.configDir, target.skillsSubdir, skill.namespace, skill.name);
   }
   // Backward-compat fallback for skills without a known namespace.
-  return join(target.configDir, target.skillsSubdir, skill.name);
+  return resolveInstanceSubdirPath(target.configDir, target.skillsSubdir, skill.name);
 }
 
 /** Copy the skill from its current first installation into a target tool instance. */
@@ -2192,7 +2192,7 @@ export function migrateLegacyStandaloneSkillLayout(): { moved: number; skipped: 
   );
 
   for (const target of targets) {
-    const skillsDir = join(target.configDir, target.skillsSubdir!);
+    const skillsDir = resolveInstanceSubdirPath(target.configDir, target.skillsSubdir!);
     if (!existsSync(skillsDir)) continue;
 
     for (const [skillName, namespace] of namespaceBySkill.entries()) {

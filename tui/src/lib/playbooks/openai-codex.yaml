@@ -4,11 +4,13 @@ default_instances:
   - id: default
     name: Codex
     config_dir: ~/.codex
-structure:
-  - skills/
+structure: []
 components:
   skills:
-    install_dir: skills/
+    # Codex reads skills from the shared `.agents/skills` convention (no
+    # separate `.codex/skills` exists), so blackbook installs there directly
+    # instead of duplicating into Codex's own config dir.
+    install_dir: ~/.agents/skills
     strategy: symlink
 config_files:
   - name: Codex Config

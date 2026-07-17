@@ -31,6 +31,7 @@ const BUILTIN_TOOL_IDS = [
   "amp-code",
   "openai-codex",
   "pi",
+  "agents",
   "blackbook",
 ];
 
