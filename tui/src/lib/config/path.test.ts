@@ -19,6 +19,18 @@ describe("expandPath", () => {
   it("leaves relative paths unchanged", () => {
     expect(expandPath("relative/path")).toBe("relative/path");
   });
+
+  it("strips a trailing slash so equivalent paths compare equal", () => {
+    // Regression: registering a project twice — once with and once without a
+    // trailing slash — used to bypass the dedupe check (which compares
+    // expandPath output) and create a duplicate row.
+    expect(expandPath("/foo/bar/")).toBe(expandPath("/foo/bar"));
+    expect(expandPath("~/src/config/")).toBe(expandPath("~/src/config"));
+  });
+
+  it("never strips the root path down to empty", () => {
+    expect(expandPath("/")).toBe("/");
+  });
 });
 
 describe("resolveSourcePath", () => {

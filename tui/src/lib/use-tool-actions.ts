@@ -2,12 +2,19 @@ import { useEffect, useMemo, useState } from "react";
 import { type Key } from "ink";
 import { useStore } from "./store.js";
 import { getPackageManager } from "./config.js";
-import { getToolLifecycleCommand, detectInstallMethodMismatch } from "./tool-lifecycle.js";
+import { getToolLifecycleCommand, detectInstallMethodMismatch, detectUninstallMismatch } from "./tool-lifecycle.js";
+import { TOOL_REGISTRY } from "./tool-registry.js";
 import { type ToolModalAction } from "../components/ToolActionModal.js";
 import type { Tab, ManagedToolRow } from "./types.js";
 
 const isBrewManagedTool = (binaryPath: string | null | undefined): boolean =>
   Boolean(binaryPath && (binaryPath.startsWith("/opt/homebrew/") || binaryPath.startsWith("/usr/local/")));
+
+// Config-only tools (e.g. "Blackbook" itself) have no entry in TOOL_REGISTRY and
+// so no detection/lifecycle at all. ToolsList/ToolDetail already special-case
+// this for rendering; the shortcut layer needs the same check so "i" doesn't
+// offer an install that's guaranteed to fail with "Unknown tool".
+const isConfigOnlyTool = (toolId: string): boolean => !(toolId in TOOL_REGISTRY);
 
 interface UseToolActionsArgs {
   tab: Tab;
@@ -82,13 +89,21 @@ export function useToolActions({ tab, selectedIndex }: UseToolActionsArgs) {
   useEffect(() => {
     let cancelled = false;
 
-    if (!toolModalAction || !activeToolForModal || toolModalAction === "uninstall") {
+    if (!toolModalAction || !activeToolForModal) {
       setToolModalWarning(null);
       return;
     }
 
-    const packageManager = getPackageManager();
     const binaryPath = toolDetection[activeToolForModal.toolId]?.binaryPath ?? null;
+
+    if (toolModalAction === "uninstall") {
+      // Synchronous, unlike the install/update mismatch check below (no need to
+      // shell out to package managers — the registry entry has everything).
+      setToolModalWarning(detectUninstallMismatch(activeToolForModal.toolId, binaryPath));
+      return;
+    }
+
+    const packageManager = getPackageManager();
 
     void detectInstallMethodMismatch(activeToolForModal.toolId, packageManager, binaryPath)
       .then((mismatch) => {
@@ -118,6 +133,9 @@ export function useToolActions({ tab, selectedIndex }: UseToolActionsArgs) {
       detection?.installed === true && isBrewManagedTool(detection.binaryPath);
 
     if (detailTool) {
+      if (isConfigOnlyTool(detailTool.toolId)) {
+        return "e Edit · Space Toggle · R Refresh · Esc Back";
+      }
       const detection = toolDetection[detailTool.toolId];
       if (supportsMigration(detection)) {
         return "i Install · u Update · d Uninstall · m Migrate · e Edit · Space Toggle · R Refresh · Esc Back";
@@ -127,6 +145,10 @@ export function useToolActions({ tab, selectedIndex }: UseToolActionsArgs) {
 
     if (!selectedManagedTool) {
       return "Enter detail · e edit · Space toggle · R refresh · q quit";
+    }
+
+    if (isConfigOnlyTool(selectedManagedTool.toolId)) {
+      return "Enter detail · e Edit · Space Toggle · R refresh · q quit";
     }
 
     const detection = toolDetection[selectedManagedTool.toolId];
@@ -190,7 +212,7 @@ export function useToolActions({ tab, selectedIndex }: UseToolActionsArgs) {
     const openModal = (action: "install" | "update" | "uninstall", migrate = false) =>
       setToolModal({ action, warning: null, migrate, running: false, done: false, success: false });
 
-    if (input === "i" && tool && (!detection || !detection.installed)) { openModal("install"); return true; }
+    if (input === "i" && tool && !isConfigOnlyTool(tool.toolId) && (!detection || !detection.installed)) { openModal("install"); return true; }
     if (input === "u" && tool && detection?.installed && detection.hasUpdate) { openModal("update"); return true; }
     if (input === "d" && tool && detection?.installed) { openModal("uninstall"); return true; }
     if (input === "m" && tool && detection?.installed) {

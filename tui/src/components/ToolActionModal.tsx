@@ -35,6 +35,10 @@ export function ToolActionModal({
   output,
 }: ToolActionModalProps) {
   const heading = `${actionLabel(action)} ${toolName}`;
+  // "Migrate to preferred install tool" is an install/update concept — for
+  // uninstall, the warning (from detectUninstallMismatch) is purely
+  // informational ("this will likely fail"); there's nothing to migrate to.
+  const showMigrateOption = action !== "uninstall";
 
   return (
     <Box flexDirection="column" borderStyle="single" paddingX={1}>
@@ -52,9 +56,11 @@ export function ToolActionModal({
           {warning && (
             <Box flexDirection="column" marginBottom={1}>
               <Text color="yellow">⚠ {warning}</Text>
-              <Text color="cyan">
-                [{migrateSelected ? "x" : " "}] Migrate to preferred install tool: {preferredPackageManager || "(configured)"} (press m)
-              </Text>
+              {showMigrateOption && (
+                <Text color="cyan">
+                  [{migrateSelected ? "x" : " "}] Migrate to preferred install tool: {preferredPackageManager || "(configured)"} (press m)
+                </Text>
+              )}
             </Box>
           )}
 
@@ -93,9 +99,11 @@ export function ToolActionModal({
           {!success && warning && (
             <Box flexDirection="column" marginBottom={1}>
               <Text color="yellow">⚠ {warning}</Text>
-              <Text color="cyan">
-                [{migrateSelected ? "x" : " "}] Migrate to preferred install tool: {preferredPackageManager || "(configured)"} (press m)
-              </Text>
+              {showMigrateOption && (
+                <Text color="cyan">
+                  [{migrateSelected ? "x" : " "}] Migrate to preferred install tool: {preferredPackageManager || "(configured)"} (press m)
+                </Text>
+              )}
             </Box>
           )}
           <Box flexDirection="column" marginBottom={1}>
@@ -105,7 +113,7 @@ export function ToolActionModal({
               </Text>
             ))}
           </Box>
-          <Text color="gray">{success ? "Press any key to close" : warning ? "Enter to retry · m toggle migration · Esc (or any other key) to close" : "Enter to retry · Esc (or any other key) to close"}</Text>
+          <Text color="gray">{success ? "Press any key to close" : warning && showMigrateOption ? "Enter to retry · m toggle migration · Esc (or any other key) to close" : "Enter to retry · Esc (or any other key) to close"}</Text>
         </>
       )}
     </Box>

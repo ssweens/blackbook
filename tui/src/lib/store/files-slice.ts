@@ -106,7 +106,25 @@ function buildSkillSyncPreview(
     (i) => i.kind === "tool" && i.enabled && !!i.skillsSubdir,
   );
   for (const skill of skills) {
-    if (!skill.sourcePath) continue; // can't sync without a source
+    // No source match (deleted, or never tracked) but real disk installations
+    // exist: unlike a normal not-yet-synced skill, there's nothing to sync FROM,
+    // so skip the missing-instance computation entirely and treat every current
+    // installation as needing attention — mirrors how a file with a deleted
+    // source but a surviving target is always surfaced as drift (never silently
+    // dropped), instead of vanishing from the one tab meant to show everything
+    // that needs a look. Previously this `continue`d here, unconditionally,
+    // making such a skill invisible on the Sync tab (still visible elsewhere,
+    // e.g. Installed's "not in git" tag).
+    if (!skill.sourcePath) {
+      if (skill.installations.length === 0) continue;
+      preview.push({
+        kind: "skill",
+        skill,
+        missingInstances: [],
+        driftedInstances: skill.installations.map((i) => i.instanceName),
+      });
+      continue;
+    }
     const installedKeys = new Set(
       skill.installations.map((i) => `${i.toolId}:${i.instanceId}`),
     );
@@ -610,8 +628,16 @@ export const createFilesSlice: SliceCreator<FilesSlice> = (set, get) => ({
           errors.push(`Failed to update ${item.name}`);
         }
       } else if (item.kind === "skill") {
-        // Sync the skill to every missing+drifted tool. installSkillToInstance
-        // overwrites the disk copy with the source-repo version.
+        // Only auto-sync MISSING installations here. Unlike files, skills have
+        // no three-way state (no recorded last-synced baseline), so "drifted"
+        // is a pure binary source!=disk comparison — there's no way to tell
+        // whether the DISK side changed (a local edit worth keeping) from the
+        // source side changing, from both. Silently overwriting a drifted
+        // instance here risked destroying a real, uncaptured local edit with
+        // zero indication (a backup is taken, but nothing tells the user one
+        // was needed). A drifted skill still shows up in this list — resolving
+        // it is a deliberate action via the skill's own detail view, which
+        // already labels itself "(overwrites disk)".
         const { installSkillToInstance } = await import("../install.js");
         const installedKeys = new Set(
           item.skill.installations.map((i) => `${i.toolId}:${i.instanceId}`),
@@ -623,11 +649,7 @@ export const createFilesSlice: SliceCreator<FilesSlice> = (set, get) => ({
         for (const inst of toolInstances) {
           const key = `${inst.toolId}:${inst.instanceId}`;
           const isMissing = !installedKeys.has(key);
-          const installation = item.skill.installations.find(
-            (i) => i.toolId === inst.toolId && i.instanceId === inst.instanceId,
-          );
-          const isDrifted = installation?.drifted === true;
-          if (!isMissing && !isDrifted) continue;
+          if (!isMissing) continue;
           if (installSkillToInstance(item.skill, inst.toolId, inst.instanceId)) any = true;
           else errors.push(`Failed to sync ${item.skill.name} to ${inst.name}`);
         }

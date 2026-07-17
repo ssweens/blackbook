@@ -19,11 +19,19 @@ const HINTS: Record<Tab, string> = {
 };
 
 export const HintBar = React.memo(function HintBar({ tab, hasDetail, toolsHint }: HintBarProps) {
-  const hint = hasDetail
-    ? "↑/↓ to navigate · Enter to select · p pullback (if available) · Esc to back"
-    : tab === "tools" && toolsHint
+  // toolsHint already fully accounts for every tools-tab state, INCLUDING Tool
+  // Detail being open (it has its own detailTool branch) — so it must be
+  // checked before the generic hasDetail hint, not after. The old order meant
+  // hasDetail (true whenever Tool Detail is open, since it's a "detail" mode
+  // overlay) always won first, making the tools-specific hint unreachable
+  // exactly when it mattered most: i/u/d/e/Space/m were never hinted while
+  // viewing a tool's detail.
+  const hint =
+    tab === "tools" && toolsHint
       ? toolsHint
-      : HINTS[tab];
+      : hasDetail
+        ? "↑/↓ to navigate · Enter to select · p pullback (if available) · Esc to back"
+        : HINTS[tab];
 
   return (
     // height caps the text row to exactly 1 line regardless of terminal width

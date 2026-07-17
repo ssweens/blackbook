@@ -352,11 +352,17 @@ export function buildFileDiffTarget(
       };
     }
 
+    // Source is gone but the target may still hold real content — report it as
+    // an "extra" (target-only) file rather than an empty list. An empty `files`
+    // renders as "No differences found - files are in sync", which was false:
+    // this is exactly the "target-changed" drift case (source deleted, target
+    // still exists with content that was never captured back).
+    const targetExists = existsSync(targetPath);
     return {
       kind: "file",
       title,
       instance,
-      files: [],
+      files: targetExists ? [buildFileSummary(displayPath, displayPath, null, targetPath)] : [],
     };
   }
 
@@ -436,7 +442,10 @@ export function buildSkillDiffTarget(
   );
   if (!inst) return null;
   return buildFileDiffTarget(
-    `${skill.name} · ${inst.instanceName}`,
+    // Bare item name, matching every other diff-target builder (file/plugin) —
+    // DiffDetail already appends "· {instanceName}" unconditionally, so baking
+    // it in here too produced "skill-name · Instance · Instance".
+    skill.name,
     skill.name,
     skill.sourcePath,
     inst.diskPath,

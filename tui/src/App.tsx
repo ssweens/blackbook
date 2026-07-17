@@ -1127,8 +1127,12 @@ export function App() {
     // List sub-views below are NOT render overlays (they render inside TabContent),
     // so they live outside the registry — handled here exactly as before.
     if (tab === "projects" && projectDetailPath) {
+      // Land back on the project we just drilled out of, not unconditionally
+      // the first row (Global) — a hardcoded reset made repeated drill-in/out
+      // on any non-Global project always kick the cursor back to the top.
+      const idx = projects.findIndex((p) => p.path === projectDetailPath);
       setProjectDetailPath(null);
-      setSelectedIndex(0);
+      setSelectedIndex(idx >= 0 ? idx : 0);
       return;
     }
     if (discoverSubView) {
@@ -1479,8 +1483,12 @@ export function App() {
     }
 
     // Quit. Global shortcuts (including this one) are already suppressed while the
-    // search box is focused via the searchFocused guard above.
-    if (input === "q") {
+    // search box is focused via the searchFocused guard above. Also gated on
+    // !isOverlayOpen — a detail/diff/tool-detail overlay is "detail" mode, not
+    // "modal", so it doesn't hit the modal early-return above; without this guard
+    // a reflexive `q` while reviewing a diff or item detail exits the ENTIRE app
+    // (irreversibly losing all navigation state) instead of just backing out.
+    if (input === "q" && !isOverlayOpen) {
       exit();
       return;
     }
@@ -1747,6 +1755,16 @@ export function App() {
     const action = actions[index];
     if (!action) return;
 
+    // Any dispatched action can rebuild the detail's action list with a different
+    // shape (e.g. "Uninstall from all tools" replaces per-instance rows with
+    // Sync rows and shifts everything after them up). actionIndex is a raw numeric
+    // position with no reclamp against the new list, so leaving it untouched can
+    // silently land the cursor on a DIFFERENT, more destructive row than the one
+    // just used (e.g. landing on "Delete everywhere" right after an uninstall,
+    // one keypress from wiping the source-repo copy too — with no confirm gate).
+    // Every action-list builder places bulk/destructive actions after the
+    // per-instance status rows, so index 0 is always the safe row to land on.
+    setActionIndex(0);
     await handleItemAction(item, action, buildDetailCallbacks({
       detail,
       setDetail,

@@ -218,6 +218,36 @@ export async function detectInstallMethodMismatch(
   };
 }
 
+/**
+ * Warn before an uninstall that is very likely to fail. getToolLifecycleCommand
+ * resolves uninstall to exactly one command: a configured native command, a
+ * brew formula match, or — the fallback — a generic package-manager uninstall.
+ * Only that fallback can silently target a package that was never installed
+ * that way (e.g. claude-code's native curl-script install has no matching
+ * bun/npm/pnpm package to remove, so "bun remove -g ..." is guaranteed to fail
+ * with a confusing "nothing to remove" error and no advance warning). There is
+ * no "migrate" concept here (unlike install/update) — this only informs.
+ */
+export function detectUninstallMismatch(
+  toolId: string,
+  binaryPath: string | null | undefined
+): string | null {
+  const entry = getToolRegistryEntry(toolId);
+  if (!entry) return null;
+
+  const uninstallStrategy = entry.lifecycle?.uninstall?.strategy ?? "package-manager";
+  if (uninstallStrategy === "native") return null; // has its own configured command
+
+  const binaryMethod = detectBinaryInstallMethod(binaryPath);
+  if (binaryMethod === "brew" && entry.brewFormula) return null; // getToolLifecycleCommand already special-cases this
+  if (binaryMethod === "bun" || binaryMethod === "npm" || binaryMethod === "pnpm") return null; // a real package-manager install; should resolve fine
+
+  const installStrategy = entry.lifecycle?.install?.strategy ?? "package-manager";
+  if (installStrategy === "package-manager" && !binaryMethod) return null; // installed via a package manager blackbook just couldn't pin down exactly; let it try
+
+  return `${entry.displayName} does not appear to be installed via a package manager blackbook can uninstall (install method: ${installStrategy === "native" ? "native installer" : binaryMethod ?? "unknown"}). This will likely fail — you may need to remove it manually.`;
+}
+
 async function runLifecycleCommand(
   command: { cmd: string; args: string[] },
   onProgress: (event: ProgressEvent) => void,

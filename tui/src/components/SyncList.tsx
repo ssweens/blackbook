@@ -91,12 +91,17 @@ export const SyncList = React.memo(function SyncList({
           const parts: string[] = [];
           if (item.missingInstances.length > 0) parts.push(`Missing: ${item.missingInstances.length}`);
           if (item.driftedInstances.length > 0) {
-            const dir = item.skill.gitStatus === "modified" ? "source" : item.skill.gitStatus === "clean" ? "disk" : null;
-            const dirLabel = dir ? ` (${dir})` : "";
+            // No "(source)"/"(disk)" direction claim here: unlike files, skills
+            // have no recorded last-synced baseline, so "drifted" is a pure
+            // source!=disk comparison with no way to tell which side actually
+            // changed. The previous heuristic (the WHOLE source directory's
+            // git status) was frequently wrong — e.g. a stale uncommitted diff
+            // from an earlier edit kept claiming "(source)" even after a
+            // brand-new disk-only edit. A wrong direction is worse than none.
             if (item.driftedInstances.length === 1) {
-              parts.push(`Drifted on ${item.driftedInstances[0]}${dirLabel}`);
+              parts.push(`Drifted on ${item.driftedInstances[0]}`);
             } else {
-              parts.push(`Drifted: ${item.driftedInstances.length}${dirLabel} (${item.driftedInstances.join(", ")})`);
+              parts.push(`Drifted: ${item.driftedInstances.length} (${item.driftedInstances.join(", ")})`);
             }
           }
           statusLabel = parts.join(" · ");

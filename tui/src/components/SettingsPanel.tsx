@@ -371,7 +371,14 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
         const def = item.def;
         if (def.type === "number") {
           const num = parseInt(editValue, 10);
-          if (isNaN(num) || num < 1 || num > 100) return;
+          if (isNaN(num) || num < 1 || num > 100) {
+            // Previously a silent no-op here — Enter appeared to do nothing at
+            // all, with no indication why, and the field stayed in edit mode
+            // with the invalid text still shown. Surface it like every other
+            // validation/action outcome in this panel.
+            setActionMessage(`⚠ Must be a number between 1 and 100`);
+            return;
+          }
           persistSettings({ ...settings, [def.key]: num });
         } else {
           persistSettings({ ...settings, [def.key]: editValue || undefined });
