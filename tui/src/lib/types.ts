@@ -399,8 +399,8 @@ export interface PiPackageSpec {
   marketplace?: string;
 }
 
-// Section navigation for Discover/Installed tabs
-export type DiscoverSection = "files" | "skills" | "plugins" | "piPackages";
+// Section navigation for Discover/Installed/Sync tabs
+export type DiscoverSection = "tools" | "files" | "skills" | "plugins" | "piPackages";
 
 // Sub-view state for drilling into Plugins or Pi Packages
 export type DiscoverSubView = "plugins" | "piPackages" | null;

@@ -725,6 +725,26 @@ export function App() {
     const result: Array<{ id: DiscoverSection; start: number; end: number }> = [];
     let offset = 0;
 
+    if (tab === "sync") {
+      // syncPreview is already sorted into contiguous groups by kind
+      // (tool → file → skill → plugin → piPackage) — find the first index
+      // of each kind and emit a section boundary for it.
+      const syncSections: Array<{ kind: SyncPreviewItem["kind"]; id: DiscoverSection }> = [
+        { kind: "tool", id: "tools" },
+        { kind: "file", id: "files" },
+        { kind: "skill", id: "skills" },
+        { kind: "plugin", id: "plugins" },
+        { kind: "piPackage", id: "piPackages" },
+      ];
+      for (const { kind, id } of syncSections) {
+        const first = syncPreview.findIndex((i) => i.kind === kind);
+        if (first === -1) continue;
+        const last = syncPreview.length - 1 - [...syncPreview].reverse().findIndex((i) => i.kind === kind);
+        result.push({ id, start: first, end: last });
+      }
+      return result;
+    }
+
     if (tab === "installed") {
       if (fileCount > 0) {
         result.push({ id: "files", start: offset, end: offset + fileCount - 1 });
@@ -1504,8 +1524,8 @@ export function App() {
       return;
     }
 
-    // Tab/Shift+Tab for section navigation in Discover/Installed tabs
-    if (key.tab && (tab === "discover" || tab === "installed") && !discoverSubView && !isOverlayOpen) {
+    // Tab/Shift+Tab for section navigation in Discover/Installed/Sync tabs
+    if (key.tab && (tab === "discover" || tab === "installed" || tab === "sync") && !discoverSubView && !isOverlayOpen) {
       if (sections.length > 0) {
         const currentIdx = sections.findIndex((s) => selectedIndex >= s.start && selectedIndex <= s.end);
         if (key.shift) {
