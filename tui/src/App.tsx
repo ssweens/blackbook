@@ -955,7 +955,7 @@ export function App() {
       marketplace: ns.toolIds.join(", "),
       description: `${ns.skills.length} skill${ns.skills.length === 1 ? "" : "s"} · ${ns.toolIds.join(", ")}`,
       installed: isInstalled,
-      incomplete: ns.missingCount > 0,
+      incomplete: isInstalled && ns.missingCount > 0,
       scope: "user" as const,
       tools: ns.toolIds,
       instances: ns.toolIds.map((toolId) => ({

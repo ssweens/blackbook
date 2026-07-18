@@ -160,7 +160,7 @@ export function InstalledTab({ contentHeight, searchFocused, onSearchFocus, onSe
         marketplace: scopeLabel,
         description: `${ns.skills.length} skill${ns.skills.length === 1 ? "" : "s"} · ${scopeLabel}`,
         installed: isInstalled,
-        incomplete: ns.missingCount > 0,
+        incomplete: isInstalled && ns.missingCount > 0,
         scope: "user" as const,
         tools: ns.toolIds,
         instances: ns.toolIds.map((toolId) => ({
