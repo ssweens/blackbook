@@ -37,17 +37,15 @@ Everything is a plugin. Plugins can include skills, commands, agents, hooks, MCP
 
 ## Supported Tools
 
-| Tool | Config Directory | Skills | Commands | Agents | Config Sync |
-|------|------------------|--------|----------|--------|-------------|
-| Claude Code | `~/.claude` | ✓ (own dir) | ✓ | ✓ | ✓ |
-| OpenAI Codex | `~/.codex` | ✓ (shared, see below) | — | — | ✓ |
-| OpenCode | `~/.config/opencode` | ✓ (shared, see below) | ✓ | ✓ | ✓ |
-| Amp Code | `~/.config/amp` | ✓ (shared, see below) | ✓ | ✓ | ✓ |
-| Pi | `~/.pi/agent` | ✓ (shared, see below) | ✓* | — | ✓ |
+| Tool | Config Directory | Skills | Commands | Agents | MCP | Config Sync |
+|------|------------------|--------|----------|--------|-----|-------------|
+| Claude Code | `~/.claude` | ✓ (own dir, flat) | ✓ (flat) | ✓ (flat) | ✓ (native CLI) | ✓ |
+| OpenAI Codex | `~/.codex` | ✓ (shared, see below) | — | — | — | ✓ |
+| OpenCode | `~/.config/opencode` | ✓ (shared, see below) | ✓ | ✓ | ✓ (skill-bundled) | ✓ |
+| Amp Code | `~/.config/amp` | ✓ (shared, see below) | ✓ | ✓ | ✓ (skill-bundled) | ✓ |
+| Pi | `~/.pi/agent` | ✓ (shared, see below) | ✓ (own dir, flat) | — | ✓ (shared, see below) | ✓ |
 
-\* Pi marketplace plugins are bridge-managed. Blackbook treats installed Pi plugin resources as namespaced generated artifacts: skills under `${TMPDIR}/pi-plugins-user-skills/<plugin>-<skill>/`, prompts under `${TMPDIR}/pi-plugins-user-prompts/<plugin>:<command>.md`, and agents under `~/.pi/agent/agents/pi-plugins-<plugin>-<agent>.md`.
-
-> Pi plugin lifecycle in Blackbook is bridge-backed. Blackbook does not project Claude-style plugins directly into `~/.pi/agent/skills` / `prompts`; it follows the Pi bridge backend's generated resource layout and state.
+Pi is a plain file-copy tool like OpenCode/Amp/Codex — plugin skills/commands install directly, with no separate bridge process or native registration step.
 
 ### Shared `.agents/skills`
 
@@ -56,6 +54,20 @@ Codex, OpenCode, Amp, and Pi all natively read skills from the emerging `.agents
 Claude Code does not support `.agents/skills`, so its skills stay in `~/.claude/skills` as before.
 
 Because Codex/OpenCode/Amp/Pi's skill installs now resolve to the same physical files, uninstalling a skill from one of them may remove it for the others too — the per-tool uninstall action is labeled accordingly when this applies. Upgrading from an older Blackbook version: existing skill installs under each tool's own directory (e.g. `~/.codex/skills`, `~/.config/opencode/skills`) are no longer tracked by Blackbook and are not automatically migrated or deleted — remove them manually once `~/.agents/skills` is populated via a normal sync.
+
+### Flat-install namespacing (Claude, Pi commands)
+
+Claude Code (skills/commands/agents) and Pi (commands only — its prompt loader doesn't support nested directories, unlike its skill loader) install components flat, with no per-plugin subfolder. To avoid two plugins' same-named component silently overwriting each other there, Blackbook prefixes the on-disk name with the owning plugin/namespace (e.g. `myplugin-verdict.md` instead of `verdict.md`) whenever it would otherwise collide. This is a display-invisible, disk-only naming scheme — skill/command frontmatter names are unaffected.
+
+Upgrading from an older Blackbook version: existing flat installs keep their old un-prefixed filename on disk and are not automatically renamed — remove them manually once the new name is confirmed installed via a normal sync.
+
+### MCP servers
+
+A plugin that bundles an MCP server (`mcp.json`/`.mcp.json` at its root, or an inline `mcpServers` field in its marketplace/plugin manifest) gets it installed two ways, depending on what each tool actually reads:
+
+- **Claude Code and Pi** both read a shared `{"mcpServers": {...}}` convention — Claude via its native `claude mcp add-json`/`claude mcp remove` CLI (never hand-edited directly, since `~/.claude.json` is Claude-owned state), Pi via a direct merge into `~/.config/mcp/mcp.json` (the global location the community `pi-mcp-adapter` extension reads).
+- **Amp and OpenCode** read a skill-bundled `mcp.json` colocated with the skill directory itself (`~/.agents/skills/<skill>/mcp.json`) — Amp natively, OpenCode via a common (non-core) plugin. Blackbook copies the plugin's `mcp.json` alongside each skill it installs for these two.
+- **Codex** has no shared-file MCP convention (its own config is TOML-based) and is out of scope for now.
 
 ## Installation
 
@@ -305,7 +317,7 @@ Native command exceptions:
 
 Incomplete installs are detected when a plugin is missing from any enabled instance that supports it.
 
-For Pi, installed plugin status comes from the Pi bridge state, and per-tool drift/diff uses the bridge's generated resource paths rather than guessed `~/.pi/agent/skills` paths.
+For Pi, installed plugin status and per-tool drift/diff come from the same file-copy manifest used for OpenCode/Amp/Codex — Pi has no separate native plugin registration.
 
 
 ### Managing Marketplaces

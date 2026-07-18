@@ -21,8 +21,8 @@ import {
   cpSync,
   symlinkSync,
 } from "fs";
-import { join, dirname } from "path";
-import { resolveInstanceSubdirPath } from "../path-utils.js";
+import { basename, join, dirname } from "path";
+import { flattenNamespacedName, resolveInstanceSubdirPath } from "../path-utils.js";
 import type { Plugin, InstalledItem, ToolInstance } from "../types.js";
 import type { Manifest } from "../manifest.js";
 import { loadManifest, saveManifest } from "../manifest.js";
@@ -77,6 +77,52 @@ function findSiblingInstall(
     }
   }
   return null;
+}
+
+/**
+ * Whether commands should install flat + plugin-prefixed (see
+ * flattenNamespacedName) rather than namespaced under a `<plugin>/` subdir.
+ * `pluginFlatInstall` covers fully-flat tools (Claude); Pi is a special
+ * case — its skills stay namespaced (its skill loader is recursive-safe,
+ * confirmed from source), but its prompt loader only reads flat *.md files
+ * directly under prompts/ (also confirmed from source, non-recursive), so
+ * commands need flattening there even though skills don't.
+ */
+function usesFlatCommands(instance: ToolInstance): boolean {
+  return instance.pluginFlatInstall || instance.toolId === "pi";
+}
+
+// Amp reads a skill-bundled `mcp.json` colocated with the skill directory
+// natively; OpenCode supports the identical convention via a common
+// (non-core) plugin. Neither reads a plugin-root mcp.json directly, so a
+// plugin's MCP servers need copying alongside each skill it installs.
+const SKILL_BUNDLED_MCP_TOOL_IDS = new Set(["amp-code", "opencode"]);
+
+/**
+ * Copy a plugin's root `mcp.json`/`.mcp.json` (if it has one) into a
+ * just-installed skill's own directory, for tools that read MCP servers
+ * bundled with the skill rather than from a shared file (see
+ * SKILL_BUNDLED_MCP_TOOL_IDS). A plugin with multiple skills gets the same
+ * file copied into each of them — redundant if more than one is installed,
+ * but harmless (both readers dedupe by server name).
+ *
+ * No manifest tracking needed: this rides along with the skill's own
+ * InstalledItem — uninstalling the skill removes its directory, mcp.json
+ * included, for free.
+ */
+function copyPluginMcpJsonIntoSkill(instance: ToolInstance, sourcePath: string, skillDest: string): void {
+  if (!SKILL_BUNDLED_MCP_TOOL_IDS.has(instance.toolId)) return;
+  for (const relPath of ["mcp.json", ".mcp.json"]) {
+    const src = join(sourcePath, relPath);
+    if (existsSync(src)) {
+      try {
+        copyFileSync(src, join(skillDest, "mcp.json"));
+      } catch (error) {
+        logError(`Failed to copy ${relPath} into ${skillDest}`, error);
+      }
+      return;
+    }
+  }
 }
 
 /**
@@ -261,8 +307,10 @@ export function installPluginItemsToInstance(
             const baseDest = instance.pluginFlatInstall
               ? resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir)
               : resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir, pluginName);
-            const dest = safePath(baseDest, entry);
+            const destName = instance.pluginFlatInstall ? flattenNamespacedName(pluginName, entry) : entry;
+            const dest = safePath(baseDest, destName);
             installItem("skill", entry, src, dest);
+            copyPluginMcpJsonIntoSkill(instance, sourcePath, dest);
           }
         }
       }
@@ -276,10 +324,12 @@ export function installPluginItemsToInstance(
             const name = entry.replace(/\.md$/, "");
             if (componentConfig?.disabledCommands.includes(name)) continue;
             const src = safePath(commandsDir, entry);
-            const baseDest = instance.pluginFlatInstall
+            const flatCommands = usesFlatCommands(instance);
+            const baseDest = flatCommands
               ? resolveInstanceSubdirPath(instance.configDir, instance.commandsSubdir)
               : resolveInstanceSubdirPath(instance.configDir, instance.commandsSubdir, pluginName);
-            const dest = safePath(baseDest, entry);
+            const destName = flatCommands ? `${flattenNamespacedName(pluginName, name)}.md` : entry;
+            const dest = safePath(baseDest, destName);
             installItem("command", name, src, dest);
           }
         }
@@ -297,7 +347,8 @@ export function installPluginItemsToInstance(
             const baseDest = instance.pluginFlatInstall
               ? resolveInstanceSubdirPath(instance.configDir, instance.agentsSubdir)
               : resolveInstanceSubdirPath(instance.configDir, instance.agentsSubdir, pluginName);
-            const dest = safePath(baseDest, entry);
+            const destName = instance.pluginFlatInstall ? `${flattenNamespacedName(pluginName, name)}.md` : entry;
+            const dest = safePath(baseDest, destName);
             installItem("agent", name, src, dest);
           }
         }
@@ -476,7 +527,11 @@ export function listInstalledForManagedInstance(instance: ToolInstance): Plugin[
               if (stat.isDirectory() || stat.isSymbolicLink()) {
                 if (existsSync(join(itemPath, "SKILL.md"))) {
                   const source = getSource(itemPath);
-                  components.push({ type: "skill", name: item, source });
+                  // Flat installs may carry a flattened, plugin-prefixed disk
+                  // name (see flattenNamespacedName) — recover the true skill
+                  // name from its source path rather than reporting the
+                  // prefixed one.
+                  components.push({ type: "skill", name: basename(source), source });
                 }
               }
             } catch (error) {
@@ -520,12 +575,15 @@ export function listInstalledForManagedInstance(instance: ToolInstance): Plugin[
     const commandsDir = resolveInstanceSubdirPath(instance.configDir, instance.commandsSubdir);
     try {
       if (lstatSync(commandsDir).isDirectory()) {
-        if (instance.pluginFlatInstall) {
+        if (usesFlatCommands(instance)) {
           for (const item of readdirSync(commandsDir)) {
             if (item.endsWith(".md")) {
-              const name = item.replace(/\.md$/, "");
               const itemPath = join(commandsDir, item);
               const source = getSource(itemPath);
+              // Recover the true command name from its source path — the
+              // disk name may be flattened/plugin-prefixed (see
+              // flattenNamespacedName).
+              const name = basename(source).replace(/\.md$/, "");
               components.push({ type: "command", name, source });
             }
           }
@@ -563,9 +621,12 @@ export function listInstalledForManagedInstance(instance: ToolInstance): Plugin[
         if (instance.pluginFlatInstall) {
           for (const item of readdirSync(agentsDir)) {
             if (item.endsWith(".md")) {
-              const name = item.replace(/\.md$/, "");
               const itemPath = join(agentsDir, item);
               const source = getSource(itemPath);
+              // Recover the true agent name from its source path — the disk
+              // name may be flattened/plugin-prefixed (see
+              // flattenNamespacedName).
+              const name = basename(source).replace(/\.md$/, "");
               components.push({ type: "agent", name, source });
             }
           }

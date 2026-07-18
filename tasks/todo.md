@@ -1,3 +1,25 @@
+## Pi plugin bridge removal + flat-install namespacing + MCP support (v0.27.0) ✅ DONE
+
+### Problem
+- Pi's plugin lifecycle went through a large, separately-maintained subsystem (`adapters/pi-bridge.ts`, 485 lines) that shelled out to Blackbook's own `@ssweens/pi-plugins` npm extension via generated `bun -e` scripts — the only tool whose plugin components didn't go through the shared file-copy engine.
+- Claude Code installs skills/commands/agents flat (no per-plugin subfolder) — two plugins shipping a same-named component silently overwrote each other there, even though the identical pair installed fine everywhere else (namespaced layout).
+- MCP was detect-only: `hasMcp`/`scanPluginContents` flagged that a plugin bundles an MCP server, but nothing installed one anywhere for Claude/Codex/OpenCode/Amp — only Pi's (now-removed) bridge forwarded servers into Pi's own state.
+
+### Fix
+- Deleted `adapters/pi-bridge.ts` entirely; stripped `pi-bridge.ts` down to the generic `resolveInstalledPluginComponentPath` (the `toolId === "pi"` special case is gone — Pi resolves like any managed instance now). New `adapters/pi.ts` composes `managedAdapter` (same engine as OpenCode/Amp/Codex) and layers in MCP install/uninstall.
+- `flattenNamespacedName` (`path-utils.ts`, modeled on the bridge's own naming idea) prefixes a flat-installed component with its plugin/namespace (e.g. `myplugin-verdict.md`) to avoid collisions. Applies to Claude Code (skills/commands/agents) and, via a `usesFlatCommands()` special case scoped to commands only, Pi — confirmed from Pi's own source (`skills.ts` vs `prompt-templates.ts` on GitHub, not docs) that its skill loader is recursive-safe but its prompt loader isn't, so skills stay namespaced under the shared `.agents/skills` while commands flatten. `readSkillFrontmatterName` recovers the true name from a skill's own frontmatter so cross-tool aggregation isn't fragmented by the disk-only prefix.
+- MCP: `getPluginMcpServers` extracts real server definitions (not just the `hasMcp` boolean) from a plugin's cached `mcp.json`/`.claude-plugin/plugin.json`. New `adapters/mcp.ts`: Claude gets servers via the native `claude mcp add-json`/`claude mcp remove` CLI (never hand-edited `~/.claude.json`); Pi gets a direct merge into `~/.config/mcp/mcp.json` (the global file the community `pi-mcp-adapter` extension already reads — confirmed via its own README, at the user's correction after my first pass mis-scoped this). Amp/OpenCode get a plugin's `mcp.json` copied alongside each skill they install (the skill-bundled convention Amp reads natively, OpenCode via a common plugin); Codex is out of scope (TOML config, no shared-file convention).
+
+### Validation
+- Full test suite green (796 tests, 785 passing, 10 skipped, 1 pre-existing unrelated failure) — see `docs/TEST_COVERAGE.md`.
+- Live-verified in tmux with a sandboxed HOME/XDG fixture: two plugins with an identically-named skill install to Claude without collision (flattened); Pi's plugin install is pure file-copy with zero subprocess/staging artifacts; skill-bundled `mcp.json` lands correctly for Amp/OpenCode; Pi's global `mcp.json` merges correctly. Confirmed zero pollution of the real `~/.config/mcp/mcp.json`/`~/.claude.json`.
+- **Deliberately not live-tested:** the real Claude `mcp add`/`remove` CLI shell-out. `~/.claude.json` is also touched by Claude Code's own normal operation mid-session, which makes mtime-diffing an unreliable "did my change touch this" signal — the safer call was to rely on `adapters/mcp.test.ts`'s fully mocked `child_process` coverage instead of risking a live call against real state.
+- **Caught and fixed mid-implementation:** setting `plugin_flat_install: true` on Pi's whole playbook (matching the plan's first pass) also flattened Pi's *skills*, which are recursive-safe and were meant to stay namespaced under the shared `.agents/skills` — would have made Pi's shared skill layout inconsistent with Codex/OpenCode/Amp. Caught by the existing `install.integration.test.ts` suite failing on Pi-specific namespace assertions; fixed by scoping the flat-naming special case to commands only (`usesFlatCommands()`), leaving Pi's own `skills` component ungated by any playbook-level flat flag.
+
+### Notes
+- No automated migration of old flat-install filenames (pre-prefix) — documented in README/CHANGELOG as a manual cleanup step, same pattern as the `.agents/skills` redirect.
+- No `agents` component exists for Pi (unchanged from before) — no native "load agent definition files" concept was found anywhere in Pi's coding-agent core; flagged in code/docs as unresearched rather than guessed.
+
 ## Shared `.agents/skills` redirect + `.agents` pseudo-tool (v0.26.0) ✅ DONE
 
 ### Problem

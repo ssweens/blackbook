@@ -3,7 +3,7 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 780 (769 passing, 10 skipped — see CLI Mode section, 1 pre-existing failure unrelated to recent work: `install.integration.test.ts` "updatePlugin > updates only instances where plugin is already installed")
+- **Total Tests:** 796 (785 passing, 10 skipped — see CLI Mode section, 1 pre-existing failure unrelated to recent work: `install.integration.test.ts` "updatePlugin > updates only instances where plugin is already installed")
 - **Test Files:** 63
 
 ## Critical Paths
@@ -18,8 +18,8 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Plugin per-component enable/disable config parsing and round-trip
 - [x] Sync preview generation for partial installs
 - [x] Discover → plugin detail → install to all tools (E2E)
-- [x] Pi plugin lifecycle routes through `@ssweens/pi-plugins` bridge commands instead of Blackbook projection paths
-- [x] Pi plugin target-path resolution follows the bridge's generated namespaced layout (`pi-plugins-user-skills`, `pi-plugins-user-prompts`, `pi-plugins-<plugin>-<agent>`)
+- [x] Pi plugin lifecycle routes through the same managed file-copy engine as OpenCode/Amp/Codex (the `@ssweens/pi-plugins` bridge subprocess mechanism was removed) — `adapters.test.ts`, `pi-bridge.test.ts`
+- [x] Pi plugin/standalone target-path resolution matches its own skillsSubdir/commandsSubdir directly, no bridge-generated naming — `pi-bridge.test.ts`
 - [x] Install failure notification stays on detail (E2E)
 - [x] Config multi-file sync (directory, glob patterns)
 - [x] Asset path resolution (URLs, absolute, home-relative, relative)
@@ -51,7 +51,6 @@ This project tracks coverage by critical user journeys and system boundaries.
 ## Boundaries
 - [x] Marketplace fetch (remote marketplace.json)
 - [x] Local Claude marketplace checkout loading via `installLocation`, including manifest-declared nested skill roots
-- [x] Pi bridge install compatibility for local Claude marketplace checkouts with path-based `mcpServers` manifests (manual `desk` install verification)
 - [x] Tool config loading and updates
 - [x] Plugin install/uninstall/update adapters
 - [x] Asset sync adapters (hashing + drift detection)
@@ -140,7 +139,6 @@ This project tracks coverage by critical user journeys and system boundaries.
 
 ## User Journeys (Problem Paths)
 - [x] Install failure surfaces error notification without leaving detail view
-- [x] Pi bridge install retries/repoints duplicate marketplace state to Blackbook's staged compatible marketplace source
 - [x] Local-only Pi package uninstall succeeds when `pi remove npm:...` reports no matching Pi settings package
 - [x] Pi package delete-everywhere removes the in-git source-repo prescription instead of leaving the package to reappear on refresh
 - [ ] Update failure surfaces error notification with context
@@ -185,6 +183,15 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Live-verified in tmux (sandboxed HOME/XDG env, real git source repo, `bun src/cli.tsx`): a standalone skill and a plugin-bundled skill component both install to the shared `~/.agents/skills` once, with OpenCode's and Codex's own config dirs staying empty (no per-tool duplication); Claude Code (unredirected) gets its own independent copy under `~/.claude/skills`, unaffected by the shared installs/uninstalls; uninstalling from a sibling instance (not the first/primary installer) only clears that instance's own tracking and leaves the shared file in place for the instance still relying on it; uninstalling from every instance eventually removes the shared file once the true owner is processed
 - [x] Managed adapter (`adapters/managed.ts`) install: a second/third instance sharing the same physical `~/.agents/skills` file detects the first instance's manifest entry for the same plugin+item and skips re-backing-up/re-copying it (marked `sharedInstall: true`) instead of treating the sibling's just-installed content as foreign pre-existing content to back up (install.integration.test.ts — "installs same-named skills from different plugins independently", "restores backup when disabling", "backs up and restores across a simulated cross-device (EXDEV) boundary")
 - [x] Managed adapter uninstall: a `sharedInstall: true` entry never touches the filesystem (no delete, no restore) — only the instance that owns the real backup/absence is responsible for the shared file's lifecycle, preventing a sibling's uninstall from resurrecting content a prior instance's uninstall had just correctly restored or deleted (install.integration.test.ts — "returns correct removal counts", "restores backup when disabling", "backs up and restores across a simulated cross-device (EXDEV) boundary")
+
+## Pi Plugin Bridge Removal / Flat-Install Namespacing / MCP Support
+- [x] `flattenNamespacedName`: prefixes a name with its namespace; returns the bare name unchanged with no prefix, when the name already equals the prefix (self-named skill), or when already prefix-elided (no double-prefixing) (path-utils.test.ts)
+- [x] `readSkillFrontmatterName`: reads the true name from `SKILL.md` frontmatter regardless of the (possibly flattened/prefixed) directory name; falls back to the directory name when frontmatter is missing/unparsable (path-utils.test.ts)
+- [x] `getPluginMcpServers`: reads servers from `mcp.json`'s standard `{mcpServers:{...}}` shape or a bare servers object, from `.mcp.json`, and falls back to an inline or string-path `mcpServers` field in `.claude-plugin/plugin.json`; `mcp.json` at the plugin root takes precedence over the manifest fallback; returns `null` when nothing is found (path-utils.test.ts)
+- [x] `getAdapterForTool("pi")` now resolves to `piAdapter` (composing `managedAdapter`) instead of the removed bridge adapter; `usesSource` is `true` (file-copy, not native) matching OpenCode/Amp/Codex; `supports`/`isInstalled` are gated off with the same "blocked" reason OpenCode/Amp show, inherited unchanged from `managedAdapter` (adapters.test.ts)
+- [x] `installMcpServersToInstance`/`uninstallMcpServersFromInstance` (adapters/mcp.ts): no-op for any tool besides Claude/Pi or a plugin with no MCP servers; shells out to `claude mcp add-json <name> <json> --scope user`/`claude mcp remove <name> --scope user` per server for Claude, with `CLAUDE_CONFIG_DIR` set to the instance's config dir, never writing `~/.claude.json` directly; read-merges/deletes into `~/.config/mcp/mcp.json` for Pi without clobbering other plugins' servers already there; uninstall only removes servers owned by the given plugin (adapters/mcp.test.ts — sandboxed HOME, mocked `child_process`, verified no real-home file/subprocess leakage)
+- [x] Skill-bundled `mcp.json` copy (managed.ts's `installPluginItemsToInstance`): a plugin's root `mcp.json` is copied alongside every skill it installs for Amp/OpenCode specifically, not other managed-family tools (install.integration.test.ts — "copies a plugin's mcp.json alongside its skill for Amp/OpenCode")
+- [x] Live-verified in tmux (sandboxed HOME/XDG env): two plugins with an identically-named skill (`utils`) install to Claude Code without collision, flattened to `<plugin>-utils`; Pi's plugin install goes through plain file-copy with no `bun -e` subprocess and no bridge staging directory; a plugin bundling an MCP server produces a skill-bundled `mcp.json` at the shared `.agents/skills` location (read by Amp/OpenCode) and a correctly-merged `~/.config/mcp/mcp.json` for Pi; confirmed no pollution of the real `~/.config/mcp/mcp.json` or `~/.claude.json` (the real Claude `mcp add`/`remove` CLI shell-out was deliberately not exercised live — `~/.claude.json` is also touched by Claude Code's own normal operation, making mtime-diffing an unreliable safety signal; that path is covered by `adapters/mcp.test.ts`'s mocked `child_process` assertions instead)
 
 ## Gaps (Low Priority)
 - [ ] End-to-end TUI navigation across all tabs (discover → installed → tools → sync → settings)

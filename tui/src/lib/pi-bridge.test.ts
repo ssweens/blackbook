@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { homedir, tmpdir } from "os";
+import { homedir } from "os";
 import { join } from "path";
 import { resolveInstalledPluginComponentPath } from "./pi-bridge.js";
 import type { Plugin, ToolInstance } from "./types.js";
@@ -18,27 +18,24 @@ const plugin: Pick<Plugin, "name" | "marketplace" | "installedMarketplace"> = {
 };
 
 describe("resolveInstalledPluginComponentPath for Pi", () => {
-  it("uses namespaced temp skill paths", () => {
+  // Pi's plugin bridge (which generated tmpdir-staged, colon/dash-named
+  // paths here) was removed — Pi now resolves like any other managed
+  // instance, straight from its own skillsSubdir/commandsSubdir/agentsSubdir.
+  it("resolves skill paths from skillsSubdir, same as any managed instance", () => {
     expect(resolveInstalledPluginComponentPath(piInstance, plugin, "skill", "crafting-interfaces")).toBe(
-      join(tmpdir(), "pi-plugins-user-skills", "crafting-interfaces"),
+      join(piInstance.configDir, "skills", "crafting-interfaces"),
     );
   });
 
-  it("uses namespaced temp prompt paths", () => {
+  it("resolves command paths from commandsSubdir, same as any managed instance", () => {
     expect(resolveInstalledPluginComponentPath(piInstance, plugin, "command", "verdict")).toBe(
-      join(tmpdir(), "pi-plugins-user-prompts", "crafting-interfaces:verdict.md"),
+      join(piInstance.configDir, "prompts", "verdict.md"),
     );
   });
 
-  it("uses namespaced agent paths", () => {
+  it("resolves agent paths from agentsSubdir, same as any managed instance", () => {
     expect(resolveInstalledPluginComponentPath(piInstance, plugin, "agent", "reviewer")).toBe(
-      join(homedir(), ".pi", "agent", "agents", "pi-plugins-crafting-interfaces-reviewer.md"),
-    );
-  });
-
-  it("elides duplicated plugin prefixes", () => {
-    expect(resolveInstalledPluginComponentPath(piInstance, plugin, "command", "crafting-interfaces-verdict")).toBe(
-      join(tmpdir(), "pi-plugins-user-prompts", "crafting-interfaces:verdict.md"),
+      join(piInstance.configDir, "agents", "reviewer.md"),
     );
   });
 });

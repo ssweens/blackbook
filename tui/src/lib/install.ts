@@ -45,7 +45,7 @@ import type {
   FileStatus,
 } from "./types.js";
 import { atomicWriteFileSync, renameOrCopy, withFileLockSync } from "./fs-utils.js";
-import { resolveInstanceSubdirPath, resolveLocalPath, scanPluginContents } from "./path-utils.js";
+import { flattenNamespacedName, readSkillFrontmatterName, resolveInstanceSubdirPath, resolveLocalPath, scanPluginContents } from "./path-utils.js";
 import {
   safePath,
   validateGitRef,
@@ -77,7 +77,6 @@ import {
 } from "./manifest.js";
 import { logError, validatePluginMetadata } from "./validation.js";
 import { getPluginToolStatus } from "./plugin-status.js";
-import { listPiBridgeInstalledPlugins } from "./pi-bridge.js";
 // Per-tool plugin lifecycle logic lives in the adapters, dispatched by toolId.
 // The orchestrators below resolve `getAdapterForTool(instance.toolId)` and call
 // its install/uninstall/update/installComponents/removeComponents methods
@@ -88,14 +87,10 @@ import {
   uninstallPluginItemsFromInstance,
 } from "./adapters/managed.js";
 import { removeFromClaudeInstalledPluginsJson } from "./adapters/claude.js";
-import {
-  runPiBridgeMarketplaceRemoveCommand,
-  isPiPluginBridgeReady,
-} from "./adapters/pi-bridge.js";
 // Preserve the historical public surface: these were exported from install.ts
 // before they moved into the adapters. Re-export so external importers (store,
 // tests) keep working unchanged.
-export { removeFromClaudeInstalledPluginsJson, isPiPluginBridgeReady };
+export { removeFromClaudeInstalledPluginsJson };
 
 // extractPluginInfoFromSource and readClaudePluginMetadata now live in the
 // adapters (managed.ts and claude.ts respectively).
@@ -134,11 +129,6 @@ async function ensureGitAvailable(): Promise<void> {
   }
 }
 
-// Pi bridge resolution (isPiPluginBridgeReady, resolvePiPluginsPackageRoot) and
-// the bridge command runners (runPiBridgeMarketplaceRemoveCommand,
-// runPiBridgePluginCommand) now live in ./adapters/pi-bridge.ts. install.ts
-// imports isPiPluginBridgeReady / runPiBridgeMarketplaceRemoveCommand from there.
-
 export async function removeClaudeMarketplace(marketplaceName: string): Promise<void> {
   validateMarketplaceName(marketplaceName);
   const claudeInstances = getEnabledToolInstances().filter((i) => i.toolId === "claude-code");
@@ -163,29 +153,10 @@ export async function removeClaudeMarketplace(marketplaceName: string): Promise<
   }
 }
 
-export async function removePiMarketplace(marketplaceName: string): Promise<void> {
-  validateMarketplaceName(marketplaceName);
-  const piInstances = getEnabledToolInstances().filter((i) => i.toolId === "pi");
-  const failures: string[] = [];
-
-  for (const instance of piInstances) {
-    try {
-      await runPiBridgeMarketplaceRemoveCommand(instance, marketplaceName);
-    } catch (error) {
-      const commandError = error as { stderr?: string; stdout?: string; message?: string };
-      const message = commandError.stderr || commandError.stdout || commandError.message || String(error);
-      if (/not found/i.test(message)) continue;
-      logError(`Failed to remove marketplace ${marketplaceName} from ${instance.name}`, error);
-      failures.push(`${instance.name}: ${message.trim()}`);
-    }
-  }
-
-  if (failures.length > 0) {
-    throw new Error(`Failed to remove Pi marketplace ${marketplaceName}: ${failures.join("; ")}`);
-  }
-}
-
 // execClaudeCommand now lives in ./adapters/claude.ts.
+// Pi has no native marketplace registration to clean up (the plugin bridge
+// that provided one was removed) — Blackbook's own config.yaml tracking is
+// the only bookkeeping, same as OpenCode/Amp/Codex.
 
 function withTempDir<T>(
   prefix: string,
@@ -1326,7 +1297,13 @@ export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSki
           if (entry.name.startsWith(".")) continue;
           const skillPath = join(skillsDir, entry.name);
           if (!existsSync(join(skillPath, "SKILL.md"))) continue;
-          if (globalPluginOwnedSkills.has(entry.name)) continue;
+          // The disk folder name may be flattened/plugin-prefixed (see
+          // flattenNamespacedName) — recover the true skill name from its
+          // own frontmatter so it aggregates with the same skill's
+          // installations on non-flat tools instead of fragmenting into a
+          // separate entry keyed by the prefixed name.
+          const skillName = readSkillFrontmatterName(skillPath);
+          if (globalPluginOwnedSkills.has(skillName)) continue;
 
           const installation: SkillInstallation = {
             toolId: instance.toolId,
@@ -1334,15 +1311,15 @@ export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSki
             instanceName: instance.name,
             diskPath: skillPath,
           };
-          const existing = byName.get(entry.name);
+          const existing = byName.get(skillName);
           if (existing) {
             existing.installations.push(installation);
             if (!existing.namespace && installation.namespace) {
               existing.namespace = installation.namespace;
             }
           } else {
-            byName.set(entry.name, {
-              name: entry.name,
+            byName.set(skillName, {
+              name: skillName,
               installations: [installation],
               diskPath: skillPath,
               toolId: instance.toolId,
@@ -2036,9 +2013,15 @@ function getStandaloneSkillTargetDir(
   target: ToolInstance,
 ): string {
   if (!target.skillsSubdir) return "";
-  // Claude/user-flat tools keep standalone skills as skills/<name>.
+  // Claude/user-flat tools keep standalone skills flat — prefix with the
+  // namespace (when known) to avoid two differently-namespaced skills of the
+  // same bare name colliding on disk.
   if (target.pluginFlatInstall) {
-    return resolveInstanceSubdirPath(target.configDir, target.skillsSubdir, skill.name);
+    return resolveInstanceSubdirPath(
+      target.configDir,
+      target.skillsSubdir,
+      flattenNamespacedName(skill.namespace, skill.name),
+    );
   }
   // Non-flat tools prefer namespaced layout when namespace is known.
   if (skill.namespace) {

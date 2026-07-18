@@ -3,7 +3,15 @@ import { homedir, tmpdir } from "os";
 import { join } from "path";
 import { pathToFileURL } from "url";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
-import { expandTilde, resolveInstanceSubdirPath, resolveLocalPath, resolveLocalPathRaw } from "./path-utils.js";
+import {
+  expandTilde,
+  flattenNamespacedName,
+  getPluginMcpServers,
+  readSkillFrontmatterName,
+  resolveInstanceSubdirPath,
+  resolveLocalPath,
+  resolveLocalPathRaw,
+} from "./path-utils.js";
 
 describe("expandTilde", () => {
   it("expands a bare tilde to the home directory", () => {
@@ -56,6 +64,63 @@ describe("resolveInstanceSubdirPath", () => {
     expect(resolveInstanceSubdirPath("/home/user/.codex", "~/.agents/skills", "my-plugin", "my-skill")).toBe(
       join(homedir(), ".agents", "skills", "my-plugin", "my-skill"),
     );
+  });
+});
+
+describe("flattenNamespacedName", () => {
+  it("prefixes a name with its namespace", () => {
+    expect(flattenNamespacedName("myplugin", "verdict")).toBe("myplugin-verdict");
+  });
+
+  it("returns the bare name unchanged when there is no prefix", () => {
+    expect(flattenNamespacedName(undefined, "verdict")).toBe("verdict");
+    expect(flattenNamespacedName(null, "verdict")).toBe("verdict");
+    expect(flattenNamespacedName("", "verdict")).toBe("verdict");
+  });
+
+  it("returns the bare name unchanged when the name equals the prefix (self-named skill)", () => {
+    expect(flattenNamespacedName("myplugin", "myplugin")).toBe("myplugin");
+  });
+
+  it("does not double-prefix a name that's already prefix-elided", () => {
+    expect(flattenNamespacedName("myplugin", "myplugin-verdict")).toBe("myplugin-verdict");
+  });
+});
+
+describe("readSkillFrontmatterName", () => {
+  let testDir: string;
+
+  beforeEach(() => {
+    testDir = mkdtempSync(join(tmpdir(), "read-skill-name-"));
+  });
+
+  afterEach(() => {
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it("reads the name from SKILL.md frontmatter", () => {
+    const skillDir = join(testDir, "myplugin-verdict");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      '---\nname: verdict\ndescription: "test"\n---\n\n# Verdict\n',
+    );
+    // The directory is flattened/prefixed, but the frontmatter name is bare —
+    // this is exactly the case a flat-install tool's disk layout produces.
+    expect(readSkillFrontmatterName(skillDir)).toBe("verdict");
+  });
+
+  it("falls back to the directory name when SKILL.md has no name field", () => {
+    const skillDir = join(testDir, "verdict");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "# Verdict\n\nNo frontmatter here.");
+    expect(readSkillFrontmatterName(skillDir)).toBe("verdict");
+  });
+
+  it("falls back to the directory name when SKILL.md is missing", () => {
+    const skillDir = join(testDir, "verdict");
+    mkdirSync(skillDir, { recursive: true });
+    expect(readSkillFrontmatterName(skillDir)).toBe("verdict");
   });
 });
 
@@ -138,5 +203,69 @@ describe("resolveLocalPathRaw", () => {
 
   it("returns null for an empty string", () => {
     expect(resolveLocalPathRaw("")).toBeNull();
+  });
+});
+
+describe("getPluginMcpServers", () => {
+  let pluginDir: string;
+
+  beforeEach(() => {
+    pluginDir = mkdtempSync(join(tmpdir(), "plugin-mcp-"));
+  });
+
+  afterEach(() => {
+    rmSync(pluginDir, { recursive: true, force: true });
+  });
+
+  it("reads servers from the standard {mcpServers: {...}} shape in mcp.json", () => {
+    writeFileSync(
+      join(pluginDir, "mcp.json"),
+      JSON.stringify({ mcpServers: { search: { command: "npx", args: ["search-mcp"] } } }),
+    );
+    expect(getPluginMcpServers(pluginDir)).toEqual({ search: { command: "npx", args: ["search-mcp"] } });
+  });
+
+  it("reads servers from a bare servers object in .mcp.json", () => {
+    writeFileSync(
+      join(pluginDir, ".mcp.json"),
+      JSON.stringify({ search: { command: "npx", args: ["search-mcp"] } }),
+    );
+    expect(getPluginMcpServers(pluginDir)).toEqual({ search: { command: "npx", args: ["search-mcp"] } });
+  });
+
+  it("falls back to an inline mcpServers object in .claude-plugin/plugin.json", () => {
+    mkdirSync(join(pluginDir, ".claude-plugin"), { recursive: true });
+    writeFileSync(
+      join(pluginDir, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "demo", mcpServers: { search: { command: "npx" } } }),
+    );
+    expect(getPluginMcpServers(pluginDir)).toEqual({ search: { command: "npx" } });
+  });
+
+  it("follows a string mcpServers path in plugin.json to another file", () => {
+    mkdirSync(join(pluginDir, ".claude-plugin"), { recursive: true });
+    writeFileSync(
+      join(pluginDir, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "demo", mcpServers: "./custom-mcp.json" }),
+    );
+    writeFileSync(
+      join(pluginDir, "custom-mcp.json"),
+      JSON.stringify({ mcpServers: { search: { command: "npx" } } }),
+    );
+    expect(getPluginMcpServers(pluginDir)).toEqual({ search: { command: "npx" } });
+  });
+
+  it("returns null when no MCP definitions are present", () => {
+    expect(getPluginMcpServers(pluginDir)).toBeNull();
+  });
+
+  it("prefers mcp.json at the plugin root over plugin.json's inline field", () => {
+    writeFileSync(join(pluginDir, "mcp.json"), JSON.stringify({ mcpServers: { root: { command: "a" } } }));
+    mkdirSync(join(pluginDir, ".claude-plugin"), { recursive: true });
+    writeFileSync(
+      join(pluginDir, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ mcpServers: { inline: { command: "b" } } }),
+    );
+    expect(getPluginMcpServers(pluginDir)).toEqual({ root: { command: "a" } });
   });
 });

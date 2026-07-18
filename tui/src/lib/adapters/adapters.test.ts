@@ -1,24 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { Plugin, ToolInstance } from "../types.js";
 import type { Manifest } from "../manifest.js";
 import type { InstalledContext } from "./types.js";
 
-// Pi readiness reads Pi settings from disk; mock it so pi.supports() is
-// deterministic regardless of the test machine's ~/.pi state.
-const { loadPiSettingsMock } = vi.hoisted(() => ({
-  loadPiSettingsMock: vi.fn(() => ({ packages: [] as string[] })),
-}));
-
-vi.mock("../marketplace.js", async () => {
-  const actual = await vi.importActual<typeof import("../marketplace.js")>(
-    "../marketplace.js",
-  );
-  return { ...actual, loadPiSettings: loadPiSettingsMock };
-});
-
 import { getAdapterForTool } from "./types.js";
 import { claudeAdapter } from "./claude.js";
-import { piBridgeAdapter } from "./pi-bridge.js";
+import { piAdapter } from "./pi.js";
 import { codexAdapter, manifestHasPluginForInstance } from "./codex.js";
 import { managedAdapter, extractPluginInfoFromSource } from "./managed.js";
 import { getPluginsCacheDir } from "../plugin-helpers.js";
@@ -69,7 +56,6 @@ const NO_COMPONENTS = {
 function makeCtx(overrides: Partial<InstalledContext> = {}): InstalledContext {
   return {
     getClaudeInstalledIds: () => new Set<string>(),
-    getPiBridgeInstalledIds: () => new Set<string>(),
     getCodexInstalledIds: () => new Set<string>(),
     getManifest: () => ({ version: 1, tools: {} }) as unknown as Manifest,
     ...overrides,
@@ -79,7 +65,7 @@ function makeCtx(overrides: Partial<InstalledContext> = {}): InstalledContext {
 describe("getAdapterForTool registry", () => {
   it("maps each tool family to its adapter, defaulting unknown to managed", () => {
     expect(getAdapterForTool("claude-code")).toBe(claudeAdapter);
-    expect(getAdapterForTool("pi")).toBe(piBridgeAdapter);
+    expect(getAdapterForTool("pi")).toBe(piAdapter);
     expect(getAdapterForTool("openai-codex")).toBe(codexAdapter);
     expect(getAdapterForTool("opencode")).toBe(managedAdapter);
     expect(getAdapterForTool("amp-code")).toBe(managedAdapter);
@@ -88,7 +74,10 @@ describe("getAdapterForTool registry", () => {
 
   it("exposes usesSource matching the native-vs-file-copy split", () => {
     expect(getAdapterForTool("claude-code").usesSource).toBe(false);
-    expect(getAdapterForTool("pi").usesSource).toBe(false);
+    // Pi is now a plain file-copy tool (managedAdapter-composed), same as
+    // OpenCode/Amp/Codex — the bridge that made it native (usesSource:
+    // false) was removed.
+    expect(getAdapterForTool("pi").usesSource).toBe(true);
     expect(getAdapterForTool("openai-codex").usesSource).toBe(true);
     expect(getAdapterForTool("opencode").usesSource).toBe(true);
   });
@@ -145,46 +134,27 @@ describe("claudeAdapter.isInstalled", () => {
   });
 });
 
-describe("piBridgeAdapter.supports", () => {
+describe("piAdapter", () => {
   const instance = makeInstance({ toolId: "pi", name: "Pi" });
 
-  beforeEach(() => {
-    loadPiSettingsMock.mockReset();
-  });
-
-  it("is unsupported with a bridge-missing reason when the bridge is not ready", () => {
-    loadPiSettingsMock.mockReturnValue({ packages: [] });
-    const r = piBridgeAdapter.supports({
+  // piAdapter composes managedAdapter and only overrides
+  // install/uninstall/installComponents/removeComponents to layer in MCP —
+  // supports()/isInstalled() are inherited unchanged, so Pi now behaves
+  // exactly like OpenCode/Amp there (gated off, manifest-driven) instead of
+  // the old bridge-readiness check.
+  it("is gated off from support with a reason, same as OpenCode/Amp", () => {
+    const r = piAdapter.supports({
       plugin: makePlugin(),
       instance,
       ...NO_COMPONENTS,
       canInstallSkills: true,
     });
     expect(r.supported).toBe(false);
-    expect(r.reason).toContain("Pi bridge missing");
+    expect(r.reason).toContain("blocked");
   });
 
-  it("does not grant Claude's mcp/lsp/hooks-only support", () => {
-    // Even if the bridge were ready, an mcp-only plugin with no installable
-    // components is not supported for Pi (unlike Claude).
-    loadPiSettingsMock.mockReturnValue({ packages: [] });
-    const r = piBridgeAdapter.supports({
-      plugin: makePlugin({ hasMcp: true }),
-      instance,
-      ...NO_COMPONENTS,
-    });
-    expect(r.supported).toBe(false);
-  });
-});
-
-describe("piBridgeAdapter.isInstalled", () => {
-  const instance = makeInstance({ toolId: "pi", name: "Pi" });
-
-  it("matches on either id from the Pi bridge set", () => {
-    const ctx = makeCtx({ getPiBridgeInstalledIds: () => new Set(["myplugin@mymarket"]) });
-    expect(piBridgeAdapter.isInstalled(makePlugin(), instance, ctx)).toBe(true);
-    const ctx2 = makeCtx({ getPiBridgeInstalledIds: () => new Set(["x@y"]) });
-    expect(piBridgeAdapter.isInstalled(makePlugin(), instance, ctx2)).toBe(false);
+  it("reports not-installed regardless of context", () => {
+    expect(piAdapter.isInstalled(makePlugin(), instance, makeCtx())).toBe(false);
   });
 });
 

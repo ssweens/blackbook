@@ -11,7 +11,6 @@ import { validatePluginMetadata, logError } from "./validation.js";
 import { loadManifest, saveManifest, type Manifest } from "./manifest.js";
 import { getPluginSourcePath, instanceKey, createSymlink, isSymlink, buildManifestItemKey, migrateManifestKeys } from "./plugin-helpers.js";
 import { countGetPluginToolStatus } from "./perf.js";
-import { getPiBridgeInstalledPluginIds as loadPiBridgeInstalledPluginIds } from "./pi-bridge.js";
 // isConfigOnlyInstance is canonicalized in install.ts. Per-tool status logic
 // (supports/isInstalled) now lives in the adapters, dispatched by toolId.
 import { isConfigOnlyInstance } from "./install.js";
@@ -42,8 +41,6 @@ let codexInstalledCacheGeneration = -1;
 let codexInstalledPluginIds = new Set<string>();
 let claudeInstalledCacheGeneration = -1;
 let claudeInstalledPluginIds = new Set<string>();
-let piBridgeInstalledCacheGeneration = -1;
-let piBridgeInstalledPluginIds = new Set<string>();
 
 function getCodexInstalledPluginIds(): Set<string> {
   if (codexInstalledCacheGeneration === statusCacheGeneration) return codexInstalledPluginIds;
@@ -57,13 +54,6 @@ function getClaudeInstalledPluginIds(): Set<string> {
   claudeInstalledCacheGeneration = statusCacheGeneration;
   claudeInstalledPluginIds = fetchClaudeInstalledPluginIds();
   return claudeInstalledPluginIds;
-}
-
-function getPiBridgeInstalledPluginIds(): Set<string> {
-  if (piBridgeInstalledCacheGeneration === statusCacheGeneration) return piBridgeInstalledPluginIds;
-  piBridgeInstalledCacheGeneration = statusCacheGeneration;
-  piBridgeInstalledPluginIds = loadPiBridgeInstalledPluginIds();
-  return piBridgeInstalledPluginIds;
 }
 
 /** Invalidate the plugin tool status cache. Call after any plugin/tool mutation. */
@@ -101,7 +91,6 @@ function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
   let manifest: Manifest | null = null;
   const ctx: InstalledContext = {
     getClaudeInstalledIds: getClaudeInstalledPluginIds,
-    getPiBridgeInstalledIds: getPiBridgeInstalledPluginIds,
     getCodexInstalledIds: getCodexInstalledPluginIds,
     getManifest: () => {
       if (manifest === null) {

@@ -11,7 +11,6 @@ import {
   syncPluginInstances,
   updatePlugin,
   uninstallPlugin,
-  removePiMarketplace,
   installSkillToInstance,
 } from "./install.js";
 import { getSkillActions } from "./item-actions.js";
@@ -61,7 +60,6 @@ vi.mock("./install.js", async (importOriginal) => {
     syncPluginInstances: vi.fn(),
     updatePlugin: vi.fn(),
     uninstallPlugin: vi.fn().mockResolvedValue(true),
-    removePiMarketplace: vi.fn().mockResolvedValue(undefined),
     installSkillToInstance: vi.fn(),
   };
 });
@@ -810,8 +808,6 @@ describe("Store detail views", () => {
 
 describe("Store marketplace management", () => {
   beforeEach(() => {
-    vi.mocked(removePiMarketplace).mockReset();
-    vi.mocked(removePiMarketplace).mockResolvedValue(undefined);
     useStore.setState({
       marketplaces: [createMockMarketplace({ name: "existing" })],
     });
@@ -862,25 +858,16 @@ describe("Store marketplace management", () => {
     expect(notifications.some((n) => n.type === "error" && n.message.includes("broken-pi-source"))).toBe(true);
   });
 
-  it("should remove marketplace from Pi before removing Blackbook config", async () => {
+  it("should remove marketplace from Blackbook config", async () => {
+    // Pi had its own native marketplace deregistration here before the
+    // plugin bridge was removed (Pi's own pi-plugins extension is gone —
+    // Blackbook's config is the only bookkeeping now, same as
+    // OpenCode/Amp/Codex, none of which ever had a native call here).
     const { removeMarketplace } = useStore.getState();
     await removeMarketplace("existing");
 
-    expect(removePiMarketplace).toHaveBeenCalledWith("existing");
     const { marketplaces } = useStore.getState();
     expect(marketplaces).toHaveLength(0);
-  });
-
-  it("should keep Blackbook config when Pi marketplace removal fails", async () => {
-    vi.mocked(removePiMarketplace).mockRejectedValueOnce(new Error("Pi cleanup failed"));
-
-    const { removeMarketplace } = useStore.getState();
-    await removeMarketplace("existing");
-
-    expect(removePiMarketplace).toHaveBeenCalledWith("existing");
-    const { marketplaces } = useStore.getState();
-    expect(marketplaces).toHaveLength(1);
-    expect(marketplaces[0].name).toBe("existing");
   });
 
   it("should detect local marketplace", () => {

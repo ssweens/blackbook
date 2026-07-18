@@ -40,7 +40,7 @@ import {
   reconcileStaleInstallArtifacts,
 } from "./install.js";
 import * as manifestModule from "./manifest.js";
-import { resolveInstanceSubdirPath } from "./path-utils.js";
+import { flattenNamespacedName, resolveInstanceSubdirPath } from "./path-utils.js";
 import { listBackups } from "./modules/backup.js";
 import { togglePluginComponent } from "./plugin-status.js";
 import type { FileStatus } from "./types.js";
@@ -335,6 +335,55 @@ describe("enablePlugin", () => {
         const content = readFileSync(join(skillPath, "SKILL.md"), "utf-8");
         expect(content).toContain("Test Skill");
       }
+    }
+  });
+
+  it("copies a plugin's mcp.json alongside its skill for Amp/OpenCode", async () => {
+    // Not asserting Codex/Pi *lack* the file: they share physical storage
+    // with OpenCode/Amp via the .agents/skills redirect, so they'd see the
+    // same file too (harmless — neither reads mcp.json from a skill
+    // directory — but not a meaningful "did this tool's own copy logic run"
+    // signal). Claude would be the clean comparison (separate ~/.claude/
+    // skills storage), but exercising it here would enable the Claude
+    // instance and go through installMcpServersToInstance's real `claude`
+    // CLI shell-out — not something to risk invoking unmocked in this file.
+    const pluginName = "mcp-plugin";
+    const skillName = "mcp-skill";
+    const pluginDir = join(getPluginsCacheDir(), TEST_MARKETPLACE, pluginName);
+    mkdirSync(join(pluginDir, "skills", skillName), { recursive: true });
+    writeFileSync(join(pluginDir, "skills", skillName, "SKILL.md"), `# ${skillName}\n\nHas an MCP server.`);
+    writeFileSync(
+      join(pluginDir, "mcp.json"),
+      JSON.stringify({ mcpServers: { search: { command: "npx", args: ["search-mcp"] } } }),
+    );
+
+    const plugin: Plugin = {
+      name: pluginName,
+      marketplace: TEST_MARKETPLACE,
+      description: "MCP-bundling test plugin",
+      source: `./plugins/${pluginName}`,
+      skills: [skillName],
+      commands: [],
+      agents: [],
+      hooks: [],
+      hasMcp: true,
+      hasLsp: false,
+      homepage: "",
+      installed: true,
+      scope: "user",
+    };
+
+    await enablePlugin(plugin);
+
+    for (const toolId of ["opencode", "amp-code"]) {
+      const instance = getInstance(toolId);
+      const skillPath = instance.pluginFlatInstall
+        ? resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir!, skillName)
+        : resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir!, pluginName, skillName);
+      const mcpPath = join(skillPath, "mcp.json");
+      expect(existsSync(mcpPath), `mcp.json should be copied alongside the skill for ${toolId}`).toBe(true);
+      const copied = JSON.parse(readFileSync(mcpPath, "utf-8"));
+      expect(copied.mcpServers.search).toEqual({ command: "npx", args: ["search-mcp"] });
     }
   });
 
@@ -1605,7 +1654,14 @@ describe("P1 data-integrity behavior", () => {
     const claude = getInstance("claude-code");
 
     const ocSkill = resolveInstanceSubdirPath(opencode.configDir, opencode.skillsSubdir!, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
-    const claudeSkill = resolveInstanceSubdirPath(claude.configDir, claude.skillsSubdir!, TEST_SKILL_NAME);
+    // Claude is flat-install, so a plugin's skill lands under a
+    // plugin-prefixed flattened name (see flattenNamespacedName), not the
+    // bare skill name.
+    const claudeSkill = resolveInstanceSubdirPath(
+      claude.configDir,
+      claude.skillsSubdir!,
+      flattenNamespacedName(TEST_PLUGIN_NAME, TEST_SKILL_NAME),
+    );
     mkdirSync(ocSkill, { recursive: true });
     writeFileSync(join(ocSkill, "SKILL.md"), "# Opencode Original");
     mkdirSync(claudeSkill, { recursive: true });

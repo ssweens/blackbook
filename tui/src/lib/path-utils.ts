@@ -47,6 +47,24 @@ export function isSharedSubdirPath(subdir: string | null | undefined): boolean {
 }
 
 /**
+ * Prefix a component name with its plugin/namespace to avoid collisions on
+ * tools with a flat, unnamespaced install layout (`pluginFlatInstall: true` —
+ * Claude Code, and Pi's plugin-sourced commands). Non-flat tools don't need
+ * this: they already namespace by putting the component under a
+ * `<prefix>/<name>` subdirectory instead.
+ *
+ * Returns `name` unchanged when there's no prefix to apply (unknown
+ * namespace), the name already equals the prefix (e.g. a plugin's
+ * self-named skill), or the name is already prefix-elided (avoids
+ * double-prefixing an already-namespaced name like `utils-helper` under
+ * plugin `utils` into `utils-utils-helper`).
+ */
+export function flattenNamespacedName(prefix: string | null | undefined, name: string): string {
+  if (!prefix || name === prefix || name.startsWith(`${prefix}-`)) return name;
+  return `${prefix}-${name}`;
+}
+
+/**
  * Normalize a URL/path string to an absolute file-system path, without
  * collapsing a file target down to its containing directory. Handles
  * `file://` URLs, `~`-prefixed paths, and relative paths. Returns null if
@@ -98,6 +116,24 @@ export function resolveLocalPath(urlOrPath: string, isLocal = false): string | n
   }
 
   return normalized;
+}
+
+/**
+ * Read a skill's canonical name from its `SKILL.md` frontmatter, falling
+ * back to the containing directory's name if the file is missing/unparsable.
+ * The directory name alone isn't reliable on flat-install tools (Claude, and
+ * now Pi's commands), where a component may be stored under a
+ * plugin/namespace-prefixed name (see `flattenNamespacedName`) rather than
+ * its bare one — the frontmatter `name:` field is unaffected by that.
+ */
+export function readSkillFrontmatterName(skillDir: string): string {
+  try {
+    const body = readFileSync(join(skillDir, "SKILL.md"), "utf-8");
+    const match = body.match(/^---\s*\n[\s\S]*?^name:\s*["']?([^"'\n]+)["']?\s*$/m);
+    return match?.[1]?.trim() || basename(skillDir);
+  } catch {
+    return basename(skillDir);
+  }
 }
 
 export interface PluginContents {
@@ -154,26 +190,16 @@ export function scanPluginContents(pluginDir: string): PluginContents {
     return join(pluginDir, clean);
   };
 
-  const readSkillName = (skillDir: string) => {
-    try {
-      const body = readFileSync(join(skillDir, "SKILL.md"), "utf-8");
-      const match = body.match(/^---\s*\n[\s\S]*?^name:\s*["']?([^"'\n]+)["']?\s*$/m);
-      return match?.[1]?.trim() || basename(skillDir);
-    } catch {
-      return basename(skillDir);
-    }
-  };
-
   const scanSkillRoot = (root: string) => {
     if (!isDirectory(root)) return;
     if (existsSync(join(root, "SKILL.md"))) {
-      add(result.skills, readSkillName(root));
+      add(result.skills, readSkillFrontmatterName(root));
       return;
     }
     for (const item of readdirSync(root)) {
       const skillDir = join(root, item);
       if (isDirectory(skillDir) && existsSync(join(skillDir, "SKILL.md"))) {
-        add(result.skills, readSkillName(skillDir));
+        add(result.skills, readSkillFrontmatterName(skillDir));
       }
     }
   };
@@ -207,4 +233,57 @@ export function scanPluginContents(pluginDir: string): PluginContents {
   result.agents.sort();
   result.hooks.sort();
   return result;
+}
+
+function readJsonIfExists(path: string): unknown {
+  try {
+    return JSON.parse(readFileSync(path, "utf-8"));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Extract a plugin's actual MCP server definitions from its cached source
+ * directory — `scanPluginContents`'s `hasMcp` only tells you a server
+ * exists, not what it is. Checks, in order:
+ * 1. `mcp.json` / `.mcp.json` at the plugin root — either the standard
+ *    `{"mcpServers": {...}}` shape or a bare servers object.
+ * 2. `.claude-plugin/plugin.json`'s `mcpServers` field — either an inline
+ *    servers object, or a string path to another JSON file within the
+ *    plugin (resolved relative to `pluginDir`) holding the servers.
+ * Returns null if no server definitions are found or parsable.
+ */
+export function getPluginMcpServers(pluginDir: string): Record<string, unknown> | null {
+  const fromFile = (relPath: string): Record<string, unknown> | null => {
+    const parsed = readJsonIfExists(join(pluginDir, relPath));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const obj = parsed as Record<string, unknown>;
+    const servers = obj.mcpServers;
+    if (servers && typeof servers === "object" && !Array.isArray(servers)) {
+      return servers as Record<string, unknown>;
+    }
+    return obj;
+  };
+
+  for (const relPath of ["mcp.json", ".mcp.json"]) {
+    if (existsSync(join(pluginDir, relPath))) {
+      const servers = fromFile(relPath);
+      if (servers) return servers;
+    }
+  }
+
+  const manifest = readJsonIfExists(join(pluginDir, ".claude-plugin", "plugin.json"));
+  if (manifest && typeof manifest === "object") {
+    const mcpServers = (manifest as Record<string, unknown>).mcpServers;
+    if (typeof mcpServers === "string") {
+      const cleanRel = mcpServers.replace(/^\.\//, "");
+      return fromFile(cleanRel);
+    }
+    if (mcpServers && typeof mcpServers === "object" && !Array.isArray(mcpServers)) {
+      return mcpServers as Record<string, unknown>;
+    }
+  }
+
+  return null;
 }

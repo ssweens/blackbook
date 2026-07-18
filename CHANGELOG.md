@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-07-17
+
+### Added
+- MCP server install/uninstall for plugins that bundle one: Claude Code and Pi via a shared `{"mcpServers": {...}}` convention (Claude through the native `claude mcp add-json`/`claude mcp remove` CLI, never hand-edited; Pi through a direct merge into `~/.config/mcp/mcp.json`, the global location the community `pi-mcp-adapter` extension reads); Amp and OpenCode via a skill-bundled `mcp.json` copied alongside each skill (`~/.agents/skills/<skill>/mcp.json`) — Amp reads this natively, OpenCode via a common plugin. Codex has no shared-file MCP convention and is out of scope. New `getPluginMcpServers` (`path-utils.ts`) extracts a plugin's actual server definitions from its cached source (`mcp.json`/`.mcp.json`, or an inline `mcpServers` field in `.claude-plugin/plugin.json`) — previously only a `hasMcp` boolean was tracked, never the servers themselves.
+- `flattenNamespacedName`/`readSkillFrontmatterName` (`path-utils.ts`): flat-install tools (Claude Code; Pi for commands only) now prefix a component's on-disk name with its owning plugin/namespace (e.g. `myplugin-verdict.md`) to avoid two plugins' same-named skill/command/agent silently overwriting each other. Scan-side code recovers the true name from a skill's own frontmatter (or a command/agent's source path) rather than trusting the possibly-prefixed disk name, so cross-tool aggregation isn't fragmented by the prefix.
+
+### Changed
+- **Breaking:** Removed Blackbook's Pi plugin bridge (`adapters/pi-bridge.ts`, the `@ssweens/pi-plugins`-shelling-out mechanism) entirely. Pi is now a plain file-copy tool (`adapters/pi.ts`, composing the same managed engine as OpenCode/Amp/Codex) — plugin skills/commands install directly with no subprocess, no separate marketplace registration, and no bridge-specific naming. Accepted trade-off: Pi's own `pi-plugins` extension no longer has native visibility into Blackbook-installed plugins; Blackbook's manifest is the sole source of truth, matching OpenCode/Amp already. Pi's commands now install flat and plugin-prefixed (e.g. `myplugin-verdict.md` in `prompts/`) instead of the bridge's old colon-named tmpdir staging (`myplugin:verdict.md`) — confirmed from Pi's own source that its prompt loader doesn't read nested directories, unlike its skill loader (which does, so Pi's skills stay namespaced under the shared `~/.agents/skills`, unaffected). No `agents` component exists for Pi — no native "load agent definition files" concept was found in Pi's coding-agent core, so there's no confirmed raw-file target for plugin-bundled agents post-bridge-removal (this was already the case; not a new gap).
+- Existing flat installs (Claude Code; Pi commands) keep their old un-prefixed filename on disk after upgrading — not auto-renamed or deleted. Remove manually once the new prefixed name is confirmed installed via a normal sync, same pattern as the `.agents/skills` redirect in 0.26.0.
+
 ## [0.26.0] - 2026-07-17
 
 ### Added

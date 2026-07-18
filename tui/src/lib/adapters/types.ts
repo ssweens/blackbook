@@ -44,7 +44,6 @@ export interface SupportInput {
  */
 export interface InstalledContext {
   getClaudeInstalledIds(): Set<string>;
-  getPiBridgeInstalledIds(): Set<string>;
   getCodexInstalledIds(): Set<string>;
   getManifest(): Manifest;
 }
@@ -96,16 +95,16 @@ export interface ToolAdapter {
 }
 
 import { claudeAdapter } from "./claude.js";
-import { piBridgeAdapter } from "./pi-bridge.js";
 import { codexAdapter } from "./codex.js";
 import { managedAdapter } from "./managed.js";
+import { piAdapter } from "./pi.js";
 
 const ADAPTERS: Record<string, ToolAdapter> = {
   "claude-code": claudeAdapter,
-  pi: piBridgeAdapter,
   "openai-codex": codexAdapter,
   opencode: managedAdapter,
   "amp-code": managedAdapter,
+  pi: piAdapter,
 };
 
 /**

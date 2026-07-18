@@ -29,6 +29,7 @@ import {
   installPluginItemsToInstance,
   uninstallPluginItemsFromInstance,
 } from "./managed.js";
+import { installMcpServersToInstance, uninstallMcpServersFromInstance } from "./mcp.js";
 import type {
   ToolAdapter,
   PerInstanceResult,
@@ -376,10 +377,13 @@ export const claudeAdapter: ToolAdapter = {
       instance,
       plugin.marketplace,
     );
-    return { count, errors };
+    const mcp = await installMcpServersToInstance(plugin.name, sourcePath, instance);
+    return { count: count + mcp.count, errors: [...errors, ...mcp.errors] };
   },
 
   async removeComponents(plugin: Plugin, instance: ToolInstance): Promise<number> {
-    return uninstallPluginItemsFromInstance(plugin.name, instance);
+    const removed = uninstallPluginItemsFromInstance(plugin.name, instance);
+    const mcpRemoved = await uninstallMcpServersFromInstance(plugin.name, instance);
+    return removed + mcpRemoved;
   },
 };
