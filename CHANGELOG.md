@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.1] - 2026-07-18
+
+### Fixed
+- Pi's plugins permanently reported as unsupported/not-installed regardless of real state — a regression from 0.27.0's Pi bridge removal. `piAdapter` composed `managedAdapter` without overriding `supports`/`isInstalled`, so it silently inherited `managedAdapter`'s hardcoded "always false, blocked" stub (a deliberate, pre-existing product decision specific to OpenCode/Amp, not appropriate for Pi — which used to have real status via the removed bridge). Symptom: the Discover tab's "Plugin support is blocked for this tool until native plugin checks are implemented" message now showing for Pi, and a plugin toggled off via Space in Discover still showing as installed. `piAdapter` now has its own `supports` (mirrors `canInstallSkills`/`canInstallCommands`) and `isInstalled` (manifest-based, reusing `codexAdapter`'s `manifestHasPluginForInstance` minus the native-CLI check Pi no longer has). OpenCode/Amp are untouched — their gating remains the original deliberate decision.
+
 ## [0.27.0] - 2026-07-17
 
 ### Added

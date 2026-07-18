@@ -137,23 +137,50 @@ describe("claudeAdapter.isInstalled", () => {
 describe("piAdapter", () => {
   const instance = makeInstance({ toolId: "pi", name: "Pi" });
 
-  // piAdapter composes managedAdapter and only overrides
-  // install/uninstall/installComponents/removeComponents to layer in MCP —
-  // supports()/isInstalled() are inherited unchanged, so Pi now behaves
-  // exactly like OpenCode/Amp there (gated off, manifest-driven) instead of
-  // the old bridge-readiness check.
-  it("is gated off from support with a reason, same as OpenCode/Amp", () => {
+  // piAdapter composes managedAdapter but overrides supports()/isInstalled()
+  // with real detection, unlike OpenCode/Amp's deliberate "always blocked"
+  // gate — Pi used to have real status via the bridge, and inheriting the
+  // managed stub after the bridge was removed regressed it to permanently
+  // unsupported/not-installed regardless of real state.
+  it("is supported when a component can be installed", () => {
     const r = piAdapter.supports({
       plugin: makePlugin(),
       instance,
       ...NO_COMPONENTS,
       canInstallSkills: true,
     });
-    expect(r.supported).toBe(false);
-    expect(r.reason).toContain("blocked");
+    expect(r.supported).toBe(true);
   });
 
-  it("reports not-installed regardless of context", () => {
+  it("is unsupported when nothing installable", () => {
+    const r = piAdapter.supports({ plugin: makePlugin(), instance, ...NO_COMPONENTS });
+    expect(r.supported).toBe(false);
+  });
+
+  it("reports installed when the manifest records a file-copy install for this instance", () => {
+    const manifest = {
+      version: 1,
+      tools: {
+        "pi:default": {
+          items: {
+            "myplugin::skill::foo": {
+              kind: "skill",
+              name: "foo",
+              source: "/src/foo",
+              dest: "/home/.agents/skills/foo",
+              backup: null,
+              owner: "myplugin",
+              previous: null,
+            },
+          },
+        },
+      },
+    } as unknown as Manifest;
+    const ctx = makeCtx({ getManifest: () => manifest });
+    expect(piAdapter.isInstalled(makePlugin(), instance, ctx)).toBe(true);
+  });
+
+  it("reports not-installed when the manifest has no matching entry", () => {
     expect(piAdapter.isInstalled(makePlugin(), instance, makeCtx())).toBe(false);
   });
 });

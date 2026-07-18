@@ -6,6 +6,17 @@
  * plugin's `mcp.json` copied alongside its skill — see managed.ts; Codex has
  * no shared-file MCP convention at all).
  *
+ * `supports`/`isInstalled` are also overridden, not inherited from
+ * `managedAdapter`. `managedAdapter`'s versions are a hardcoded "always
+ * false, always blocked" stub — a deliberate product decision specific to
+ * OpenCode/Amp (see managed.ts). Pi isn't in that position: it used to have
+ * real detection via the bridge, and losing that when the bridge was
+ * removed was a regression, not a "matching existing tools" consistency —
+ * it left Pi's plugins permanently reporting as not-installed/unsupported
+ * regardless of real state. Pi has no native CLI list to check (unlike
+ * Codex), so `isInstalled` is manifest-only, reusing the same
+ * `manifestHasPluginForInstance` helper Codex's manifest fallback uses.
+ *
  * `update` isn't overridden: `managedAdapter.update` calls `this.install(...)`,
  * so overriding `install` alone already covers it.
  */
@@ -13,7 +24,8 @@
 import type { Plugin, ToolInstance } from "../types.js";
 import { installPluginItemsToInstance, uninstallPluginItemsFromInstance, managedAdapter } from "./managed.js";
 import { installMcpServersToInstance, uninstallMcpServersFromInstance } from "./mcp.js";
-import type { ToolAdapter, PerInstanceResult } from "./types.js";
+import { manifestHasPluginForInstance } from "./codex.js";
+import type { ToolAdapter, PerInstanceResult, SupportInput, InstalledContext } from "./types.js";
 
 async function installComponentsAndMcp(
   plugin: Plugin,
@@ -35,6 +47,17 @@ async function removeComponentsAndMcp(plugin: Plugin, instance: ToolInstance): P
 export const piAdapter: ToolAdapter = {
   ...managedAdapter,
   toolId: "pi",
+
+  supports(input: SupportInput): { supported: boolean; reason?: string } {
+    const { canInstallSkills, canInstallCommands } = input;
+    // No agentsSubdir for Pi (see playbooks/pi.yaml) — no agents component
+    // to check here.
+    return { supported: canInstallSkills || canInstallCommands };
+  },
+
+  isInstalled(plugin: Plugin, instance: ToolInstance, ctx: InstalledContext): boolean {
+    return manifestHasPluginForInstance(ctx.getManifest(), instance, plugin.name);
+  },
 
   async install(plugin: Plugin, instance: ToolInstance, sourcePath: string | null): Promise<PerInstanceResult> {
     return installComponentsAndMcp(plugin, instance, sourcePath);
