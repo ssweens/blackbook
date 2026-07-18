@@ -60,6 +60,8 @@ export interface DispatchCallbacks {
   installSkillToAll?: (skill: import("./install.js").StandaloneSkill) => Promise<void>;
   pullbackSkillFromInstance?: (skill: import("./install.js").StandaloneSkill, toolId: string, instanceId: string) => Promise<void>;
   deleteSkillEverywhere?: (skill: import("./install.js").StandaloneSkill) => Promise<void>;
+  removeSkillLocalInstalls?: (skill: import("./install.js").StandaloneSkill) => Promise<void>;
+  deleteSourceSkill?: (skill: import("./install.js").StandaloneSkill) => Promise<void>;
   refreshDetailSkill?: (skill: import("./install.js").StandaloneSkill) => void;
   removeRedundantSkillInstallations?: (skill: import("./install.js").StandaloneSkill, redundant: import("./install.js").SkillInstallation[]) => Promise<void>;
 
@@ -67,6 +69,8 @@ export interface DispatchCallbacks {
   syncNamespace?: (ns: import("./install.js").NamespaceGroup) => Promise<void>;
   resyncNamespace?: (ns: import("./install.js").NamespaceGroup) => Promise<void>;
   deleteNamespaceEverywhere?: (ns: import("./install.js").NamespaceGroup) => Promise<void>;
+  removeNamespaceLocalInstalls?: (ns: import("./install.js").NamespaceGroup) => Promise<void>;
+  deleteSourceNamespace?: (ns: import("./install.js").NamespaceGroup) => Promise<void>;
   uninstallNamespaceAll?: (ns: import("./install.js").NamespaceGroup) => Promise<void>;
   uninstallNamespaceFromInstance?: (ns: import("./install.js").NamespaceGroup, toolId: string, instanceId: string) => Promise<void>;
   pullbackNamespaceFromInstance?: (ns: import("./install.js").NamespaceGroup, toolId: string, instanceId: string) => Promise<void>;
@@ -205,6 +209,17 @@ export async function handleItemAction(
       }
       if (item._piPackage && callbacks.deletePiPackageEverywhere) {
         await callbacks.deletePiPackageEverywhere(item._piPackage);
+        return true;
+      }
+      return false;
+
+    case "delete_source":
+      if (item._namespace && callbacks.deleteSourceNamespace) {
+        await callbacks.deleteSourceNamespace(item._namespace);
+        return true;
+      }
+      if (item._skill && callbacks.deleteSourceSkill) {
+        await callbacks.deleteSourceSkill(item._skill);
         return true;
       }
       return false;

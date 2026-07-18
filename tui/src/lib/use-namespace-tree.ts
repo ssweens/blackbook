@@ -9,10 +9,14 @@ import {
   uninstallSkillFromInstance,
   pullbackSkillToSource,
   deleteSkillEverywhere,
+  removeSkillLocalInstalls,
+  deleteSkillSourceOnly,
   groupSkillsByNamespace,
   syncNamespaceToAllMissing,
   resyncNamespaceDrifted,
   deleteNamespaceEverywhere,
+  removeNamespaceLocalInstalls,
+  deleteNamespaceSourceOnly,
   uninstallNamespaceAll,
   uninstallNamespaceFromInstance,
   pullbackNamespaceToSource,
@@ -149,6 +153,14 @@ export function useNamespaceTree({
           await withSpinner(
             `Deleting ${skill.name} everywhere...`,
             async () => { deleteSkillEverywhere(skill); },
+            store.notify, store.clearNotification,
+          );
+          break;
+        }
+        case "delete_source": {
+          await withSpinner(
+            `Deleting ${skill.name} from source repo...`,
+            async () => { deleteSkillSourceOnly(skill); },
             store.notify, store.clearNotification,
           );
           break;
@@ -293,6 +305,21 @@ export function useNamespaceTree({
             const parts: string[] = [`${result.deleted} skills deleted`];
             if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
             store.notify(`Deleted ${ns.name}: ${parts.join(", ")}`, result.errors.length > 0 ? "warning" : "info");
+          },
+          store.notify, store.clearNotification,
+        );
+        if (detail?.kind === "namespace") setDetail(null);
+        closeDetail();
+        return;
+      }
+      case "delete_source": {
+        await withSpinner(
+          `Deleting all ${ns.name} skills from source repo...`,
+          async () => {
+            const result = deleteNamespaceSourceOnly(ns);
+            const parts: string[] = [`${result.deleted} deleted`];
+            if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
+            store.notify(`Deleted ${ns.name} from source: ${parts.join(", ")} (uncommitted — review & commit manually)`, result.errors.length > 0 ? "warning" : "info");
           },
           store.notify, store.clearNotification,
         );

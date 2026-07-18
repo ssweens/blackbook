@@ -1765,6 +1765,31 @@ export function deleteSkillEverywhere(skill: StandaloneSkill): { ok: boolean; to
   return { ok: true, tools: toolsRemoved, source: sourceRemoved };
 }
 
+/** Remove a skill from all local tool installs only — source repo is untouched. */
+export function removeSkillLocalInstalls(skill: StandaloneSkill): { ok: boolean; tools: number; error?: string } {
+  let toolsRemoved = 0;
+  for (const inst of skill.installations) {
+    try {
+      rmSync(inst.diskPath, { recursive: true, force: true });
+      toolsRemoved += 1;
+    } catch { /* skip */ }
+  }
+  return { ok: true, tools: toolsRemoved };
+}
+
+/** Delete a skill from the source repo only — local tool installs are untouched. */
+export function deleteSkillSourceOnly(skill: StandaloneSkill): { ok: boolean; error?: string } {
+  if (!skill.sourcePath || !existsSync(skill.sourcePath)) {
+    return { ok: false, error: "No source path found for this skill" };
+  }
+  try {
+    rmSync(skill.sourcePath, { recursive: true, force: true });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /**
  * Result of a source-repo commit+push. The local commit and filesystem changes
  * are non-fatal on failure, but a failed push must NOT be hidden: it leaves a
@@ -2232,6 +2257,30 @@ export function deleteNamespaceEverywhere(group: NamespaceGroup): { deleted: num
   let deleted = 0;
   for (const skill of group.skills) {
     const result = deleteSkillEverywhere(skill);
+    if (result.ok) deleted += 1;
+    if (result.error) errors.push(result.error);
+  }
+  return { deleted, errors };
+}
+
+/** Remove all skills in a namespace from local tool installs only — source repo untouched. */
+export function removeNamespaceLocalInstalls(group: NamespaceGroup): { removed: number; errors: string[] } {
+  const errors: string[] = [];
+  let removed = 0;
+  for (const skill of group.skills) {
+    const result = removeSkillLocalInstalls(skill);
+    if (result.ok) removed += 1;
+    if (result.error) errors.push(result.error);
+  }
+  return { removed, errors };
+}
+
+/** Delete all skills in a namespace from the source repo only — local installs untouched. */
+export function deleteNamespaceSourceOnly(group: NamespaceGroup): { deleted: number; errors: string[] } {
+  const errors: string[] = [];
+  let deleted = 0;
+  for (const skill of group.skills) {
+    const result = deleteSkillSourceOnly(skill);
     if (result.ok) deleted += 1;
     if (result.error) errors.push(result.error);
   }

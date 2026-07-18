@@ -38,6 +38,7 @@ export interface ItemAction {
     | "track"
     | "remove_from_git"
     | "delete_everywhere"
+    | "delete_source"
     | "remove_redundant"
     | "open_skill"
     | "back";

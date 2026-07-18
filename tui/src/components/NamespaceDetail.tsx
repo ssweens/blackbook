@@ -286,19 +286,35 @@ export function buildTreeNodes(
         });
       }
 
-      const srcFragment = sn.skill.sourcePath ? " + source repo" : "";
-      nodes.push({
-        type: "action",
-        action: {
-          id: `delete_everywhere_${sn.skill.name}`,
-          label: `🗑  Delete everywhere (all tools${srcFragment})`,
-          type: "delete_everywhere",
-          statusColor: "red",
-        },
-        skill: sn.skill,
-        depth: 1,
-        key: `action_delete_${sn.skill.name}`,
-      });
+      if (sn.installations.length > 0) {
+        nodes.push({
+          type: "action",
+          action: {
+            id: `remove_local_${sn.skill.name}`,
+            label: "Remove local installs",
+            type: "uninstall",
+            statusColor: "yellow",
+          },
+          skill: sn.skill,
+          depth: 1,
+          key: `action_remove_local_${sn.skill.name}`,
+        });
+      }
+
+      if (sn.skill.sourcePath) {
+        nodes.push({
+          type: "action",
+          action: {
+            id: `delete_source_${sn.skill.name}`,
+            label: "🗑  Delete from source repo",
+            type: "delete_source",
+            statusColor: "red",
+          },
+          skill: sn.skill,
+          depth: 1,
+          key: `action_delete_source_${sn.skill.name}`,
+        });
+      }
     }
   }
 
@@ -404,17 +420,36 @@ export function buildTreeNodes(
     key: "back",
   });
 
-  nodes.push({
-    type: "action",
-    action: {
-      id: "delete_everywhere",
-      label: `🗑  Delete all ${ns.skills.length} skills in ${ns.name}`,
-      type: "delete_everywhere",
-      statusColor: "red",
-    },
-    depth: 0,
-    key: "ns_delete_everywhere",
-  });
+  const hasLocalInstalls = ns.skills.some((s) => s.installations.length > 0);
+  const hasSource = ns.skills.some((s) => s.sourcePath);
+
+  if (hasLocalInstalls) {
+    nodes.push({
+      type: "action",
+      action: {
+        id: "remove_local_all",
+        label: `Remove all ${ns.skills.length} local installs in ${ns.name}`,
+        type: "uninstall",
+        statusColor: "yellow",
+      },
+      depth: 0,
+      key: "ns_remove_local_all",
+    });
+  }
+
+  if (hasSource) {
+    nodes.push({
+      type: "action",
+      action: {
+        id: "delete_source_all",
+        label: `🗑  Delete all ${ns.skills.length} skills in ${ns.name} from source repo`,
+        type: "delete_source",
+        statusColor: "red",
+      },
+      depth: 0,
+      key: "ns_delete_source_all",
+    });
+  }
 
   return nodes;
 }
@@ -573,6 +608,7 @@ function getActionColor(type: ItemAction["type"]): string {
     case "track":
       return "cyan";
     case "delete_everywhere":
+    case "delete_source":
       return "red";
     default:
       return "white";

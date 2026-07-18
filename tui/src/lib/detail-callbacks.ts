@@ -8,6 +8,8 @@ import {
   installSkillToAllNonSynced,
   pullbackSkillToSource,
   deleteSkillEverywhere,
+  removeSkillLocalInstalls,
+  deleteSkillSourceOnly,
   deletePluginEverywhere,
   deleteFileEverywhere,
   removeFileFromGit,
@@ -16,6 +18,8 @@ import {
   syncNamespaceToAllMissing,
   resyncNamespaceDrifted,
   deleteNamespaceEverywhere,
+  removeNamespaceLocalInstalls,
+  deleteNamespaceSourceOnly,
   uninstallNamespaceAll,
   uninstallNamespaceFromInstance,
   pullbackNamespaceToSource,
@@ -210,6 +214,38 @@ export function buildDetailCallbacks(deps: DetailCallbackDeps): DispatchCallback
       if (detail?.kind === "skill") setDetail(null);
       closeDetail();
     },
+    removeSkillLocalInstalls: async (skill) => {
+      await runMutation(
+        `Removing ${skill.name} from all tools...`,
+        async () => {
+          const result = removeSkillLocalInstalls(skill);
+          if (result.ok) {
+            useStore.getState().notify(`Removed ${skill.name}: ${result.tools} tool installs`, "info");
+          } else {
+            useStore.getState().notify(`Remove failed: ${result.error}`, "error");
+          }
+        },
+        { refresh: "plugins" },
+      );
+      if (detail?.kind === "skill") setDetail(null);
+      closeDetail();
+    },
+    deleteSourceSkill: async (skill) => {
+      await runMutation(
+        `Deleting ${skill.name} from source repo...`,
+        async () => {
+          const result = deleteSkillSourceOnly(skill);
+          if (result.ok) {
+            useStore.getState().notify(`Deleted ${skill.name} from source repo (uncommitted — review & commit manually)`, "info");
+          } else {
+            useStore.getState().notify(`Delete from source failed: ${result.error}`, "error");
+          }
+        },
+        { refresh: "plugins" },
+      );
+      if (detail?.kind === "skill") setDetail(null);
+      closeDetail();
+    },
 
     // ── Namespace bulk operations ──
     syncNamespace: (ns) =>
@@ -232,6 +268,34 @@ export function buildDetailCallbacks(deps: DetailCallbackDeps): DispatchCallback
           const parts: string[] = [`${result.deleted} skills deleted`];
           if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
           useStore.getState().notify(`Deleted ${ns.name}: ${parts.join(", ")}`, result.errors.length > 0 ? "warning" : "info");
+        },
+        { refresh: "plugins" },
+      );
+      if (detail?.kind === "namespace") setDetail(null);
+      closeDetail();
+    },
+    removeNamespaceLocalInstalls: async (ns) => {
+      await runMutation(
+        `Removing all ${ns.name} skills from tools...`,
+        async () => {
+          const result = removeNamespaceLocalInstalls(ns);
+          const parts: string[] = [`${result.removed} removed`];
+          if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
+          useStore.getState().notify(`Removed ${ns.name}: ${parts.join(", ")}`, result.errors.length > 0 ? "warning" : "info");
+        },
+        { refresh: "plugins" },
+      );
+      if (detail?.kind === "namespace") setDetail(null);
+      closeDetail();
+    },
+    deleteSourceNamespace: async (ns) => {
+      await runMutation(
+        `Deleting all ${ns.name} skills from source repo...`,
+        async () => {
+          const result = deleteNamespaceSourceOnly(ns);
+          const parts: string[] = [`${result.deleted} deleted`];
+          if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
+          useStore.getState().notify(`Deleted ${ns.name} from source: ${parts.join(", ")} (uncommitted — review & commit manually)`, result.errors.length > 0 ? "warning" : "info");
         },
         { refresh: "plugins" },
       );
