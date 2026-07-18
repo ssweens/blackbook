@@ -777,7 +777,7 @@ export function App() {
     }
 
     return result;
-  }, [tab, fileCount, namespaceCount, skillCount, pluginCount, piPkgCount, pluginSectionCount, piPkgSectionCount]);
+  }, [tab, syncPreview, fileCount, namespaceCount, skillCount, pluginCount, piPkgCount, pluginSectionCount, piPkgSectionCount]);
 
   const currentSectionInfo = useMemo(() => {
     return sections.find((s) => selectedIndex >= s.start && selectedIndex <= s.end);
