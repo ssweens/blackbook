@@ -41,7 +41,9 @@ export interface FileAction {
 
 export function buildPluginActions(
   plugin: Plugin,
-  toolStatuses: ToolInstallStatus[],
+  // Retained for signature compatibility with the caller; the consolidated
+  // component-centric view no longer enumerates per-tool status.
+  _toolStatuses: ToolInstallStatus[],
   isIncomplete?: boolean,
   drift?: PluginDrift,
 ): PluginAction[] {
@@ -49,237 +51,78 @@ export function buildPluginActions(
 
   if (plugin.installed) {
     const sourcePaths = resolvePluginSourcePaths(plugin);
-    const allInstances = getToolInstances();
-    const changedInstances: DiffInstanceRef[] = [];
-    const manifest = loadManifest();
+    const enabledInstances = getToolInstances().filter(
+      (t) => t.kind === "tool" && t.enabled,
+    );
 
-    // ── Shared skill status (computed ONCE, not per-tool) ──
-    // Skills live once in ~/.agents/skills, read by every non-flat tool with
-    // Claude's ~/.claude/skills a symlink overlay — they cannot differ per
-    // tool. Emitting a per-tool skill-drift row produced contradictory states
-    // (OpenCode "Drifted" vs Codex "Synced") for the same physical file. Diff
-    // the store copy against source once and show a single shared row instead.
+    // ── Component status (consolidated on ~/.agents — NOT per-tool) ──
+    // Every artifact resolves through the shared ~/.agents convention: skills
+    // in ~/.agents/skills (Claude via overlay symlink), commands/agents copied
+    // into each tool's dir but from one shared source. Users don't manage
+    // tools individually, so show ONE status row per component type, computed
+    // once against source — never an N-tool enumeration.
+    let anyDrift = false;
+
+    // Skills: diff the shared-store copy against source.
     if (plugin.skills.length > 0) {
-      let skillAdded = 0;
-      let skillRemoved = 0;
-      let skillDrift = false;
+      let added = 0;
+      let removed = 0;
+      let drifted = false;
       if (sourcePaths) {
         for (const skill of plugin.skills) {
-          const srcPath = join(sourcePaths.pluginDir, "skills", skill);
           const storePath = pluginSkillStorePath(plugin.name, skill);
           if (!storePath) continue;
           try {
-            const dt = buildFileDiffTarget(`${plugin.name}/${skill}`, skill, srcPath, storePath, {
-              toolId: "agents", instanceId: "shared", instanceName: "Shared store", configDir: "",
-            });
+            const dt = buildFileDiffTarget(`${plugin.name}/${skill}`, skill,
+              join(sourcePaths.pluginDir, "skills", skill), storePath, SHARED_REF);
             if (dt.files.length > 0) {
-              skillAdded += dt.files.reduce((s, f) => s + f.linesAdded, 0);
-              skillRemoved += dt.files.reduce((s, f) => s + f.linesRemoved, 0);
-              skillDrift = true;
+              added += dt.files.reduce((s, f) => s + f.linesAdded, 0);
+              removed += dt.files.reduce((s, f) => s + f.linesRemoved, 0);
+              drifted = true;
             }
-          } catch {
-            // Ignore errors — treated as in-sync.
-          }
+          } catch { /* treat as in-sync */ }
         }
       }
-      const sharedInstance: DiffInstanceRef = {
-        toolId: "agents", instanceId: "shared", instanceName: "Shared store", configDir: "",
-      };
-      if (skillDrift) {
-        changedInstances.push(sharedInstance);
-        actions.push({
-          id: "status_shared_skills",
-          label: `Skills → ~/.agents/skills (shared, ${plugin.skills.length})`,
-          type: "diff",
-          instance: { ...sharedInstance, totalAdded: skillAdded, totalRemoved: skillRemoved },
-          statusColor: "yellow",
-          statusLabel: "Drifted",
-        });
-      } else {
-        actions.push({
-          id: "status_shared_skills",
-          label: `Skills → ~/.agents/skills (shared, ${plugin.skills.length})`,
-          type: "status",
-          statusColor: "green",
-          statusLabel: "In sync",
-        });
-      }
+      if (drifted) anyDrift = true;
+      actions.push(componentStatusRow("skills", "Skills", plugin.skills.length, drifted, added, removed));
     }
 
-    // ── Per-tool status for commands/agents/hooks (genuinely per-tool dirs) ──
-    // Skills are excluded — they're covered by the shared row above.
-    const hasPerToolComponents = plugin.commands.length > 0 || plugin.agents.length > 0 || plugin.hooks.length > 0;
-
-    for (const status of toolStatuses) {
-      if (!status.enabled || !status.supported) continue;
-      if (!status.installed) continue;
-      if (!hasPerToolComponents) continue; // skills-only plugin: shared row says it all
-
-      const inst = allInstances.find(
-        (t) => t.toolId === status.toolId && t.instanceId === status.instanceId,
-      );
-      if (!inst) continue;
-
-      const instance: DiffInstanceRef = {
-        toolId: status.toolId,
-        instanceId: status.instanceId,
-        instanceName: status.name,
-        configDir: inst.configDir,
-      };
-
-      let totalAdded = 0;
-      let totalRemoved = 0;
-      let hasDrift = false;
-
-      if (sourcePaths && drift) {
-        const ikey = instanceKey(inst);
-        for (const [key, driftStatus] of Object.entries(drift)) {
-          if (driftStatus === "in-sync") continue;
-          const [kind, name] = key.split(":");
-          if (kind === "skill") continue; // shared, handled above
-          const srcSuffix = `${name}.md`;
-          const srcPath = join(sourcePaths.pluginDir, `${kind}s`, srcSuffix);
-          const manifestKey = buildManifestItemKey(plugin.name, kind, name);
-          const manifestItem = manifest.tools[ikey]?.items[manifestKey];
-          const destPath = resolveInstalledPluginComponentPath(inst, plugin, kind as "command" | "agent", name, manifestItem?.dest);
-          if (!destPath) continue;
-          if (inst.toolId === "pi" && !existsSync(destPath)) {
-            hasDrift = true;
-            continue;
-          }
-          try {
-            const dt = buildFileDiffTarget(
-              `${plugin.name}/${name}`, srcSuffix, srcPath, destPath, instance,
-            );
-            if (dt.files.length > 0) {
-              totalAdded += dt.files.reduce((sum, f) => sum + f.linesAdded, 0);
-              totalRemoved += dt.files.reduce((sum, f) => sum + f.linesRemoved, 0);
-              hasDrift = true;
-            }
-          } catch {
-            // Ignore errors
-          }
-        }
-      }
-
-      if (hasDrift) {
-        const summary: DiffInstanceSummary = { ...instance, totalAdded, totalRemoved };
-        changedInstances.push(instance);
-        actions.push({
-          id: `status_${status.toolId}:${status.instanceId}`,
-          label: `${status.name} (commands/agents)`,
-          type: "diff",
-          toolStatus: status,
-          instance: summary,
-          statusColor: "yellow",
-          statusLabel: "Drifted",
-        });
-      } else {
-        actions.push({
-          id: `status_${status.toolId}:${status.instanceId}`,
-          label: `${status.name} (commands/agents)`,
-          type: "diff",
-          toolStatus: status,
-          instance,
-          statusColor: "green",
-          statusLabel: "Synced",
-        });
-      }
+    // Commands/agents: one row each. They copy into each tool's own dir from a
+    // single shared source, so "drifted" means any enabled tool's copy differs.
+    for (const [kind, label] of [["command", "Commands"], ["agent", "Agents"]] as const) {
+      const names = kind === "command" ? plugin.commands : plugin.agents;
+      if (names.length === 0) continue;
+      const { drifted, added, removed } = perComponentDrift(plugin, kind, names, drift, sourcePaths, enabledInstances);
+      if (drifted) anyDrift = true;
+      actions.push(componentStatusRow(`${kind}s`, label, names.length, drifted, added, removed));
     }
 
-    // Not-installed + unsupported instances (only meaningful for per-tool
-    // components — a skills-only plugin's presence is the shared row's job).
-    for (const status of toolStatuses) {
-      if (!status.enabled) continue;
-      if (!status.supported) {
-        actions.push({
-          id: `status_${status.toolId}:${status.instanceId}`,
-          label: status.name,
-          type: "status",
-          statusColor: "gray",
-          statusLabel: status.supportReason || "Unsupported",
-        });
-        continue;
-      }
-      if (status.installed) continue;
-      if (!hasPerToolComponents) continue;
+    if (plugin.hooks.length > 0) {
       actions.push({
-        id: `status_${status.toolId}:${status.instanceId}`,
-        label: `${status.name} (commands/agents)`,
-        type: "diff",
-        statusColor: "yellow",
-        statusLabel: "Not installed",
+        id: "status_hooks", type: "status", statusColor: "green",
+        label: `Hooks (${plugin.hooks.length})`, statusLabel: "Installed",
       });
     }
 
-    // Bulk actions
+    // ── Bulk actions (all operate across every tool via ~/.agents) ──
     if (plugin.prescriptionStatus === "no-longer-in-marketplace" || plugin.prescriptionStatus === "marketplace-removed") {
       actions.push({ id: "track", label: "Track in source repo", type: "track" });
     }
     if (plugin.prescriptionStatus === "in-git") {
       actions.push({ id: "remove_from_git", label: "Remove from git (source repo prescription)", type: "remove_from_git" });
     }
-    actions.push({ id: "uninstall", label: "Uninstall from all tools", type: "uninstall" });
+    if (isIncomplete || anyDrift) {
+      actions.push({ id: "install_all", label: "Sync from source (install missing + fix drift)", type: "install" });
+    }
+    if (anyDrift && sourcePaths) {
+      actions.push({ id: "pullback_shared", label: "Pull local changes to source repo", type: "pullback", instance: SHARED_REF });
+    }
     const updateLabel = plugin.hasUpdate && plugin.installedVersion && plugin.latestVersion
       ? `Update ${plugin.installedVersion} → ${plugin.latestVersion}`
       : "Update now";
     actions.push({ id: "update", label: updateLabel, type: "update" });
-
-    if (isIncomplete) {
-      actions.push({ id: "install_all", label: "Install to all tools", type: "install" });
-    }
-
-    // Per-tool install/uninstall
-    for (const status of toolStatuses) {
-      if (!status.enabled || !status.supported) continue;
-      const inst = allInstances.find(
-        (t) => t.toolId === status.toolId && t.instanceId === status.instanceId,
-      );
-      const instance = inst
-        ? {
-            toolId: inst.toolId,
-            instanceId: inst.instanceId,
-            instanceName: inst.name,
-            configDir: inst.configDir,
-          }
-        : undefined;
-
-      if (status.installed) {
-        const shared = isSharedSubdirPath(inst?.skillsSubdir);
-        actions.push({
-          id: `uninstall_${status.toolId}:${status.instanceId}`,
-          label: shared
-            ? `Uninstall from ${status.name} (shared skills location — may affect other tools)`
-            : `Uninstall from ${status.name}`,
-          type: "uninstall_tool",
-          toolStatus: status,
-          instance,
-        });
-      } else {
-        actions.push({
-          id: `install_${status.toolId}:${status.instanceId}`,
-          label: `Install to ${status.name}`,
-          type: "install_tool",
-          toolStatus: status,
-          instance,
-        });
-      }
-    }
-
-    if (sourcePaths && changedInstances.length > 0) {
-      for (const instance of changedInstances) {
-        actions.push({
-          id: `pullback_${instance.toolId}:${instance.instanceId}`,
-          label: `Pull to source from ${instance.instanceName}`,
-          type: "pullback",
-          instance,
-        });
-      }
-    }
-
+    actions.push({ id: "uninstall", label: "Uninstall", type: "uninstall" });
     actions.push({ id: "back", label: "Back to plugin list", type: "back" });
-
-    // Destructive "delete everywhere" — nukes tool installs + plugin cache + manifest entries.
     actions.push({
       id: "delete_everywhere",
       label: "🗑  Delete everywhere (all tools + plugin cache + manifest)",
@@ -287,34 +130,82 @@ export function buildPluginActions(
       statusColor: "red",
     });
   } else {
-    actions.push({ id: "install", label: "Install to all tools", type: "install" });
-
-    const allInstances = getToolInstances();
-    for (const status of toolStatuses) {
-      if (!status.enabled || !status.supported) continue;
-      const inst = allInstances.find(
-        (t) => t.toolId === status.toolId && t.instanceId === status.instanceId,
-      );
-      actions.push({
-        id: `install_${status.toolId}:${status.instanceId}`,
-        label: `Install to ${status.name}`,
-        type: "install_tool",
-        toolStatus: status,
-        instance: inst
-          ? {
-              toolId: inst.toolId,
-              instanceId: inst.instanceId,
-              instanceName: inst.name,
-              configDir: inst.configDir,
-            }
-          : undefined,
-      });
-    }
-
+    // Not installed: one Install action (goes to every tool via ~/.agents).
+    actions.push({ id: "install", label: "Install", type: "install" });
     actions.push({ id: "back", label: "Back to plugin list", type: "back" });
   }
 
   return actions;
+}
+
+/** Shared-store diff instance ref — the single "location" every tool reads from. */
+const SHARED_REF: DiffInstanceRef = {
+  toolId: "agents", instanceId: "shared", instanceName: "Shared store", configDir: "",
+};
+
+/** One consolidated status row for a component type against ~/.agents. */
+function componentStatusRow(
+  idKind: string,
+  label: string,
+  count: number,
+  drifted: boolean,
+  added: number,
+  removed: number,
+): PluginAction {
+  const rowLabel = `${label} (${count})`;
+  if (drifted) {
+    return {
+      id: `status_${idKind}`,
+      type: "diff",
+      label: rowLabel,
+      instance: { ...SHARED_REF, totalAdded: added, totalRemoved: removed },
+      statusColor: "yellow",
+      statusLabel: "Drifted",
+    };
+  }
+  return { id: `status_${idKind}`, type: "status", label: rowLabel, statusColor: "green", statusLabel: "In sync" };
+}
+
+/**
+ * Aggregate drift for a command/agent component type across enabled tools.
+ * Commands/agents copy into each tool's own dir from one shared source, so the
+ * component is "drifted" if ANY enabled tool's copy differs from source; the
+ * +/- counts are the max single-tool delta (representative, not summed across
+ * tools which would double-count the same edit).
+ */
+function perComponentDrift(
+  plugin: Plugin,
+  kind: "command" | "agent",
+  names: string[],
+  drift: PluginDrift | undefined,
+  sourcePaths: { pluginDir: string; repoRoot: string } | null,
+  enabledInstances: ReturnType<typeof getToolInstances>,
+): { drifted: boolean; added: number; removed: number } {
+  if (!sourcePaths || !drift) return { drifted: false, added: 0, removed: 0 };
+  const manifest = loadManifest();
+  let drifted = false;
+  let added = 0;
+  let removed = 0;
+  for (const name of names) {
+    if (drift[`${kind}:${name}`] === "in-sync") continue;
+    const srcSuffix = `${name}.md`;
+    const srcPath = join(sourcePaths.pluginDir, `${kind}s`, srcSuffix);
+    for (const inst of enabledInstances) {
+      const ikey = instanceKey(inst);
+      const manifestItem = manifest.tools[ikey]?.items[buildManifestItemKey(plugin.name, kind, name)];
+      const destPath = resolveInstalledPluginComponentPath(inst, plugin, kind, name, manifestItem?.dest);
+      if (!destPath || !existsSync(destPath)) continue;
+      try {
+        const dt = buildFileDiffTarget(`${plugin.name}/${name}`, srcSuffix, srcPath, destPath, SHARED_REF);
+        if (dt.files.length > 0) {
+          drifted = true;
+          added = Math.max(added, dt.files.reduce((s, f) => s + f.linesAdded, 0));
+          removed = Math.max(removed, dt.files.reduce((s, f) => s + f.linesRemoved, 0));
+        }
+      } catch { /* ignore */ }
+    }
+  }
+  return { drifted, added, removed };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

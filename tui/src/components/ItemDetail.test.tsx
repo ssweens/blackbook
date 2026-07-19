@@ -153,10 +153,21 @@ describe("ItemDetail", () => {
     expect(lastFrame()).toContain("(drifted)");
   });
 
-  it("renders Instances header when installed", () => {
+  it("renders the component-status header for an installed plugin", () => {
     const { lastFrame } = render(
       React.createElement(ItemDetail, {
         item: createItem({ installed: true }),
+        actions: [statusAction("Skills (1)", "In sync"), backAction()],
+        selectedAction: 0,
+      }),
+    );
+    expect(lastFrame()).toContain("Component status:");
+  });
+
+  it("renders the Instances header for an installed file (per-tool)", () => {
+    const { lastFrame } = render(
+      React.createElement(ItemDetail, {
+        item: createItem({ installed: true, kind: "file" }),
         actions: [statusAction("Claude", "Synced"), backAction()],
         selectedAction: 0,
       }),
@@ -164,7 +175,7 @@ describe("ItemDetail", () => {
     expect(lastFrame()).toContain("Instances:");
   });
 
-  it("does not show Instances header when not installed", () => {
+  it("does not show a status header when not installed", () => {
     const { lastFrame } = render(
       React.createElement(ItemDetail, {
         item: createItem({ installed: false }),
@@ -172,6 +183,7 @@ describe("ItemDetail", () => {
         selectedAction: 0,
       }),
     );
+    expect(lastFrame()).not.toContain("Component status:");
     expect(lastFrame()).not.toContain("Instances:");
   });
 

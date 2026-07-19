@@ -695,7 +695,7 @@ describe("App E2E — Installed Tab", () => {
     }
   });
 
-  it("plugin detail shows Instances section with metadata", async () => {
+  it("plugin detail shows the component-status section with metadata", async () => {
     useStore.setState({
       tab: "installed",
       ...openPluginDetail(createPlugin()),
@@ -703,11 +703,13 @@ describe("App E2E — Installed Tab", () => {
     });
     const { stdout, unmount } = render(<App />);
     try {
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Instances:"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Component status:"));
       const frame = stdout.lastFrame()!;
       expect(frame).toContain("test-plugin");
       expect(frame).toContain("@ Test Marketplace");
       expect(frame).toContain("A test plugin");
+      // Consolidated component rows, not per-tool.
+      expect(frame).toContain("Skills (1)");
       expect(frame).toContain("Back to plugin list");
     } finally {
       unmount();
@@ -722,9 +724,9 @@ describe("App E2E — Installed Tab", () => {
     });
     const { stdout, unmount } = render(<App />);
     try {
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Instances:"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Component status:"));
       useStore.setState({ detailPlugin: null, detail: null });
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Plugins") && !f.includes("Instances:"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Plugins") && !f.includes("Component status:"));
     } finally {
       unmount();
     }
@@ -769,7 +771,7 @@ describe("App E2E — Plugin Detail", () => {
     useStore.setState(defaultStoreState());
   });
 
-  it("installed plugin shows per-instance status", async () => {
+  it("installed plugin shows consolidated component status (not per-tool)", async () => {
     vi.mocked(getPluginToolStatusDirect).mockReturnValue(toolStatusBothInstalled);
     useStore.setState({
       tab: "installed",
@@ -778,16 +780,19 @@ describe("App E2E — Plugin Detail", () => {
     });
     const { stdout, unmount } = render(<App />);
     try {
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Instances:"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Component status:"));
       const frame = stdout.lastFrame()!;
-      expect(frame).toContain("Claude");
-      expect(frame).toContain("OpenCode");
+      // One row per component type, against ~/.agents — NOT a per-tool list.
+      expect(frame).toContain("Skills (1)");
+      expect(frame).toContain("Commands (1)");
+      expect(frame).not.toContain("OpenCode:");
+      expect(frame).not.toContain("Uninstall from Claude");
     } finally {
       unmount();
     }
   });
 
-  it("incomplete plugin shows Install to all tools action", async () => {
+  it("incomplete plugin shows a Sync-from-source action", async () => {
     useStore.setState({
       tab: "installed",
       ...openPluginDetail(createPlugin({ incomplete: true })),
@@ -795,14 +800,14 @@ describe("App E2E — Plugin Detail", () => {
     });
     const { stdout, unmount } = render(<App />);
     try {
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Install to all tools"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Sync from source"));
       expect(stdout.lastFrame()).toContain("incomplete");
     } finally {
       unmount();
     }
   });
 
-  it("stays on plugin detail after install to all tools", async () => {
+  it("stays on plugin detail after install", async () => {
     vi.mocked(installPlugin).mockResolvedValue({
       success: true,
       linkedInstances: { "opencode:default": 1 },
@@ -816,9 +821,9 @@ describe("App E2E — Plugin Detail", () => {
     });
     const { stdout, unmount } = render(<App />);
     try {
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Instances:"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Component status:"));
       await useStore.getState().installPlugin(createPlugin({ incomplete: true }));
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Instances:"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Component status:"));
       expect(stdout.lastFrame()).toContain("Back to plugin list");
     } finally {
       unmount();
@@ -839,25 +844,27 @@ describe("App E2E — Plugin Detail", () => {
     });
     const { stdout, unmount } = render(<App />);
     try {
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Instances:"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Component status:"));
       const ok = await useStore.getState().installPlugin(createPlugin({ incomplete: true }));
       expect(ok).toBe(false);
-      expect(stdout.lastFrame()).toContain("Instances:");
+      expect(stdout.lastFrame()).toContain("Component status:");
     } finally {
       unmount();
     }
   });
 
-  it("shows per-tool install/uninstall actions", async () => {
+  it("shows a single Install action (no per-tool enumeration) for a not-installed plugin", async () => {
     vi.mocked(getPluginToolStatusDirect).mockReturnValue(toolStatusPartial);
     useStore.setState({
-      tab: "installed",
-      ...openPluginDetail(createPlugin({ incomplete: true })),
+      tab: "discover",
+      ...openPluginDetail(createPlugin({ installed: false })),
     });
     const { stdout, unmount } = render(<App />);
     try {
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Uninstall from Claude"));
-      expect(stdout.lastFrame()).toContain("Install to OpenCode");
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Back to plugin list"));
+      const frame = stdout.lastFrame()!;
+      expect(frame).not.toContain("Install to OpenCode");
+      expect(frame).not.toContain("Install to Claude");
     } finally {
       unmount();
     }
@@ -883,7 +890,7 @@ describe("App E2E — Plugin Detail", () => {
     }
   });
 
-  it("drifted plugin skill shows a single shared-store Drifted row with +/- counts", async () => {
+  it("drifted plugin skill shows a single consolidated Skills Drifted row with +/- counts", async () => {
     vi.mocked(resolvePluginSourcePaths).mockReturnValue({ pluginDir: "/src/plugins/test", repoRoot: "/src" });
     vi.mocked(buildFileDiffTarget).mockReturnValue({
       kind: "file",
@@ -901,19 +908,20 @@ describe("App E2E — Plugin Detail", () => {
     });
     const { stdout, unmount } = render(<App />);
     try {
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("shared") || f.includes("+10"), 5000);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Skills (1)") || f.includes("+10"), 5000);
       const frame = stdout.lastFrame()!;
-      // Skills are shown as ONE shared-store row, not broken out per tool.
-      expect(frame).toContain("shared");
+      // One consolidated Skills row, not broken out per tool.
+      expect(frame).toContain("Skills (1)");
       expect(frame).toContain("Drifted");
       expect(frame).toContain("+10");
       expect(frame).toContain("-5");
+      expect(frame).not.toContain("OpenCode:");
     } finally {
       unmount();
     }
   });
 
-  it("shows skill drift on the shared row, not a per-tool status badge", async () => {
+  it("shows skill drift on the consolidated Skills row, not a per-tool badge", async () => {
     vi.mocked(resolvePluginSourcePaths).mockReturnValue({ pluginDir: "/src/plugins/test", repoRoot: "/src" });
     vi.mocked(buildFileDiffTarget).mockReturnValue({
       kind: "file", title: "t",
@@ -932,7 +940,7 @@ describe("App E2E — Plugin Detail", () => {
       await waitForFrame(stdout.lastFrame, (f) => f.includes("Drifted") || f.includes("+1"), 5000);
       const frame = stdout.lastFrame()!;
       expect(frame).not.toContain("Status: Installed (drifted)");
-      expect(frame).toContain("shared");
+      expect(frame).toContain("Skills (1)");
       expect(frame).toContain("Drifted");
     } finally {
       unmount();

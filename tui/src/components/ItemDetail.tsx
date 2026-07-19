@@ -145,7 +145,7 @@ export function ItemDetail({ item, actions, selectedAction, metadata }: ItemDeta
 
       {/* Instance list + actions (windowed to fit the terminal) */}
       <Box flexDirection="column" marginTop={1}>
-        {item.installed && <Text bold>Instances:</Text>}
+        {item.installed && <Text bold>{item.kind === "plugin" ? "Component status:" : "Instances:"}</Text>}
         {hiddenAbove > 0 && (
           <Text color="gray" dimColor>
             ↑ {hiddenAbove} more above
