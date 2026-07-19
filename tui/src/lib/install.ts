@@ -8,6 +8,8 @@ import {
   lstatSync,
   realpathSync,
   readdirSync,
+  readlinkSync,
+  statSync,
   copyFileSync,
   cpSync,
   rmSync,
@@ -16,7 +18,7 @@ import { promisify } from "util";
 import { execFile, execFileSync } from "child_process";
 import { hashBuffer, hashFile, hashPath, hashString, hashDirectory } from "./modules/hash.js";
 import { createBackup, pruneBackups } from "./modules/backup.js";
-import { applySymlinkSync } from "./modules/symlink-create.js";
+import { applySymlinkSync, checkSymlinkSync } from "./modules/symlink-create.js";
 
 const execFileAsync = promisify(execFile);
 import { join, dirname, resolve, basename } from "path";
@@ -45,7 +47,7 @@ import type {
   FileStatus,
 } from "./types.js";
 import { atomicWriteFileSync, renameOrCopy, withFileLockSync } from "./fs-utils.js";
-import { flattenNamespacedName, readSkillFrontmatterName, resolveInstanceSubdirPath, resolveLocalPath, scanPluginContents } from "./path-utils.js";
+import { agentsSkillsDir, flattenNamespacedName, readSkillFrontmatterName, resolveInstanceSubdirPath, resolveLocalPath, scanPluginContents } from "./path-utils.js";
 import {
   safePath,
   validateGitRef,
@@ -1618,10 +1620,29 @@ export function uninstallSkillFromInstance(
   );
   if (!inst) return false;
   try {
-    rmSync(inst.diskPath, { recursive: true, force: true });
+    removeSkillInstallPath(inst.diskPath);
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Remove one on-disk skill installation. A derived-view entry (symlink into
+ * `~/.agents/skills`) is unlinked — never followed — so removing a tool's view
+ * of a skill can't destroy the shared store copy other tools still read.
+ */
+function removeSkillInstallPath(diskPath: string): void {
+  let isLink: boolean;
+  try {
+    isLink = lstatSync(diskPath).isSymbolicLink();
+  } catch {
+    return; // already gone — match rmSync's force:true semantics
+  }
+  if (isLink) {
+    unlinkSync(diskPath);
+  } else {
+    rmSync(diskPath, { recursive: true, force: true });
   }
 }
 
@@ -1630,7 +1651,7 @@ export function uninstallSkillAllInstances(skill: StandaloneSkill): number {
   let removed = 0;
   for (const inst of skill.installations) {
     try {
-      rmSync(inst.diskPath, { recursive: true, force: true });
+      removeSkillInstallPath(inst.diskPath);
       removed += 1;
     } catch { /* skip */ }
   }
@@ -2073,6 +2094,41 @@ export function installSkillToInstance(
   const targetDir = getStandaloneSkillTargetDir(skill, target);
   if (!targetDir) return false;
 
+  // Flat tools (Claude) get a derived view of the shared ~/.agents/skills
+  // store: materialize the skill there if needed, then link the tool's flat
+  // entry at that store path — never at the source repo or another tool's
+  // copy. Applies regardless of skill_sync_mode.
+  if (target.pluginFlatInstall) {
+    try {
+      const agentsTarget = agentsSkillsDir(skill.namespace, skill.name);
+      if (!existsSync(agentsTarget)) {
+        // Clear a dangling symlink so cpSync can't trip over it.
+        if (isSymlink(agentsTarget)) unlinkSync(agentsTarget);
+        mkdirSync(dirname(agentsTarget), { recursive: true });
+        cpSync(sourcePath, agentsTarget, { recursive: true });
+      }
+      if (checkSymlinkSync({ sourcePath: agentsTarget, targetPath: targetDir }).status === "ok") {
+        return true;
+      }
+      // Replace whatever sits at the flat entry with the derived-view link,
+      // backing up real content first (a symlink carries none of its own).
+      if (existsSync(targetDir) || isSymlink(targetDir)) {
+        if (lstatSync(targetDir).isSymbolicLink()) {
+          unlinkSync(targetDir);
+        } else {
+          createBackup(targetDir, `skill:${skill.name}`);
+          pruneBackups(`skill:${skill.name}`);
+          rmSync(targetDir, { recursive: true, force: true });
+        }
+      }
+      mkdirSync(dirname(targetDir), { recursive: true });
+      symlinkSync(agentsTarget, targetDir);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // Opt-in: symlink the whole skill directory instead of copying it. A
   // symlinked skill can't drift (the target IS the source) and needs no
   // resync. applySymlinkSync backs up any existing real content first, same
@@ -2224,6 +2280,140 @@ export function migrateLegacyStandaloneSkillLayout(): { moved: number; skipped: 
   }
 
   return { moved, skipped, errors };
+}
+
+/**
+ * Reconcile flat-install tools' (Claude's) skills directories as a derived
+ * view of the shared `~/.agents/skills` store:
+ *   - create missing per-skill symlinks for every store skill
+ *   - repair links that point at the wrong/nonexistent target
+ *   - migrate real directories whose content is identical to the store copy
+ *     into symlinks (backed up first); content that differs is left alone —
+ *     the user may have local edits
+ *   - prune dangling links into the store whose target is gone
+ * Real directories with no store counterpart are never touched. Fast,
+ * best-effort, and never throws — meant to run once at startup.
+ */
+export function reconcileClaudeDerivedView(): {
+  linked: number;
+  repaired: number;
+  migrated: number;
+  pruned: number;
+} {
+  const summary = { linked: 0, repaired: 0, migrated: 0, pruned: 0 };
+  const agentsRoot = join(homedir(), ".agents", "skills");
+
+  let flatInstances: ToolInstance[];
+  try {
+    flatInstances = getToolInstances().filter(
+      (i) => i.kind === "tool" && i.enabled && i.pluginFlatInstall && !!i.skillsSubdir,
+    );
+  } catch {
+    return summary;
+  }
+  if (flatInstances.length === 0 || !existsSync(agentsRoot)) return summary;
+
+  const isRealDir = (path: string): boolean => {
+    try {
+      return statSync(path).isDirectory();
+    } catch {
+      return false;
+    }
+  };
+
+  // Enumerate store skills: skills/<ns>/<skill>/SKILL.md (namespaced) and
+  // skills/<skill>/SKILL.md (flat top-level).
+  const storeSkills: { flatName: string; agentsPath: string }[] = [];
+  try {
+    for (const nsName of readdirSync(agentsRoot)) {
+      if (nsName.startsWith(".")) continue;
+      const nsPath = join(agentsRoot, nsName);
+      if (!isRealDir(nsPath)) continue;
+      if (existsSync(join(nsPath, "SKILL.md"))) {
+        storeSkills.push({ flatName: nsName, agentsPath: nsPath });
+        continue;
+      }
+      let skillNames: string[];
+      try {
+        skillNames = readdirSync(nsPath);
+      } catch {
+        continue;
+      }
+      for (const skillName of skillNames) {
+        if (skillName.startsWith(".")) continue;
+        const skillPath = join(nsPath, skillName);
+        if (!isRealDir(skillPath) || !existsSync(join(skillPath, "SKILL.md"))) continue;
+        storeSkills.push({ flatName: flattenNamespacedName(nsName, skillName), agentsPath: skillPath });
+      }
+    }
+  } catch {
+    return summary;
+  }
+
+  for (const instance of flatInstances) {
+    const skillsDir = resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir!);
+
+    for (const { flatName, agentsPath } of storeSkills) {
+      const linkPath = join(skillsDir, flatName);
+      try {
+        let linkStat: ReturnType<typeof lstatSync> | null = null;
+        try {
+          linkStat = lstatSync(linkPath);
+        } catch {
+          linkStat = null;
+        }
+        if (!linkStat) {
+          mkdirSync(dirname(linkPath), { recursive: true });
+          symlinkSync(agentsPath, linkPath);
+          summary.linked++;
+        } else if (linkStat.isSymbolicLink()) {
+          if (checkSymlinkSync({ sourcePath: agentsPath, targetPath: linkPath }).status !== "ok") {
+            unlinkSync(linkPath);
+            symlinkSync(agentsPath, linkPath);
+            summary.repaired++;
+          }
+        } else if (linkStat.isDirectory()) {
+          // Real directory shadowing a store skill: convert to a link only
+          // when its content is byte-identical to the store copy — differing
+          // content may hold local edits and is left untouched.
+          if (hashDirectory(linkPath) === hashDirectory(agentsPath)) {
+            createBackup(linkPath, `skill:${flatName}`);
+            pruneBackups(`skill:${flatName}`);
+            rmSync(linkPath, { recursive: true, force: true });
+            symlinkSync(agentsPath, linkPath);
+            summary.migrated++;
+          }
+        }
+      } catch {
+        // Per-entry best effort — one bad skill must not break the rest.
+      }
+    }
+
+    // Prune dangling links into the store whose target no longer exists.
+    // Dangling links pointing elsewhere are the user's own business.
+    let dirEntries: string[];
+    try {
+      dirEntries = readdirSync(skillsDir);
+    } catch {
+      continue;
+    }
+    for (const entry of dirEntries) {
+      const entryPath = join(skillsDir, entry);
+      try {
+        if (!lstatSync(entryPath).isSymbolicLink() || existsSync(entryPath)) continue;
+        const linkTarget = readlinkSync(entryPath);
+        const resolved = linkTarget.startsWith("/") ? linkTarget : join(skillsDir, linkTarget);
+        if (resolved === agentsRoot || resolved.startsWith(`${agentsRoot}/`)) {
+          unlinkSync(entryPath);
+          summary.pruned++;
+        }
+      } catch {
+        // Per-entry best effort.
+      }
+    }
+  }
+
+  return summary;
 }
 
 // ── Namespace bulk operations ─────────────────────────────────────────────

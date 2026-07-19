@@ -47,6 +47,17 @@ export function isSharedSubdirPath(subdir: string | null | undefined): boolean {
 }
 
 /**
+ * Canonical location of a skill in the shared `~/.agents/skills` store — the
+ * same physical path the Codex/OpenCode/Amp/Pi playbooks install to via their
+ * `install_dir: ~/.agents/skills` override. Flat-install tools (Claude) don't
+ * read this store natively, so their per-skill entries are symlinks pointing
+ * here (the "derived view") rather than independent copies.
+ */
+export function agentsSkillsDir(namespace: string | null | undefined, name: string): string {
+  return join(homedir(), ".agents", "skills", ...(namespace ? [namespace, name] : [name]));
+}
+
+/**
  * Prefix a component name with its plugin/namespace to avoid collisions on
  * tools with a flat, unnamespaced install layout (`pluginFlatInstall: true` —
  * Claude Code, and Pi's plugin-sourced commands). Non-flat tools don't need

@@ -14,6 +14,7 @@ import { countGetPluginToolStatus } from "./perf.js";
 // isConfigOnlyInstance is canonicalized in install.ts. Per-tool status logic
 // (supports/isInstalled) now lives in the adapters, dispatched by toolId.
 import { isConfigOnlyInstance } from "./install.js";
+import { ensureAgentsSkillMaterialized } from "./adapters/managed.js";
 import { getAdapterForTool, type InstalledContext } from "./adapters/types.js";
 import { fetchClaudeInstalledPluginIds } from "./adapters/claude.js";
 import { fetchCodexInstalledPluginIds } from "./adapters/codex.js";
@@ -254,7 +255,23 @@ export function togglePluginComponent(
         manifest.tools[key] = { items: {} };
       }
 
-      const result = createSymlink(src, dest, {
+      // Flat tools (Claude) keep skills as a derived view of the shared
+      // ~/.agents/skills store — re-enabling links to the store entry
+      // (materializing it from the cache if missing), never to the cache.
+      let linkSource = src;
+      if (kind === "skill" && instance.pluginFlatInstall) {
+        try {
+          linkSource = ensureAgentsSkillMaterialized(src, plugin.name, componentName).agentsPath;
+        } catch (error) {
+          logError(`Failed to materialize ${componentName} into ~/.agents/skills`, error);
+          failures.push(
+            `Failed to enable ${kind} ${componentName} in ${instance.name}: could not materialize shared skill store entry`,
+          );
+          continue;
+        }
+      }
+
+      const result = createSymlink(linkSource, dest, {
         instanceScope: key,
         pluginName: plugin.name,
         itemKind: kind,

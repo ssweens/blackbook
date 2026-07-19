@@ -22,7 +22,7 @@ import {
   symlinkSync,
 } from "fs";
 import { basename, join, dirname } from "path";
-import { flattenNamespacedName, resolveInstanceSubdirPath } from "../path-utils.js";
+import { agentsSkillsDir, flattenNamespacedName, resolveInstanceSubdirPath } from "../path-utils.js";
 import type { Plugin, InstalledItem, ToolInstance } from "../types.js";
 import type { Manifest } from "../manifest.js";
 import { loadManifest, saveManifest } from "../manifest.js";
@@ -162,6 +162,55 @@ export function extractPluginInfoFromSource(
   return null;
 }
 
+/**
+ * Move any pre-existing dest (real file/dir or symlink) into the per-item
+ * backup slot. Returns the backup path, or null when dest was absent. Shared
+ * by the copy, symlink, and derived-view install paths so every one of them
+ * preserves user content identically.
+ */
+function backupExistingDest(
+  dest: string,
+  instanceScope: string,
+  pluginName: string,
+  itemKind: string,
+  itemName: string,
+): string | null {
+  if (!existsSync(dest) && !isSymlink(dest)) return null;
+  const backupPath = buildBackupPath(instanceScope, pluginName, itemKind, itemName);
+  const tempBackup = `${backupPath}.new.${Date.now()}`;
+  // dest lives in the tool's config dir; tempBackup under the cache dir — a
+  // cross-device move on setups where those trees are separate mounts.
+  renameOrCopy(dest, tempBackup);
+  if (existsSync(backupPath) || isSymlink(backupPath)) {
+    rmSync(backupPath, { recursive: true, force: true });
+  }
+  renameSync(tempBackup, backupPath);
+  return backupPath;
+}
+
+/**
+ * Ensure a plugin skill exists in the shared `~/.agents/skills/<ns>/<name>`
+ * store, materializing it from the plugin cache copy when no sibling `.agents`
+ * tool (Codex/OpenCode/Amp/Pi) has installed it yet — instance ordering within
+ * an install run isn't guaranteed, and the user may only have Claude enabled.
+ * Returns the store path plus whether this call created it (so a failed
+ * install can roll the materialization back).
+ */
+export function ensureAgentsSkillMaterialized(
+  src: string,
+  namespace: string,
+  skillName: string,
+): { agentsPath: string; materialized: boolean } {
+  const agentsPath = agentsSkillsDir(namespace, skillName);
+  if (existsSync(agentsPath)) return { agentsPath, materialized: false };
+  // A dangling symlink passes lstat but fails existsSync — clear it so cpSync
+  // can't write through or trip over it.
+  if (isSymlink(agentsPath)) unlinkSync(agentsPath);
+  mkdirSync(dirname(agentsPath), { recursive: true });
+  cpSync(src, agentsPath, { recursive: true });
+  return { agentsPath, materialized: true };
+}
+
 function copyWithBackup(
   src: string,
   dest: string,
@@ -170,19 +219,7 @@ function copyWithBackup(
   itemKind: string,
   itemName: string,
 ): { dest: string; backup: string | null } {
-  let backupPath: string | null = null;
-
-  if (existsSync(dest) || isSymlink(dest)) {
-    backupPath = buildBackupPath(instanceScope, pluginName, itemKind, itemName);
-    const tempBackup = `${backupPath}.new.${Date.now()}`;
-    // dest lives in the tool's config dir; tempBackup under the cache dir — a
-    // cross-device move on setups where those trees are separate mounts.
-    renameOrCopy(dest, tempBackup);
-    if (existsSync(backupPath) || isSymlink(backupPath)) {
-      rmSync(backupPath, { recursive: true, force: true });
-    }
-    renameSync(tempBackup, backupPath);
-  }
+  const backupPath = backupExistingDest(dest, instanceScope, pluginName, itemKind, itemName);
 
   mkdirSync(dirname(dest), { recursive: true });
 
@@ -235,7 +272,19 @@ export function installPluginItemsToInstance(
   }
   const toolManifest = manifest.tools[key];
 
+  // `.agents` store copies THIS run materialized (vs found already present).
+  // Rollback removes only these — a store entry that predates this install
+  // belongs to a sibling tool and must survive our failure.
+  const materializedAgentsPaths: string[] = [];
+
   const rollback = () => {
+    for (const materialized of materializedAgentsPaths.reverse()) {
+      try {
+        rmSync(materialized, { recursive: true, force: true });
+      } catch (error) {
+        logError(`Failed to rollback materialized skill ${materialized}`, error);
+      }
+    }
     for (const appliedKey of appliedKeys.reverse()) {
       const item = toolManifest.items[appliedKey];
       if (!item) continue;
@@ -272,6 +321,12 @@ export function installPluginItemsToInstance(
     name: string,
     src: string,
     dest: string,
+    /**
+     * When set (flat-install skills only), dest becomes a symlink into the
+     * shared `~/.agents/skills` store at this path — the "derived view" —
+     * instead of an independent copy of the plugin cache.
+     */
+    agentsStoreTarget?: string,
   ) => {
     validateItemName(kind, name);
     const key = buildManifestItemKey(pluginName, kind, name);
@@ -280,6 +335,13 @@ export function installPluginItemsToInstance(
     let item: InstalledItem;
     if (sibling) {
       item = { kind, name, source: src, dest, backup: null, owner: pluginName, previous, sharedInstall: true };
+    } else if (agentsStoreTarget) {
+      const { materialized } = ensureAgentsSkillMaterialized(src, pluginName, name);
+      if (materialized) materializedAgentsPaths.push(agentsStoreTarget);
+      const backup = backupExistingDest(dest, instanceKey(instance), pluginName, kind, name);
+      mkdirSync(dirname(dest), { recursive: true });
+      symlinkSync(agentsStoreTarget, dest);
+      item = { kind, name, source: src, dest, backup, owner: pluginName, previous };
     } else {
       const result = copyWithBackup(src, dest, instanceKey(instance), pluginName, kind, name);
       item = { kind, name, source: src, dest: result.dest, backup: result.backup, owner: pluginName, previous };
@@ -309,7 +371,13 @@ export function installPluginItemsToInstance(
               : resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir, pluginName);
             const destName = instance.pluginFlatInstall ? flattenNamespacedName(pluginName, entry) : entry;
             const dest = safePath(baseDest, destName);
-            installItem("skill", entry, src, dest);
+            // Flat tools (Claude) get a derived view: their skill entry is a
+            // symlink into the shared ~/.agents/skills store rather than a
+            // copy, so all tools serve one physical skill.
+            const agentsStoreTarget = instance.pluginFlatInstall
+              ? agentsSkillsDir(pluginName, entry)
+              : undefined;
+            installItem("skill", entry, src, dest, agentsStoreTarget);
             copyPluginMcpJsonIntoSkill(instance, sourcePath, dest);
           }
         }
