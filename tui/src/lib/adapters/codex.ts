@@ -16,6 +16,7 @@ import type {
   InstalledContext,
 } from "./types.js";
 import { managedAdapter } from "./managed.js";
+import { pluginInstalledForManagedInstance } from "./shared.js";
 
 /**
  * Parse `codex plugin list` output into the set of installed `plugin@marketplace`
@@ -83,6 +84,8 @@ export const codexAdapter: ToolAdapter = {
     const id2 = plugin.installedMarketplace ? `${plugin.name}@${plugin.installedMarketplace}` : "";
     const nativeInstalled = ids.has(id1) || (id2 ? ids.has(id2) : false);
     if (nativeInstalled) return true;
-    return manifestHasPluginForInstance(ctx.getManifest(), instance, plugin.name);
+    // Shared-store aware: a skills-only plugin is installed for Codex when the
+    // skill is present in the shared store, even with no per-tool manifest key.
+    return pluginInstalledForManagedInstance(plugin, instance, ctx.getManifest());
   },
 };

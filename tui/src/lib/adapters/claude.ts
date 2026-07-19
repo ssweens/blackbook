@@ -29,6 +29,7 @@ import {
   installPluginItemsToInstance,
   uninstallPluginItemsFromInstance,
 } from "./managed.js";
+import { pluginInstalledForManagedInstance } from "./shared.js";
 import { installMcpServersToInstance, uninstallMcpServersFromInstance } from "./mcp.js";
 import type {
   ToolAdapter,
@@ -301,11 +302,16 @@ export const claudeAdapter: ToolAdapter = {
     return { supported };
   },
 
-  isInstalled(plugin: Plugin, _instance: ToolInstance, ctx: InstalledContext): boolean {
+  isInstalled(plugin: Plugin, instance: ToolInstance, ctx: InstalledContext): boolean {
     const ids = ctx.getClaudeInstalledIds();
     const id1 = `${plugin.name}@${plugin.marketplace}`;
     const id2 = plugin.installedMarketplace ? `${plugin.name}@${plugin.installedMarketplace}` : "";
-    return ids.has(id1) || (id2 ? ids.has(id2) : false);
+    if (ids.has(id1) || (id2 ? ids.has(id2) : false)) return true;
+    // Skills reach Claude through the derived-view overlay symlinks into the
+    // shared store (not the native plugin CLI / installed_plugins.json), so a
+    // skills-only or standalone-installed plugin is "installed" when the
+    // overlay skill is present or a per-tool manifest entry records a component.
+    return pluginInstalledForManagedInstance(plugin, instance, ctx.getManifest());
   },
 
   listInstalled(instance: ToolInstance): Plugin[] {

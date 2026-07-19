@@ -24,7 +24,7 @@
 import type { Plugin, ToolInstance } from "../types.js";
 import { installPluginItemsToInstance, uninstallPluginItemsFromInstance, managedAdapter } from "./managed.js";
 import { installMcpServersToInstance, uninstallMcpServersFromInstance } from "./mcp.js";
-import { manifestHasPluginForInstance } from "./codex.js";
+import { pluginInstalledForManagedInstance } from "./shared.js";
 import type { ToolAdapter, PerInstanceResult, SupportInput, InstalledContext } from "./types.js";
 
 async function installComponentsAndMcp(
@@ -56,7 +56,10 @@ export const piAdapter: ToolAdapter = {
   },
 
   isInstalled(plugin: Plugin, instance: ToolInstance, ctx: InstalledContext): boolean {
-    return manifestHasPluginForInstance(ctx.getManifest(), instance, plugin.name);
+    // Shared-store aware: Pi reads skills from ~/.agents/skills too, so a
+    // skills-only plugin is installed for Pi via the store even with no
+    // per-tool manifest entry.
+    return pluginInstalledForManagedInstance(plugin, instance, ctx.getManifest());
   },
 
   async install(plugin: Plugin, instance: ToolInstance, sourcePath: string | null): Promise<PerInstanceResult> {

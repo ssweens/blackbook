@@ -49,6 +49,7 @@ import type {
   SupportInput,
   InstalledContext,
 } from "./types.js";
+import { pluginInstalledForManagedInstance } from "./shared.js";
 
 function loadMigratedManifest(): Manifest {
   const manifest = loadManifest();
@@ -843,19 +844,27 @@ export const managedAdapter: ToolAdapter = {
   toolId: "managed",
   usesSource: true,
 
-  supports(_input: SupportInput): { supported: boolean; reason?: string } {
-    // OpenCode/Amp are gated off from plugin support by product decision.
-    return {
-      supported: false,
-      reason:
-        "Plugin support is blocked for this tool until native plugin checks are implemented",
-    };
+  supports(input: SupportInput): { supported: boolean; reason?: string } {
+    // OpenCode/Amp install plugin components through the shared file-copy engine
+    // (skills into ~/.agents/skills, commands/agents into their own dirs), so
+    // they're supported whenever any component can land here.
+    const { plugin, canInstallSkills, canInstallCommands, canInstallAgents, hasHooks } = input;
+    const supported =
+      canInstallSkills ||
+      canInstallCommands ||
+      canInstallAgents ||
+      hasHooks ||
+      plugin.hasMcp ||
+      plugin.hasLsp;
+    return { supported };
   },
 
-  isInstalled(): boolean {
-    // supported === false, so the status check never reaches here for managed
-    // tools; return false to match the pre-refactor `installed` default.
-    return false;
+  isInstalled(plugin: Plugin, instance: ToolInstance, ctx: InstalledContext): boolean {
+    // Installed when the plugin's shared skill is present for this instance, or
+    // a per-tool manifest entry records a component under its own key. A
+    // skills-only plugin counts as installed on every store-sharing tool with
+    // no per-tool manifest key required (the skill lives once in the store).
+    return pluginInstalledForManagedInstance(plugin, instance, ctx.getManifest());
   },
 
   listInstalled(instance: ToolInstance): Plugin[] {

@@ -198,19 +198,38 @@ describe("piAdapter", () => {
 describe("managedAdapter (OpenCode / Amp)", () => {
   const instance = makeInstance({ toolId: "opencode" });
 
-  it("is gated off from support with a reason", () => {
+  it("is supported when a component can install (no longer the old 'blocked' stub)", () => {
     const r = managedAdapter.supports({
-      plugin: makePlugin(),
+      plugin: makePlugin({ skills: ["s"] }),
       instance,
       ...NO_COMPONENTS,
       canInstallSkills: true,
     });
-    expect(r.supported).toBe(false);
-    expect(r.reason).toContain("blocked");
+    expect(r.supported).toBe(true);
   });
 
-  it("reports not-installed regardless of context", () => {
+  it("is unsupported when nothing installable and no mcp/lsp/hooks", () => {
+    expect(
+      managedAdapter.supports({ plugin: makePlugin(), instance, ...NO_COMPONENTS }).supported,
+    ).toBe(false);
+  });
+
+  it("reports not-installed when neither the shared store nor a manifest entry has it", () => {
+    // makePlugin has no skills, and the empty manifest has no owned items.
     expect(managedAdapter.isInstalled(makePlugin(), instance, makeCtx())).toBe(false);
+  });
+
+  it("reports installed when a manifest entry records a component under this instance's key", () => {
+    const manifest = {
+      version: 1,
+      tools: {
+        "opencode:default": {
+          items: { "myplugin::command::c": { kind: "command", name: "c", owner: "myplugin" } },
+        },
+      },
+    } as unknown as Manifest;
+    const ctx = makeCtx({ getManifest: () => manifest });
+    expect(managedAdapter.isInstalled(makePlugin(), instance, ctx)).toBe(true);
   });
 });
 

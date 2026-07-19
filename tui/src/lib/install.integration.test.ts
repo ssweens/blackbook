@@ -44,6 +44,7 @@ import {
 } from "./install.js";
 import { skillsShResultToPlugin } from "./skillssh.js";
 import { uninstallPluginItemsFromInstance } from "./adapters/managed.js";
+import { getAdapterForTool } from "./adapters/types.js";
 import * as manifestModule from "./manifest.js";
 import { flattenNamespacedName, resolveInstanceSubdirPath } from "./path-utils.js";
 import { listBackups } from "./modules/backup.js";
@@ -672,7 +673,12 @@ describe("plugin completeness across instances", () => {
     cleanupAllTestArtifacts();
   });
 
-  it("marks missing when any enabled instance lacks installs", () => {
+  it("marks missing when any enabled instance lacks installs", async () => {
+    // Two OpenCode instances with SEPARATE config dirs. Skills wouldn't
+    // distinguish them (both read the shared ~/.agents/skills store), so use a
+    // command — which installs into each instance's OWN commands/ dir — to
+    // create a genuine per-instance gap: install for primary only, and the
+    // secondary must show as not-installed.
     const primary = getInstance("opencode");
     const secondaryDir = join(TEST_TOOL_DIR, "opencode-secondary");
     mkdirSync(secondaryDir, { recursive: true });
@@ -682,12 +688,31 @@ describe("plugin completeness across instances", () => {
       name: "OpenCode Secondary",
     });
 
-    const plugin = createTestPlugin();
-    if (primary.skillsSubdir) {
-      const skillPath = resolveInstanceSubdirPath(primary.configDir, primary.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
-      mkdirSync(skillPath, { recursive: true });
-      writeFileSync(join(skillPath, "SKILL.md"), "# Test Skill");
-    }
+    // A commands-only plugin so status is decided purely by the per-tool dir.
+    const pluginName = "cmd-only-plugin";
+    const commandName = "cmd-only-command";
+    const cacheDir = join(getPluginsCacheDir(), TEST_MARKETPLACE, pluginName, "commands");
+    mkdirSync(cacheDir, { recursive: true });
+    writeFileSync(join(cacheDir, `${commandName}.md`), "# cmd\n");
+
+    const plugin: Plugin = {
+      name: pluginName,
+      marketplace: TEST_MARKETPLACE,
+      description: "commands-only",
+      source: "",
+      skills: [],
+      commands: [commandName],
+      agents: [],
+      hooks: [],
+      hasMcp: false,
+      hasLsp: false,
+      homepage: "",
+      installed: true,
+      scope: "user",
+    };
+
+    // Install into the primary instance only.
+    await getAdapterForTool("opencode").installComponents(plugin, primary, join(getPluginsCacheDir(), TEST_MARKETPLACE, pluginName));
 
     const statuses = getPluginToolStatus(plugin);
     const supportedEnabled = statuses.filter((status) => status.enabled && status.supported);
