@@ -15,6 +15,7 @@ const HINTS: Record<Tab, string> = {
   tools: "Enter detail · i install · u update · d uninstall · e edit config · Space toggle · R refresh · q quit",
   sync: "y to sync missing/changed items (press twice) · Enter details · d diff/detail · R refresh · q quit",
   projects: "Enter open · a add · A adopt · P apply profile · d remove · (in project) p push · u pull · e toggle · d delete · Esc back · R refresh · q quit",
+  profiles: "n new · Enter/e edit · d delete · (in builder) Space toggle · Enter save · Esc back · q quit",
   settings: "↑/↓ select · Enter edit · Esc cancel · R refresh · q quit",
 };
 

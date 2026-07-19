@@ -36,6 +36,7 @@ import { SyncTab } from "./tabs/SyncTab.js";
 import { DiscoverTab } from "./tabs/DiscoverTab.js";
 import { InstalledTab } from "./tabs/InstalledTab.js";
 import { ProjectsTab } from "./tabs/ProjectsTab.js";
+import { ProfilesTab } from "./tabs/ProfilesTab.js";
 import { AddProjectModal } from "./components/AddProjectModal.js";
 import { AdoptModal } from "./components/AdoptModal.js";
 import { ProfilePickerModal } from "./components/ProfilePickerModal.js";
@@ -69,7 +70,7 @@ import { buildDetailCallbacks } from "./lib/detail-callbacks.js";
 import { getSyncItemKey, sortAndFilterPiPackages } from "./lib/derived.js";
 import { buildProjectSkillRows, collectUnmanagedSkills } from "./lib/projects.js";
 
-const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces", "projects", "settings"];
+const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces", "projects", "profiles", "settings"];
 
 interface TabContentProps {
   tab: Tab;
@@ -107,6 +108,8 @@ function TabContent({ tab, searchFocused, onSearchFocus, onSearchBlur }: TabCont
       return <SyncTab contentHeight={contentHeight} />;
     case "projects":
       return <ProjectsTab contentHeight={contentHeight} />;
+    case "profiles":
+      return <ProfilesTab contentHeight={contentHeight} />;
     case "settings":
       return <SettingsTab />;
   }
@@ -308,6 +311,7 @@ export function App() {
     installed: false,
     marketplaces: false,
     projects: false,
+    profiles: false,
     settings: false,
   });
 
@@ -397,6 +401,7 @@ export function App() {
           await refreshToolDetection();
           break;
         case "projects":
+        case "profiles":
           await loadProjects();
           break;
         case "sync":
@@ -435,6 +440,7 @@ export function App() {
       : tab === "installed" ? state.installedPluginsLoaded || state.filesLoaded || state.piPackagesLoaded
       : tab === "tools" ? state.managedTools.length > 0 && Object.keys(state.toolDetection).length > 0
       : tab === "projects" ? state.projectsLoaded
+      : tab === "profiles" ? state.projectsLoaded
       : tab === "settings";
     if (initialTabAlreadyHydrated) return;
 
@@ -1460,6 +1466,12 @@ export function App() {
       return;
     }
 
+    // The Profiles tab builder (name input / skill picker / delete confirm) owns
+    // input while engaged — including Esc, which backs out one builder step.
+    // Without this, typed characters hit global single-key shortcuts (digits
+    // switch tabs, `q` quits) while the user is naming a profile.
+    if (tab === "profiles" && useStore.getState().profilesEditing) { return; }
+
     // A "modal" overlay (SourceSetupWizard, EditToolModal, Add(Pi)MarketplaceModal)
     // owns input while open and handles its own Esc to close itself. Return early
     // for EVERY key — including Esc — so App's own Esc handling below does not ALSO
@@ -1539,7 +1551,7 @@ export function App() {
       }
     }
 
-    // Number keys 1-7 for tab navigation
+    // Number keys 1-8 for tab navigation
     if (!isOverlayOpen) {
       const tabIdx = parseInt(input, 10);
       if (tabIdx >= 1 && tabIdx <= TABS.length) {
@@ -1548,8 +1560,9 @@ export function App() {
       }
     }
 
-    // Settings tab: SettingsPanel handles its own input (up/down/enter/esc)
-    if (tab === "settings") {
+    // Settings/Profiles tabs: the tab component handles its own input
+    // (up/down/enter/esc, builder keys). Digits/q/R above still work.
+    if (tab === "settings" || tab === "profiles") {
       return;
     }
 

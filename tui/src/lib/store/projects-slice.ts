@@ -32,6 +32,10 @@ export type ProjectsSlice = Pick<
   | "removeProjectSkill"
   | "adoptUnmanagedSkills"
   | "applyProfile"
+  | "saveProfile"
+  | "deleteProfile"
+  | "profilesEditing"
+  | "setProfilesEditing"
 >;
 
 function backupRetention(): number | undefined {
@@ -51,6 +55,9 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
   projectsLoaded: false,
   projectDetailPath: null,
   profiles: {},
+  profilesEditing: false,
+
+  setProfilesEditing: (editing) => set({ profilesEditing: editing }),
 
   setProjectDetailPath: (path) => set({ projectDetailPath: path }),
 
@@ -240,5 +247,44 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
       notify(`Applied profile "${name}" (${applied} skill${applied === 1 ? "" : "s"})`, "success");
     }
     return applied > 0;
+  },
+
+  saveProfile: async (name, skills) => {
+    const { notify } = get();
+    const trimmed = name.trim();
+    if (!trimmed) {
+      notify("Profile name can't be empty", "error");
+      return false;
+    }
+    const { config, configPath } = loadYamlConfig();
+    try {
+      saveYamlConfig({ ...config, profiles: { ...config.profiles, [trimmed]: skills } }, configPath);
+    } catch (err) {
+      notify(`Failed to save profile: ${err instanceof Error ? err.message : String(err)}`, "error");
+      return false;
+    }
+    set({ profiles: { ...get().profiles, [trimmed]: skills } });
+    notify(`Saved profile "${trimmed}" (${skills.length} skill${skills.length === 1 ? "" : "s"})`, "success");
+    return true;
+  },
+
+  deleteProfile: async (name) => {
+    const { notify } = get();
+    const { config, configPath } = loadYamlConfig();
+    if (!(name in config.profiles)) {
+      notify(`Profile "${name}" not found`, "warning");
+      return false;
+    }
+    const { [name]: _removed, ...rest } = config.profiles;
+    try {
+      saveYamlConfig({ ...config, profiles: rest }, configPath);
+    } catch (err) {
+      notify(`Failed to delete profile: ${err instanceof Error ? err.message : String(err)}`, "error");
+      return false;
+    }
+    const { [name]: _r2, ...stateRest } = get().profiles;
+    set({ profiles: stateRest });
+    notify(`Deleted profile "${name}"`, "success");
+    return true;
   },
 });

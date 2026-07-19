@@ -495,9 +495,9 @@ describe("App E2E — Tab Navigation", () => {
     try {
       await waitForFrame(stdout.lastFrame, (f) => f.includes("[4] Installed"));
       useStore.setState({ tab: "marketplaces" });
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("[5] Marketplaces"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("[5] Markets"));
       useStore.setState({ tab: "settings" });
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("[7] Settings"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("[8] Settings"));
     } finally {
       unmount();
     }
@@ -560,7 +560,7 @@ describe("App E2E — Tab Navigation", () => {
       act(() => {
         useStore.setState({ tab: "marketplaces" });
       });
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("[5] Marketplaces"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("[5] Markets"));
       await settleInput();
       expect(loadInstalledPlugins).not.toHaveBeenCalled();
       expect(loadPiPackages).not.toHaveBeenCalled();
@@ -1506,7 +1506,7 @@ describe("App E2E — Settings Tab", () => {
     useStore.setState({ tab: "settings" });
     const { stdout, unmount } = render(<App />);
     try {
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("[7] Settings"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("[8] Settings"));
     } finally {
       unmount();
     }

@@ -8,8 +8,9 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "tools", label: "Tools" },
   { id: "discover", label: "Discover" },
   { id: "installed", label: "Installed" },
-  { id: "marketplaces", label: "Marketplaces" },
+  { id: "marketplaces", label: "Markets" },
   { id: "projects", label: "Projects" },
+  { id: "profiles", label: "Profiles" },
   { id: "settings", label: "Settings" },
 ];
 

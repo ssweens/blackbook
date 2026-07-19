@@ -75,6 +75,13 @@ export interface Actions {
   adoptUnmanagedSkills: () => Promise<boolean>;
   /** Apply a named profile (skill bundle) to a workspace — pushes its skills in. */
   applyProfile: (workspacePath: string, name: string) => Promise<boolean>;
+  /** Create or update a named profile in config.yaml. */
+  saveProfile: (name: string, skills: string[]) => Promise<boolean>;
+  /** Delete a named profile from config.yaml. */
+  deleteProfile: (name: string) => Promise<boolean>;
+  /** True while the Profiles tab builder/confirm owns input (suppresses global keys). */
+  profilesEditing: boolean;
+  setProfilesEditing: (editing: boolean) => void;
   setDetailPiPackage: (pkg: PiPackage | null) => Promise<void>;
   togglePiMarketplaceEnabled: (name: string) => Promise<void>;
   addPiMarketplace: (name: string, source: string) => Promise<void>;

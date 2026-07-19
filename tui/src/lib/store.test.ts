@@ -2798,6 +2798,7 @@ describe("composed store shape", () => {
     "projectsLoaded",
     "projectDetailPath",
     "profiles",
+    "profilesEditing",
   ] as const;
 
   const EXPECTED_ACTIONS = [
@@ -2867,6 +2868,9 @@ describe("composed store shape", () => {
     "removeProjectSkill",
     "adoptUnmanagedSkills",
     "applyProfile",
+    "saveProfile",
+    "deleteProfile",
+    "setProfilesEditing",
   ] as const;
 
   it("exposes every expected state field", () => {

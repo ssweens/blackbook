@@ -172,4 +172,47 @@ describe("projects-slice", () => {
     expect(ok).toBe(false);
     expect(pushSkillMock).not.toHaveBeenCalled();
   });
+
+  it("saveProfile writes the profile to config and updates state", async () => {
+    const { get } = makeStore();
+    const ok = await get().saveProfile("web", ["a", "b"]);
+    expect(ok).toBe(true);
+    expect(saveConfigMock).toHaveBeenCalledWith(
+      expect.objectContaining({ profiles: { web: ["a", "b"] } }),
+      "/cfg",
+    );
+    expect(get().profiles).toEqual({ web: ["a", "b"] });
+  });
+
+  it("saveProfile rejects an empty name without writing", async () => {
+    const { get } = makeStore();
+    const ok = await get().saveProfile("   ", ["a"]);
+    expect(ok).toBe(false);
+    expect(saveConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("deleteProfile removes the profile from config and state", async () => {
+    loadConfigMock.mockReturnValue({
+      config: { projects: [], profiles: { web: ["a"], db: ["b"] }, settings: { backup_retention: 3 } },
+      configPath: "/cfg",
+    });
+    getProjectsMock.mockReturnValue([]);
+    const { get } = makeStore();
+    await get().loadProjects();
+
+    const ok = await get().deleteProfile("web");
+    expect(ok).toBe(true);
+    expect(saveConfigMock).toHaveBeenCalledWith(
+      expect.objectContaining({ profiles: { db: ["b"] } }),
+      "/cfg",
+    );
+    expect(get().profiles).toEqual({ db: ["b"] });
+  });
+
+  it("deleteProfile no-ops for an unknown profile", async () => {
+    const { get } = makeStore();
+    const ok = await get().deleteProfile("nope");
+    expect(ok).toBe(false);
+    expect(saveConfigMock).not.toHaveBeenCalled();
+  });
 });
