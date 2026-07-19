@@ -40,7 +40,9 @@ import {
   deleteFileEverywhere,
   reconcileStaleInstallArtifacts,
   uninstallSkillFromInstance,
+  downloadPlugin,
 } from "./install.js";
+import { skillsShResultToPlugin } from "./skillssh.js";
 import { uninstallPluginItemsFromInstance } from "./adapters/managed.js";
 import * as manifestModule from "./manifest.js";
 import { flattenNamespacedName, resolveInstanceSubdirPath } from "./path-utils.js";
@@ -2018,4 +2020,69 @@ describe("claude derived view (~/.claude/skills as symlinks into ~/.agents/skill
     expect(existsSync(join(storePath, "SKILL.md"))).toBe(true);
   });
 
+  describe("downloadPlugin (skills.sh discovery source)", () => {
+    function makeSkillsShPlugin(): Plugin {
+      return skillsShResultToPlugin({
+        id: "acme/agent-skills/widget-builder",
+        skillId: "widget-builder",
+        name: "widget-builder",
+        installs: 42,
+        source: "acme/agent-skills",
+      });
+    }
+
+    it("fetches via the download API and lays out the canonical skills/<id>/SKILL.md shape", async () => {
+      const plugin = makeSkillsShPlugin();
+      vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          files: [
+            { path: "SKILL.md", contents: "---\nname: widget-builder\n---\n\nBuild widgets." },
+            { path: "references/patterns.md", contents: "# Patterns" },
+          ],
+        }),
+      } as Response);
+
+      const result = await downloadPlugin(plugin, "");
+      expect(result).not.toBeNull();
+
+      const skillMd = join(result!, "skills", "widget-builder", "SKILL.md");
+      expect(existsSync(skillMd)).toBe(true);
+      expect(readFileSync(skillMd, "utf-8")).toContain("Build widgets");
+      expect(existsSync(join(result!, "skills", "widget-builder", "references", "patterns.md"))).toBe(true);
+    });
+
+    it("never git-clones — the whole repo is not fetched, only the download API", async () => {
+      const plugin = makeSkillsShPlugin();
+      const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ files: [{ path: "SKILL.md", contents: "content" }] }),
+      } as Response);
+
+      await downloadPlugin(plugin, "");
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const [url] = fetchSpy.mock.calls[0];
+      expect(String(url)).toBe("https://skills.sh/api/download/acme/agent-skills/widget-builder");
+    });
+
+    it("returns null and cleans up when the download API responds non-ok", async () => {
+      const plugin = makeSkillsShPlugin();
+      vi.spyOn(global, "fetch").mockResolvedValue({ ok: false, status: 404 } as Response);
+
+      const result = await downloadPlugin(plugin, "");
+      expect(result).toBeNull();
+      expect(existsSync(join(getPluginsCacheDir(), "skills.sh", plugin.name))).toBe(false);
+    });
+
+    it("returns null when the response has no SKILL.md", async () => {
+      const plugin = makeSkillsShPlugin();
+      vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ files: [{ path: "README.md", contents: "no skill file here" }] }),
+      } as Response);
+
+      const result = await downloadPlugin(plugin, "");
+      expect(result).toBeNull();
+    });
+  });
 });

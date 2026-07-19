@@ -2761,6 +2761,7 @@ describe("composed store shape", () => {
   const EXPECTED_STATE_FIELDS = [
     "tab",
     "marketplaces",
+    "skillsShResults",
     "installedPlugins",
     "installedPluginsLoaded",
     "standaloneSkills",
@@ -2806,6 +2807,7 @@ describe("composed store shape", () => {
     "setSearch",
     "setSelectedIndex",
     "loadMarketplaces",
+    "searchSkillsSh",
     "loadInstalledPlugins",
     "loadFiles",
     "refreshManagedTools",

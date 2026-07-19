@@ -181,8 +181,15 @@ export interface Marketplace {
   installedCount: number;
   updatedAt?: Date;
   autoUpdate: boolean;
-  source: "blackbook" | "claude";
+  source: "blackbook" | "claude" | "skills.sh";
   enabled: boolean;
+  /**
+   * True for a virtual, search-backed marketplace (skills.sh) whose
+   * `plugins` are query results, not a fixed cloned catalog —
+   * `availableCount` reflects "results for the last search", not a stable
+   * total, and there is nothing to periodically re-fetch until searched.
+   */
+  dynamic?: boolean;
 }
 
 export interface InstalledItem {
@@ -225,6 +232,8 @@ export interface Notification {
 export interface AppState {
   tab: Tab;
   marketplaces: Marketplace[];
+  /** Live skills.sh search results, synthesized as Plugin rows. Cleared when the search box empties. */
+  skillsShResults: Plugin[];
   installedPlugins: Plugin[];
   installedPluginsLoaded: boolean;
   standaloneSkills: import("./install.js").StandaloneSkill[];

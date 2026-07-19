@@ -112,6 +112,34 @@ describe("claudeAdapter.supports", () => {
     const r = claudeAdapter.supports({ plugin: makePlugin(), instance, ...NO_COMPONENTS });
     expect(r.supported).toBe(false);
   });
+
+  it("is unsupported for skills.sh plugins — Claude's native CLI can't register a virtual marketplace", () => {
+    const r = claudeAdapter.supports({
+      plugin: makePlugin({ marketplace: "skills.sh" }),
+      instance,
+      ...NO_COMPONENTS,
+      canInstallSkills: true, // even though a skill is installable, the marketplace gate wins
+    });
+    expect(r.supported).toBe(false);
+    expect(r.reason).toContain("skills.sh");
+  });
+});
+
+describe("claudeAdapter skills.sh lifecycle no-ops", () => {
+  const instance = makeInstance({ toolId: "claude-code", name: "Claude" });
+  const plugin = makePlugin({ marketplace: "skills.sh" });
+
+  it("install is a clean no-op (never shells out to the native CLI)", async () => {
+    expect(await claudeAdapter.install(plugin, instance, null, "https://skills.sh")).toEqual({ count: 0, errors: [] });
+  });
+
+  it("uninstall is a clean no-op (no spurious 'not found' error)", async () => {
+    expect(await claudeAdapter.uninstall(plugin, instance)).toEqual({ count: 0, errors: [] });
+  });
+
+  it("update is a clean no-op", async () => {
+    expect(await claudeAdapter.update(plugin, instance, null, "https://skills.sh")).toEqual({ count: 0, errors: [] });
+  });
 });
 
 describe("claudeAdapter.isInstalled", () => {

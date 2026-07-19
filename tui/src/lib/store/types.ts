@@ -18,6 +18,12 @@ import type { PluginDrift } from "../plugin-drift.js";
 export interface Actions {
   setTab: (tab: Tab) => void;
   setSearch: (search: string) => void;
+  /**
+   * Debounced skills.sh discovery search — fetches results for `search` and
+   * merges them into `skillsShResults` as synthesized Plugin rows so they
+   * flow through Discover/install unmodified. No-ops below 2 characters.
+   */
+  searchSkillsSh: (query: string) => Promise<void>;
   setSelectedIndex: (index: number) => void;
   loadMarketplaces: () => Promise<void>;
   loadInstalledPlugins: (options?: { silent?: boolean }) => Promise<void>;

@@ -135,6 +135,7 @@ export function App() {
 
   // ── Data: Marketplaces & Plugins ──
   const marketplaces = useStore((s) => s.marketplaces);
+  const skillsShResults = useStore((s) => s.skillsShResults);
   const installedPlugins = useStore((s) => s.installedPlugins);
   const standaloneSkills = useStore((s) => s.standaloneSkills);
 
@@ -516,8 +517,11 @@ export function App() {
   }, [syncPreview, syncSelection]);
 
 
+  // The dynamic skills.sh marketplace's `plugins` mirrors `skillsShResults` —
+  // excluded here since DiscoverTab appends skillsShResults separately below
+  // (see the matching comment there), or every result would double.
   const allPlugins = useMemo(() => {
-    return marketplaces.flatMap((m) => m.plugins);
+    return marketplaces.filter((m) => !m.dynamic).flatMap((m) => m.plugins);
   }, [marketplaces]);
 
   const filteredPlugins = useMemo(() => {
@@ -533,6 +537,11 @@ export function App() {
           p.description.toLowerCase().includes(lowerSearch) ||
           p.marketplace.toLowerCase().includes(lowerSearch)
       );
+    }
+    // skillsShResults are already query-scoped server-side, so they're
+    // appended after filtering rather than re-filtered — matches DiscoverTab.
+    if (tab === "discover" && skillsShResults.length > 0) {
+      filtered = [...filtered, ...skillsShResults];
     }
 
     const sorted = [...filtered].sort((a, b) => {

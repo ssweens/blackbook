@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { Box, Text } from "ink";
 import { useStore } from "../lib/store.js";
 import { ItemList, PLUGIN_COLUMNS } from "../components/ItemList.js";
@@ -36,7 +36,20 @@ export function DiscoverTab({ contentHeight, searchFocused, onSearchFocus, onSea
   const sortBy = useStore((s) => s.sortBy);
   const sortDir = useStore((s) => s.sortDir);
   const marketplaces = useStore((s) => s.marketplaces);
+  const skillsShResults = useStore((s) => s.skillsShResults);
+  const searchSkillsSh = useStore((s) => s.searchSkillsSh);
   const piPackages = useStore((s) => s.piPackages);
+
+  // Debounce skills.sh discovery search on the shared search box — a live
+  // network query per keystroke would be both slow and rude to their API.
+  const skillsShDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (skillsShDebounceRef.current) clearTimeout(skillsShDebounceRef.current);
+    skillsShDebounceRef.current = setTimeout(() => { void searchSkillsSh(search); }, 400);
+    return () => {
+      if (skillsShDebounceRef.current) clearTimeout(skillsShDebounceRef.current);
+    };
+  }, [search, searchSkillsSh]);
   const subViewIndex = selectedIndex;
   // Single source of truth for the sub-view list height — previously the
   // "(showing X-Y of N)" range label hardcoded 12 while the ItemList it
@@ -45,7 +58,13 @@ export function DiscoverTab({ contentHeight, searchFocused, onSearchFocus, onSea
   // scroll position, worse the taller the terminal).
   const listMaxHeight = Math.max(4, contentHeight - 9);
 
-  const allPlugins = useMemo(() => marketplaces.flatMap((m) => m.plugins), [marketplaces]);
+  // The dynamic skills.sh marketplace's `plugins` mirrors `skillsShResults`
+  // (kept in sync so the Marketplaces tab shows a sensible count) — excluded
+  // here since it's appended separately below, or every result would double.
+  const allPlugins = useMemo(
+    () => marketplaces.filter((m) => !m.dynamic).flatMap((m) => m.plugins),
+    [marketplaces],
+  );
 
   const filteredPlugins = useMemo(() => {
     const lowerSearch = search.toLowerCase();
@@ -57,6 +76,12 @@ export function DiscoverTab({ contentHeight, searchFocused, onSearchFocus, onSea
           p.description.toLowerCase().includes(lowerSearch) ||
           p.marketplace.toLowerCase().includes(lowerSearch)
       );
+    }
+    // skillsShResults are already query-scoped server-side (skills.sh's own
+    // search), so they're appended after the client-side filter rather than
+    // re-filtered against it.
+    if (skillsShResults.length > 0) {
+      filtered = [...filtered, ...skillsShResults];
     }
     return [...filtered].sort((a, b) => {
       if (sortBy === "name") {

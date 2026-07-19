@@ -464,7 +464,7 @@ export function parseMarketplaces(): Marketplace[] {
   const blackbookNames = new Set(Object.keys(blackbookUrls));
   for (const [name, url] of Object.entries(claudeUrls)) {
     if (blackbookNames.has(name)) continue;
-    
+
     const expandedUrl = expandPath(url);
     const isLocal = expandedUrl.startsWith("/");
     marketplaces.push({
@@ -477,6 +477,26 @@ export function parseMarketplaces(): Marketplace[] {
       autoUpdate: false,
       source: "claude",
       enabled: !isDisabled(name),
+    });
+  }
+
+  // Virtual discovery marketplace: skills.sh. Never fetched by fetchMarketplace
+  // (dynamic: true means loadMarketplaces leaves its `plugins` untouched) —
+  // its results come from the debounced search-box query instead. Exists here
+  // purely so installPlugin's `marketplaces.find(m => m.name === plugin.marketplace)`
+  // lookup resolves for skills.sh-sourced Plugin rows.
+  if (!blackbookNames.has("skills.sh")) {
+    marketplaces.push({
+      name: "skills.sh",
+      url: "https://skills.sh",
+      isLocal: false,
+      plugins: [],
+      availableCount: 0,
+      installedCount: 0,
+      autoUpdate: false,
+      source: "skills.sh",
+      dynamic: true,
+      enabled: !isDisabled("skills.sh"),
     });
   }
 
@@ -555,7 +575,7 @@ export function getPiMarketplaces(): PiMarketplacesConfig {
 
 export function getDisabledMarketplaces(): string[] {
   const { config } = loadYamlConfig();
-  return config.settings.disabled_marketplaces;
+  return config.settings.disabled_marketplaces ?? [];
 }
 
 export function setMarketplaceEnabled(name: string, enabled: boolean): void {

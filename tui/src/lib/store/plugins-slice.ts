@@ -6,6 +6,7 @@ import { atomicWriteFileSync } from "../fs-utils.js";
 import { safePath } from "../validation.js";
 import type { Plugin } from "../types.js";
 import { fetchMarketplace, resetFetchErrors, getFetchErrors } from "../marketplace.js";
+import { searchSkillsSh, skillsShResultToPlugin } from "../skillssh.js";
 import {
   parseMarketplaces,
   addMarketplace as addMarketplaceToConfig,
@@ -113,6 +114,7 @@ export type PluginsSlice = Pick<
   Store,
   // state
   | "marketplaces"
+  | "skillsShResults"
   | "installedPlugins"
   | "installedPluginsLoaded"
   | "standaloneSkills"
@@ -130,14 +132,44 @@ export type PluginsSlice = Pick<
   | "removeMarketplace"
   | "updateMarketplace"
   | "toggleMarketplaceEnabled"
+  | "searchSkillsSh"
 >;
+
+let searchSkillsShRunToken = 0;
 
 export const createPluginsSlice: SliceCreator<PluginsSlice> = (set, get) => ({
   marketplaces: [],
+  skillsShResults: [],
   installedPlugins: [],
   installedPluginsLoaded: false,
   standaloneSkills: [] as import("../install.js").StandaloneSkill[],
   managedItems: [],
+
+  searchSkillsSh: async (query) => {
+    const runToken = ++searchSkillsShRunToken;
+    const trimmed = query.trim();
+    const applyResults = (results: Plugin[]) => {
+      set({
+        skillsShResults: results,
+        marketplaces: get().marketplaces.map((m) =>
+          m.dynamic ? { ...m, plugins: results, availableCount: results.length } : m,
+        ),
+      });
+    };
+    if (trimmed.length < 2) {
+      applyResults([]);
+      return;
+    }
+    const results = await searchSkillsSh(trimmed);
+    if (runToken !== searchSkillsShRunToken) return; // a newer search started
+    const { installedPlugins } = get();
+    applyResults(
+      results.map((r) => {
+        const plugin = skillsShResultToPlugin(r);
+        return { ...plugin, ...getInstallStatus(plugin, installedPlugins.some((ip) => ip.name === plugin.name)) };
+      }),
+    );
+  },
 
   loadMarketplaces: async () => {
     const runToken = ++loadMarketplacesRunToken;
@@ -162,6 +194,14 @@ export const createPluginsSlice: SliceCreator<PluginsSlice> = (set, get) => ({
               availableCount: 0,
               installedCount: 0,
             };
+          }
+
+          // The virtual skills.sh marketplace has no marketplace.json to
+          // fetch — its plugins come from the live search box instead (see
+          // searchSkillsSh / DiscoverTab's debounce), never from here.
+          if (m.dynamic) {
+            const current = get().skillsShResults;
+            return { ...m, plugins: current, availableCount: current.length, installedCount: 0 };
           }
 
           const plugins = await fetchMarketplace(m);
@@ -209,8 +249,16 @@ export const createPluginsSlice: SliceCreator<PluginsSlice> = (set, get) => ({
       // A newer loadMarketplaces call started during our fetches — let it win.
       if (runToken !== loadMarketplacesRunToken) return;
       const state = get();
+      // STEP 4 above recomputed install status onto the dynamic skills.sh
+      // marketplace's `plugins` too — but DiscoverTab/App.tsx read live
+      // search results from `skillsShResults` directly (not marketplace.plugins,
+      // to avoid double-counting — see the filter in both). Without this, an
+      // install/uninstall's subsequent refreshAll() would leave those rows
+      // showing stale "not installed" status indefinitely.
+      const refreshedSkillsSh = updatedMarketplaces.find((m) => m.dynamic)?.plugins ?? state.skillsShResults;
       set({
         marketplaces: updatedMarketplaces,
+        skillsShResults: refreshedSkillsSh,
         installedPlugins: installedWithStatus,
         installedPluginsLoaded: true,
         tools,

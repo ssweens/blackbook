@@ -2,6 +2,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  writeFileSync,
   symlinkSync,
   unlinkSync,
   renameSync,
@@ -192,6 +193,52 @@ export function parseGithubRepoFromUrl(
   return null;
 }
 
+/**
+ * Fetch a skills.sh-discovered skill's files via their download API and lay
+ * them out at `<pluginDir>/skills/<skillId>/...` — the same canonical shape
+ * every other plugin source produces, so the rest of the install pipeline
+ * (installPlugin, drift detection, uninstall) needs no skills.sh-specific
+ * branches beyond this one entry point.
+ */
+async function downloadSkillsShPlugin(plugin: Plugin, pluginDir: string): Promise<string | null> {
+  // plugin.name is "owner-repo" (namespace/manifest-owner) — the actual skill
+  // directory/download-API slug is plugin.skills[0] (see skillsShResultToPlugin).
+  const skillId = plugin.skills[0];
+  const repo = typeof plugin.source === "object" ? plugin.source.repo : undefined;
+  if (!skillId) {
+    logError(`skills.sh plugin ${plugin.name} has no skill id`, new Error("missing skills[0]"));
+    return null;
+  }
+  if (!repo) {
+    logError(`skills.sh plugin ${plugin.name} has no repo source`, new Error("missing source.repo"));
+    return null;
+  }
+  try {
+    const res = await fetch(`https://skills.sh/api/download/${repo}/${skillId}`, {
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) {
+      logError(`Failed to download skills.sh skill ${skillId}`, new Error(`HTTP ${res.status}`));
+      return null;
+    }
+    const data = (await res.json()) as { files?: Array<{ path?: string; contents?: string }> };
+    const files = data.files ?? [];
+    if (files.length === 0) return null;
+
+    const skillDir = safePath(join(pluginDir, "skills"), skillId);
+    for (const file of files) {
+      if (!file.path || typeof file.contents !== "string") continue;
+      const dest = safePath(skillDir, ...file.path.split("/"));
+      mkdirSync(dirname(dest), { recursive: true });
+      writeFileSync(dest, file.contents, "utf-8");
+    }
+    return existsSync(join(skillDir, "SKILL.md")) ? pluginDir : null;
+  } catch (error) {
+    logError(`Failed to download skills.sh skill ${skillId}`, error);
+    return null;
+  }
+}
+
 export async function downloadPlugin(
   plugin: Plugin,
   marketplaceUrl: string,
@@ -210,6 +257,15 @@ export async function downloadPlugin(
   }
 
   mkdirSync(pluginDir, { recursive: true });
+
+  // skills.sh discovery result: fetch the skill's files directly via their
+  // download API rather than git-cloning the whole repo — sidesteps having
+  // to locate an arbitrary subpath inside someone else's repo layout.
+  if (plugin.marketplace === "skills.sh") {
+    const downloaded = await downloadSkillsShPlugin(plugin, pluginDir);
+    if (!downloaded) rmSync(pluginDir, { recursive: true, force: true });
+    return downloaded;
+  }
 
   const source = plugin.source;
 
