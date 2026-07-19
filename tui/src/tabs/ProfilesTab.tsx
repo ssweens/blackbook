@@ -3,21 +3,57 @@ import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { useStore } from "../lib/store.js";
 import { getConfigRepoPath } from "../lib/config.js";
-import { indexSourceSkills } from "../lib/projects.js";
+import { indexSourceSkillTree, type SourceSkillNamespace } from "../lib/projects.js";
 
 /**
  * Profiles tab — named skill bundles (config `profiles:`) that can be applied
  * to any workspace. List view for browsing, builder sub-view for creating and
- * editing (multi-select over the source repo's skills).
+ * editing.
+ *
+ * The builder shows a namespace-aware tree: each `skills/<ns>/` group is a
+ * selectable header (toggling it selects/deselects all its skills) that
+ * expands to its individual skills, plus top-level skills. Profiles still
+ * store a flat list of bare skill names, so a namespace selection is exactly
+ * equivalent to selecting each of its children — applyProfile needs no change.
  */
 
 type Mode =
   | { kind: "list" }
-  | { kind: "edit"; original: string | null; name: string; naming: boolean; selected: Set<string>; cursor: number }
+  | {
+      kind: "edit";
+      original: string | null;
+      name: string;
+      naming: boolean;
+      selected: Set<string>;
+      cursor: number;
+      expanded: Set<string>;
+    }
   | { kind: "confirmDelete"; name: string };
+
+/** A flattened, navigable row in the builder tree. */
+type TreeRow =
+  | { kind: "namespace"; name: string; skills: string[]; expanded: boolean }
+  | { kind: "skill"; name: string; depth: 0 | 1 };
 
 export interface ProfilesTabProps {
   contentHeight: number;
+}
+
+function buildRows(
+  namespaces: SourceSkillNamespace[],
+  topLevel: string[],
+  expanded: Set<string>,
+): TreeRow[] {
+  const rows: TreeRow[] = [];
+  for (const ns of namespaces) {
+    const isExpanded = expanded.has(ns.name);
+    rows.push({ kind: "namespace", name: ns.name, skills: ns.skills, expanded: isExpanded });
+    if (isExpanded) {
+      for (const s of ns.skills) rows.push({ kind: "skill", name: s, depth: 1 });
+    }
+  }
+  for (const s of topLevel) rows.push({ kind: "skill", name: s, depth: 0 });
+  return rows;
 }
 
 export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
@@ -38,13 +74,24 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
 
   const names = useMemo(() => Object.keys(profiles).sort(), [profiles]);
 
-  // All skills available in the source repo, sorted. Recomputed when entering
-  // the builder (cheap directory scan; the tab re-renders on mode change).
-  const sourceSkills = useMemo(() => {
+  // Source repo skills grouped into namespaces + top-level. Recomputed when
+  // entering the builder (cheap directory scan; the tab re-renders on mode
+  // change).
+  const tree = useMemo(() => {
     const repo = getConfigRepoPath();
-    if (!repo) return [];
-    return [...indexSourceSkills(repo).keys()].sort();
+    if (!repo) return { namespaces: [], topLevel: [] };
+    return indexSourceSkillTree(repo);
   }, [mode.kind]);
+
+  const totalSkills = useMemo(
+    () => tree.namespaces.reduce((n, ns) => n + ns.skills.length, 0) + tree.topLevel.length,
+    [tree],
+  );
+
+  const rows = useMemo(
+    () => (mode.kind === "edit" ? buildRows(tree.namespaces, tree.topLevel, mode.expanded) : []),
+    [tree, mode],
+  );
 
   const openBuilder = (original: string | null) => {
     setMode({
@@ -55,6 +102,7 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
       naming: original === null,
       selected: new Set(original ? profiles[original] ?? [] : []),
       cursor: 0,
+      expanded: new Set(),
     });
   };
 
@@ -92,15 +140,33 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
       setMode({ kind: "list" });
       return;
     }
+
+    const row = rows[mode.cursor];
+
     if (key.upArrow) {
       setMode({ ...mode, cursor: Math.max(0, mode.cursor - 1) });
     } else if (key.downArrow) {
-      setMode({ ...mode, cursor: Math.min(Math.max(0, sourceSkills.length - 1), mode.cursor + 1) });
-    } else if (input === " " && sourceSkills.length > 0) {
-      const skill = sourceSkills[mode.cursor];
+      setMode({ ...mode, cursor: Math.min(Math.max(0, rows.length - 1), mode.cursor + 1) });
+    } else if ((key.rightArrow || key.leftArrow) && row?.kind === "namespace") {
+      // Expand/collapse the namespace under the cursor.
+      const expanded = new Set(mode.expanded);
+      if (key.rightArrow) expanded.add(row.name);
+      else expanded.delete(row.name);
+      setMode({ ...mode, expanded });
+    } else if (input === " " && row) {
       const selected = new Set(mode.selected);
-      if (selected.has(skill)) selected.delete(skill);
-      else selected.add(skill);
+      if (row.kind === "namespace") {
+        // Toggle the whole namespace: if every child is selected, clear them
+        // all; otherwise select them all.
+        const allSelected = row.skills.every((s) => selected.has(s));
+        for (const s of row.skills) {
+          if (allSelected) selected.delete(s);
+          else selected.add(s);
+        }
+      } else {
+        if (selected.has(row.name)) selected.delete(row.name);
+        else selected.add(row.name);
+      }
       setMode({ ...mode, selected });
     } else if (input === "r") {
       setMode({ ...mode, naming: true });
@@ -148,31 +214,47 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
     }
 
     const maxRows = Math.max(1, contentHeight - 5);
-    const start = Math.max(0, Math.min(mode.cursor - Math.floor(maxRows / 2), sourceSkills.length - maxRows));
-    const visible = sourceSkills.slice(start, start + maxRows);
+    const start = Math.max(0, Math.min(mode.cursor - Math.floor(maxRows / 2), rows.length - maxRows));
+    const visible = rows.slice(start, start + maxRows);
     return (
       <Box flexDirection="column">
         <Box>
           <Text bold color="cyan">{mode.name}</Text>
-          <Text color="gray">{"  "}{mode.selected.size} of {sourceSkills.length} skills selected</Text>
+          <Text color="gray">{"  "}{mode.selected.size} of {totalSkills} skills selected</Text>
         </Box>
-        {sourceSkills.length === 0 ? (
+        {rows.length === 0 ? (
           <Text color="gray">No skills found in the source repo.</Text>
         ) : (
-          visible.map((skill, i) => {
+          visible.map((row, i) => {
             const idx = start + i;
             const isSel = idx === mode.cursor;
-            const checked = mode.selected.has(skill);
+            const marker = isSel ? "❯ " : "  ";
+            if (row.kind === "namespace") {
+              const selCount = row.skills.filter((s) => mode.selected.has(s)).length;
+              const glyph = selCount === 0 ? "○" : selCount === row.skills.length ? "◉" : "◐";
+              const glyphColor = selCount === 0 ? "gray" : selCount === row.skills.length ? "green" : "yellow";
+              return (
+                <Box key={`ns:${row.name}`}>
+                  <Text color={isSel ? "cyan" : "gray"}>{marker}</Text>
+                  <Text color={glyphColor}>{glyph} </Text>
+                  <Text color="blue">{row.expanded ? "▾ " : "▸ "}</Text>
+                  <Text bold color={isSel ? "white" : "gray"}>{row.name}</Text>
+                  <Text color="gray">{"  "}{selCount}/{row.skills.length} · →/← expand</Text>
+                </Box>
+              );
+            }
+            const checked = mode.selected.has(row.name);
             return (
-              <Box key={skill}>
-                <Text color={isSel ? "cyan" : "gray"}>{isSel ? "❯ " : "  "}</Text>
+              <Box key={`sk:${row.name}`}>
+                <Text color={isSel ? "cyan" : "gray"}>{marker}</Text>
+                <Text>{row.depth === 1 ? "  " : ""}</Text>
                 <Text color={checked ? "green" : "gray"}>{checked ? "◉ " : "○ "}</Text>
-                <Text color={isSel ? "white" : checked ? "white" : "gray"}>{skill}</Text>
+                <Text color={isSel ? "white" : checked ? "white" : "gray"}>{row.name}</Text>
               </Box>
             );
           })
         )}
-        <Text color="gray">Space toggle · Enter save · r rename · Esc cancel</Text>
+        <Text color="gray">Space toggle (namespace = all its skills) · →/← expand · Enter save · r rename · Esc cancel</Text>
       </Box>
     );
   }

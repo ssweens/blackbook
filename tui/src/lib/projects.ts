@@ -98,6 +98,53 @@ export function indexSourceSkills(sourceRepo: string): Map<string, string> {
   return index;
 }
 
+/** A namespace group in the source repo: a dir holding one or more skills. */
+export interface SourceSkillNamespace {
+  /** Namespace directory name (e.g. "gbrain", "ssmp"). */
+  name: string;
+  /** Bare skill names inside it, sorted. */
+  skills: string[];
+}
+
+/**
+ * Group the source repo's skills into namespaces + top-level skills, for the
+ * profile builder's tree view. A namespace is a `skills/<ns>/` dir whose
+ * children are skill dirs (no SKILL.md of its own); top-level skills are
+ * `skills/<name>/SKILL.md`. Skill names are the same bare names used by
+ * `indexSourceSkills` and profiles, so selecting a namespace is exactly
+ * equivalent to selecting each of its skills.
+ */
+export function indexSourceSkillTree(sourceRepo: string): {
+  namespaces: SourceSkillNamespace[];
+  topLevel: string[];
+} {
+  const namespaces: SourceSkillNamespace[] = [];
+  const topLevel: string[] = [];
+  const skillsRoot = join(sourceRepo, "skills");
+  if (!existsSync(skillsRoot)) return { namespaces, topLevel };
+
+  for (const entry of safeReaddir(skillsRoot)) {
+    const dir = join(skillsRoot, entry);
+    if (!isDirectory(dir)) continue;
+    if (isSkillDir(dir)) {
+      topLevel.push(entry);
+      continue;
+    }
+    const nsSkills: string[] = [];
+    for (const child of safeReaddir(dir)) {
+      const childDir = join(dir, child);
+      if (isDirectory(childDir) && isSkillDir(childDir)) nsSkills.push(child);
+    }
+    if (nsSkills.length > 0) {
+      namespaces.push({ name: entry, skills: nsSkills.sort() });
+    }
+  }
+
+  namespaces.sort((a, b) => a.name.localeCompare(b.name));
+  topLevel.sort();
+  return { namespaces, topLevel };
+}
+
 /** Scan one skills root (enabled or disabled) for immediate skill directories. */
 function scanSkillsRoot(
   root: string,

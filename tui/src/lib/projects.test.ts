@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { indexSourceSkills, scanProjectSkills, collectUnmanagedSkills, type ProjectInfo } from "./projects.js";
+import { indexSourceSkills, indexSourceSkillTree, scanProjectSkills, collectUnmanagedSkills, type ProjectInfo } from "./projects.js";
 
 let root: string;
 let sourceRepo: string;
@@ -39,6 +39,50 @@ describe("indexSourceSkills", () => {
 
   it("returns an empty index when the source has no skills dir", () => {
     expect(indexSourceSkills(join(root, "nope")).size).toBe(0);
+  });
+});
+
+describe("indexSourceSkillTree", () => {
+  it("groups namespaced skills and lists top-level skills separately", () => {
+    // Two namespaces + two top-level skills.
+    writeSkill(join(sourceRepo, "skills"), "rclone", "# rclone\n");
+    writeSkill(join(sourceRepo, "skills"), "pdf", "# pdf\n");
+    mkdirSync(join(sourceRepo, "skills", "gbrain"), { recursive: true });
+    writeSkill(join(sourceRepo, "skills", "gbrain"), "briefing", "# briefing\n");
+    writeSkill(join(sourceRepo, "skills", "gbrain"), "web-research", "# web-research\n");
+    mkdirSync(join(sourceRepo, "skills", "ssmp"), { recursive: true });
+    writeSkill(join(sourceRepo, "skills", "ssmp"), "mixing", "# mixing\n");
+
+    const { namespaces, topLevel } = indexSourceSkillTree(sourceRepo);
+
+    expect(namespaces.map((n) => n.name)).toEqual(["gbrain", "ssmp"]);
+    expect(namespaces.find((n) => n.name === "gbrain")?.skills).toEqual(["briefing", "web-research"]);
+    expect(namespaces.find((n) => n.name === "ssmp")?.skills).toEqual(["mixing"]);
+    expect(topLevel).toEqual(["pdf", "rclone"]);
+  });
+
+  it("uses the same bare skill names as indexSourceSkills, so a namespace selection maps 1:1 to individual skills", () => {
+    mkdirSync(join(sourceRepo, "skills", "gbrain"), { recursive: true });
+    writeSkill(join(sourceRepo, "skills", "gbrain"), "briefing", "# briefing\n");
+
+    const flat = indexSourceSkills(sourceRepo);
+    const { namespaces } = indexSourceSkillTree(sourceRepo);
+    for (const s of namespaces.flatMap((n) => n.skills)) {
+      expect(flat.has(s)).toBe(true);
+    }
+  });
+
+  it("ignores empty namespace dirs and non-skill dirs", () => {
+    mkdirSync(join(sourceRepo, "skills", "empty-ns"), { recursive: true });
+    const { namespaces, topLevel } = indexSourceSkillTree(sourceRepo);
+    expect(namespaces).toEqual([]);
+    expect(topLevel).toEqual([]);
+  });
+
+  it("returns empty groups when the source has no skills dir", () => {
+    const { namespaces, topLevel } = indexSourceSkillTree(join(root, "nope"));
+    expect(namespaces).toEqual([]);
+    expect(topLevel).toEqual([]);
   });
 });
 
