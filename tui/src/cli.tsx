@@ -7,7 +7,7 @@ import { initializeStore, useStore } from "./lib/store.js";
 import { isAgenticDir } from "./lib/projects.js";
 import { patchExistsSync, mark, measure, logReport, setStartupTime } from "./lib/perf.js";
 import { logError } from "./lib/validation.js";
-import { reconcileClaudeDerivedView, reconcileStaleInstallArtifacts } from "./lib/install.js";
+import { reconcileStaleInstallArtifacts } from "./lib/install.js";
 import { isCliInvocation, runCli } from "./lib/cli/program.js";
 
 // Safety net: a stray unhandled promise rejection (e.g. from a fire-and-forget
@@ -37,15 +37,6 @@ try {
   reconcileStaleInstallArtifacts();
 } catch (error) {
   logError("Failed to reconcile stale install artifacts", error);
-}
-
-// Keep Claude's flat skills dir a derived view of the shared ~/.agents/skills
-// store: link new store skills, repair/prune stale links, and migrate
-// identical-content copies to links. Never allowed to block or break startup.
-try {
-  reconcileClaudeDerivedView();
-} catch (error) {
-  logError("Failed to reconcile Claude derived skill view", error);
 }
 
 // Workspace-aware startup: launched from an agentic project dir (has .agents/

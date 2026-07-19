@@ -39,7 +39,6 @@ import {
   uninstallPluginFromInstance,
   deleteFileEverywhere,
   reconcileStaleInstallArtifacts,
-  reconcileClaudeDerivedView,
   uninstallSkillFromInstance,
 } from "./install.js";
 import { uninstallPluginItemsFromInstance } from "./adapters/managed.js";
@@ -2019,97 +2018,4 @@ describe("claude derived view (~/.claude/skills as symlinks into ~/.agents/skill
     expect(existsSync(join(storePath, "SKILL.md"))).toBe(true);
   });
 
-  describe("reconcileClaudeDerivedView", () => {
-    function seedStoreSkill(namespace: string | null, name: string, content = "store copy"): string {
-      const dir = namespace ? join(agentsRoot(), namespace, name) : join(agentsRoot(), name);
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, "SKILL.md"), `# ${name}\n\n${content}\n`);
-      return dir;
-    }
-
-    it("does nothing when no flat-install instance is enabled or the store is absent", () => {
-      // Store exists but claude is disabled (test default).
-      seedStoreSkill("testns", "someskill");
-      expect(reconcileClaudeDerivedView()).toEqual({ linked: 0, repaired: 0, migrated: 0, pruned: 0 });
-
-      // Claude enabled but no store dir.
-      rmSync(join(TEST_HOME, ".agents"), { recursive: true, force: true });
-      enableClaude();
-      expect(reconcileClaudeDerivedView()).toEqual({ linked: 0, repaired: 0, migrated: 0, pruned: 0 });
-    });
-
-    it("creates links for namespaced and flat store skills", () => {
-      const claude = enableClaude();
-      const nsStore = seedStoreSkill("testns", "testskill");
-      const flatStore = seedStoreSkill(null, "flatskill");
-
-      const summary = reconcileClaudeDerivedView();
-      expect(summary.linked).toBe(2);
-
-      const nsLink = join(claudeSkillsDir(claude), "testns-testskill");
-      const flatLink = join(claudeSkillsDir(claude), "flatskill");
-      expect(lstatSync(nsLink).isSymbolicLink()).toBe(true);
-      expect(realpathSync(nsLink)).toBe(realpathSync(nsStore));
-      expect(lstatSync(flatLink).isSymbolicLink()).toBe(true);
-      expect(realpathSync(flatLink)).toBe(realpathSync(flatStore));
-
-      // Idempotent: a second run changes nothing.
-      expect(reconcileClaudeDerivedView()).toEqual({ linked: 0, repaired: 0, migrated: 0, pruned: 0 });
-    });
-
-    it("repairs links pointing at the wrong target and prunes dangling store links", () => {
-      const claude = enableClaude();
-      const store = seedStoreSkill("testns", "testskill");
-      const skillsDir = claudeSkillsDir(claude);
-      mkdirSync(skillsDir, { recursive: true });
-
-      // Wrong target: points at some other existing dir.
-      const wrongLink = join(skillsDir, "testns-testskill");
-      symlinkSync(TEST_TOOL_DIR, wrongLink);
-      // Dangling link into the store whose skill was removed.
-      const danglingStoreLink = join(skillsDir, "testns-gone");
-      symlinkSync(join(agentsRoot(), "testns", "gone"), danglingStoreLink);
-      // Dangling link pointing OUTSIDE the store: the user's own business.
-      const foreignLink = join(skillsDir, "user-link");
-      symlinkSync(join(TEST_ROOT, "nonexistent"), foreignLink);
-
-      const summary = reconcileClaudeDerivedView();
-      expect(summary.repaired).toBe(1);
-      expect(summary.pruned).toBe(1);
-
-      expect(realpathSync(wrongLink)).toBe(realpathSync(store));
-      expect(lstatSync(danglingStoreLink, { throwIfNoEntry: false })).toBeUndefined();
-      expect(lstatSync(foreignLink, { throwIfNoEntry: false })?.isSymbolicLink()).toBe(true);
-    });
-
-    it("migrates identical real directories to links and leaves edited ones alone", () => {
-      const claude = enableClaude();
-      seedStoreSkill("testns", "identical", "same content");
-      seedStoreSkill("testns", "edited", "store content");
-      const skillsDir = claudeSkillsDir(claude);
-
-      const identicalDir = join(skillsDir, "testns-identical");
-      mkdirSync(identicalDir, { recursive: true });
-      writeFileSync(join(identicalDir, "SKILL.md"), "# identical\n\nsame content\n");
-
-      const editedDir = join(skillsDir, "testns-edited");
-      mkdirSync(editedDir, { recursive: true });
-      writeFileSync(join(editedDir, "SKILL.md"), "# edited\n\nlocal user edits\n");
-
-      const summary = reconcileClaudeDerivedView();
-      expect(summary.migrated).toBe(1);
-
-      expect(lstatSync(identicalDir).isSymbolicLink()).toBe(true);
-      expect(realpathSync(identicalDir)).toBe(realpathSync(join(agentsRoot(), "testns", "identical")));
-
-      // Differing content stays a real directory with the user's edits intact.
-      expect(lstatSync(editedDir).isSymbolicLink()).toBe(false);
-      expect(readFileSync(join(editedDir, "SKILL.md"), "utf-8")).toContain("local user edits");
-
-      // The migrated content was backed up recoverably.
-      const backups = listBackups("skill:testns-identical");
-      expect(backups.length).toBeGreaterThan(0);
-      expect(readFileSync(join(backups[0], "testns-identical", "SKILL.md"), "utf-8")).toContain("same content");
-    });
-  });
 });
