@@ -181,6 +181,16 @@ vi.mock("./lib/diff.js", async (importOriginal) => {
   };
 });
 
+vi.mock("./lib/adapters/shared.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lib/adapters/shared.js")>();
+  return {
+    ...actual,
+    // Pretend the plugin's skill is present in the shared store so the
+    // consolidated shared-skill row computes drift against the (mocked) diff.
+    pluginSkillStorePath: vi.fn().mockReturnValue("/store/test-skill"),
+  };
+});
+
 vi.mock("./lib/tool-detect.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/tool-detect.js")>();
   return {
@@ -873,12 +883,12 @@ describe("App E2E — Plugin Detail", () => {
     }
   });
 
-  it("drifted plugin detail shows Changed instance with +/- counts", async () => {
+  it("drifted plugin skill shows a single shared-store Drifted row with +/- counts", async () => {
     vi.mocked(resolvePluginSourcePaths).mockReturnValue({ pluginDir: "/src/plugins/test", repoRoot: "/src" });
     vi.mocked(buildFileDiffTarget).mockReturnValue({
       kind: "file",
       title: "test",
-      instance: { toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/tmp/claude" },
+      instance: { toolId: "agents", instanceId: "shared", instanceName: "Shared store", configDir: "" },
       files: [{ id: "f1", displayPath: "SKILL.md", sourcePath: "/a", targetPath: "/b", status: "modified", linesAdded: 10, linesRemoved: 5, sourceMtime: null, targetMtime: null }],
     });
     vi.mocked(getPluginToolStatusDirect).mockReturnValue(toolStatusBothInstalled);
@@ -891,8 +901,10 @@ describe("App E2E — Plugin Detail", () => {
     });
     const { stdout, unmount } = render(<App />);
     try {
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Changed") || f.includes("+10"), 5000);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("shared") || f.includes("+10"), 5000);
       const frame = stdout.lastFrame()!;
+      // Skills are shown as ONE shared-store row, not broken out per tool.
+      expect(frame).toContain("shared");
       expect(frame).toContain("Drifted");
       expect(frame).toContain("+10");
       expect(frame).toContain("-5");
@@ -901,11 +913,11 @@ describe("App E2E — Plugin Detail", () => {
     }
   });
 
-  it("keeps plugin drift as a per-tool row instead of a status-line badge", async () => {
+  it("shows skill drift on the shared row, not a per-tool status badge", async () => {
     vi.mocked(resolvePluginSourcePaths).mockReturnValue({ pluginDir: "/src/plugins/test", repoRoot: "/src" });
     vi.mocked(buildFileDiffTarget).mockReturnValue({
       kind: "file", title: "t",
-      instance: { toolId: "claude-code", instanceId: "default", instanceName: "Claude", configDir: "/tmp/claude" },
+      instance: { toolId: "agents", instanceId: "shared", instanceName: "Shared store", configDir: "" },
       files: [{ id: "f1", displayPath: "SKILL.md", sourcePath: "/a", targetPath: "/b", status: "modified", linesAdded: 1, linesRemoved: 1, sourceMtime: null, targetMtime: null }],
     });
 
@@ -920,6 +932,7 @@ describe("App E2E — Plugin Detail", () => {
       await waitForFrame(stdout.lastFrame, (f) => f.includes("Drifted") || f.includes("+1"), 5000);
       const frame = stdout.lastFrame()!;
       expect(frame).not.toContain("Status: Installed (drifted)");
+      expect(frame).toContain("shared");
       expect(frame).toContain("Drifted");
     } finally {
       unmount();

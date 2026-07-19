@@ -15,6 +15,7 @@ import { resolvePluginSourcePaths, type PluginDrift } from "./plugin-drift.js";
 import { buildFileDiffTarget } from "./diff.js";
 import { resolveInstalledPluginComponentPath } from "./pi-bridge.js";
 import { isSharedSubdirPath } from "./path-utils.js";
+import { pluginSkillStorePath } from "./adapters/shared.js";
 import { loadManifest } from "./manifest.js";
 import { buildManifestItemKey, instanceKey } from "./plugin-helpers.js";
 import type { ItemAction } from "../components/ItemDetail.js";
@@ -52,9 +53,67 @@ export function buildPluginActions(
     const changedInstances: DiffInstanceRef[] = [];
     const manifest = loadManifest();
 
+    // ── Shared skill status (computed ONCE, not per-tool) ──
+    // Skills live once in ~/.agents/skills, read by every non-flat tool with
+    // Claude's ~/.claude/skills a symlink overlay — they cannot differ per
+    // tool. Emitting a per-tool skill-drift row produced contradictory states
+    // (OpenCode "Drifted" vs Codex "Synced") for the same physical file. Diff
+    // the store copy against source once and show a single shared row instead.
+    if (plugin.skills.length > 0) {
+      let skillAdded = 0;
+      let skillRemoved = 0;
+      let skillDrift = false;
+      if (sourcePaths) {
+        for (const skill of plugin.skills) {
+          const srcPath = join(sourcePaths.pluginDir, "skills", skill);
+          const storePath = pluginSkillStorePath(plugin.name, skill);
+          if (!storePath) continue;
+          try {
+            const dt = buildFileDiffTarget(`${plugin.name}/${skill}`, skill, srcPath, storePath, {
+              toolId: "agents", instanceId: "shared", instanceName: "Shared store", configDir: "",
+            });
+            if (dt.files.length > 0) {
+              skillAdded += dt.files.reduce((s, f) => s + f.linesAdded, 0);
+              skillRemoved += dt.files.reduce((s, f) => s + f.linesRemoved, 0);
+              skillDrift = true;
+            }
+          } catch {
+            // Ignore errors — treated as in-sync.
+          }
+        }
+      }
+      const sharedInstance: DiffInstanceRef = {
+        toolId: "agents", instanceId: "shared", instanceName: "Shared store", configDir: "",
+      };
+      if (skillDrift) {
+        changedInstances.push(sharedInstance);
+        actions.push({
+          id: "status_shared_skills",
+          label: `Skills → ~/.agents/skills (shared, ${plugin.skills.length})`,
+          type: "diff",
+          instance: { ...sharedInstance, totalAdded: skillAdded, totalRemoved: skillRemoved },
+          statusColor: "yellow",
+          statusLabel: "Drifted",
+        });
+      } else {
+        actions.push({
+          id: "status_shared_skills",
+          label: `Skills → ~/.agents/skills (shared, ${plugin.skills.length})`,
+          type: "status",
+          statusColor: "green",
+          statusLabel: "In sync",
+        });
+      }
+    }
+
+    // ── Per-tool status for commands/agents/hooks (genuinely per-tool dirs) ──
+    // Skills are excluded — they're covered by the shared row above.
+    const hasPerToolComponents = plugin.commands.length > 0 || plugin.agents.length > 0 || plugin.hooks.length > 0;
+
     for (const status of toolStatuses) {
       if (!status.enabled || !status.supported) continue;
       if (!status.installed) continue;
+      if (!hasPerToolComponents) continue; // skills-only plugin: shared row says it all
 
       const inst = allInstances.find(
         (t) => t.toolId === status.toolId && t.instanceId === status.instanceId,
@@ -77,22 +136,17 @@ export function buildPluginActions(
         for (const [key, driftStatus] of Object.entries(drift)) {
           if (driftStatus === "in-sync") continue;
           const [kind, name] = key.split(":");
-          const srcSuffix = kind === "skill" ? name : `${name}.md`;
+          if (kind === "skill") continue; // shared, handled above
+          const srcSuffix = `${name}.md`;
           const srcPath = join(sourcePaths.pluginDir, `${kind}s`, srcSuffix);
           const manifestKey = buildManifestItemKey(plugin.name, kind, name);
           const manifestItem = manifest.tools[ikey]?.items[manifestKey];
-          const destPath = resolveInstalledPluginComponentPath(inst, plugin, kind as "skill" | "command" | "agent", name, manifestItem?.dest);
+          const destPath = resolveInstalledPluginComponentPath(inst, plugin, kind as "command" | "agent", name, manifestItem?.dest);
           if (!destPath) continue;
-          // Pi skills/commands with no manifest record resolve to an ephemeral
-          // tmpdir staging path (see resolveInstalledPluginComponentPath) that
-          // rarely still exists by the time drift is displayed. Treating a
-          // missing staging path as "entire file deleted" produces line counts
-          // in the thousands — skip the stat but keep the drift-map's status.
-          if (inst.toolId === "pi" && kind !== "agent" && !existsSync(destPath)) {
+          if (inst.toolId === "pi" && !existsSync(destPath)) {
             hasDrift = true;
             continue;
           }
-
           try {
             const dt = buildFileDiffTarget(
               `${plugin.name}/${name}`, srcSuffix, srcPath, destPath, instance,
@@ -113,7 +167,7 @@ export function buildPluginActions(
         changedInstances.push(instance);
         actions.push({
           id: `status_${status.toolId}:${status.instanceId}`,
-          label: status.name,
+          label: `${status.name} (commands/agents)`,
           type: "diff",
           toolStatus: status,
           instance: summary,
@@ -123,7 +177,7 @@ export function buildPluginActions(
       } else {
         actions.push({
           id: `status_${status.toolId}:${status.instanceId}`,
-          label: status.name,
+          label: `${status.name} (commands/agents)`,
           type: "diff",
           toolStatus: status,
           instance,
@@ -133,7 +187,8 @@ export function buildPluginActions(
       }
     }
 
-    // Not-installed + unsupported instances
+    // Not-installed + unsupported instances (only meaningful for per-tool
+    // components — a skills-only plugin's presence is the shared row's job).
     for (const status of toolStatuses) {
       if (!status.enabled) continue;
       if (!status.supported) {
@@ -147,9 +202,10 @@ export function buildPluginActions(
         continue;
       }
       if (status.installed) continue;
+      if (!hasPerToolComponents) continue;
       actions.push({
         id: `status_${status.toolId}:${status.instanceId}`,
-        label: status.name,
+        label: `${status.name} (commands/agents)`,
         type: "diff",
         statusColor: "yellow",
         statusLabel: "Not installed",

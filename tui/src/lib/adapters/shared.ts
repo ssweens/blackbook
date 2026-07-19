@@ -73,6 +73,20 @@ export function pluginInstalledForManagedInstance(
   return manifestHasOwnedItemForInstance(manifest, instance, plugin.name);
 }
 
+/**
+ * Absolute path to a plugin's skill in the shared store, or null if absent.
+ * Checks the namespaced plugin-component layout first
+ * (`~/.agents/skills/<plugin>/<skill>`), then the flat/standalone layout
+ * (`~/.agents/skills/<skill>`, for a self-named skill installed standalone).
+ */
+export function pluginSkillStorePath(pluginName: string, skill: string): string | null {
+  const namespaced = agentsSkillsDir(pluginName, skill);
+  if (existsSync(join(namespaced, "SKILL.md"))) return namespaced;
+  const flat = agentsSkillsDir(null, skill);
+  if (existsSync(join(flat, "SKILL.md"))) return flat;
+  return null;
+}
+
 /** True when the manifest records any item owned by `pluginName` under this instance's key. */
 export function manifestHasOwnedItemForInstance(
   manifest: Manifest,
