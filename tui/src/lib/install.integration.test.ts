@@ -527,21 +527,18 @@ describe("updatePlugin", () => {
     mkdirSync(marketplaceDir, { recursive: true });
     writeFileSync(marketplaceJsonPath, JSON.stringify({ name: marketplace, plugins: [] }));
 
-    mkdirSync(join(pluginSourceDir, "skills", skillName), { recursive: true });
-    writeFileSync(join(pluginSourceDir, "skills", skillName, "SKILL.md"), "# Updated Skill");
+    // Codex is the only managed tool whose adapter reports real plugin
+    // support/installed status (OpenCode/Amp are deliberately gated off), so
+    // it's the instance that can actually be "already installed" for an
+    // update. All the other .agents/skills-sharing tools are disabled so codex
+    // is the sole enabled instance; the update must touch it and skip the rest.
+    updateToolInstanceConfig("opencode", "default", { enabled: false });
+    updateToolInstanceConfig("amp-code", "default", { enabled: false });
+    updateToolInstanceConfig("pi", "default", { enabled: false });
+    updateToolInstanceConfig("agents", "default", { enabled: false });
 
-    const opencode = getInstance("opencode");
-    const opencodeSkillDir = resolveInstanceSubdirPath(opencode.configDir, opencode.skillsSubdir!, pluginName, skillName);
-    mkdirSync(opencodeSkillDir, { recursive: true });
-    writeFileSync(join(opencodeSkillDir, "SKILL.md"), "# Old Skill");
-
-
-    const amp = getInstance("amp-code");
     const codex = getInstance("openai-codex");
-    const ampSkillDir = resolveInstanceSubdirPath(amp.configDir, amp.skillsSubdir!, pluginName, skillName);
     const codexSkillDir = resolveInstanceSubdirPath(codex.configDir, codex.skillsSubdir!, pluginName, skillName);
-    rmSync(ampSkillDir, { recursive: true, force: true });
-    rmSync(codexSkillDir, { recursive: true, force: true });
 
     const plugin: Plugin = {
       name: pluginName,
@@ -559,16 +556,29 @@ describe("updatePlugin", () => {
       scope: "user",
     };
 
+    // Install the OLD version for real (records the manifest, so the plugin is
+    // genuinely "installed" per adapter.isInstalled — which reads the manifest,
+    // not the disk). enablePlugin with no marketplaceUrl resolves the source
+    // from the plugin cache dir, so seed it there.
+    const cacheSkillDir = join(getPluginsCacheDir(), marketplace, pluginName, "skills", skillName);
+    mkdirSync(cacheSkillDir, { recursive: true });
+    writeFileSync(join(cacheSkillDir, "SKILL.md"), "# Old Skill");
+    await enablePlugin(plugin);
+    expect(readFileSync(join(codexSkillDir, "SKILL.md"), "utf-8")).toContain("Old Skill");
+
+    // Now bump the source (in the marketplace repo updatePlugin re-downloads
+    // from) to the new version and update.
+    mkdirSync(join(pluginSourceDir, "skills", skillName), { recursive: true });
+    writeFileSync(join(pluginSourceDir, "skills", skillName, "SKILL.md"), "# Updated Skill");
     const result = await updatePlugin(plugin, marketplaceJsonPath);
 
     expect(result.success).toBe(true);
-    expect(result.linkedInstances[`opencode:${opencode.instanceId}`]).toBeGreaterThan(0);
-    expect(result.linkedInstances[`amp-code:${amp.instanceId}`]).toBeUndefined();
-    expect(result.linkedInstances[`openai-codex:${codex.instanceId}`]).toBeUndefined();
+    expect(result.linkedInstances[`openai-codex:${codex.instanceId}`]).toBeGreaterThan(0);
+    // Disabled instances are never targeted.
+    expect(result.linkedInstances[`opencode:default`]).toBeUndefined();
+    expect(result.linkedInstances[`amp-code:default`]).toBeUndefined();
 
-    expect(readFileSync(join(opencodeSkillDir, "SKILL.md"), "utf-8")).toContain("Updated Skill");
-    expect(existsSync(ampSkillDir)).toBe(false);
-    expect(existsSync(codexSkillDir)).toBe(false);
+    expect(readFileSync(join(codexSkillDir, "SKILL.md"), "utf-8")).toContain("Updated Skill");
   });
 });
 
