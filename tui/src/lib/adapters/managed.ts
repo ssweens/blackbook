@@ -21,7 +21,7 @@ import {
   cpSync,
   symlinkSync,
 } from "fs";
-import { basename, join, dirname } from "path";
+import { basename, join, dirname, relative } from "path";
 import { agentsSkillsDir, flattenNamespacedName, resolveInstanceSubdirPath } from "../path-utils.js";
 import type { Plugin, InstalledItem, ToolInstance } from "../types.js";
 import type { Manifest } from "../manifest.js";
@@ -340,7 +340,8 @@ export function installPluginItemsToInstance(
       if (materialized) materializedAgentsPaths.push(agentsStoreTarget);
       const backup = backupExistingDest(dest, instanceKey(instance), pluginName, kind, name);
       mkdirSync(dirname(dest), { recursive: true });
-      symlinkSync(agentsStoreTarget, dest);
+      // Relative link: survives home-dir moves/renames (portability).
+      symlinkSync(relative(dirname(dest), agentsStoreTarget), dest);
       item = { kind, name, source: src, dest, backup, owner: pluginName, previous };
     } else {
       const result = copyWithBackup(src, dest, instanceKey(instance), pluginName, kind, name);

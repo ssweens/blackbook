@@ -3,7 +3,7 @@
  */
 
 import { existsSync, lstatSync, unlinkSync, rmSync, renameSync } from "fs";
-import { join } from "path";
+import { join, dirname, relative } from "path";
 import { resolveInstanceSubdirPath } from "./path-utils.js";
 import type { Plugin, ToolInstance } from "./types.js";
 import { getToolInstances, getEnabledToolInstances, setPluginComponentEnabled } from "./config.js";
@@ -261,7 +261,11 @@ export function togglePluginComponent(
       let linkSource = src;
       if (kind === "skill" && instance.pluginFlatInstall) {
         try {
-          linkSource = ensureAgentsSkillMaterialized(src, plugin.name, componentName).agentsPath;
+          // Relative link: survives home-dir moves/renames (portability).
+          linkSource = relative(
+            dirname(dest),
+            ensureAgentsSkillMaterialized(src, plugin.name, componentName).agentsPath,
+          );
         } catch (error) {
           logError(`Failed to materialize ${componentName} into ~/.agents/skills`, error);
           failures.push(

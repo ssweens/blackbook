@@ -21,7 +21,7 @@ import { createBackup, pruneBackups } from "./modules/backup.js";
 import { applySymlinkSync, checkSymlinkSync } from "./modules/symlink-create.js";
 
 const execFileAsync = promisify(execFile);
-import { join, dirname, resolve, basename } from "path";
+import { join, dirname, resolve, relative, basename } from "path";
 import { tmpdir, homedir } from "os";
 import {
   expandPath,
@@ -2122,7 +2122,8 @@ export function installSkillToInstance(
         }
       }
       mkdirSync(dirname(targetDir), { recursive: true });
-      symlinkSync(agentsTarget, targetDir);
+      // Relative link: survives home-dir moves/renames (portability).
+      symlinkSync(relative(dirname(targetDir), agentsTarget), targetDir);
       return true;
     } catch {
       return false;
