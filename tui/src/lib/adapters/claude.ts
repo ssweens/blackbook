@@ -291,16 +291,6 @@ export const claudeAdapter: ToolAdapter = {
 
   supports(input: SupportInput): { supported: boolean; reason?: string } {
     const { plugin, canInstallSkills, canInstallCommands, canInstallAgents, hasHooks } = input;
-    // Claude's whole-plugin lifecycle goes through the native `claude plugin
-    // install <name>@<marketplace>` CLI, which requires a real registered
-    // marketplace. skills.sh is a virtual, search-only marketplace with no
-    // marketplace.json — the native CLI can't install or uninstall from it, so
-    // Claude simply doesn't support these. (Claude still reads any resulting
-    // skill through the shared ~/.agents/skills store via its derived-view
-    // symlinks — those are maintained outside the native plugin CLI.)
-    if (plugin.marketplace === "skills.sh") {
-      return { supported: false, reason: "skills.sh installs are not registered with Claude's native plugin CLI" };
-    }
     const supported =
       canInstallSkills ||
       canInstallCommands ||
@@ -323,9 +313,6 @@ export const claudeAdapter: ToolAdapter = {
   },
 
   async install(plugin: Plugin, instance: ToolInstance): Promise<PerInstanceResult> {
-    // skills.sh is a virtual marketplace Claude's native CLI can't register —
-    // a no-op here (not an error) so it degrades cleanly, matching supports().
-    if (plugin.marketplace === "skills.sh") return { count: 0, errors: [] };
     try {
       await execClaudeCommand(instance, "install", claudePluginId(plugin));
       return { count: 1, errors: [] };
@@ -340,9 +327,6 @@ export const claudeAdapter: ToolAdapter = {
   },
 
   async uninstall(plugin: Plugin, instance: ToolInstance): Promise<PerInstanceResult> {
-    // skills.sh was never registered with Claude's native CLI (see install) —
-    // a no-op, so uninstall doesn't spuriously fail against it.
-    if (plugin.marketplace === "skills.sh") return { count: 0, errors: [] };
     // Claude installs go through the native CLI, so uninstall must too — the CLI
     // owns the plugin cache dir, settings.json enabledPlugins, and hook/MCP
     // registrations. JSON surgery alone leaves Claude's own state desynced.
@@ -363,7 +347,6 @@ export const claudeAdapter: ToolAdapter = {
   },
 
   async update(plugin: Plugin, instance: ToolInstance): Promise<PerInstanceResult> {
-    if (plugin.marketplace === "skills.sh") return { count: 0, errors: [] };
     try {
       // Use Claude's "update" command with the marketplace key Claude already
       // knows about (the installed marketplace), not the Blackbook-selected

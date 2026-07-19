@@ -1983,6 +1983,51 @@ describe("claude derived view (~/.claude/skills as symlinks into ~/.agents/skill
     expect(existsSync(join(storePath, "SKILL.md"))).toBe(true);
   });
 
+  it("prunes the empty namespace shell after the last skill in it is uninstalled", async () => {
+    // Sole owner of the shared store dir — with amp/codex also enabled they'd
+    // share the physical path, and uninstalling one must leave it for the rest.
+    updateToolInstanceConfig("amp-code", "default", { enabled: false });
+    updateToolInstanceConfig("openai-codex", "default", { enabled: false });
+    const opencode = getInstance("opencode");
+    createTestPluginInCache();
+    const plugin = createTestPlugin();
+    await enablePlugin(plugin);
+
+    // Non-flat install: <skillsRoot>/<plugin>/<skill>/SKILL.md
+    const nsDir = resolveInstanceSubdirPath(opencode.configDir, opencode.skillsSubdir!, TEST_PLUGIN_NAME);
+    const skillDir = join(nsDir, TEST_SKILL_NAME);
+    expect(existsSync(join(skillDir, "SKILL.md"))).toBe(true);
+
+    uninstallPluginItemsFromInstance(TEST_PLUGIN_NAME, opencode);
+
+    // Both the skill and its now-empty namespace parent are gone; the skills
+    // root itself survives.
+    expect(existsSync(skillDir)).toBe(false);
+    expect(existsSync(nsDir)).toBe(false);
+    expect(existsSync(resolveInstanceSubdirPath(opencode.configDir, opencode.skillsSubdir!))).toBe(true);
+  });
+
+  it("uninstallPlugin removes the shared store copy even when Claude (symlink dest) is one of the tools", async () => {
+    // Claude installs its skill as a SYMLINK into ~/.agents/skills, so its
+    // manifest dest is the link, not the store — its uninstall unlinks but
+    // never removes the store target. With the other tools' entries being
+    // sharedInstall no-ops, nothing would remove the physical store copy
+    // without uninstallPlugin's orphaned-namespace cleanup.
+    enableClaude();
+    createTestPluginInCache();
+    const plugin = createTestPlugin();
+    await enablePlugin(plugin);
+
+    const storeNsDir = join(agentsRoot(), TEST_PLUGIN_NAME);
+    expect(existsSync(join(storeNsDir, TEST_SKILL_NAME, "SKILL.md"))).toBe(true);
+
+    const ok = await uninstallPlugin(plugin);
+    expect(ok).toBe(true);
+
+    // The physical store copy is fully gone — no orphan left behind.
+    expect(existsSync(storeNsDir)).toBe(false);
+  });
+
   it("standalone skill install links claude at the store and uninstall only unlinks", () => {
     const claude = enableClaude();
     const skillName = "derived-view-skill";

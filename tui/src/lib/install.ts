@@ -452,15 +452,24 @@ export async function installPlugin(
     return result;
   }
 
+  // skills.sh is a virtual, skills-only marketplace with no native registration
+  // anywhere — so every tool, INCLUDING Claude, installs it through the shared
+  // component file-copy engine (installComponents), which materializes the skill
+  // into ~/.agents/skills and, for Claude, maintains the derived-view symlink.
+  // Claude's native `claude plugin install` path (used for real registered
+  // marketplaces) can't touch a virtual marketplace and is skipped entirely.
+  const isVirtualSkillSource = plugin.marketplace === "skills.sh";
+
   // Native tools (Claude CLI, Pi bridge) need no downloaded source; each reports
   // success/failure through its adapter. Source-based tools (Codex, managed)
-  // share a single download.
-  const nativeInstances = enabledInstances.filter(
-    (instance) => !getAdapterForTool(instance.toolId).usesSource,
-  );
-  const sourceInstances = enabledInstances.filter(
-    (instance) => getAdapterForTool(instance.toolId).usesSource,
-  );
+  // share a single download. For a virtual skill source, treat every instance
+  // as source-based so Claude routes through installComponents too.
+  const nativeInstances = isVirtualSkillSource
+    ? []
+    : enabledInstances.filter((instance) => !getAdapterForTool(instance.toolId).usesSource);
+  const sourceInstances = isVirtualSkillSource
+    ? enabledInstances
+    : enabledInstances.filter((instance) => getAdapterForTool(instance.toolId).usesSource);
   // Preserved quirk: if the shared download fails and there is no Claude
   // instance that could already have succeeded, the whole install hard-errors.
   const hasClaudeInstance = enabledInstances.some(
@@ -485,19 +494,23 @@ export async function installPlugin(
     const sourcePath = await downloadPlugin(plugin, marketplaceUrl);
 
     if (!sourcePath) {
-      if (!hasClaudeInstance) {
+      // A virtual skill source has no native fallback — a failed download means
+      // nothing installed anywhere.
+      if (!hasClaudeInstance || isVirtualSkillSource) {
         result.errors.push(`Failed to download plugin ${plugin.name}`);
         return result;
       }
     } else {
       for (const instance of sourceInstances) {
         try {
-          const r = await getAdapterForTool(instance.toolId).install(
-            plugin,
-            instance,
-            sourcePath,
-            marketplaceUrl,
-          );
+          const adapter = getAdapterForTool(instance.toolId);
+          // skills.sh → component surface for ALL tools (Claude's native CLI
+          // can't register a virtual marketplace); otherwise the normal
+          // per-adapter install (managed adapters' install IS the component
+          // copy; Claude's install is the native CLI).
+          const r = isVirtualSkillSource
+            ? await adapter.installComponents(plugin, instance, sourcePath)
+            : await adapter.install(plugin, instance, sourcePath, marketplaceUrl);
           result.linkedInstances[instanceKey(instance)] = r.count;
           result.errors.push(...r.errors);
         } catch (error) {
@@ -547,11 +560,18 @@ export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
     return false;
   }
 
+  // skills.sh installs went through the component surface for every tool (see
+  // installPlugin), so they must be removed the same way — Claude's native
+  // `claude plugin uninstall` can't touch a virtual marketplace.
+  const isVirtualSkillSource = plugin.marketplace === "skills.sh";
+
   // Uninstall from all enabled instances via their adapters.
   for (const instance of enabledInstances) {
     if (isConfigOnlyInstance(instance)) continue;
-    const r = await getAdapterForTool(instance.toolId).uninstall(plugin, instance);
-    removedCount += r.count;
+    const adapter = getAdapterForTool(instance.toolId);
+    removedCount += isVirtualSkillSource
+      ? await adapter.removeComponents(plugin, instance)
+      : (await adapter.uninstall(plugin, instance)).count;
   }
 
   try {
@@ -565,7 +585,41 @@ export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
     logError(`Failed to remove plugin dir for ${plugin.name}`, error);
   }
 
+  // Shared-store skills (installed to multiple tools where one is a flat/derived
+  // tool like Claude) can leave the physical ~/.agents/skills copy orphaned:
+  // Claude's manifest entry is the SYMLINK dest, so its uninstall unlinks
+  // without removing the store target, and the other tools' entries are
+  // sharedInstall no-ops. After removing every instance, prune the store
+  // namespace dir if nothing in the manifest still points into it.
+  removeOrphanedStoreNamespace(plugin.name);
+
   return removedCount > 0;
+}
+
+/**
+ * Remove `~/.agents/skills/<namespace>/` (and any empty parent) when no manifest
+ * entry across any tool still references a path inside it. Safe no-op when the
+ * dir doesn't exist or is still referenced. Best-effort; never throws.
+ */
+function removeOrphanedStoreNamespace(namespace: string): void {
+  try {
+    const nsDir = join(homedir(), ".agents", "skills", namespace);
+    if (!existsSync(nsDir)) return;
+
+    const manifest = loadManifest();
+    const prefix = nsDir.endsWith("/") ? nsDir : `${nsDir}/`;
+    for (const toolManifest of Object.values(manifest.tools)) {
+      for (const item of Object.values(toolManifest.items)) {
+        // A manifest entry keeps the store dir alive only if its dest resolves
+        // INTO it — a Claude symlink dest (~/.claude/skills/...) never does, so
+        // it correctly doesn't count as a reference here.
+        if (item.dest === nsDir || item.dest.startsWith(prefix)) return;
+      }
+    }
+    rmSync(nsDir, { recursive: true, force: true });
+  } catch (error) {
+    logError(`Failed to prune orphaned store namespace ${namespace}`, error);
+  }
 }
 
 export interface EnableResult {

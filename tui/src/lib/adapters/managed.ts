@@ -466,6 +466,15 @@ export function uninstallPluginItemsFromInstance(
   let removed = 0;
   const keysToRemove: string[] = [];
   const processedDests = new Set<string>();
+  // Namespaced installs live at <skillsRoot>/<namespace>/<skill>; removing the
+  // last skill leaves an empty <namespace> shell. Collect the parents of every
+  // removed dest and prune the ones that end up empty (below).
+  const parentDirs = new Set<string>();
+  // The tool's own component roots — never prune these even if they go empty.
+  const rootDirs = new Set<string>();
+  for (const subdir of [instance.skillsSubdir, instance.commandsSubdir, instance.agentsSubdir]) {
+    if (subdir) rootDirs.add(resolveInstanceSubdirPath(instance.configDir, subdir));
+  }
 
   for (const [entryKey, item] of Object.entries(toolManifest.items)) {
     const owner = item.owner || "";
@@ -504,6 +513,10 @@ export function uninstallPluginItemsFromInstance(
           if (backup && (existsSync(backup) || isSymlink(backup))) {
             // Cache dir -> tool config dir restore; may cross filesystems.
             renameOrCopy(backup, dest);
+          } else {
+            // No backup restored — the dest is gone for good, so its namespace
+            // parent may now be an empty shell worth pruning.
+            parentDirs.add(dirname(dest));
           }
         } catch (error) {
           logError(`Failed to uninstall ${item.kind}:${item.name}`, error);
@@ -523,6 +536,20 @@ export function uninstallPluginItemsFromInstance(
     delete toolManifest.items[entryKey];
   }
   saveManifest(manifest);
+
+  // Prune empty namespace-parent shells left behind by removing the last skill
+  // in a namespace. Never touch the tool's own component roots (skills/,
+  // commands/, agents/) even if a tool legitimately has zero installs.
+  for (const parent of parentDirs) {
+    if (rootDirs.has(parent)) continue;
+    try {
+      if (existsSync(parent) && !isSymlink(parent) && readdirSync(parent).length === 0) {
+        rmSync(parent, { recursive: true });
+      }
+    } catch (error) {
+      logError(`Failed to prune empty namespace dir ${parent}`, error);
+    }
+  }
 
   return removed;
 }
