@@ -5,6 +5,7 @@ import { loadConfig } from "./config/loader.js";
 import { expandPath } from "./config/path.js";
 import { getConfigRepoPath } from "./config.js";
 import { hashDirectory } from "./modules/hash.js";
+import { loadRecentWorkspaces } from "./recent-workspaces.js";
 
 // Blackbook manages a project's shared, tool-agnostic skills directory. `.agents`
 // is the emerging cross-tool convention (multiple agents read `.agents/skills`),
@@ -55,6 +56,12 @@ export interface ProjectInfo {
    * reads, so skills sync once instead of fanning into each tool's own dir.
    */
   synthetic?: boolean;
+  /**
+   * A recently-opened workspace (cwd detection or `openWorkspace`) that isn't
+   * registered in config.yaml — shown in the list but never persisted there.
+   * Tracked in the recent-workspaces cache instead.
+   */
+  transient?: boolean;
 }
 
 /** True if `dir` is a skill directory (contains SKILL.md). */
@@ -167,9 +174,32 @@ function buildProjectInfo(
 }
 
 /**
+ * Scan one directory into a transient (non-persisted) workspace, building the
+ * source index on demand. Used for workspaces opened ad hoc (cwd detection,
+ * recents) rather than registered in config.yaml.
+ */
+export function buildWorkspaceInfo(path: string, name?: string): ProjectInfo {
+  const sourceRepo = getConfigRepoPath();
+  const sourceIndex = sourceRepo ? indexSourceSkills(sourceRepo) : new Map<string, string>();
+  return { ...buildProjectInfo(path, name ?? basename(path), sourceIndex), transient: true };
+}
+
+/**
+ * True if `path` looks like a directory an agentic tool works in: it carries
+ * at least one of the cross-tool markers (`.agents`/`.claude` dirs, AGENTS.md,
+ * CLAUDE.md). Used by startup cwd detection.
+ */
+export function isAgenticDir(path: string): boolean {
+  return [".agents", ".claude", "AGENTS.md", "CLAUDE.md"].some((marker) =>
+    existsSync(join(path, marker)),
+  );
+}
+
+/**
  * All skill workspaces: the always-present global `~/.agents/skills` first,
- * then the registered project directories. Each is scanned against the source
- * repo for drift.
+ * then the registered project directories, then still-existing recent
+ * (transient) workspaces that aren't already registered. Each is scanned
+ * against the source repo for drift.
  *
  * Note: `~/.agents/skills` is now ALSO tracked as the `agents` pseudo-tool's
  * instance through the normal sync/skill engine (see
@@ -187,7 +217,12 @@ export function getProjects(): ProjectInfo[] {
   const registered = config.projects.map((entry) =>
     buildProjectInfo(expandPath(entry.path), entry.name ?? basename(expandPath(entry.path)), sourceIndex),
   );
-  return [global, ...registered];
+  const known = new Set([global.path, ...registered.map((p) => p.path)]);
+  const recent = loadRecentWorkspaces()
+    .map(expandPath)
+    .filter((path) => !known.has(path) && isDirectory(path))
+    .map((path) => ({ ...buildProjectInfo(path, basename(path), sourceIndex), transient: true }));
+  return [global, ...registered, ...recent];
 }
 
 /** An unmanaged skill: present in some workspace's `.agents/skills` but not in the source repo. */

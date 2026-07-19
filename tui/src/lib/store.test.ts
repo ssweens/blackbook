@@ -2861,6 +2861,8 @@ describe("composed store shape", () => {
     "loadProjects",
     "addProject",
     "removeProject",
+    "openWorkspace",
+    "removeRecentWorkspace",
     "setProjectDetailPath",
     "pushProjectSkill",
     "pullProjectSkill",

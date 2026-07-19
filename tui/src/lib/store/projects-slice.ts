@@ -1,7 +1,11 @@
 import { statSync } from "fs";
 import type { Store, SliceCreator } from "./types.js";
 import { join } from "path";
-import { getProjects, collectUnmanagedSkills, indexSourceSkills } from "../projects.js";
+import { getProjects, collectUnmanagedSkills, indexSourceSkills, buildWorkspaceInfo } from "../projects.js";
+import {
+  recordRecentWorkspace,
+  removeRecentWorkspace as removeRecentWorkspaceFs,
+} from "../recent-workspaces.js";
 import {
   pushSkillToProject,
   pullSkillToSource,
@@ -25,6 +29,8 @@ export type ProjectsSlice = Pick<
   | "loadProjects"
   | "addProject"
   | "removeProject"
+  | "openWorkspace"
+  | "removeRecentWorkspace"
   | "setProjectDetailPath"
   | "pushProjectSkill"
   | "pullProjectSkill"
@@ -99,6 +105,45 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
 
     await get().loadProjects({ silent: true });
     notify(`Added project ${expanded}`, "success");
+    return true;
+  },
+
+  openWorkspace: async (path) => {
+    const { notify } = get();
+    const expanded = expandPath(path);
+    if (!isDirectory(expanded)) {
+      notify(`Not a directory: ${path}`, "error");
+      return false;
+    }
+
+    // Make sure the registered/synthetic set is known before deciding whether
+    // this dir is already a workspace (startup calls this before any load).
+    if (!get().projectsLoaded) await get().loadProjects({ silent: true });
+
+    // Switch tabs first: setTab clears projectDetailPath, so the drill-in
+    // target must be set after.
+    get().setTab("projects");
+
+    const existing = get().projects.find((p) => p.path === expanded);
+    if (existing) {
+      set({ projectDetailPath: expanded });
+      return true;
+    }
+
+    recordRecentWorkspace(expanded);
+    const info = buildWorkspaceInfo(expanded);
+    set({ projects: [...get().projects, info], projectDetailPath: expanded });
+    return true;
+  },
+
+  removeRecentWorkspace: async (path) => {
+    const expanded = expandPath(path);
+    removeRecentWorkspaceFs(expanded);
+    set({
+      projects: get().projects.filter((p) => !(p.transient && p.path === expanded)),
+      projectDetailPath: get().projectDetailPath === expanded ? null : get().projectDetailPath,
+    });
+    get().notify(`Removed ${expanded} from recent workspaces`, "success");
     return true;
   },
 

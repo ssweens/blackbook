@@ -241,6 +241,7 @@ export function App() {
   const loadProjects = useStore((s) => s.loadProjects);
   const addProject = useStore((s) => s.addProject);
   const removeProject = useStore((s) => s.removeProject);
+  const removeRecentWorkspace = useStore((s) => s.removeRecentWorkspace);
   const projectDetailPath = useStore((s) => s.projectDetailPath);
   const setProjectDetailPath = useStore((s) => s.setProjectDetailPath);
   const pushProjectSkill = useStore((s) => s.pushProjectSkill);
@@ -1649,7 +1650,10 @@ export function App() {
       if (input === "d") {
         const target = projects[selectedIndex];
         // The synthetic global workspace isn't registered — can't be removed.
-        if (target && !target.synthetic) void removeProject(target.path);
+        if (!target || target.synthetic) return;
+        // Transient rows live in the recents cache, not config.yaml.
+        if (target.transient) void removeRecentWorkspace(target.path);
+        else void removeProject(target.path);
         return;
       }
     }

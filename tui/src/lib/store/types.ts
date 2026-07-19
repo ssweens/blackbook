@@ -65,6 +65,14 @@ export interface Actions {
   loadProjects: (options?: { silent?: boolean }) => Promise<void>;
   addProject: (path: string) => Promise<boolean>;
   removeProject: (path: string) => Promise<boolean>;
+  /**
+   * Open a directory as a workspace without registering it: drill into it on
+   * the Projects tab. Already-known paths just open; new ones are scanned
+   * transiently and recorded in the recent-workspaces cache (not config.yaml).
+   */
+  openWorkspace: (path: string) => Promise<boolean>;
+  /** Drop a transient workspace from the recents cache and the projects list. */
+  removeRecentWorkspace: (path: string) => Promise<boolean>;
   setProjectDetailPath: (path: string | null) => void;
   // Per-skill provisioning within a project (drill-in actions)
   pushProjectSkill: (projectPath: string, name: string, sourceSkillDir: string) => Promise<boolean>;

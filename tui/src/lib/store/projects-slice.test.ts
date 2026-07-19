@@ -12,11 +12,19 @@ const statSyncMock = vi.fn();
 const pushSkillMock = vi.fn();
 const pullSkillMock = vi.fn();
 const commitMock = vi.fn();
+const buildWorkspaceInfoMock = vi.fn();
+const recordRecentMock = vi.fn();
+const removeRecentFsMock = vi.fn();
 
 vi.mock("../projects.js", () => ({
   getProjects: () => getProjectsMock(),
   collectUnmanagedSkills: (...a: unknown[]) => collectUnmanagedMock(...a),
   indexSourceSkills: (...a: unknown[]) => indexSourceSkillsMock(...a),
+  buildWorkspaceInfo: (...a: unknown[]) => buildWorkspaceInfoMock(...a),
+}));
+vi.mock("../recent-workspaces.js", () => ({
+  recordRecentWorkspace: (...a: unknown[]) => recordRecentMock(...a),
+  removeRecentWorkspace: (...a: unknown[]) => removeRecentFsMock(...a),
 }));
 vi.mock("../project-actions.js", () => ({
   pushSkillToProject: (...a: unknown[]) => pushSkillMock(...a),
@@ -40,7 +48,7 @@ function makeStore() {
   };
   const get = () => state as any;
   const slice = createProjectsSlice(set as any, get as any);
-  state = { ...slice, notify: vi.fn(), projects: [], projectsLoaded: false };
+  state = { ...slice, notify: vi.fn(), setTab: vi.fn(), projects: [], projectsLoaded: false };
   return { get, state: () => state };
 }
 
@@ -54,6 +62,9 @@ beforeEach(() => {
   pushSkillMock.mockReset();
   pullSkillMock.mockReset();
   commitMock.mockReset();
+  buildWorkspaceInfoMock.mockReset();
+  recordRecentMock.mockReset();
+  removeRecentFsMock.mockReset();
   // Default config so loadProjects() (called after mutations) can read profiles.
   loadConfigMock.mockReturnValue({ config: { projects: [], profiles: {}, settings: { backup_retention: 3 } }, configPath: "/cfg" });
 });
@@ -113,6 +124,57 @@ describe("projects-slice", () => {
     const { get } = makeStore();
     const ok = await get().removeProject("/missing");
     expect(ok).toBe(false);
+    expect(saveConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("openWorkspace on a known path drills in without touching recents", async () => {
+    statSyncMock.mockReturnValue({ isDirectory: () => true });
+    getProjectsMock.mockReturnValue([{ path: "/known", name: "known", exists: true, hasAgentsDir: true, skills: [], available: [] }]);
+    const { get } = makeStore();
+
+    const ok = await get().openWorkspace("/known");
+    expect(ok).toBe(true);
+    expect(get().setTab).toHaveBeenCalledWith("projects");
+    expect(get().projectDetailPath).toBe("/known");
+    expect(recordRecentMock).not.toHaveBeenCalled();
+    expect(buildWorkspaceInfoMock).not.toHaveBeenCalled();
+  });
+
+  it("openWorkspace on a new dir scans it transiently and records a recent", async () => {
+    statSyncMock.mockReturnValue({ isDirectory: () => true });
+    getProjectsMock.mockReturnValue([]);
+    const info = { path: "/new", name: "new", exists: true, hasAgentsDir: false, skills: [], available: [], transient: true };
+    buildWorkspaceInfoMock.mockReturnValue(info);
+    const { get } = makeStore();
+
+    const ok = await get().openWorkspace("/new");
+    expect(ok).toBe(true);
+    expect(recordRecentMock).toHaveBeenCalledWith("/new");
+    expect(get().projects).toEqual([info]);
+    expect(get().projectDetailPath).toBe("/new");
+    // Transient: nothing written to config.yaml.
+    expect(saveConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("openWorkspace rejects a non-directory", async () => {
+    statSyncMock.mockImplementation(() => { throw new Error("ENOENT"); });
+    const { get } = makeStore();
+    const ok = await get().openWorkspace("/nope");
+    expect(ok).toBe(false);
+    expect(recordRecentMock).not.toHaveBeenCalled();
+    expect(get().projectDetailPath).toBe(null);
+  });
+
+  it("removeRecentWorkspace drops the transient row and updates the cache", async () => {
+    const { get, state } = makeStore();
+    const transient = { path: "/t", name: "t", exists: true, hasAgentsDir: false, skills: [], available: [], transient: true };
+    const registered = { path: "/r", name: "r", exists: true, hasAgentsDir: false, skills: [], available: [] };
+    (state() as any).projects = [registered, transient];
+
+    const ok = await get().removeRecentWorkspace("/t");
+    expect(ok).toBe(true);
+    expect(removeRecentFsMock).toHaveBeenCalledWith("/t");
+    expect(get().projects).toEqual([registered]);
     expect(saveConfigMock).not.toHaveBeenCalled();
   });
 

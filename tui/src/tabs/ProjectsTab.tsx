@@ -114,6 +114,7 @@ export function ProjectsTab({ contentHeight }: ProjectsTabProps) {
             <Text color="gray" wrap="truncate">
               {"  "}
               {location} · {summary}
+              {p.transient ? " · recent" : ""}
             </Text>
           </Box>
         );

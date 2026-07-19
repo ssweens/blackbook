@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import React from "react";
 import { render } from "ink";
+import { homedir } from "os";
 import { App } from "./App.js";
-import { initializeStore } from "./lib/store.js";
+import { initializeStore, useStore } from "./lib/store.js";
+import { isAgenticDir } from "./lib/projects.js";
 import { patchExistsSync, mark, measure, logReport, setStartupTime } from "./lib/perf.js";
 import { logError } from "./lib/validation.js";
 import { reconcileStaleInstallArtifacts } from "./lib/install.js";
@@ -35,6 +37,20 @@ try {
   reconcileStaleInstallArtifacts();
 } catch (error) {
   logError("Failed to reconcile stale install artifacts", error);
+}
+
+// Workspace-aware startup: launched from an agentic project dir (has .agents/
+// .claude/AGENTS.md/CLAUDE.md), boot straight into that workspace's drill-in
+// view on the Projects tab. The home dir is excluded — it carries those
+// markers too but is already the synthetic Global workspace. Never allowed to
+// block or break startup.
+try {
+  const cwd = process.cwd();
+  if (cwd !== homedir() && isAgenticDir(cwd)) {
+    await useStore.getState().openWorkspace(cwd);
+  }
+} catch (error) {
+  logError("Failed to open cwd workspace", error);
 }
 
 render(<App />);
