@@ -243,6 +243,7 @@ describe("ItemList", () => {
         kind: "file",
         tools: ["claude-code"],
         marketplace: "local",
+        installed: true,
       }),
     ];
     const { lastFrame } = render(
@@ -250,7 +251,7 @@ describe("ItemList", () => {
     );
     const frame = lastFrame()!;
     expect(frame).toContain("AGENTS.md");
-    expect(frame).toContain("claude-code");
+    expect(frame).toContain("All tools");
   });
 
   it("shows ❯ for selected item", () => {
@@ -360,10 +361,10 @@ describe("ItemList", () => {
     expect(pf()).toContain("my-market");
 
     // Files get FILE_COLUMNS (scope col)
-    const fileItems = [createItem({ kind: "file", tools: ["claude-code"] })];
+    const fileItems = [createItem({ kind: "file", tools: ["claude-code"], installed: true })];
     const { lastFrame: ff } = render(
       React.createElement(ItemList, { items: fileItems, selectedIndex: 0 }),
     );
-    expect(ff()).toContain("claude-code");
+    expect(ff()).toContain("All tools");
   });
 });

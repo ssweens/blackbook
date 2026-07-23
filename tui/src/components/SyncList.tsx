@@ -98,11 +98,7 @@ export const SyncList = React.memo(function SyncList({
             // git status) was frequently wrong — e.g. a stale uncommitted diff
             // from an earlier edit kept claiming "(source)" even after a
             // brand-new disk-only edit. A wrong direction is worse than none.
-            if (item.driftedInstances.length === 1) {
-              parts.push(`Drifted on ${item.driftedInstances[0]}`);
-            } else {
-              parts.push(`Drifted: ${item.driftedInstances.length} (${item.driftedInstances.join(", ")})`);
-            }
+            parts.push(`Drifted: ${item.driftedInstances.length} instance${item.driftedInstances.length === 1 ? "" : "s"}`);
           }
           statusLabel = parts.join(" · ");
         } else if (item.kind === "piPackage") {

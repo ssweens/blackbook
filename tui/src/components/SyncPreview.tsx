@@ -58,31 +58,31 @@ export function SyncPreview({ item }: SyncPreviewProps) {
           {item.missingInstances.length > 0 && (
             <>
               <Text color="gray">Missing: </Text>
-              <Text color="yellow">{item.missingInstances.join(", ")}</Text>
+              <Text color="yellow">{item.missingInstances.length} instance{item.missingInstances.length === 1 ? "" : "s"}</Text>
             </>
           )}
           {sourceChangedInstances.length > 0 && (
             <>
               <Text color="gray">{item.missingInstances.length > 0 ? " · " : ""}Source drifted: </Text>
-              <Text color="yellow">{sourceChangedInstances.join(", ")}</Text>
+              <Text color="yellow">{sourceChangedInstances.length}</Text>
             </>
           )}
           {targetChangedInstances.length > 0 && (
             <>
               <Text color="gray">{(item.missingInstances.length > 0 || sourceChangedInstances.length > 0) ? " · " : ""}Target drifted: </Text>
-              <Text color="magenta">{targetChangedInstances.join(", ")}</Text>
+              <Text color="magenta">{targetChangedInstances.length}</Text>
             </>
           )}
           {bothChangedInstances.length > 0 && (
             <>
               <Text color="gray">{(item.missingInstances.length > 0 || sourceChangedInstances.length > 0 || targetChangedInstances.length > 0) ? " · " : ""}Both drifted: </Text>
-              <Text color="red">{bothChangedInstances.join(", ")}</Text>
+              <Text color="red">{bothChangedInstances.length}</Text>
             </>
           )}
           {untrackedInstances.length > 0 && (
             <>
               <Text color="gray">{(item.missingInstances.length > 0 || sourceChangedInstances.length > 0 || targetChangedInstances.length > 0 || bothChangedInstances.length > 0) ? " · " : ""}Untracked: </Text>
-              <Text color="red">{untrackedInstances.join(", ")}</Text>
+              <Text color="red">{untrackedInstances.length}</Text>
             </>
           )}
         </Box>
@@ -101,13 +101,13 @@ export function SyncPreview({ item }: SyncPreviewProps) {
         {item.missingInstances.length > 0 && (
           <Box>
             <Text color="gray">Missing: </Text>
-            <Text color="yellow">{item.missingInstances.join(", ")}</Text>
+            <Text color="yellow">{item.missingInstances.length} instance{item.missingInstances.length === 1 ? "" : "s"} — needs repair</Text>
           </Box>
         )}
         {item.driftedInstances.length > 0 && (
           <Box>
             <Text color="gray">Drifted: </Text>
-            <Text color="yellow">{item.driftedInstances.join(", ")}</Text>
+            <Text color="yellow">{item.driftedInstances.length} instance{item.driftedInstances.length === 1 ? "" : "s"}</Text>
           </Box>
         )}
       </Box>
@@ -141,8 +141,8 @@ export function SyncPreview({ item }: SyncPreviewProps) {
         <Text color="white">{item.plugin.name}</Text>
       </Box>
       <Box>
-        <Text color="gray">Missing instances: </Text>
-        <Text color="yellow">{item.missingInstances.join(", ")}</Text>
+        <Text color="gray">Missing: </Text>
+        <Text color="yellow">{item.missingInstances.length} instance{item.missingInstances.length === 1 ? "" : "s"} — needs repair</Text>
       </Box>
     </Box>
   );

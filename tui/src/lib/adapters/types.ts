@@ -43,8 +43,6 @@ export interface SupportInput {
  * every plugin in a render pass. Adapters read only what they need.
  */
 export interface InstalledContext {
-  getClaudeInstalledIds(): Set<string>;
-  getCodexInstalledIds(): Set<string>;
   getManifest(): Manifest;
 }
 

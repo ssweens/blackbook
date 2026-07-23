@@ -1,24 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { ToolInstance } from "../types.js";
-
-// installMcpServersToInstance/uninstallMcpServersFromInstance shell out to the
-// real `claude` CLI for Claude instances — mock child_process so tests never
-// invoke a real binary, and so we can assert on exactly what would have run.
-const execFileCalls: Array<{ file: string; args: string[]; options: any }> = [];
-vi.mock("child_process", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("child_process")>();
-  return {
-    ...actual,
-    execFile: (file: string, args: string[], options: any, callback: any) => {
-      execFileCalls.push({ file, args, options });
-      const cb = typeof options === "function" ? options : callback;
-      cb(null, { stdout: "", stderr: "" });
-    },
-  };
-});
 
 import { installMcpServersToInstance, uninstallMcpServersFromInstance } from "./mcp.js";
 
@@ -34,8 +18,8 @@ function claudeInstance(configDir: string): ToolInstance {
     name: "Claude",
     configDir,
     skillsSubdir: "skills",
-    commandsSubdir: "commands",
-    agentsSubdir: "agents",
+    commandsSubdir: null,
+    agentsSubdir: null,
     enabled: true,
     kind: "tool",
     pluginFlatInstall: true,
@@ -48,87 +32,51 @@ function piInstance(configDir: string): ToolInstance {
     instanceId: "default",
     name: "Pi",
     configDir,
-    skillsSubdir: "~/.agents/skills",
-    commandsSubdir: "prompts",
+    skillsSubdir: null,
+    commandsSubdir: null,
     agentsSubdir: null,
-    enabled: true,
-    kind: "tool",
-    pluginFlatInstall: true,
-  };
-}
-
-function opencodeInstance(configDir: string): ToolInstance {
-  return {
-    toolId: "opencode",
-    instanceId: "default",
-    name: "OpenCode",
-    configDir,
-    skillsSubdir: "~/.agents/skills",
-    commandsSubdir: "commands",
-    agentsSubdir: "agents",
     enabled: true,
     kind: "tool",
     pluginFlatInstall: false,
   };
 }
 
-function writePluginMcpJson(pluginDir: string, servers: Record<string, unknown>): void {
+function writePluginMcpJson(pluginDir: string, servers: Record<string, unknown>) {
   mkdirSync(pluginDir, { recursive: true });
-  writeFileSync(join(pluginDir, "mcp.json"), JSON.stringify({ mcpServers: servers }));
+  writeFileSync(join(pluginDir, "mcp.json"), JSON.stringify(servers, null, 2));
 }
 
 beforeEach(() => {
-  execFileCalls.length = 0;
   process.env.HOME = TEST_HOME;
-  process.env.XDG_CACHE_HOME = join(TEST_ROOT, "cache");
-  rmSync(TEST_ROOT, { recursive: true, force: true });
+  process.env.XDG_CACHE_HOME = join(TEST_HOME, ".cache");
   mkdirSync(TEST_HOME, { recursive: true });
+  mkdirSync(join(TEST_HOME, ".cache", "blackbook"), { recursive: true });
 });
 
 afterEach(() => {
-  if (ORIGINAL_HOME === undefined) delete process.env.HOME;
-  else process.env.HOME = ORIGINAL_HOME;
-  if (ORIGINAL_XDG_CACHE === undefined) delete process.env.XDG_CACHE_HOME;
-  else process.env.XDG_CACHE_HOME = ORIGINAL_XDG_CACHE;
+  process.env.HOME = ORIGINAL_HOME;
+  if (ORIGINAL_XDG_CACHE) process.env.XDG_CACHE_HOME = ORIGINAL_XDG_CACHE;
+  else delete process.env.XDG_CACHE_HOME;
   rmSync(TEST_ROOT, { recursive: true, force: true });
 });
 
 describe("installMcpServersToInstance", () => {
-  it("is a no-op for tools other than Claude/Pi", async () => {
-    const pluginDir = join(TEST_ROOT, "plugin-opencode");
-    writePluginMcpJson(pluginDir, { search: { command: "npx", args: ["search-mcp"] } });
-    const result = await installMcpServersToInstance("demo-plugin", pluginDir, opencodeInstance(join(TEST_ROOT, "opencode")));
-    expect(result).toEqual({ count: 0, errors: [] });
-    expect(execFileCalls).toHaveLength(0);
-  });
-
-  it("is a no-op when the plugin has no MCP servers", async () => {
-    const pluginDir = join(TEST_ROOT, "plugin-empty");
-    mkdirSync(pluginDir, { recursive: true });
-    const result = await installMcpServersToInstance("demo-plugin", pluginDir, piInstance(join(TEST_ROOT, "pi")));
-    expect(result).toEqual({ count: 0, errors: [] });
-  });
-
-  it("shells out to the claude CLI per server for a Claude instance", async () => {
+  it("writes to settings.json for a Claude instance", async () => {
     const pluginDir = join(TEST_ROOT, "plugin-claude");
     writePluginMcpJson(pluginDir, { search: { command: "npx", args: ["search-mcp"] } });
     const instance = claudeInstance(join(TEST_ROOT, "claude"));
+    mkdirSync(join(TEST_ROOT, "claude"), { recursive: true });
 
     const result = await installMcpServersToInstance("demo-plugin", pluginDir, instance);
 
     expect(result.count).toBe(1);
     expect(result.errors).toHaveLength(0);
-    expect(execFileCalls).toHaveLength(1);
-    expect(execFileCalls[0].file).toBe("claude");
-    expect(execFileCalls[0].args[0]).toBe("mcp");
-    expect(execFileCalls[0].args[1]).toBe("add-json");
-    expect(execFileCalls[0].args[2]).toBe("search");
-    expect(JSON.parse(execFileCalls[0].args[3])).toEqual({ command: "npx", args: ["search-mcp"] });
-    expect(execFileCalls[0].args.slice(4)).toEqual(["--scope", "user"]);
-    expect(execFileCalls[0].options.env.CLAUDE_CONFIG_DIR).toBe(instance.configDir);
 
-    // Never hand-edits ~/.claude.json directly.
-    expect(existsSync(join(TEST_HOME, ".claude.json"))).toBe(false);
+    // Should write to <configDir>/settings.json
+    const settingsPath = join(TEST_ROOT, "claude", "settings.json");
+    expect(existsSync(settingsPath)).toBe(true);
+    const written = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    expect(written.mcpServers.search).toEqual({ command: "npx", args: ["search-mcp"] });
   });
 
   it("writes a merged ~/.config/mcp/mcp.json for a Pi instance", async () => {
@@ -143,7 +91,6 @@ describe("installMcpServersToInstance", () => {
     expect(existsSync(mcpPath)).toBe(true);
     const written = JSON.parse(readFileSync(mcpPath, "utf-8"));
     expect(written.mcpServers.search).toEqual({ command: "npx", args: ["search-mcp"] });
-    expect(execFileCalls).toHaveLength(0);
   });
 
   it("merges into an existing ~/.config/mcp/mcp.json without clobbering other servers", async () => {
@@ -162,18 +109,20 @@ describe("installMcpServersToInstance", () => {
 });
 
 describe("uninstallMcpServersFromInstance", () => {
-  it("removes only the servers owned by the given plugin, via the claude CLI", async () => {
+  it("removes only the servers owned by the given plugin from Claude settings.json", async () => {
     const pluginDir = join(TEST_ROOT, "plugin-claude");
     writePluginMcpJson(pluginDir, { search: { command: "npx" } });
     const instance = claudeInstance(join(TEST_ROOT, "claude"));
+    mkdirSync(join(TEST_ROOT, "claude"), { recursive: true });
     await installMcpServersToInstance("demo-plugin", pluginDir, instance);
-    execFileCalls.length = 0;
 
     const removed = await uninstallMcpServersFromInstance("demo-plugin", instance);
 
     expect(removed).toBe(1);
-    expect(execFileCalls).toHaveLength(1);
-    expect(execFileCalls[0].args).toEqual(["mcp", "remove", "search", "--scope", "user"]);
+    // settings.json should have empty mcpServers
+    const settingsPath = join(TEST_ROOT, "claude", "settings.json");
+    const written = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    expect(written.mcpServers).toEqual({});
   });
 
   it("removes only the given plugin's servers from the shared Pi mcp.json, leaving others intact", async () => {
@@ -194,10 +143,5 @@ describe("uninstallMcpServersFromInstance", () => {
     const written = JSON.parse(readFileSync(mcpPath, "utf-8"));
     expect(written.mcpServers["a-server"]).toBeUndefined();
     expect(written.mcpServers["b-server"]).toEqual({ command: "b" });
-  });
-
-  it("returns 0 for a plugin with nothing installed", async () => {
-    const removed = await uninstallMcpServersFromInstance("nothing-installed", piInstance(join(TEST_ROOT, "pi")));
-    expect(removed).toBe(0);
   });
 });

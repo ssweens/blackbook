@@ -319,14 +319,11 @@ export function PluginMetadata({ item }: { item: ManagedItem }) {
 
 /** File/config/asset metadata: tools, source mapping. */
 export function FileMetadata({ item }: { item: ManagedItem }) {
-  const isScoped = item.tools && item.tools.length > 0;
-  const toolScope = isScoped ? item.tools!.join(", ") : "All tools";
-
   return (
     <>
       <Box marginBottom={1}>
         <Text color="gray">Tools: </Text>
-        <Text color={isScoped ? "magenta" : "blue"}>{toolScope}</Text>
+        <Text color="blue">All tools</Text>
       </Box>
 
       {item.fileSource && (
@@ -470,11 +467,7 @@ export function SkillMetadata({ item }: { item: ManagedItem }) {
   const tree = buildSkillTree(skillPath);
   const isScoped = item.tools && item.tools.length > 0;
   const isInstalledAnywhere = item.instances.length > 0;
-  const toolScope = !isInstalledAnywhere
-    ? "(none yet)"
-    : isScoped
-      ? item.tools!.join(", ")
-      : "All tools";
+  const toolScope = !isInstalledAnywhere ? "(none yet)" : "All tools";
   const skill = item._skill;
 
   // Truncate long descriptions so the title/source/git rows stay visible.
@@ -565,7 +558,7 @@ export function NamespaceMetadata({ item }: { item: ManagedItem }) {
 
       <Box marginBottom={1}>
         <Text color="gray">Tools: </Text>
-        <Text color="magenta">{ns.toolIds.join(", ")}</Text>
+        <Text color="blue">All tools</Text>
       </Box>
 
       {ns.missingCount > 0 && (

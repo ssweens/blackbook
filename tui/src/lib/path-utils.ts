@@ -58,6 +58,16 @@ export function agentsSkillsDir(namespace: string | null | undefined, name: stri
 }
 
 /**
+ * Canonical location of a command/agent file in the shared `~/.agents/{commands,agents}`
+ * store — every tool's playbook (Claude included) points its `commands`/`agents`
+ * component at this same absolute override, so there is exactly one physical
+ * copy per plugin component, namespaced under the plugin name.
+ */
+export function agentsComponentDir(kind: "command" | "agent", pluginName: string, name: string): string {
+  return join(homedir(), ".agents", `${kind}s`, pluginName, `${name}.md`);
+}
+
+/**
  * Prefix a component name with its plugin/namespace to avoid collisions on
  * tools with a flat, unnamespaced install layout (`pluginFlatInstall: true` —
  * Claude Code, and Pi's plugin-sourced commands). Non-flat tools don't need

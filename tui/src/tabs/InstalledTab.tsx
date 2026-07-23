@@ -1,5 +1,6 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
+import fs from "fs";
 import { useStore } from "../lib/store.js";
 import { ItemList, FILE_COLUMNS, PLUGIN_COLUMNS } from "../components/ItemList.js";
 import { SearchBox } from "../components/SearchBox.js";
@@ -153,7 +154,7 @@ export function InstalledTab({ contentHeight, searchFocused, onSearchFocus, onSe
   const filteredNamespaces = useMemo(() => {
     return namespaceGroups.map((ns): import("../lib/managed-item.js").ManagedItem => {
       const isInstalled = ns.totalInstallations > 0;
-      const scopeLabel = ns.toolIds.join(", ");
+      const scopeLabel = isInstalled ? "All tools" : "source only";
       return {
         name: ns.name,
         kind: "namespace" as const,
@@ -190,11 +191,30 @@ export function InstalledTab({ contentHeight, searchFocused, onSearchFocus, onSe
       const toolIds = s.installations.map((i) => i.toolId);
       const uniqueTools = Array.from(new Set(toolIds));
       const isInstalled = s.installations.length > 0;
+
+      // A skill is "everywhere" when every skill-capable tool can reach it.
+      // Two paths lead to that conclusion:
+      //  1. Explicit: one installation per tool (the old check).
+      //  2. Shared path: all installations resolve to the same physical
+      //     directory (e.g. ~/.agents/skills, symlinked into ~/.claude/skills).
+      //     In that case the single physical copy serves every tool that reads
+      //     from either path, so the skill is effectively everywhere even
+      //     though not every tool has its own installation entry.
+      const uniquePhysicalPaths = new Set(
+        s.installations.map((i) => {
+          try { return fs.realpathSync(i.diskPath); } catch { return i.diskPath; }
+        }),
+      );
+      const sharedPathEverywhere =
+        isInstalled &&
+        uniquePhysicalPaths.size === 1 &&
+        skillCapableTools.size > 0;
       const isEverywhere =
         isInstalled &&
-        uniqueTools.length === skillCapableTools.size &&
-        uniqueTools.every((t) => skillCapableTools.has(t));
-      const scopeLabel = isInstalled ? uniqueTools.join(", ") : "source only";
+        (sharedPathEverywhere ||
+          (uniqueTools.length === skillCapableTools.size &&
+           uniqueTools.every((t) => skillCapableTools.has(t))));
+      const scopeLabel = isInstalled ? "All tools" : "source only";
       return {
         name: s.name,
         kind: "file" as const,

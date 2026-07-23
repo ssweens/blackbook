@@ -23,7 +23,7 @@ import {
   installPlugin,
   uninstallPlugin,
   updatePlugin,
-  removeClaudeMarketplace,
+
 } from "../install.js";
 import { invalidatePluginToolStatusCache } from "../plugin-status.js";
 import { getManagedToolRows } from "../tool-view.js";
@@ -33,6 +33,7 @@ import {
   newestMarketplacePluginFor,
   uniqueStrings,
 } from "../plugin-merge.js";
+import { summarizePluginComponents } from "../plugin-helpers.js";
 import { composeManagedItems, withSpinner, pluginActionInFlight } from "./shared.js";
 import type { Store, SliceCreator } from "./types.js";
 
@@ -41,10 +42,6 @@ const execFileAsync = promisify(execFile);
 // Monotonic run-tokens guard the loaders against stale overwrites (see loaders).
 let loadMarketplacesRunToken = 0;
 let loadInstalledPluginsRunToken = 0;
-
-function instanceKey(toolId: string, instanceId: string): string {
-  return `${toolId}:${instanceId}`;
-}
 
 function ensurePluginJson(pluginDir: string, plugin: Plugin): void {
   const pluginJsonPath = join(pluginDir, ".claude-plugin", "plugin.json");
@@ -369,23 +366,10 @@ export const createPluginsSlice: SliceCreator<PluginsSlice> = (set, get) => ({
       if (result.success) {
         await get().refreshAll({ silent: true });
 
-        const parts: string[] = [];
-        const toolList = get().tools;
-        const nameByKey = new Map(
-          toolList.map((tool) => [instanceKey(tool.toolId, tool.instanceId), tool.name])
-        );
-        for (const [key, count] of Object.entries(result.linkedInstances)) {
-          if (count > 0) {
-            const toolName = nameByKey.get(key) || key;
-            parts.push(`${toolName} (${count})`);
-          }
-        }
-
-        if (parts.length > 0) {
-          const skipped = result.skippedInstances.length > 0
-            ? ` (skipped: ${result.skippedInstances.map((key) => nameByKey.get(key) || key).join(", ")})`
-            : "";
-          notify(`✓ Installed ${plugin.name} → ${parts.join(", ")}${skipped}`, "success");
+        const totalLinked = Object.values(result.linkedInstances).reduce((sum, count) => sum + count, 0);
+        if (totalLinked > 0) {
+          const summary = summarizePluginComponents(plugin);
+          notify(`✓ Installed ${plugin.name}${summary ? ` — ${summary}` : ""}`, "success");
         } else {
           notify(`⚠ Install ran but no items linked for ${plugin.name}`, "error");
         }
@@ -451,26 +435,8 @@ export const createPluginsSlice: SliceCreator<PluginsSlice> = (set, get) => ({
         await get().refreshAll({ silent: true });
         get().refreshDetail();
 
-        const parts: string[] = [];
-        const toolList = get().tools;
-        const nameByKey = new Map(
-          toolList.map((tool) => [instanceKey(tool.toolId, tool.instanceId), tool.name])
-        );
-        for (const [key, count] of Object.entries(result.linkedInstances)) {
-          if (count > 0) {
-            const toolName = nameByKey.get(key) || key;
-            parts.push(`${toolName} (${count})`);
-          }
-        }
-
-        if (parts.length > 0) {
-          const skipped = result.skippedInstances.length > 0
-            ? ` (skipped: ${result.skippedInstances.map((key) => nameByKey.get(key) || key).join(", ")})`
-            : "";
-          notify(`✓ Updated ${plugin.name} → ${parts.join(", ")}${skipped}`, "success");
-        } else {
-          notify(`✓ Updated ${plugin.name}`, "success");
-        }
+        const summary = summarizePluginComponents(plugin);
+        notify(`✓ Updated ${plugin.name}${summary ? ` — ${summary}` : ""}`, "success");
       } else {
         notify(`✗ Failed to update ${plugin.name}: ${result.errors.join("; ")}`, "error");
       }
@@ -628,12 +594,6 @@ export const createPluginsSlice: SliceCreator<PluginsSlice> = (set, get) => ({
     const marketplace = get().marketplaces.find((m) => m.name === name);
 
     try {
-      // For Claude-discovered marketplaces, run the native Claude CLI command to
-      // remove it from known_marketplaces.json on every Claude instance.
-      if (marketplace?.source === "claude") {
-        await removeClaudeMarketplace(name);
-      }
-
       // Remove from Blackbook config (no-op if it wasn't user-added).
       removeMarketplaceFromConfig(name);
 

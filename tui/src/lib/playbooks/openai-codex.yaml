@@ -12,6 +12,12 @@ components:
     # instead of duplicating into Codex's own config dir.
     install_dir: ~/.agents/skills
     strategy: symlink
+  commands:
+    install_dir: ~/.agents/commands
+    strategy: symlink
+  agents:
+    install_dir: ~/.agents/agents
+    strategy: symlink
 config_files:
   - name: Codex Config
     path: config.toml

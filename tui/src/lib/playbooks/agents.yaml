@@ -7,9 +7,17 @@ default_instances:
     config_dir: ~/.agents
 structure:
   - skills/
+  - commands/
+  - agents/
 components:
   skills:
     install_dir: skills/
+    strategy: symlink
+  commands:
+    install_dir: commands/
+    strategy: symlink
+  agents:
+    install_dir: agents/
     strategy: symlink
 config_files: []
 syncable: false

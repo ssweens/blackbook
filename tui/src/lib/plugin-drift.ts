@@ -15,11 +15,9 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import { basename, dirname, join, resolve } from "path";
 import type { Plugin } from "./types.js";
-import { loadManifest } from "./manifest.js";
-import { buildManifestItemKey, instanceKey } from "./plugin-helpers.js";
-import { getToolInstances, parseMarketplaces } from "./config.js";
-import { resolveLocalPathRaw } from "./path-utils.js";
-import { resolveInstalledPluginComponentPath } from "./pi-bridge.js";
+import { parseMarketplaces } from "./config.js";
+import { resolveLocalPathRaw, agentsComponentDir } from "./path-utils.js";
+import { pluginSkillStorePath } from "./adapters/shared.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -217,8 +215,6 @@ export async function computePluginDrift(
   const drift: PluginDrift = {};
 
   const pluginSource = resolvePluginSource(plugin.name, []);
-  const toolInstances = getToolInstances();
-  const manifest = loadManifest();
 
   const allComponents: Array<{
     kind: "skill" | "command" | "agent";
@@ -243,40 +239,23 @@ export async function computePluginDrift(
       }
 
       // ── Target side ───────────────────────────────────────────────────────
-      // Has the installed copy diverged from the source repo copy?
+      // Has the installed copy diverged from the source repo copy? Every tool
+      // now serves ONE physical copy from the shared ~/.agents store, so drift
+      // is computed ONCE against that store — never against each tool's own
+      // dest. Comparing against a per-tool dest was wrong: a flat-install tool
+      // (Claude) reads through a derived-view symlink, so `git diff --no-index`
+      // saw "directory vs symlink" and reported a phantom target-change that
+      // the detail rows (which diff the store) never showed.
       let targetDirty = false;
       if (pluginSource) {
         const srcSuffix = kind === "skill" ? name : `${name}.md`;
         const srcPath = join(pluginSource.pluginDir, `${kind}s`, srcSuffix);
-
-        await mapLimit(
-          toolInstances.filter((inst) => inst.enabled),
-          2,
-          async (inst) => {
-              if (targetDirty) return;
-
-              const subdir =
-                kind === "skill"
-                  ? inst.skillsSubdir
-                  : kind === "command"
-                    ? inst.commandsSubdir
-                    : inst.agentsSubdir;
-              if (!subdir) return;
-
-              // Try manifest first for the exact dest path, then fall back to
-              // the tool-native install location. Pi plugins are bridge-managed
-              // and resolve to the staged `resolvedSource`, not ~/.pi/agent/skills.
-              const ikey = instanceKey(inst);
-              const manifestKey = buildManifestItemKey(plugin.name, kind, name);
-              const manifestItem = manifest.tools[ikey]?.items[manifestKey];
-              const destPath = resolveInstalledPluginComponentPath(inst, plugin, kind, name, manifestItem?.dest);
-              if (!destPath || !existsSync(destPath)) return;
-
-              if (await hasDiff(srcPath, destPath)) {
-                targetDirty = true;
-              }
-            },
-        );
+        const storePath = kind === "skill"
+          ? pluginSkillStorePath(plugin.name, name)
+          : agentsComponentDir(kind, plugin.name, name);
+        if (storePath && existsSync(storePath) && (await hasDiff(srcPath, storePath))) {
+          targetDirty = true;
+        }
       }
 
       // ── Combine ───────────────────────────────────────────────────────────

@@ -507,7 +507,7 @@ export function NamespaceDetail({ item, selectedAction, expandedSkills }: Namesp
       {/* Status */}
       <Box>
         <Text color="gray">Tools: </Text>
-        <Text color="magenta">{ns.toolIds.join(", ")}</Text>
+        <Text color="magenta">All tools</Text>
         {ns.missingCount > 0 && <Text color="yellow"> · {ns.missingCount} missing</Text>}
         {ns.driftedCount > 0 && <Text color="yellow"> · {ns.driftedCount} drifted</Text>}
         {ns.notInGitCount > 0 && <Text color="red"> · {ns.notInGitCount} not in git</Text>}

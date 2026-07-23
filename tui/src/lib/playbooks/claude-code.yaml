@@ -13,10 +13,10 @@ components:
     install_dir: skills/
     strategy: symlink
   commands:
-    install_dir: commands/
+    install_dir: ~/.agents/commands
     strategy: symlink
   agents:
-    install_dir: agents/
+    install_dir: ~/.agents/agents
     strategy: symlink
 config_files:
   - name: Settings
@@ -25,6 +25,9 @@ config_files:
   - name: CLAUDE.md
     path: CLAUDE.md
     format: markdown
+    install_dir: ~/.claude/CLAUDE.md
+    strategy: symlink
+    source: assets/AGENTS.md
 syncable: true
 plugin_flat_install: true
 lifecycle:

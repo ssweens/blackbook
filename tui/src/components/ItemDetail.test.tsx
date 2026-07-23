@@ -312,10 +312,10 @@ describe("FileMetadata", () => {
   it("renders tool scope", () => {
     const { lastFrame } = render(
       React.createElement(FileMetadata, {
-        item: createItem({ tools: ["claude-code"] }),
+        item: createItem({ tools: ["claude-code"], installed: true }),
       }),
     );
-    expect(lastFrame()).toContain("claude-code");
+    expect(lastFrame()).toContain("All tools");
   });
 
   it("shows All tools when no tools specified", () => {

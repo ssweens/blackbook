@@ -74,6 +74,7 @@ import {
   groupSkillsByNamespace,
 } from "./lib/install.js";
 import { getPluginToolStatus as getPluginToolStatusDirect } from "./lib/plugin-status.js";
+import { skillPresentForInstance } from "./lib/adapters/shared.js";
 import { fetchMarketplace } from "./lib/marketplace.js";
 import { parseMarketplaces, getToolInstances, ensureConfigExists, getPluginComponentConfig } from "./lib/config.js";
 import { detectTool } from "./lib/tool-detect.js";
@@ -188,6 +189,13 @@ vi.mock("./lib/adapters/shared.js", async (importOriginal) => {
     // Pretend the plugin's skill is present in the shared store so the
     // consolidated shared-skill row computes drift against the (mocked) diff.
     pluginSkillStorePath: vi.fn().mockReturnValue("/store/test-skill"),
+    // Pretend every flat-install (Claude-like) instance already has its own
+    // derived-view overlay materialized — the fixture's /tmp/claude doesn't
+    // exist on disk, so the real filesystem check would otherwise report it
+    // as "Missing" and mask the drift/in-sync scenarios these tests target.
+    // The skills row checks per-skill presence, so mock that too.
+    pluginSkillPresentForInstance: vi.fn().mockReturnValue(true),
+    skillPresentForInstance: vi.fn().mockReturnValue(true),
   };
 });
 
@@ -792,7 +800,7 @@ describe("App E2E — Plugin Detail", () => {
     }
   });
 
-  it("incomplete plugin shows a Sync-from-source action", async () => {
+  it("incomplete plugin shows an Install-from-source action", async () => {
     useStore.setState({
       tab: "installed",
       ...openPluginDetail(createPlugin({ incomplete: true })),
@@ -800,7 +808,7 @@ describe("App E2E — Plugin Detail", () => {
     });
     const { stdout, unmount } = render(<App />);
     try {
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Sync from source"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Install missing"));
       expect(stdout.lastFrame()).toContain("incomplete");
     } finally {
       unmount();
@@ -944,6 +952,48 @@ describe("App E2E — Plugin Detail", () => {
       expect(frame).toContain("Drifted");
     } finally {
       unmount();
+    }
+  });
+
+  it("reports Skills as Missing when a second flat-install instance (e.g. a second Claude profile) lacks its own overlay, even though the shared store has the skill", async () => {
+    // A tool can have multiple enabled instances with separate config dirs
+    // (two Claude profiles). The shared store being populated once is not
+    // enough — a flat-install (Claude-like) instance needs its OWN derived-
+    // view symlink materialized in its OWN config dir. One instance has it,
+    // the other doesn't — the row must reflect that, not silently say "In sync".
+    vi.mocked(getToolInstances).mockReturnValue([
+      ...createToolInstances(),
+      {
+        toolId: "claude-code",
+        instanceId: "claude-learning",
+        name: "Claude (Learning)",
+        enabled: true,
+        configDir: "/tmp/claude-learning",
+        skillsSubdir: "skills",
+        commandsSubdir: "commands",
+        agentsSubdir: "agents",
+        kind: "tool" as const,
+        pluginFlatInstall: true,
+      },
+    ]);
+    vi.mocked(skillPresentForInstance).mockImplementation(
+      (_pluginName, _skill, instance) => instance.instanceId !== "claude-learning",
+    );
+
+    useStore.setState({
+      tab: "installed",
+      ...openPluginDetail(createPlugin()),
+      installedPlugins: [createPlugin()],
+    });
+    const { stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Missing"), 5000);
+      const frame = stdout.lastFrame()!;
+      expect(frame).toContain("Skills (1)");
+      expect(frame).toContain("Missing");
+    } finally {
+      unmount();
+      vi.mocked(skillPresentForInstance).mockReturnValue(true);
     }
   });
 });

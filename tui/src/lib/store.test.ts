@@ -939,14 +939,14 @@ describe("Store tool management", () => {
 
 describe("Store sync tools", () => {
   beforeEach(() => {
-    vi.mocked(getAllInstalledPlugins).mockReset();
     vi.mocked(getPluginToolStatus).mockReset();
     vi.mocked(syncPluginInstances).mockReset();
+    useStore.setState({ installedPlugins: [] });
   });
 
   it("builds a sync preview for partial plugins", () => {
     const plugin = createMockPlugin({ name: "partial-plugin" });
-    vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [plugin], byTool: {} });
+    useStore.setState({ installedPlugins: [plugin] });
     vi.mocked(getPluginToolStatus).mockReturnValue([
       {
         toolId: "opencode",
@@ -998,8 +998,7 @@ describe("Store sync tools", () => {
       },
     };
 
-    useStore.setState({ managedTools, toolDetection });
-    vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [], byTool: {} });
+    useStore.setState({ managedTools, toolDetection, installedPlugins: [] });
 
     const preview = useStore.getState().getSyncPreview();
     expect(preview).toHaveLength(1);
@@ -1339,7 +1338,7 @@ describe("Store loadFiles (YAML config)", () => {
       toolDetection: {},
     });
 
-    vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [], byTool: {} });
+    useStore.setState({ installedPlugins: [] });
 
     const preview = useStore.getState().getSyncPreview();
     const fileItems = preview.filter((p) => p.kind === "file");
@@ -1600,6 +1599,7 @@ describe("Store syncTools with toolFilter", () => {
     vi.mocked(installSkillToInstance).mockReset();
     vi.mocked(getAllInstalledPlugins).mockReset();
     vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [], byTool: {} });
+    useStore.setState({ installedPlugins: [] });
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: { files: [], settings: { source_repo: "~/dotfiles", package_manager: "pnpm", backup_retention: 3 }, tools: {}, plugins: {}, configs: [], marketplaces: {} } as any,
       configPath: "/tmp/config.yaml",
@@ -1731,7 +1731,7 @@ describe("Repo-prescribed Pi packages", () => {
     vi.mocked(removePiPackage).mockReset();
     vi.mocked(repairPiPackageManager).mockReset();
     vi.mocked(updatePiPackage).mockReset();
-    vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [], byTool: {} });
+    useStore.setState({ installedPlugins: [] });
 
     vi.mocked(loadAllPiMarketplaces).mockResolvedValue([]);
     vi.mocked(getAllPiPackages).mockReturnValue([]);
@@ -2494,7 +2494,6 @@ describe("Unified skill detail actions", () => {
     const namespaceActions = getSkillActions(skill);
 
     expect(namespaceActions).toEqual(standaloneActions);
-    expect(namespaceActions.some((a) => a.type === "pullback")).toBe(true);
     expect(namespaceActions.some((a) => a.type === "uninstall")).toBe(true);
     expect(namespaceActions.some((a) => a.type === "delete_everywhere")).toBe(true);
   });
@@ -2724,7 +2723,7 @@ describe("Store sync preview depends on standaloneSkills", () => {
       piPackages: [],
     });
     vi.mocked(getToolInstances).mockReturnValue([createMockTool()]);
-    vi.mocked(getAllInstalledPlugins).mockReturnValue({ plugins: [], byTool: {} });
+    useStore.setState({ installedPlugins: [] });
   });
 
   it("reflects standaloneSkills, proving it is a real getSyncPreview input", () => {

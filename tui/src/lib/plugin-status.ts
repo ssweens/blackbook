@@ -16,8 +16,6 @@ import { countGetPluginToolStatus } from "./perf.js";
 import { isConfigOnlyInstance } from "./install.js";
 import { ensureAgentsSkillMaterialized } from "./adapters/managed.js";
 import { getAdapterForTool, type InstalledContext } from "./adapters/types.js";
-import { fetchClaudeInstalledPluginIds } from "./adapters/claude.js";
-import { fetchCodexInstalledPluginIds } from "./adapters/codex.js";
 
 export interface ToolInstallStatus {
   toolId: string;
@@ -38,24 +36,6 @@ export interface ToolInstallStatus {
 
 const statusCache = new Map<string, ToolInstallStatus[]>();
 let statusCacheGeneration = 0;
-let codexInstalledCacheGeneration = -1;
-let codexInstalledPluginIds = new Set<string>();
-let claudeInstalledCacheGeneration = -1;
-let claudeInstalledPluginIds = new Set<string>();
-
-function getCodexInstalledPluginIds(): Set<string> {
-  if (codexInstalledCacheGeneration === statusCacheGeneration) return codexInstalledPluginIds;
-  codexInstalledCacheGeneration = statusCacheGeneration;
-  codexInstalledPluginIds = fetchCodexInstalledPluginIds();
-  return codexInstalledPluginIds;
-}
-
-function getClaudeInstalledPluginIds(): Set<string> {
-  if (claudeInstalledCacheGeneration === statusCacheGeneration) return claudeInstalledPluginIds;
-  claudeInstalledCacheGeneration = statusCacheGeneration;
-  claudeInstalledPluginIds = fetchClaudeInstalledPluginIds();
-  return claudeInstalledPluginIds;
-}
 
 /** Invalidate the plugin tool status cache. Call after any plugin/tool mutation. */
 export function invalidatePluginToolStatusCache(): void {
@@ -91,8 +71,6 @@ function computePluginToolStatus(plugin: Plugin): ToolInstallStatus[] {
   // consult Blackbook's own manifest, not just `codex plugin list`).
   let manifest: Manifest | null = null;
   const ctx: InstalledContext = {
-    getClaudeInstalledIds: getClaudeInstalledPluginIds,
-    getCodexInstalledIds: getCodexInstalledPluginIds,
     getManifest: () => {
       if (manifest === null) {
         manifest = loadManifest();

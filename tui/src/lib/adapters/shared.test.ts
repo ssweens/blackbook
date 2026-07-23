@@ -122,7 +122,10 @@ describe("pluginInstalledForManagedInstance", () => {
     expect(pluginInstalledForManagedInstance(plugin, makeInstance(), EMPTY_MANIFEST)).toBe(true);
   });
 
-  it("true via a per-tool manifest entry (command/agent into the tool's own dir)", () => {
+  it("for a file-component plugin, requires the REAL file — a manifest entry alone is NOT enough", () => {
+    // The old behavior trusted a manifest owned-item, so a stale/legacy dest
+    // read as installed while nothing was actually present at the read
+    // location. Now presence is judged by the real file.
     const manifest = {
       version: 1,
       tools: {
@@ -131,7 +134,29 @@ describe("pluginInstalledForManagedInstance", () => {
         },
       },
     } as unknown as Manifest;
+    const instance = makeInstance();
     const plugin = makePlugin({ commands: ["c"] });
+
+    // Manifest entry present, file absent → NOT installed.
+    expect(pluginInstalledForManagedInstance(plugin, instance, manifest)).toBe(false);
+
+    // Write the real command file at the instance's read location → installed.
+    const cmdDir = join(instance.configDir, "commands", "myplugin");
+    mkdirSync(cmdDir, { recursive: true });
+    writeFileSync(join(cmdDir, "c.md"), "# c\n");
+    expect(pluginInstalledForManagedInstance(plugin, instance, manifest)).toBe(true);
+  });
+
+  it("for a component-LESS plugin (mcp/lsp/hooks-only), falls back to the manifest owned-item", () => {
+    const manifest = {
+      version: 1,
+      tools: {
+        "opencode:default": {
+          items: { "myplugin::mcp::srv": { kind: "mcp", name: "srv", owner: "myplugin" } },
+        },
+      },
+    } as unknown as Manifest;
+    const plugin = makePlugin({ hasMcp: true }); // no skills/commands/agents
     expect(pluginInstalledForManagedInstance(plugin, makeInstance(), manifest)).toBe(true);
   });
 

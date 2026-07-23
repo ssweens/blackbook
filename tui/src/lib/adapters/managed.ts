@@ -22,7 +22,7 @@ import {
   symlinkSync,
 } from "fs";
 import { basename, join, dirname, relative } from "path";
-import { agentsSkillsDir, flattenNamespacedName, resolveInstanceSubdirPath } from "../path-utils.js";
+import { agentsSkillsDir, flattenNamespacedName, isSharedSubdirPath, resolveInstanceSubdirPath } from "../path-utils.js";
 import type { Plugin, InstalledItem, ToolInstance } from "../types.js";
 import type { Manifest } from "../manifest.js";
 import { loadManifest, saveManifest } from "../manifest.js";
@@ -58,7 +58,7 @@ function loadMigratedManifest(): Manifest {
 }
 
 /**
- * Find another instance's manifest entry for this plugin item that already
+ * Find ANOTHER instance's manifest entry for this plugin item that already
  * points at `dest`. Several playbooks (Codex/OpenCode/Amp/Pi's `skills`
  * component) share one physical `~/.agents/skills` location, so installing
  * the same plugin to a second sharer sees the first sharer's just-written
@@ -66,13 +66,20 @@ function loadMigratedManifest(): Manifest {
  * backup that uninstall later "restores", resurrecting content that was
  * meant to be deleted. Detecting the sibling install lets the caller skip
  * that spurious backup instead.
+ *
+ * `excludeToolKey` is the CURRENT instance's key: its own prior entry (from a
+ * previous install of the same plugin, at the same dest) must NOT count as a
+ * sibling — otherwise a reinstall/repair sees itself as already-installed and
+ * becomes a no-op that never re-writes the file or fixes a stale symlink.
  */
 function findSiblingInstall(
   manifest: Manifest,
   dest: string,
   pluginName: string,
+  excludeToolKey: string,
 ): InstalledItem | null {
-  for (const toolManifest of Object.values(manifest.tools)) {
+  for (const [toolKey, toolManifest] of Object.entries(manifest.tools)) {
+    if (toolKey === excludeToolKey) continue;
     for (const item of Object.values(toolManifest.items)) {
       if (item.dest === dest && (item.owner || "") === pluginName) return item;
     }
@@ -83,13 +90,14 @@ function findSiblingInstall(
 /**
  * Whether commands should install flat + plugin-prefixed (see
  * flattenNamespacedName) rather than namespaced under a `<plugin>/` subdir.
- * `pluginFlatInstall` covers fully-flat tools (Claude); Pi is a special
- * case — its skills stay namespaced (its skill loader is recursive-safe,
- * confirmed from source), but its prompt loader only reads flat *.md files
- * directly under prompts/ (also confirmed from source, non-recursive), so
- * commands need flattening there even though skills don't.
+ * Commands/agents now install to the shared `~/.agents/commands` /
+ * `~/.agents/agents` store (same convention as skills) — a shared
+ * destination is ALWAYS namespaced under `<plugin>/`, matching skills,
+ * regardless of any per-tool quirk. Flattening only still applies to a
+ * genuinely non-shared (tool-own-dir) destination.
  */
 function usesFlatCommands(instance: ToolInstance): boolean {
+  if (isSharedSubdirPath(instance.commandsSubdir)) return false;
   return instance.pluginFlatInstall || instance.toolId === "pi";
 }
 
@@ -332,7 +340,7 @@ export function installPluginItemsToInstance(
     validateItemName(kind, name);
     const key = buildManifestItemKey(pluginName, kind, name);
     const previous = toolManifest.items[key] || null;
-    const sibling = findSiblingInstall(manifest, dest, pluginName);
+    const sibling = findSiblingInstall(manifest, dest, pluginName, instanceKey(instance));
     let item: InstalledItem;
     if (sibling) {
       item = { kind, name, source: src, dest, backup: null, owner: pluginName, previous, sharedInstall: true };
@@ -409,15 +417,19 @@ export function installPluginItemsToInstance(
     if (instance.agentsSubdir) {
       const agentsDir = join(sourcePath, "agents");
       if (existsSync(agentsDir)) {
+        // Shared ~/.agents/agents destination is always namespaced under
+        // <plugin>/, same as skills/commands — only a genuinely non-shared
+        // (tool-own-dir) destination flattens.
+        const flatAgents = !isSharedSubdirPath(instance.agentsSubdir) && instance.pluginFlatInstall;
         for (const entry of readdirSync(agentsDir)) {
           if (entry.endsWith(".md")) {
             const name = entry.replace(/\.md$/, "");
             if (componentConfig?.disabledAgents.includes(name)) continue;
             const src = safePath(agentsDir, entry);
-            const baseDest = instance.pluginFlatInstall
+            const baseDest = flatAgents
               ? resolveInstanceSubdirPath(instance.configDir, instance.agentsSubdir)
               : resolveInstanceSubdirPath(instance.configDir, instance.agentsSubdir, pluginName);
-            const destName = instance.pluginFlatInstall ? `${flattenNamespacedName(pluginName, name)}.md` : entry;
+            const destName = flatAgents ? `${flattenNamespacedName(pluginName, name)}.md` : entry;
             const dest = safePath(baseDest, destName);
             installItem("agent", name, src, dest);
           }
@@ -479,58 +491,58 @@ export function uninstallPluginItemsFromInstance(
 
   for (const [entryKey, item] of Object.entries(toolManifest.items)) {
     const owner = item.owner || "";
-    if (owner === pluginName || (!owner && item.source.includes(pluginName))) {
-      const dest = item.dest;
-      const backup = item.backup;
+    if (!(owner === pluginName || (!owner && item.source.includes(pluginName)))) continue;
 
-      // A shared-install entry (see InstalledItem.sharedInstall) never made
-      // its own backup — the instance that owns dest's real backup/absence
-      // is responsible for its filesystem lifecycle. Touching it here would
-      // race with that owner's own uninstall: deleting content it just
-      // restored, or restoring content it correctly deleted.
-      if (item.sharedInstall) {
-        if (item.previous) {
-          toolManifest.items[entryKey] = item.previous;
-        } else {
-          keysToRemove.push(entryKey);
-        }
-        continue;
+    // Walk the whole install chain (current entry + every prior reinstall
+    // stacked in `previous`). Delete the file at each distinct dest this item
+    // ever wrote — EXCEPT a shared-install dest (another instance owns that
+    // physical file's lifecycle; touching it here would race its uninstall).
+    // Walking the chain also cleans up legacy-location orphans left by
+    // pre-redirect installs whose dests differ from the current one.
+    let userBackup: { backup: string; dest: string } | null = null;
+    for (let link: InstalledItem | null = item; link; link = link.previous ?? null) {
+      // Only the DEEPEST link (previous === null) with a backup holds the
+      // user's ORIGINAL file, moved aside on the very first install. Every
+      // shallower backup is Blackbook's own prior content from a reinstall —
+      // never restore those, or uninstall resurrects plugin content.
+      if (!link.previous && link.backup) {
+        userBackup = { backup: link.backup, dest: link.dest };
       }
-
-      // Only do file operations once per dest (handles duplicate entries)
-      if (!processedDests.has(dest)) {
-        processedDests.add(dest);
-        try {
-          if (existsSync(dest) || isSymlink(dest)) {
-            const stat = lstatSync(dest);
-            if (stat.isDirectory() && !stat.isSymbolicLink()) {
-              rmSync(dest, { recursive: true });
-            } else {
-              unlinkSync(dest);
-            }
-            removed++;
-          }
-
-          if (backup && (existsSync(backup) || isSymlink(backup))) {
-            // Cache dir -> tool config dir restore; may cross filesystems.
-            renameOrCopy(backup, dest);
+      if (link.sharedInstall) continue;
+      const d = link.dest;
+      if (!d || processedDests.has(d)) continue;
+      processedDests.add(d);
+      try {
+        if (existsSync(d) || isSymlink(d)) {
+          const stat = lstatSync(d);
+          if (stat.isDirectory() && !stat.isSymbolicLink()) {
+            rmSync(d, { recursive: true });
           } else {
-            // No backup restored — the dest is gone for good, so its namespace
-            // parent may now be an empty shell worth pruning.
-            parentDirs.add(dirname(dest));
+            unlinkSync(d);
           }
-        } catch (error) {
-          logError(`Failed to uninstall ${item.kind}:${item.name}`, error);
+          removed++;
         }
-      }
-
-      // Always update manifest for matching entries (even duplicates)
-      if (item.previous) {
-        toolManifest.items[entryKey] = item.previous;
-      } else {
-        keysToRemove.push(entryKey);
+        parentDirs.add(dirname(d));
+      } catch (error) {
+        logError(`Failed to uninstall ${link.kind}:${link.name}`, error);
       }
     }
+
+    // Restore the user's original file (if one was backed up) over its dest.
+    if (userBackup && (existsSync(userBackup.backup) || isSymlink(userBackup.backup))) {
+      try {
+        // Cache dir -> tool config dir restore; may cross filesystems.
+        renameOrCopy(userBackup.backup, userBackup.dest);
+        // dest is repopulated — its parent is no longer an empty shell.
+        parentDirs.delete(dirname(userBackup.dest));
+      } catch (error) {
+        logError(`Failed to restore backup for ${item.kind}:${item.name}`, error);
+      }
+    }
+
+    // ALWAYS remove the entry — never revert to `previous` (a stale prior
+    // install of the same plugin item, which would leave it half-installed).
+    keysToRemove.push(entryKey);
   }
 
   for (const entryKey of keysToRemove) {
@@ -845,17 +857,15 @@ export const managedAdapter: ToolAdapter = {
   usesSource: true,
 
   supports(input: SupportInput): { supported: boolean; reason?: string } {
-    // OpenCode/Amp install plugin components through the shared file-copy engine
-    // (skills into ~/.agents/skills, commands/agents into their own dirs), so
-    // they're supported whenever any component can land here.
-    const { plugin, canInstallSkills, canInstallCommands, canInstallAgents, hasHooks } = input;
-    const supported =
-      canInstallSkills ||
-      canInstallCommands ||
-      canInstallAgents ||
-      hasHooks ||
-      plugin.hasMcp ||
-      plugin.hasLsp;
+    // Managed tools (OpenCode/Amp/Codex/Pi) proxy FILE components into the
+    // shared ~/.agents store — skills, commands, agents. That is the only thing
+    // whose presence they can verify per instance, so a plugin is "supported"
+    // here only when it ships a file component this tool can serve. MCP/LSP/
+    // hooks-only plugins are NOT materialized per managed tool, so counting
+    // them as supported made the tool perpetually "supported-but-not-installed"
+    // = a phantom "incomplete" that could never clear.
+    const { canInstallSkills, canInstallCommands, canInstallAgents } = input;
+    const supported = canInstallSkills || canInstallCommands || canInstallAgents;
     return { supported };
   },
 

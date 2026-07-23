@@ -448,6 +448,10 @@ export function App() {
 
     initialRefreshStartedRef.current = true;
     void refreshTabData(tab);
+    // Load projects/profiles on every boot so the Profiles tab has data
+    // regardless of which tab the user started on. This is a cheap config
+    // read — no network I/O — and only runs once.
+    if (!state.projectsLoaded) void loadProjects({ silent: true });
     // Run exactly once on boot. Tab switches after boot do not auto-refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -935,7 +939,7 @@ export function App() {
     return {
       name: displayName,
       kind: "file" as const,
-      marketplace: isInstalled ? uniqueTools.join(", ") : "source only",
+      marketplace: isInstalled ? "All tools" : "source only",
       description: `Standalone skill`,
       installed: isInstalled,
       incomplete: false,
@@ -968,8 +972,8 @@ export function App() {
     return {
       name: ns.name,
       kind: "namespace" as const,
-      marketplace: ns.toolIds.join(", "),
-      description: `${ns.skills.length} skill${ns.skills.length === 1 ? "" : "s"} · ${ns.toolIds.join(", ")}`,
+      marketplace: isInstalled ? "All tools" : "source only",
+      description: `${ns.skills.length} skill${ns.skills.length === 1 ? "" : "s"} · ${isInstalled ? "All tools" : "source only"}`,
       installed: isInstalled,
       incomplete: isInstalled && ns.missingCount > 0,
       scope: "user" as const,
@@ -1496,16 +1500,17 @@ export function App() {
     // dismissal so users can back out even when a notification is showing. Read the
     // live notification list here via getState() instead of subscribing at the top
     // level, so the whole app doesn't re-render on every notification add/clear.
-    const stickyNotifications = useStore.getState().notifications.filter(
-      (n) => (n.type === "warning" || n.type === "error") && !n.spinner
-    );
+    // Every notification (not just warnings/errors) is sticky — dismissed only
+    // by a keystroke, never by a timer — so a spinner notification is the only
+    // exception (still in flight, cleared by its own owner).
+    const stickyNotifications = useStore.getState().notifications.filter((n) => !n.spinner);
     if (isEscape) {
       stickyNotifications.forEach((n) => clearNotification(n.id));
       handleEscape();
       return;
     }
 
-    // Sticky notifications (warnings/errors) are acknowledged with any other key.
+    // Sticky notifications are acknowledged with any other key.
     if (stickyNotifications.length > 0) {
       stickyNotifications.forEach((n) => clearNotification(n.id));
       return;

@@ -20,9 +20,9 @@ export function StatusBar() {
   const piPackagesCount = useStore((s) => s.piPackages.length);
   const filesCount = useStore((s) => s.files.length);
 
-  const enabledTools = tools.filter((t) => t.enabled).map((t) => t.name);
+  const enabledTools = tools.filter((t) => t.enabled);
   const toolsLabel = enabledTools.length > 0
-    ? `Tools: ${enabledTools.join(", ")}`
+    ? `Tools: ${enabledTools.length}`
     : "Tools: none";
   const statusText = loading
     ? `Loading... · ${toolsLabel}`

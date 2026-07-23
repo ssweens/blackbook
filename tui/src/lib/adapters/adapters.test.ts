@@ -55,8 +55,6 @@ const NO_COMPONENTS = {
 
 function makeCtx(overrides: Partial<InstalledContext> = {}): InstalledContext {
   return {
-    getClaudeInstalledIds: () => new Set<string>(),
-    getCodexInstalledIds: () => new Set<string>(),
     getManifest: () => ({ version: 1, tools: {} }) as unknown as Manifest,
     ...overrides,
   };
@@ -127,19 +125,12 @@ describe("claudeAdapter.supports", () => {
 describe("claudeAdapter.isInstalled", () => {
   const instance = makeInstance({ toolId: "claude-code", name: "Claude" });
 
-  it("matches on the selected marketplace id", () => {
-    const ctx = makeCtx({ getClaudeInstalledIds: () => new Set(["myplugin@mymarket"]) });
-    expect(claudeAdapter.isInstalled(makePlugin(), instance, ctx)).toBe(true);
-  });
-
-  it("matches on the installedMarketplace id when present", () => {
-    const ctx = makeCtx({ getClaudeInstalledIds: () => new Set(["myplugin@oldmarket"]) });
-    const plugin = makePlugin({ installedMarketplace: "oldmarket" });
-    expect(claudeAdapter.isInstalled(plugin, instance, ctx)).toBe(true);
-  });
-
-  it("returns false when neither id is present", () => {
-    const ctx = makeCtx({ getClaudeInstalledIds: () => new Set(["other@mymarket"]) });
+  it("returns true when plugin files exist on disk", () => {
+    // The new isInstalled checks filesystem via pluginInstalledForManagedInstance
+    // — no CLI is called. This test verifies the adapter doesn't crash when
+    // the InstalledContext has no getClaudeInstalledIds.
+    const ctx = makeCtx();
+    // With no files on disk, isInstalled returns false
     expect(claudeAdapter.isInstalled(makePlugin(), instance, ctx)).toBe(false);
   });
 });
@@ -236,18 +227,25 @@ describe("managedAdapter (OpenCode / Amp)", () => {
 describe("codexAdapter", () => {
   const instance = makeInstance({ toolId: "openai-codex", name: "Codex" });
 
-  it("is always supported", () => {
+  it("is supported only when a file component can install (not for component-less plugins)", () => {
+    // Codex now inherits managedAdapter.supports: a plugin is supported only
+    // when it ships a file component (skill/command/agent). The old
+    // unconditional `true` made MCP/LSP-only plugins count as
+    // supported-but-not-installed = a phantom "incomplete".
     expect(
       codexAdapter.supports({ plugin: makePlugin(), instance, ...NO_COMPONENTS }).supported,
+    ).toBe(false);
+    expect(
+      codexAdapter.supports({
+        plugin: makePlugin({ skills: ["s"] }),
+        instance,
+        ...NO_COMPONENTS,
+        canInstallSkills: true,
+      }).supported,
     ).toBe(true);
   });
 
-  it("is installed when the native codex list knows it", () => {
-    const ctx = makeCtx({ getCodexInstalledIds: () => new Set(["myplugin@mymarket"]) });
-    expect(codexAdapter.isInstalled(makePlugin(), instance, ctx)).toBe(true);
-  });
-
-  it("is installed when only the Blackbook manifest records it (file-copy)", () => {
+  it("is installed when the Blackbook manifest records it (file-copy)", () => {
     const manifest = {
       version: 1,
       tools: {
@@ -267,7 +265,6 @@ describe("codexAdapter", () => {
       },
     } as unknown as Manifest;
     const ctx = makeCtx({
-      getCodexInstalledIds: () => new Set<string>(),
       getManifest: () => manifest,
     });
     expect(codexAdapter.isInstalled(makePlugin(), instance, ctx)).toBe(true);

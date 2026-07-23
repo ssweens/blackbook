@@ -132,30 +132,6 @@ async function ensureGitAvailable(): Promise<void> {
   }
 }
 
-export async function removeClaudeMarketplace(marketplaceName: string): Promise<void> {
-  validateMarketplaceName(marketplaceName);
-  const claudeInstances = getEnabledToolInstances().filter((i) => i.toolId === "claude-code");
-  const failures: string[] = [];
-
-  for (const instance of claudeInstances) {
-    try {
-      await execFileAsync("claude", ["plugin", "marketplace", "remove", marketplaceName], {
-        env: { ...process.env, CLAUDE_CONFIG_DIR: instance.configDir },
-      });
-    } catch (error) {
-      const commandError = error as { stderr?: string; stdout?: string; message?: string };
-      const message = commandError.stderr || commandError.stdout || commandError.message || String(error);
-      if (/not found/i.test(message)) continue;
-      logError(`Failed to remove marketplace ${marketplaceName} from ${instance.name}`, error);
-      failures.push(`${instance.name}: ${message.trim()}`);
-    }
-  }
-
-  if (failures.length > 0) {
-    throw new Error(`Failed to remove Claude marketplace ${marketplaceName}: ${failures.join("; ")}`);
-  }
-}
-
 // execClaudeCommand now lives in ./adapters/claude.ts.
 // Pi has no native marketplace registration to clean up (the plugin bridge
 // that provided one was removed) — Blackbook's own config.yaml tracking is
@@ -239,6 +215,52 @@ async function downloadSkillsShPlugin(plugin: Plugin, pluginDir: string): Promis
   }
 }
 
+/**
+ * Locate a plugin's source directory inside a LOCAL marketplace repo. A freshly
+ * scanned/installed plugin carries an absolute cache `source` (e.g.
+ * `~/.cache/blackbook/plugins/<mkt>/<name>/...`), not the marketplace's declared
+ * `./plugins/<name>` — so re-deriving from the marketplace is required; trusting
+ * the scanned `source` is what made a re-install after a cache delete fail.
+ * Tries, in order: a `./`-relative `plugin.source`, the marketplace.json's
+ * declared source for this plugin name, then the conventional `plugins/<name>`
+ * layout. Returns an existing directory or null.
+ */
+function resolveLocalPluginSourceDir(marketplaceBase: string, plugin: Plugin): string | null {
+  // Source paths in marketplace.json are relative to repo root; if the base is
+  // the `.claude-plugin/` dir, step up.
+  const base = basename(marketplaceBase) === ".claude-plugin" ? dirname(marketplaceBase) : marketplaceBase;
+
+  // 1. A `./`-relative source carried on the plugin object.
+  if (typeof plugin.source === "string" && plugin.source.startsWith("./")) {
+    const dir = resolve(base, plugin.source);
+    if (existsSync(dir)) return dir;
+  }
+
+  // 2. The declared source in the local marketplace.json, looked up by name.
+  for (const manifestPath of [
+    join(base, ".claude-plugin", "marketplace.json"),
+    join(base, "marketplace.json"),
+  ]) {
+    try {
+      if (!existsSync(manifestPath)) continue;
+      const data = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
+        plugins?: Array<{ name?: string; source?: unknown }>;
+      };
+      const entry = data.plugins?.find((p) => p?.name === plugin.name);
+      if (entry && typeof entry.source === "string" && entry.source.startsWith("./")) {
+        const dir = resolve(base, entry.source);
+        if (existsSync(dir)) return dir;
+      }
+    } catch {
+      // Try the next manifest location.
+    }
+  }
+
+  // 3. Conventional layout: <repo>/plugins/<name>.
+  const conventional = join(base, "plugins", plugin.name);
+  return existsSync(conventional) ? conventional : null;
+}
+
 export async function downloadPlugin(
   plugin: Plugin,
   marketplaceUrl: string,
@@ -270,33 +292,20 @@ export async function downloadPlugin(
   const source = plugin.source;
 
   // Handle local marketplace (path-based, including file:// URLs — matches
-  // the file:// handling marketplace.ts and path-utils.ts already do).
+  // the file:// handling marketplace.ts and path-utils.ts already do). ANY
+  // local marketplace copies from disk: there's no git remote to fall back to.
   const localMarketplaceBase = resolveLocalPath(marketplaceUrl);
 
-  if (
-    localMarketplaceBase &&
-    typeof source === "string" &&
-    source.startsWith("./")
-  ) {
-    let marketplaceBase = localMarketplaceBase;
-
-    // Source paths in marketplace.json are relative to repo root.
-    // If marketplace base is .claude-plugin/, step up to repo root.
-    if (basename(marketplaceBase) === ".claude-plugin") {
-      marketplaceBase = dirname(marketplaceBase);
-    }
-
-    const sourceDir = resolve(marketplaceBase, source);
-
-    if (!existsSync(sourceDir)) {
+  if (localMarketplaceBase) {
+    const sourceDir = resolveLocalPluginSourceDir(localMarketplaceBase, plugin);
+    if (!sourceDir) {
       logError(
-        `Local plugin source not found: ${sourceDir}`,
-        new Error(`source=${source}, marketplaceBase=${marketplaceBase}`),
+        `Local plugin source not found for ${plugin.name}`,
+        new Error(`source=${JSON.stringify(source)}, marketplaceBase=${localMarketplaceBase}`),
       );
       rmSync(pluginDir, { recursive: true, force: true });
       return null;
     }
-
     try {
       cpSync(sourceDir, pluginDir, { recursive: true });
       return pluginDir;
@@ -452,77 +461,33 @@ export async function installPlugin(
     return result;
   }
 
-  // skills.sh is a virtual, skills-only marketplace with no native registration
-  // anywhere — so every tool, INCLUDING Claude, installs it through the shared
-  // component file-copy engine (installComponents), which materializes the skill
-  // into ~/.agents/skills and, for Claude, maintains the derived-view symlink.
-  // Claude's native `claude plugin install` path (used for real registered
-  // marketplaces) can't touch a virtual marketplace and is skipped entirely.
-  const isVirtualSkillSource = plugin.marketplace === "skills.sh";
+  // Every tool, INCLUDING Claude, installs through the shared component
+  // file-copy engine (installComponents) — never the native `claude plugin
+  // install` CLI. Blackbook owns the plugin lifecycle end to end so every
+  // artifact lands (and stays) in the shared ~/.agents store; Claude's own
+  // native plugin registration is never used.
+  const sourcePath = await downloadPlugin(plugin, marketplaceUrl);
 
-  // Native tools (Claude CLI, Pi bridge) need no downloaded source; each reports
-  // success/failure through its adapter. Source-based tools (Codex, managed)
-  // share a single download. For a virtual skill source, treat every instance
-  // as source-based so Claude routes through installComponents too.
-  const nativeInstances = isVirtualSkillSource
-    ? []
-    : enabledInstances.filter((instance) => !getAdapterForTool(instance.toolId).usesSource);
-  const sourceInstances = isVirtualSkillSource
-    ? enabledInstances
-    : enabledInstances.filter((instance) => getAdapterForTool(instance.toolId).usesSource);
-  // Preserved quirk: if the shared download fails and there is no Claude
-  // instance that could already have succeeded, the whole install hard-errors.
-  const hasClaudeInstance = enabledInstances.some(
-    (instance) => instance.toolId === "claude-code",
-  );
-
-  for (const instance of nativeInstances) {
-    const r = await getAdapterForTool(instance.toolId).install(
-      plugin,
-      instance,
-      null,
-      marketplaceUrl,
-    );
-    if (r.errors.length > 0) {
-      result.errors.push(...r.errors);
-    } else {
-      result.linkedInstances[instanceKey(instance)] = r.count;
-    }
+  if (!sourcePath) {
+    result.errors.push(`Failed to download plugin ${plugin.name}`);
+    return result;
   }
 
-  if (sourceInstances.length > 0) {
-    const sourcePath = await downloadPlugin(plugin, marketplaceUrl);
-
-    if (!sourcePath) {
-      // A virtual skill source has no native fallback — a failed download means
-      // nothing installed anywhere.
-      if (!hasClaudeInstance || isVirtualSkillSource) {
-        result.errors.push(`Failed to download plugin ${plugin.name}`);
-        return result;
-      }
-    } else {
-      for (const instance of sourceInstances) {
-        try {
-          const adapter = getAdapterForTool(instance.toolId);
-          // skills.sh → component surface for ALL tools (Claude's native CLI
-          // can't register a virtual marketplace); otherwise the normal
-          // per-adapter install (managed adapters' install IS the component
-          // copy; Claude's install is the native CLI).
-          const r = isVirtualSkillSource
-            ? await adapter.installComponents(plugin, instance, sourcePath)
-            : await adapter.install(plugin, instance, sourcePath, marketplaceUrl);
-          result.linkedInstances[instanceKey(instance)] = r.count;
-          result.errors.push(...r.errors);
-        } catch (error) {
-          logError(
-            `Install failed for ${plugin.name} in ${instance.name}`,
-            error,
-          );
-          result.errors.push(
-            `Install failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`,
-          );
-        }
-      }
+  for (const instance of enabledInstances) {
+    if (isConfigOnlyInstance(instance)) continue;
+    try {
+      const adapter = getAdapterForTool(instance.toolId);
+      const r = await adapter.installComponents(plugin, instance, sourcePath, marketplaceUrl);
+      result.linkedInstances[instanceKey(instance)] = r.count;
+      result.errors.push(...r.errors);
+    } catch (error) {
+      logError(
+        `Install failed for ${plugin.name} in ${instance.name}`,
+        error,
+      );
+      result.errors.push(
+        `Install failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
     }
   }
 
@@ -542,10 +507,10 @@ export async function uninstallPluginFromInstance(
   );
   if (!instance) return false;
 
-  // Each tool's adapter owns its uninstall (Claude native CLI + json cleanup,
-  // Pi bridge, managed/Codex file-copy). count > 0 means "removed".
-  const r = await getAdapterForTool(instance.toolId).uninstall(plugin, instance);
-  return r.count > 0;
+  // Component surface for every tool, INCLUDING Claude — never the native
+  // `claude plugin uninstall` CLI. count > 0 means "removed".
+  const count = await getAdapterForTool(instance.toolId).removeComponents(plugin, instance);
+  return count > 0;
 }
 
 // removeFromClaudeInstalledPluginsJson now lives in ./adapters/claude.ts and is
@@ -560,18 +525,13 @@ export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
     return false;
   }
 
-  // skills.sh installs went through the component surface for every tool (see
-  // installPlugin), so they must be removed the same way — Claude's native
-  // `claude plugin uninstall` can't touch a virtual marketplace.
-  const isVirtualSkillSource = plugin.marketplace === "skills.sh";
-
-  // Uninstall from all enabled instances via their adapters.
+  // Every tool, INCLUDING Claude, was installed through the component surface
+  // (see installPlugin), so removal always goes through removeComponents too —
+  // never the native `claude plugin uninstall` CLI.
   for (const instance of enabledInstances) {
     if (isConfigOnlyInstance(instance)) continue;
     const adapter = getAdapterForTool(instance.toolId);
-    removedCount += isVirtualSkillSource
-      ? await adapter.removeComponents(plugin, instance)
-      : (await adapter.uninstall(plugin, instance)).count;
+    removedCount += await adapter.removeComponents(plugin, instance);
   }
 
   try {
@@ -846,29 +806,12 @@ export async function updatePlugin(
     return result;
   }
 
-  // Native tools (Claude CLI, Pi bridge) update in place through their adapter,
-  // each using the marketplace key it already knows about. Source-based tools
-  // (Codex, managed) swap the installed copy after a verified re-download below.
-  const nativeTargets = targetInstances.filter(
-    (instance) => !getAdapterForTool(instance.toolId).usesSource,
-  );
-  const managedInstances = targetInstances.filter(
-    (instance) => getAdapterForTool(instance.toolId).usesSource,
-  );
-
-  for (const instance of nativeTargets) {
-    const r = await getAdapterForTool(instance.toolId).update(
-      plugin,
-      instance,
-      null,
-      marketplaceUrl,
-    );
-    if (r.errors.length > 0) {
-      result.errors.push(...r.errors);
-    } else {
-      result.linkedInstances[instanceKey(instance)] = r.count;
-    }
-  }
+  // Every installed instance, INCLUDING Claude, swaps its installed copy via
+  // the shared component file-copy engine — never the native `claude plugin
+  // update` CLI. Claude was never installed through the native CLI to begin
+  // with (see installPlugin), so there is nothing for it to "update in place"
+  // through there.
+  const managedInstances = targetInstances;
 
   if (managedInstances.length > 0) {
     // Download and VERIFY the replacement BEFORE uninstalling anything or purging
@@ -1648,9 +1591,25 @@ export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSki
             }
           }
           // Lightweight per-install drift: compare each disk SKILL.md to the source one.
+          // Deduplicate by physical path first — symlinked installs that resolve
+          // to the same directory share one SKILL.md and must not be double-counted.
           try {
             const sourceSkillMd = readFileSync(candidate, "utf-8");
+            const seenPaths = new Set<string>();
             for (const inst of skill.installations) {
+              let realPath: string;
+              try { realPath = realpathSync(inst.diskPath); } catch { realPath = inst.diskPath; }
+              if (seenPaths.has(realPath)) {
+                // Same physical dir as a prior install — inherit its drift state.
+                const peer = skill.installations.find((i) => {
+                  let rp: string;
+                  try { rp = realpathSync(i.diskPath); } catch { rp = i.diskPath; }
+                  return rp === realPath && i !== inst;
+                });
+                inst.drifted = peer?.drifted ?? false;
+                continue;
+              }
+              seenPaths.add(realPath);
               const diskSkillMd = join(inst.diskPath, "SKILL.md");
               if (!existsSync(diskSkillMd)) { inst.drifted = true; continue; }
               inst.drifted = readFileSync(diskSkillMd, "utf-8") !== sourceSkillMd;

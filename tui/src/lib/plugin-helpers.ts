@@ -28,6 +28,22 @@ export function instanceKey(instance: ToolInstance): string {
   return `${instance.toolId}:${instance.instanceId}`;
 }
 
+/**
+ * Human-readable component-count summary for a plugin, e.g.
+ * "Skills (1), Commands (5), Agents (2), Hooks (1)" — used anywhere a plugin
+ * outcome needs to be reported (toasts, logs). Deliberately component-centric
+ * rather than per-tool: every tool now reads the same shared ~/.agents
+ * artifacts, so there is no meaningful "which tool got what" to enumerate.
+ */
+export function summarizePluginComponents(plugin: Pick<Plugin, "skills" | "commands" | "agents" | "hooks">): string {
+  const parts: string[] = [];
+  if (plugin.skills.length > 0) parts.push(`Skills (${plugin.skills.length})`);
+  if (plugin.commands.length > 0) parts.push(`Commands (${plugin.commands.length})`);
+  if (plugin.agents.length > 0) parts.push(`Agents (${plugin.agents.length})`);
+  if (plugin.hooks.length > 0) parts.push(`Hooks (${plugin.hooks.length})`);
+  return parts.join(", ");
+}
+
 export function getPluginSourcePath(plugin: Plugin): string | null {
   try {
     validateMarketplaceName(plugin.marketplace);

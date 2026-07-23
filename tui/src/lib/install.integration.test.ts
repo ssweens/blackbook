@@ -425,21 +425,24 @@ describe("enablePlugin", () => {
 
     await enablePlugin(plugin);
 
-    for (const toolId of ["opencode", "amp-code"]) {
+    // Commands now install to the shared ~/.agents/commands store (same
+    // convention as skills) for every tool that declares the component,
+    // including Codex, which previously had no commands component at all.
+    for (const toolId of ["opencode", "amp-code", "openai-codex"]) {
       const instance = getInstance(toolId);
       if (instance.commandsSubdir) {
-        const cmdPath = instance.pluginFlatInstall
-          ? join(instance.configDir, instance.commandsSubdir, `${TEST_COMMAND_NAME}.md`)
-          : join(instance.configDir, instance.commandsSubdir, TEST_PLUGIN_NAME, `${TEST_COMMAND_NAME}.md`);
+        const cmdPath = resolveInstanceSubdirPath(
+          instance.configDir,
+          instance.commandsSubdir,
+          TEST_PLUGIN_NAME,
+          `${TEST_COMMAND_NAME}.md`,
+        );
         expect(existsSync(cmdPath), `command should exist for ${toolId}`).toBe(true);
 
         const content = readFileSync(cmdPath, "utf-8");
         expect(content).toContain("Test Command");
       }
     }
-
-    const codexTool = getInstance("openai-codex");
-    expect(codexTool.commandsSubdir).toBeNull();
   });
 
   it("copies agents to tools with agentsSubdir", async () => {
@@ -448,12 +451,18 @@ describe("enablePlugin", () => {
 
     await enablePlugin(plugin);
 
-    for (const toolId of ["opencode", "amp-code"]) {
+    // Agents now install to the shared ~/.agents/agents store (same
+    // convention as skills/commands) for every tool that declares the
+    // component, including Codex, which previously had none.
+    for (const toolId of ["opencode", "amp-code", "openai-codex"]) {
       const instance = getInstance(toolId);
       if (instance.agentsSubdir) {
-        const agentPath = instance.pluginFlatInstall
-          ? join(instance.configDir, instance.agentsSubdir, `${TEST_AGENT_NAME}.md`)
-          : join(instance.configDir, instance.agentsSubdir, TEST_PLUGIN_NAME, `${TEST_AGENT_NAME}.md`);
+        const agentPath = resolveInstanceSubdirPath(
+          instance.configDir,
+          instance.agentsSubdir,
+          TEST_PLUGIN_NAME,
+          `${TEST_AGENT_NAME}.md`,
+        );
         expect(existsSync(agentPath), `agent should exist for ${toolId}`).toBe(true);
 
         const content = readFileSync(agentPath, "utf-8");
@@ -471,9 +480,13 @@ describe("enablePlugin", () => {
     const opencodeKey = `${getInstance("opencode").toolId}:${getInstance("opencode").instanceId}`;
     const ampKey = `${getInstance("amp-code").toolId}:${getInstance("amp-code").instanceId}`;
     const codexKey = `${getInstance("openai-codex").toolId}:${getInstance("openai-codex").instanceId}`;
+    // Linked count is items processed per instance, regardless of whether the
+    // underlying file write was a shared no-op — Codex now declares
+    // commands/agents too (routed through the shared ~/.agents store), so it
+    // reports all 3 components like OpenCode/Amp instead of just its skill.
     expect(result.linkedInstances[opencodeKey]).toBe(3);
     expect(result.linkedInstances[ampKey]).toBe(3);
-    expect(result.linkedInstances[codexKey]).toBe(1);
+    expect(result.linkedInstances[codexKey]).toBe(3);
   });
 
   it("records items in manifest with correct metadata", async () => {
@@ -720,11 +733,16 @@ describe("plugin completeness across instances", () => {
     expect(installedCount).toBeLessThan(supportedEnabled.length);
   });
 
-  it("does not mark missing when only disabled instances lack installs", () => {
-    const primary = getInstance("opencode");
+  it("does not mark missing when only disabled instances lack installs", async () => {
+    // Disable every managed tool except OpenCode, plus the .agents pseudo-tool,
+    // so OpenCode is the sole enabled+supported instance. A real install
+    // materializes ALL file components (isInstalled now verifies each one, not
+    // just the skill), so the enabled instance is genuinely complete and only
+    // the disabled secondary lacks installs.
     updateToolInstanceConfig("amp-code", "default", { enabled: false });
     updateToolInstanceConfig("openai-codex", "default", { enabled: false });
     updateToolInstanceConfig("pi", "default", { enabled: false });
+    updateToolInstanceConfig("agents", "default", { enabled: false });
     const secondaryDir = join(TEST_TOOL_DIR, "opencode-secondary-disabled");
     mkdirSync(secondaryDir, { recursive: true });
     updateToolInstanceConfig("opencode", "secondary-disabled", {
@@ -733,16 +751,14 @@ describe("plugin completeness across instances", () => {
       name: "OpenCode Secondary Disabled",
     });
 
+    createTestPluginInCache();
     const plugin = createTestPlugin();
-    if (primary.skillsSubdir) {
-      const skillPath = resolveInstanceSubdirPath(primary.configDir, primary.skillsSubdir, TEST_PLUGIN_NAME, TEST_SKILL_NAME);
-      mkdirSync(skillPath, { recursive: true });
-      writeFileSync(join(skillPath, "SKILL.md"), "# Test Skill");
-    }
+    await enablePlugin(plugin);
 
     const statuses = getPluginToolStatus(plugin);
     const supportedEnabled = statuses.filter((status) => status.enabled && status.supported);
     const installedCount = supportedEnabled.filter((status) => status.installed).length;
+    expect(supportedEnabled.length).toBeGreaterThan(0);
     expect(installedCount).toBe(supportedEnabled.length);
   });
 });
@@ -837,14 +853,14 @@ describe("disablePlugin", () => {
     const opencodeKey = `${getInstance("opencode").toolId}:${getInstance("opencode").instanceId}`;
     const ampKey = `${getInstance("amp-code").toolId}:${getInstance("amp-code").instanceId}`;
     const codexKey = `${getInstance("openai-codex").toolId}:${getInstance("openai-codex").instanceId}`;
-    // OpenCode/Amp/Codex's skill component all share the same physical
-    // ~/.agents/skills file. Instances are processed in playbook order
-    // (opencode, then amp-code, then openai-codex), so only the first to
-    // touch the shared skill actually removes a file there — the rest find
-    // it already gone and only remove their own per-tool command/agent
-    // files (Codex has neither, so it removes nothing).
+    // OpenCode/Amp/Codex's skill, command, and agent components all share the
+    // same physical ~/.agents/{skills,commands,agents} files. Instances are
+    // processed in playbook order (opencode, then amp-code, then
+    // openai-codex), so only the first to touch each shared destination
+    // actually removes a file there — every later instance finds it already
+    // gone and removes nothing of its own.
     expect(result.linkedInstances[opencodeKey]).toBe(3);
-    expect(result.linkedInstances[ampKey]).toBe(2);
+    expect(result.linkedInstances[ampKey]).toBe(0);
     expect(result.linkedInstances[codexKey]).toBe(0);
   });
 });
@@ -886,9 +902,10 @@ describe("backup and restore", () => {
 
   it("backs up existing command file before overwriting", async () => {
     const instance = getInstance("opencode");
-    const cmdPath = join(instance.configDir, instance.commandsSubdir!, TEST_PLUGIN_NAME, `${TEST_COMMAND_NAME}.md`);
+    const cmdDir = resolveInstanceSubdirPath(instance.configDir, instance.commandsSubdir!, TEST_PLUGIN_NAME);
+    const cmdPath = join(cmdDir, `${TEST_COMMAND_NAME}.md`);
 
-    mkdirSync(join(instance.configDir, instance.commandsSubdir!, TEST_PLUGIN_NAME), { recursive: true });
+    mkdirSync(cmdDir, { recursive: true });
     writeFileSync(cmdPath, "# Original Command\n\nExisting user command.");
 
     createTestPluginInCache();
@@ -1754,7 +1771,11 @@ describe("P1 data-integrity behavior", () => {
     expect(existsSync(installedPath)).toBe(true);
   });
 
-  it("Claude uninstall goes through the native CLI (item 4)", async () => {
+  it("Claude uninstall goes through the component surface, never the native CLI (item 4)", async () => {
+    // A fake `claude` binary that records every invocation — if uninstall ever
+    // shells out to it, the log file appears. Blackbook owns the plugin
+    // lifecycle end to end now: it never calls `claude plugin install/
+    // uninstall/update`, only the shared component file-copy engine.
     const binDir = join(TEST_ROOT, "fakebin");
     const recordFile = join(TEST_ROOT, "claude-invocations.log");
     mkdirSync(binDir, { recursive: true });
@@ -1769,13 +1790,23 @@ describe("P1 data-integrity behavior", () => {
         enabled: true,
         configDir: join(TEST_TOOL_DIR, "claude-code"),
       });
+      const claude = getInstance("claude-code");
 
-      const result = await uninstallPluginFromInstance(createTestPlugin(), "claude-code", "default");
+      createTestPluginInCache();
+      const plugin = createTestPlugin();
+      const enableResult = await enablePlugin(plugin);
+      expect(enableResult.success).toBe(true);
+
+      const flatName = flattenNamespacedName(TEST_PLUGIN_NAME, TEST_SKILL_NAME);
+      const linkPath = join(resolveInstanceSubdirPath(claude.configDir, claude.skillsSubdir!), flatName);
+      expect(existsSync(linkPath)).toBe(true);
+
+      const result = await uninstallPluginFromInstance(plugin, "claude-code", "default");
 
       expect(result).toBe(true);
-      const log = readFileSync(recordFile, "utf-8");
-      expect(log).toContain("plugin uninstall");
-      expect(log).toContain(`${TEST_PLUGIN_NAME}@${TEST_MARKETPLACE}`);
+      expect(existsSync(linkPath)).toBe(false);
+      // The fake claude binary was never invoked — no log file was created.
+      expect(existsSync(recordFile)).toBe(false);
     } finally {
       process.env.PATH = origPath;
     }
@@ -2063,6 +2094,58 @@ describe("claude derived view (~/.claude/skills as symlinks into ~/.agents/skill
     expect(existsSync(storeNsDir)).toBe(false);
   });
 
+  it("uninstallPlugin fully removes every entry even after reinstalls stack a `previous` chain", async () => {
+    // Regression: uninstall used to REVERT each entry to its `previous` (a
+    // prior reinstall of the same item), leaving stale half-installed entries
+    // that made the plugin impossible to cleanly remove or reinstall.
+    enableClaude();
+    createTestPluginInCache();
+    const plugin = createTestPlugin();
+    await enablePlugin(plugin);
+    await enablePlugin(plugin); // stack previous-chains
+    await enablePlugin(plugin);
+
+    const countOwned = () => {
+      const m = loadManifest();
+      let n = 0;
+      for (const tv of Object.values(m.tools)) {
+        for (const it of Object.values(tv.items)) if (it.owner === TEST_PLUGIN_NAME) n++;
+      }
+      return n;
+    };
+    expect(countOwned()).toBeGreaterThan(0);
+
+    const ok = await uninstallPlugin(plugin);
+    expect(ok).toBe(true);
+    expect(countOwned()).toBe(0);
+  });
+
+  it("reinstall repairs a stale derived-view symlink instead of no-opping on its own prior entry", async () => {
+    // Regression: findSiblingInstall matched the CURRENT instance's own prior
+    // manifest entry (same dest), so a reinstall saw itself as already
+    // installed → sharedInstall no-op → never repaired a stale/wrong symlink.
+    const claude = enableClaude();
+    createTestPluginInCache();
+    const plugin = createTestPlugin();
+    await enablePlugin(plugin);
+
+    const flatName = flattenNamespacedName(TEST_PLUGIN_NAME, TEST_SKILL_NAME);
+    const linkPath = join(claudeSkillsDir(claude), flatName);
+    const correctTarget = realpathSync(join(agentsRoot(), TEST_PLUGIN_NAME, TEST_SKILL_NAME));
+    expect(realpathSync(linkPath)).toBe(correctTarget);
+
+    // Corrupt the symlink to point at the namespace dir (a wrong target that
+    // doesn't resolve to SKILL.md), simulating stale pre-namespacing state.
+    rmSync(linkPath, { force: true });
+    symlinkSync(join(agentsRoot(), TEST_PLUGIN_NAME), linkPath);
+    expect(existsSync(join(linkPath, "SKILL.md"))).toBe(false);
+
+    // Reinstall must REPAIR it, not no-op.
+    await enablePlugin(plugin);
+    expect(realpathSync(linkPath)).toBe(correctTarget);
+    expect(existsSync(join(linkPath, "SKILL.md"))).toBe(true);
+  });
+
   it("standalone skill install links claude at the store and uninstall only unlinks", () => {
     const claude = enableClaude();
     const skillName = "derived-view-skill";
@@ -2163,6 +2246,64 @@ describe("claude derived view (~/.claude/skills as symlinks into ~/.agents/skill
 
       const result = await downloadPlugin(plugin, "");
       expect(result).toBeNull();
+    });
+  });
+
+  describe("downloadPlugin (local marketplace)", () => {
+    function makeLocalMarketplace(pluginName: string, withManifestEntry: boolean): string {
+      const repo = join(TEST_ROOT, `local-mkt-${pluginName}`);
+      mkdirSync(join(repo, ".claude-plugin"), { recursive: true });
+      writeFileSync(
+        join(repo, ".claude-plugin", "marketplace.json"),
+        JSON.stringify({
+          name: "local-mkt",
+          plugins: withManifestEntry ? [{ name: pluginName, source: `./plugins/${pluginName}` }] : [],
+        }),
+      );
+      mkdirSync(join(repo, "plugins", pluginName, "skills", pluginName), { recursive: true });
+      writeFileSync(join(repo, "plugins", pluginName, "skills", pluginName, "SKILL.md"), `# ${pluginName}`);
+      return repo;
+    }
+
+    function scannedPlugin(name: string): Plugin {
+      // A scanned/installed plugin carries an ABSOLUTE cache source, not a
+      // `./`-relative one — the shape that used to make re-install fail.
+      return {
+        name,
+        marketplace: "local-mkt",
+        source: `/some/stale/cache/plugins/local-mkt/${name}/skills/${name}`,
+        skills: [name],
+        commands: [],
+        agents: [],
+        hooks: [],
+        hasMcp: false,
+        hasLsp: false,
+        description: "",
+        homepage: "",
+        installed: true,
+        scope: "user",
+      };
+    }
+
+    it("re-derives the source from marketplace.json when the scanned source is a stale absolute path", async () => {
+      const repo = makeLocalMarketplace("localfoo", true);
+      const result = await downloadPlugin(scannedPlugin("localfoo"), repo);
+      expect(result).not.toBeNull();
+      expect(existsSync(join(result!, "skills", "localfoo", "SKILL.md"))).toBe(true);
+    });
+
+    it("falls back to the conventional plugins/<name> layout when no manifest entry matches", async () => {
+      const repo = makeLocalMarketplace("localbar", false);
+      const result = await downloadPlugin(scannedPlugin("localbar"), repo);
+      expect(result).not.toBeNull();
+      expect(existsSync(join(result!, "skills", "localbar", "SKILL.md"))).toBe(true);
+    });
+
+    it("returns null and cleans up when the plugin isn't found anywhere in the local repo", async () => {
+      const repo = makeLocalMarketplace("present", true);
+      const result = await downloadPlugin(scannedPlugin("absent"), repo);
+      expect(result).toBeNull();
+      expect(existsSync(join(getPluginsCacheDir(), "local-mkt", "absent"))).toBe(false);
     });
   });
 });

@@ -1,4 +1,6 @@
 import { existsSync, lstatSync, statSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
 import type {
   FileStatus,
   SyncPreviewItem,
@@ -14,6 +16,7 @@ import { getAllPlaybooks, resolveToolInstances, isSyncTarget } from "../config/p
 import { runCheck, runApply } from "../modules/orchestrator.js";
 import type { OrchestratorStep } from "../modules/orchestrator.js";
 import { fileCopyModule } from "../modules/file-copy.js";
+import { symlinkCreateModule } from "../modules/symlink-create.js";
 import { directorySyncModule } from "../modules/directory-sync.js";
 import { globCopyModule } from "../modules/glob-copy.js";
 import { buildFileDiffTarget, buildFileMissingSummary, buildSkillDiffTarget } from "../diff.js";
@@ -267,6 +270,10 @@ export const createFilesSlice: SliceCreator<FilesSlice> = (set, get) => ({
         ? fileEntry.tools.filter((t) => isSyncTarget(t, playbooks))
         : [...toolInstances.keys()].filter((t) => isSyncTarget(t, playbooks));
 
+      // Track canonical target to avoid duplicate entries — all tools without
+      // an override resolve to the same absolute target path.
+      let canonicalProcessed = false;
+
       for (const toolId of targetToolIds) {
         const instances = toolInstances.get(toolId) || [];
         for (const inst of instances) {
@@ -276,21 +283,36 @@ export const createFilesSlice: SliceCreator<FilesSlice> = (set, get) => ({
           const targetOverride = fileEntry.overrides?.[`${toolId}:${inst.id}`];
           const targetRelPath = targetOverride || fileEntry.target;
 
+          // Deduplicate: all tools without an override resolve to the same
+          // absolute canonical target. Process it once, skip the rest.
+          if (!targetOverride && canonicalProcessed) continue;
+          if (!targetOverride) canonicalProcessed = true;
+
           const sourcePath = resolveSourcePath(fileEntry.source, effectiveRepo);
-          const targetPath = `${instanceConfigDir}/${targetRelPath}`;
+          // Absolute targets (~ or /) are used as-is; relative targets resolve
+          // against the instance's config dir.
+          const isAbsolute = targetRelPath.startsWith("/") || targetRelPath.startsWith("~");
+          const targetPath = isAbsolute
+            ? (targetRelPath.startsWith("~") ? join(homedir(), targetRelPath.slice(2)) : targetRelPath)
+            : `${instanceConfigDir}/${targetRelPath}`;
+
+          // When an override is present, the target is a symlink to the
+          // canonical (absolute) target — not a copy of the source.
+          const canonicalTarget = fileEntry.target.startsWith("~")
+            ? join(homedir(), fileEntry.target.slice(2))
+            : fileEntry.target.startsWith("/")
+              ? fileEntry.target
+              : null;
+          const useSymlink = targetOverride && canonicalTarget;
 
           // Build orchestrator step and run check
           const stateKey = buildStateKey(fileEntry.name, toolId, inst.id, targetRelPath);
           const steps: OrchestratorStep[] = [{
             label: `${fileEntry.name}:${toolId}:${inst.id}`,
-            module: getSyncModule(sourcePath) as any,
-            params: {
-              sourcePath,
-              targetPath,
-              owner: `file:${fileEntry.name}`,
-              stateKey,
-              backupRetention: config.settings.backup_retention,
-            },
+            module: useSymlink ? symlinkCreateModule : getSyncModule(sourcePath) as any,
+            params: useSymlink
+              ? { sourcePath: canonicalTarget, targetPath, owner: `file:${fileEntry.name}` }
+              : { sourcePath, targetPath, owner: `file:${fileEntry.name}`, stateKey, backupRetention: config.settings.backup_retention },
           }];
 
           const result = await runCheck(steps);
@@ -432,13 +454,20 @@ export const createFilesSlice: SliceCreator<FilesSlice> = (set, get) => ({
           );
           if (uncoveredInstances.length === 0) continue;
 
-          const conventionalSource = `config/${toolId}/${configFile.path}`;
+          // Use playbook-declared source if present, otherwise conventional path
+          const conventionalSource = configFile.source || `config/${toolId}/${configFile.path}`;
           const sourcePath = resolveSourcePath(conventionalSource, effectiveRepo);
+
+          // Use playbook-declared install_dir if present (absolute target)
+          const isAbsolute = configFile.install_dir && (configFile.install_dir.startsWith("/") || configFile.install_dir.startsWith("~"));
+          const canonicalTarget = isAbsolute
+            ? (configFile.install_dir!.startsWith("~") ? join(homedir(), configFile.install_dir!.slice(2)) : configFile.install_dir!)
+            : null;
 
           const fileStatus: FileStatus = {
             name: configFile.name,
             source: conventionalSource,
-            target: configFile.path,
+            target: configFile.install_dir || configFile.path,
             tools: [toolId],
             instances: [],
             kind: "config",
@@ -446,18 +475,15 @@ export const createFilesSlice: SliceCreator<FilesSlice> = (set, get) => ({
 
           for (const inst of uncoveredInstances) {
             const instanceConfigDir = expandConfigPath(inst.config_dir);
-            const targetPath = `${instanceConfigDir}/${configFile.path}`;
-            const stateKey = buildStateKey(configFile.name, toolId, inst.id, configFile.path);
+            const targetPath = canonicalTarget || `${instanceConfigDir}/${configFile.path}`;
+            const useSymlink = configFile.strategy === "symlink" && canonicalTarget;
+            const stateKey = buildStateKey(configFile.name, toolId, inst.id, configFile.install_dir || configFile.path);
             const steps: OrchestratorStep[] = [{
               label: `${configFile.name}:${toolId}:${inst.id}`,
-              module: getSyncModule(sourcePath) as any,
-              params: {
-                sourcePath,
-                targetPath,
-                owner: `file:${configFile.name}`,
-                stateKey,
-                backupRetention: config.settings.backup_retention,
-              },
+              module: useSymlink ? symlinkCreateModule : getSyncModule(sourcePath) as any,
+              params: useSymlink
+                ? { sourcePath: canonicalTarget, targetPath: `${instanceConfigDir}/${configFile.path}`, owner: `file:${configFile.name}` }
+                : { sourcePath, targetPath, owner: `file:${configFile.name}`, stateKey, backupRetention: config.settings.backup_retention },
             }];
 
             const result = await runCheck(steps);
@@ -513,7 +539,7 @@ export const createFilesSlice: SliceCreator<FilesSlice> = (set, get) => ({
   },
 
   getSyncPreview: () => {
-    const { plugins: installedPlugins } = getAllInstalledPlugins();
+    const installedPlugins = get().installedPlugins;
     const allMarketplacePlugins = get().marketplaces.flatMap((m) => m.plugins);
 
     // Use marketplace plugin for accurate component lists (skills, commands, agents)

@@ -15,10 +15,10 @@ components:
     install_dir: ~/.agents/skills
     strategy: symlink
   commands:
-    install_dir: commands/
+    install_dir: ~/.agents/commands
     strategy: symlink
   agents:
-    install_dir: agents/
+    install_dir: ~/.agents/agents
     strategy: symlink
 config_files:
   - name: Amp Config

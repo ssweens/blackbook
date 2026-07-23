@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React from "react";
 import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
 import { useStore } from "../lib/store.js";
@@ -10,28 +10,16 @@ const COLORS: Record<import("../lib/types.js").Notification["type"], string> = {
   error: "red",
 };
 
-const STICKY_TYPES: Set<import("../lib/types.js").Notification["type"]> = new Set(["error", "warning"]);
-
+// Every notification is sticky — dismissed only by a keystroke (see App.tsx's
+// global input handler), never by a timer. A spinner notification is still
+// in flight and isn't dismissible at all until its owner clears it.
 export function Notifications() {
   const notifications = useStore((s) => s.notifications);
-  const clearNotification = useStore((s) => s.clearNotification);
-
-  useEffect(() => {
-    const timers = notifications
-      .filter((n) => !STICKY_TYPES.has(n.type) && !n.spinner)
-      .map((n) => {
-        const age = Date.now() - n.timestamp;
-        const remaining = Math.max(0, 4000 - age);
-        return setTimeout(() => clearNotification(n.id), remaining);
-      });
-
-    return () => timers.forEach(clearTimeout);
-  }, [notifications, clearNotification]);
 
   if (notifications.length === 0) return null;
 
   const latest = notifications.slice(-3);
-  const hasSticky = latest.some((n) => STICKY_TYPES.has(n.type));
+  const hasDismissible = latest.some((n) => !n.spinner);
 
   return (
     <Box flexDirection="column" marginY={1}>
@@ -48,7 +36,7 @@ export function Notifications() {
           <Text color={COLORS[n.type]}>{n.message}</Text>
         </Box>
       ))}
-      {hasSticky && (
+      {hasDismissible && (
         <Box>
           <Text color="gray">Press any key to dismiss</Text>
         </Box>

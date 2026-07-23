@@ -58,6 +58,14 @@ export function getInstallStatus(plugin: Plugin, installedAny: boolean): Install
   const installedByToolStatus = supportedEnabled.some((status) => status.installed);
   if (!installedAny && !installedByToolStatus) return { installed: false, incomplete: false };
 
+  // "Incomplete" means a materializable FILE component (skill/command/agent) is
+  // absent somewhere it should be. A plugin with no file components at all
+  // (MCP/LSP/hooks/output-style only) can't be partially installed — its status
+  // is binary, so it must never read as incomplete.
+  const hasFileComponents =
+    plugin.skills.length + plugin.commands.length + plugin.agents.length > 0;
+  if (!hasFileComponents) return { installed: true, incomplete: false };
+
   const incomplete = supportedEnabled.some((status) => !status.installed);
   return { installed: true, incomplete };
 }

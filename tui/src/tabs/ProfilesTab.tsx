@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
+import { homedir } from "os";
+import { join } from "path";
 import { useStore } from "../lib/store.js";
 import { getConfigRepoPath } from "../lib/config.js";
 import { indexSourceSkillTree, type SourceSkillNamespace } from "../lib/projects.js";
@@ -74,13 +76,33 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
 
   const names = useMemo(() => Object.keys(profiles).sort(), [profiles]);
 
-  // Source repo skills grouped into namespaces + top-level. Recomputed when
-  // entering the builder (cheap directory scan; the tab re-renders on mode
-  // change).
+  // Source repo + shared store skills grouped into namespaces + top-level.
+  // Recomputed when entering the builder (cheap directory scan).
   const tree = useMemo(() => {
     const repo = getConfigRepoPath();
-    if (!repo) return { namespaces: [], topLevel: [] };
-    return indexSourceSkillTree(repo);
+    const repoTree = repo ? indexSourceSkillTree(repo) : { namespaces: [], topLevel: [] };
+    const agentsTree = indexSourceSkillTree(join(homedir(), ".agents"));
+    // Merge: source repo wins for duplicates, agents fills in the rest.
+    const seen = new Set<string>();
+    const namespaces: SourceSkillNamespace[] = [];
+    const topLevel: string[] = [];
+    for (const ns of [...repoTree.namespaces, ...agentsTree.namespaces]) {
+      const existing = namespaces.find((n) => n.name === ns.name);
+      if (existing) {
+        for (const s of ns.skills) { if (!seen.has(s)) { existing.skills.push(s); seen.add(s); } }
+      } else {
+        const skills = ns.skills.filter((s) => !seen.has(s));
+        skills.forEach((s) => seen.add(s));
+        if (skills.length > 0) namespaces.push({ name: ns.name, skills });
+      }
+    }
+    for (const s of [...repoTree.topLevel, ...agentsTree.topLevel]) {
+      if (!seen.has(s)) { topLevel.push(s); seen.add(s); }
+    }
+    namespaces.forEach((ns) => ns.skills.sort());
+    namespaces.sort((a, b) => a.name.localeCompare(b.name));
+    topLevel.sort();
+    return { namespaces, topLevel };
   }, [mode.kind]);
 
   const totalSkills = useMemo(

@@ -1,27 +1,19 @@
 /**
  * Claude Code adapter. The plugin lifecycle (install/uninstall/update) goes
- * through Claude's native CLI (`claude plugin …`), which owns the plugin cache
- * dir, settings.json enabledPlugins, and hook/MCP registrations — JSON surgery
- * alone would leave Claude's own state desynced. Uninstall additionally scrubs
- * any leftover installed_plugins.json entry as a safety net.
+ * through the shared component file-copy engine — Blackbook is the sole plugin
+ * manager. Claude's own CLI is NEVER called.
  *
  * The COMPONENT surface (installComponents/removeComponents), used by
  * enablePlugin/disablePlugin/syncPluginInstances, has always materialized
  * individual skill/command/agent files instead — so those methods delegate to
- * the shared managed file-copy engine, NOT the native CLI. This asymmetry is
- * intentional and preserved from the pre-refactor behavior.
+ * the shared managed file-copy engine. This asymmetry is intentional and
+ * preserved from the pre-refactor behavior.
  */
 
-import { execFile, execFileSync } from "child_process";
-import { promisify } from "util";
 import { existsSync, readFileSync, lstatSync, readdirSync } from "fs";
 import { join } from "path";
 import type { Plugin, ToolInstance } from "../types.js";
-import {
-  validatePluginName,
-  validateMarketplaceName,
-  logError,
-} from "../validation.js";
+import { logError } from "../validation.js";
 import { parseMarketplaces } from "../config.js";
 import { atomicWriteFileSync } from "../fs-utils.js";
 import { scanPluginContents } from "../path-utils.js";
@@ -37,40 +29,6 @@ import type {
   SupportInput,
   InstalledContext,
 } from "./types.js";
-
-const execFileAsync = promisify(execFile);
-
-function validateClaudePluginId(pluginId: string): void {
-  const [name, marketplace, extra] = pluginId.split("@");
-  if (!name || extra !== undefined) throw new Error(`Invalid Claude plugin id: ${pluginId}`);
-  validatePluginName(name);
-  if (marketplace) validateMarketplaceName(marketplace);
-}
-
-function claudePluginId(plugin: Pick<Plugin, "name" | "marketplace">): string {
-  return plugin.marketplace ? `${plugin.name}@${plugin.marketplace}` : plugin.name;
-}
-
-function claudeInstalledPluginId(
-  plugin: Pick<Plugin, "name" | "marketplace" | "installedMarketplace">,
-): string {
-  const marketplace = plugin.installedMarketplace ?? plugin.marketplace;
-  return marketplace ? `${plugin.name}@${marketplace}` : plugin.name;
-}
-
-export async function execClaudeCommand(
-  instance: ToolInstance,
-  command: "install" | "uninstall" | "enable" | "disable" | "update",
-  pluginId: string,
-): Promise<void> {
-  validateClaudePluginId(pluginId);
-  await execFileAsync("claude", ["plugin", command, pluginId], {
-    env: {
-      ...process.env,
-      CLAUDE_CONFIG_DIR: instance.configDir,
-    },
-  });
-}
 
 /**
  * Remove a plugin entry from Claude's `installed_plugins.json` for the given instance.
@@ -128,29 +86,6 @@ function readClaudePluginMetadata(
     }
   }
   return {};
-}
-
-/**
- * Parse `claude plugin list` output into the set of installed `plugin@marketplace`
- * ids. Returns an empty set if the CLI is unavailable or fails.
- */
-export function fetchClaudeInstalledPluginIds(): Set<string> {
-  const ids = new Set<string>();
-  try {
-    const output = execFileSync("claude", ["plugin", "list"], {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    for (const raw of output.split(/\r?\n/)) {
-      const line = raw.trim();
-      if (!line.startsWith("❯ ")) continue;
-      const id = line.slice(2).trim();
-      if (id.includes("@")) ids.add(id);
-    }
-  } catch {
-    // unavailable/failed CLI -> empty set
-  }
-  return ids;
 }
 
 function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] {
@@ -303,10 +238,6 @@ export const claudeAdapter: ToolAdapter = {
   },
 
   isInstalled(plugin: Plugin, instance: ToolInstance, ctx: InstalledContext): boolean {
-    const ids = ctx.getClaudeInstalledIds();
-    const id1 = `${plugin.name}@${plugin.marketplace}`;
-    const id2 = plugin.installedMarketplace ? `${plugin.name}@${plugin.installedMarketplace}` : "";
-    if (ids.has(id1) || (id2 ? ids.has(id2) : false)) return true;
     // Skills reach Claude through the derived-view overlay symlinks into the
     // shared store (not the native plugin CLI / installed_plugins.json), so a
     // skills-only or standalone-installed plugin is "installed" when the
@@ -318,59 +249,26 @@ export const claudeAdapter: ToolAdapter = {
     return getInstalledPluginsForClaudeInstance(instance);
   },
 
-  async install(plugin: Plugin, instance: ToolInstance): Promise<PerInstanceResult> {
-    try {
-      await execClaudeCommand(instance, "install", claudePluginId(plugin));
-      return { count: 1, errors: [] };
-    } catch (e) {
-      return {
-        count: 0,
-        errors: [
-          `Claude install failed for ${instance.name}: ${e instanceof Error ? e.message : "unknown error"}`,
-        ],
-      };
-    }
+  // Blackbook is the sole plugin manager: it NEVER runs `claude plugin
+  // install/uninstall/update`. Claude's lifecycle is the same component
+  // file-copy/proxy as every other tool — skills materialize into the shared
+  // ~/.agents store (with a ~/.claude derived-view overlay), commands/agents
+  // into ~/.agents, MCP servers into Claude's mcp config. install/uninstall/
+  // update are therefore identical to the component surface below.
+  async install(plugin: Plugin, instance: ToolInstance, sourcePath: string | null): Promise<PerInstanceResult> {
+    return claudeAdapter.installComponents(plugin, instance, sourcePath);
   },
 
   async uninstall(plugin: Plugin, instance: ToolInstance): Promise<PerInstanceResult> {
-    // Claude installs go through the native CLI, so uninstall must too — the CLI
-    // owns the plugin cache dir, settings.json enabledPlugins, and hook/MCP
-    // registrations. JSON surgery alone leaves Claude's own state desynced.
-    let cliOk = false;
-    try {
-      await execClaudeCommand(instance, "uninstall", claudeInstalledPluginId(plugin));
-      cliOk = true;
-    } catch (error) {
-      logError(`Claude uninstall failed for ${plugin.name} in ${instance.name}`, error);
-    }
-    // Best-effort safety net: clear any leftover installed_plugins.json entry.
-    try {
-      removeFromClaudeInstalledPluginsJson(instance, plugin.name, plugin.installedMarketplace ?? plugin.marketplace);
-    } catch (error) {
-      logError(`Failed to clean Claude installed_plugins.json for ${plugin.name}`, error);
-    }
-    return { count: cliOk ? 1 : 0, errors: [] };
+    const removed = await claudeAdapter.removeComponents(plugin, instance);
+    return { count: removed, errors: [] };
   },
 
-  async update(plugin: Plugin, instance: ToolInstance): Promise<PerInstanceResult> {
-    try {
-      // Use Claude's "update" command with the marketplace key Claude already
-      // knows about (the installed marketplace), not the Blackbook-selected
-      // "newest" marketplace which Claude may not recognize.
-      await execClaudeCommand(instance, "update", claudeInstalledPluginId(plugin));
-      return { count: 1, errors: [] };
-    } catch (error) {
-      logError(`Claude update failed for ${plugin.name} in ${instance.name}`, error);
-      return {
-        count: 0,
-        errors: [
-          `Claude update failed for ${plugin.name} in ${instance.name}: ${error instanceof Error ? error.message : "unknown error"}`,
-        ],
-      };
-    }
+  async update(plugin: Plugin, instance: ToolInstance, sourcePath: string | null): Promise<PerInstanceResult> {
+    return claudeAdapter.installComponents(plugin, instance, sourcePath);
   },
 
-  // Component surface: file-copy (NOT the native CLI). See file header.
+  // Component surface: file-copy/proxy (NOT the native CLI). See file header.
   async installComponents(
     plugin: Plugin,
     instance: ToolInstance,

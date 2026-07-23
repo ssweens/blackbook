@@ -15,6 +15,9 @@ const ConfigFileSchema = z.object({
   name: z.string().min(1),
   path: z.string().min(1),
   format: z.enum(["json", "toml", "yaml", "markdown", "text"]).default("text"),
+  install_dir: z.string().min(1).optional(),
+  strategy: z.enum(["symlink", "copy"]).default("symlink").optional(),
+  source: z.string().min(1).optional(),
 });
 
 const LifecycleCommandSchema = z.object({

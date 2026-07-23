@@ -7,9 +7,6 @@ interface FilePreviewProps {
 }
 
 function getToolScope(file: FileStatus): string {
-  if (file.tools && file.tools.length > 0) {
-    return file.tools.join(", ");
-  }
   return "All tools";
 }
 

@@ -6,18 +6,11 @@
  * alongside its skill (see `installPluginItemsToInstance` in managed.ts);
  * Codex has no shared-file convention to write to at all.
  *
- * Claude: shelled out to the native `claude mcp` CLI, never hand-edited —
- * `~/.claude.json` is scope-keyed, Claude-owned state (same reasoning as
- * the plugin lifecycle in claude.ts: JSON surgery would desync it).
- *
- * Pi: `~/.config/mcp/mcp.json` is directly read-merge-written — unlike
- * `~/.claude.json`, this file is an external, tool-agnostic convention the
- * `pi-mcp-adapter` extension reads, not Pi's own internal state.
+ * Both Claude and Pi: directly read-merge-written to their respective JSON
+ * files. Blackbook is the sole manager — no tool CLI is ever called.
  */
 
-import { execFile } from "child_process";
-import { promisify } from "util";
-import { mkdirSync, readFileSync } from "fs";
+import { mkdirSync, readFileSync, existsSync } from "fs";
 import { dirname, join } from "path";
 import { homedir } from "os";
 import type { InstalledItem, ToolInstance } from "../types.js";
@@ -27,14 +20,7 @@ import { instanceKey, buildManifestItemKey, migrateManifestKeys } from "../plugi
 import { getPluginMcpServers } from "../path-utils.js";
 import { atomicWriteFileSync } from "../fs-utils.js";
 import { logError } from "../validation.js";
-
-const execFileAsync = promisify(execFile);
-
-// Computed lazily (not a module-level constant) so it reflects HOME at call
-// time — important for test sandboxing, and correct in general.
-function getPiGlobalMcpPath(): string {
-  return join(homedir(), ".config", "mcp", "mcp.json");
-}
+import { expandPath } from "../config/path.js";
 
 function loadMigratedManifest(): Manifest {
   const manifest = loadManifest();
@@ -42,16 +28,54 @@ function loadMigratedManifest(): Manifest {
   return manifest;
 }
 
-async function addClaudeMcpServer(instance: ToolInstance, name: string, config: unknown): Promise<void> {
-  await execFileAsync("claude", ["mcp", "add-json", name, JSON.stringify(config), "--scope", "user"], {
-    env: { ...process.env, CLAUDE_CONFIG_DIR: instance.configDir },
-  });
+// ── Claude MCP config ──────────────────────────────────────────────────────
+// Stored in <configDir>/settings.json under "mcpServers".
+
+function getClaudeSettingsPath(instance: ToolInstance): string {
+  return join(expandPath(instance.configDir), "settings.json");
 }
 
-async function removeClaudeMcpServer(instance: ToolInstance, name: string): Promise<void> {
-  await execFileAsync("claude", ["mcp", "remove", name, "--scope", "user"], {
-    env: { ...process.env, CLAUDE_CONFIG_DIR: instance.configDir },
-  });
+function readClaudeMcpServers(instance: ToolInstance): Record<string, unknown> {
+  const path = getClaudeSettingsPath(instance);
+  try {
+    if (!existsSync(path)) return {};
+    const parsed = JSON.parse(readFileSync(path, "utf-8"));
+    const servers = parsed?.mcpServers;
+    return servers && typeof servers === "object" && !Array.isArray(servers) ? servers : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeClaudeMcpServers(instance: ToolInstance, servers: Record<string, unknown>): void {
+  const path = getClaudeSettingsPath(instance);
+  let existing: Record<string, unknown> = {};
+  try {
+    if (existsSync(path)) existing = JSON.parse(readFileSync(path, "utf-8"));
+  } catch { /* start fresh */ }
+  existing.mcpServers = servers;
+  mkdirSync(dirname(path), { recursive: true });
+  atomicWriteFileSync(path, JSON.stringify(existing, null, 2) + "\n");
+}
+
+function writeClaudeMcpServer(instance: ToolInstance, name: string, config: unknown): void {
+  const servers = readClaudeMcpServers(instance);
+  servers[name] = config;
+  writeClaudeMcpServers(instance, servers);
+}
+
+function removeClaudeMcpServer(instance: ToolInstance, name: string): void {
+  const servers = readClaudeMcpServers(instance);
+  if (!(name in servers)) return;
+  delete servers[name];
+  writeClaudeMcpServers(instance, servers);
+}
+
+// ── Pi MCP config ──────────────────────────────────────────────────────────
+// Stored in ~/.config/mcp/mcp.json under "mcpServers".
+
+function getPiGlobalMcpPath(): string {
+  return join(homedir(), ".config", "mcp", "mcp.json");
 }
 
 function readPiMcpServers(): Record<string, unknown> {
@@ -102,7 +126,7 @@ export async function installMcpServersToInstance(
   const key = instanceKey(instance);
   if (!manifest.tools[key]) manifest.tools[key] = { items: {} };
   const toolManifest = manifest.tools[key];
-  const dest = instance.toolId === "claude-code" ? `claude-mcp:${key}` : getPiGlobalMcpPath();
+  const dest = instance.toolId === "claude-code" ? getClaudeSettingsPath(instance) : getPiGlobalMcpPath();
 
   let count = 0;
   const errors: string[] = [];
@@ -110,7 +134,7 @@ export async function installMcpServersToInstance(
   for (const [serverName, config] of Object.entries(servers)) {
     try {
       if (instance.toolId === "claude-code") {
-        await addClaudeMcpServer(instance, serverName, config);
+        writeClaudeMcpServer(instance, serverName, config);
       } else {
         writePiMcpServer(serverName, config);
       }
@@ -154,7 +178,7 @@ export async function uninstallMcpServersFromInstance(pluginName: string, instan
     if ((item.owner || "") !== pluginName) continue;
     try {
       if (instance.toolId === "claude-code") {
-        await removeClaudeMcpServer(instance, item.name);
+        removeClaudeMcpServer(instance, item.name);
       } else {
         removePiMcpServer(item.name);
       }

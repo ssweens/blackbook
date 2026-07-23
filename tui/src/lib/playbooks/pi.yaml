@@ -8,30 +8,19 @@ structure:
   - prompts/
 components:
   skills:
-    # Pi reads skills (standalone and plugin-bundled) from the shared
-    # `.agents/skills` convention (in addition to its own ~/.pi/agent/skills),
-    # so blackbook installs there directly instead of duplicating into Pi's
-    # own config dir. Recursive discovery confirmed against Pi's own source
-    # (skills.ts finds SKILL.md at any depth), so the namespaced layout is
-    # safe here — unlike commands below.
+    # Skills, commands, and agents all install exclusively to the shared
+    # `~/.agents/*` store rather than any tool-own config dir — Pi (like
+    # every other managed tool) reads from there, never from its own
+    # ~/.pi/agent/{skills,prompts}.
     install_dir: ~/.agents/skills
     strategy: symlink
   commands:
-    install_dir: prompts/
+    install_dir: ~/.agents/commands
     strategy: symlink
 config_files:
   - name: Pi Config
     path: settings.json
     format: json
 syncable: true
-# No `plugin_flat_install` here: Pi's skills stay namespaced (matching
-# Codex/OpenCode/Amp's shared .agents/skills layout — Pi's own skill loader
-# is confirmed recursive), but Pi's prompt loader (prompt-templates.ts's
-# loadTemplatesFromDir) only reads flat *.md files directly under prompts/,
-# confirmed non-recursive from Pi's own source. `plugin_flat_install` is an
-# all-components flag, too coarse for this split — commands are flattened
-# instead via a `toolId === "pi"` special case alongside the flat-install
-# branches in managed.ts, scoped to commands only. No `agents` component is
-# declared: no native "load agent definition files" concept was found
-# anywhere in Pi's coding-agent core, so there's no confirmed raw-file target
-# for plugin-bundled agents post-bridge-removal.
+# No `agents` component declared: no native "load agent definition files"
+# concept was found anywhere in Pi's coding-agent core.
