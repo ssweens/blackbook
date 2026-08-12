@@ -3,7 +3,7 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 884 (874 passing, 10 skipped)
+- **Total Tests:** 886 (876 passing, 10 skipped)
 - **Test Files:** 71 (70 passing, 1 skipped)
 
 ## Critical Paths
@@ -50,7 +50,9 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Configurable advisory runtime: Settings persists Pi, Claude Code, or OpenCode plus an optional model; every CLI argv remains non-interactive and constrained (unit)
 - [x] Advisory consultation: `c` from Projects applies only accepted current source-skill proposals through the canonical project action (E2E)
 - [x] Advisory consultation: `c` in Profiles updates only the in-memory builder draft, then uses the existing save action; installed plugin detail highlights only an accepted, currently valid action without dispatching it (E2E)
-- [x] Installed standalone-skill consultation receives bounded, redacted per-file evidence and selects a labeled current action; standalone drift detects reference-file changes and targets the actual drifted install (unit, integration, E2E)
+- [x] Installed-plugin and standalone-skill consultations receive bounded, redacted per-file source-versus-installed evidence and select a labeled current action; standalone drift detects reference-file changes and targets the actual drifted install (unit, integration, E2E)
+- [x] Drifted Installed-tab Component Status rows open a current source-versus-shared-store diff scoped to the selected Skills, Commands, or Agents row; stale list drift state cannot suppress it or mix component files (E2E)
+- [x] Source-missing standalone-skill consultation identifies marketplace origin, recommends adding to source repo, and validates the `pullback` action proposal (unit)
 
 ## Boundaries
 - [x] Marketplace fetch (remote marketplace.json)

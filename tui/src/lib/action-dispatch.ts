@@ -51,7 +51,12 @@ export interface DispatchCallbacks {
   refreshDetailPiPackage: (pkg: PiPackage) => void;
 
   // Plugin diff support
-  buildPluginDiffTarget: (plugin: Plugin, toolId: string, instanceId: string) => Promise<DiffTarget | null>;
+  buildPluginDiffTarget: (
+    plugin: Plugin,
+    toolId: string,
+    instanceId: string,
+    componentKind?: ItemAction["componentKind"],
+  ) => Promise<DiffTarget | null>;
 
   // Skill actions
   uninstallSkillAll?: (skill: import("./install.js").StandaloneSkill) => Promise<void>;
@@ -257,6 +262,7 @@ async function handleDiffAction(
       item._plugin,
       inst.toolId,
       inst.instanceId,
+      action.componentKind,
     );
     if (diffTarget) {
       callbacks.setDiffTarget(diffTarget);

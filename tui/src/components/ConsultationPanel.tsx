@@ -5,8 +5,8 @@ import type { ConsultationProposal, ConsultationResponse } from "../lib/consulta
 
 const DEFAULT_VISIBLE_PROPOSALS = 6;
 const MAX_SUMMARY_LENGTH = 480;
+const MAX_ANALYSIS_LENGTH = 320;
 const MAX_REASON_LENGTH = 180;
-
 export type ConsultationPanelState =
   | { phase: "prompt"; initialPrompt?: string }
   | { phase: "running"; prompt: string }
@@ -31,6 +31,27 @@ function displayText(value: string, maximumLength: number): string {
     : normalized;
 }
 
+function displayProposalTarget(proposal: ConsultationProposal): string {
+  if (proposal.targetLabel) return proposal.targetLabel;
+  const action = proposal.operation.replace("_", " ");
+  if (proposal.target.startsWith("available-project-skill:")) {
+    return `${action} ${proposal.target.slice("available-project-skill:".length)} in project`;
+  }
+  if (proposal.target.startsWith("project-skill:")) {
+    return `${action} ${proposal.target.slice("project-skill:".length)} in project`;
+  }
+  if (proposal.target.startsWith("profile-member:")) {
+    return `${action} ${proposal.target.slice("profile-member:".length)} in profile`;
+  }
+  if (proposal.target.startsWith("plugin-component:")) {
+    const [, kind, name] = proposal.target.split(":", 3);
+    return `${action} ${kind} ${name}`;
+  }
+  if (proposal.target === "plugin") return `${action} installed plugin`;
+  if (proposal.target === "skill") return `${action} installed skill`;
+  return proposal.operation === "select_action" ? "Review selected action" : action;
+}
+
 function proposalViewport(
   proposalCount: number,
   selectedIndex: number,
@@ -48,15 +69,18 @@ function ProposalRow({
   proposal,
   active,
   selected,
+  recommended,
 }: {
   proposal: ConsultationProposal;
   active: boolean;
   selected: boolean;
+  recommended: boolean;
 }) {
   return (
     <Box flexDirection="column">
       <Text color={active ? "cyan" : undefined} bold={active} wrap="truncate">
-        {active ? "❯ " : "  "}[{selected ? "x" : " "}] {displayText(proposal.targetLabel ?? proposal.target, MAX_REASON_LENGTH)} · {proposal.operation.replace("_", " ")}
+        {active ? "❯ " : "  "}[{selected ? "x" : " "}] {displayText(displayProposalTarget(proposal), MAX_REASON_LENGTH)} · {proposal.operation.replace("_", " ")}
+        {recommended ? <Text color="cyan"> [recommended]</Text> : null}
       </Text>
       <Box marginLeft={4}>
         <Text color="gray" wrap="truncate">{displayText(proposal.reason, MAX_REASON_LENGTH)}</Text>
@@ -195,6 +219,24 @@ export function ConsultationPanel({
             <Text color="green">The advisor’s recommendations are ready.</Text>
             <Text wrap="wrap">{displayText(state.response.summary, MAX_SUMMARY_LENGTH)}</Text>
           </Box>
+          <Box flexDirection="column" marginBottom={1}>
+            <Text bold>Advisor assessment</Text>
+            <Text wrap="wrap">What changed: {displayText(state.response.analysis.whatChanged, MAX_ANALYSIS_LENGTH)}</Text>
+            <Text color="gray" wrap="wrap">Recency: {displayText(state.response.analysis.recency, MAX_ANALYSIS_LENGTH)}</Text>
+            <Text color="gray" wrap="wrap">Why: {displayText(state.response.analysis.assessment, MAX_ANALYSIS_LENGTH)}</Text>
+            {state.response.analysis.recommendedProposalId ? (
+              <Text color="cyan">
+                Recommended: {displayText(
+                  displayProposalTarget(
+                    proposals.find((proposal) => proposal.id === state.response.analysis.recommendedProposalId)!,
+                  ),
+                  MAX_REASON_LENGTH,
+                )}
+              </Text>
+            ) : (
+              <Text color="cyan">Recommended: Keep the current state</Text>
+            )}
+          </Box>
 
           {proposals.length > 0 ? (
             <Box flexDirection="column" marginBottom={1}>
@@ -206,6 +248,7 @@ export function ConsultationPanel({
                   proposal={proposal}
                   active={viewport.start + offset === selectedIndex}
                   selected={selectedIds.has(proposal.id)}
+                  recommended={proposal.id === state.response.analysis.recommendedProposalId}
                 />
               ))}
               {viewport.end < proposals.length && <Text color="gray">↓ more proposals below</Text>}

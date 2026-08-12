@@ -524,6 +524,13 @@ function setupMocks() {
   vi.mocked(ensureConfigExists).mockImplementation(() => {});
   vi.mocked(computePluginDrift).mockResolvedValue({});
   vi.mocked(resolvePluginSourcePaths).mockReturnValue(null);
+  vi.mocked(buildFileDiffTarget).mockReset();
+  vi.mocked(buildFileDiffTarget).mockReturnValue({
+    kind: "file",
+    title: "test",
+    instance: { toolId: "t", instanceId: "i", instanceName: "T", configDir: "/" },
+    files: [],
+  });
   vi.mocked(installPlugin).mockResolvedValue({ success: true, linkedInstances: {}, skippedInstances: [], errors: [] });
   vi.mocked(uninstallPlugin).mockResolvedValue(true);
   vi.mocked(syncPluginInstances).mockResolvedValue({ success: true, syncedInstances: {}, errors: [] });
@@ -838,6 +845,55 @@ describe("App E2E — Plugin Detail", () => {
     }
   });
 
+  it("opens the selected component's current diff without relying on the stale drift map", async () => {
+    const plugin = createPlugin({ skills: ["first-skill", "second-skill"], commands: [] });
+    vi.mocked(resolvePluginSourcePaths).mockReturnValue({ pluginDir: "/source", repoRoot: "/repo" });
+    vi.mocked(buildFileDiffTarget).mockImplementation((title, _displayPath, sourcePath, targetPath, instance) => {
+      if (!sourcePath.startsWith("/source/skills/")) {
+        return { kind: "file", title, instance, files: [] };
+      }
+      return {
+        kind: "file",
+        title,
+        instance,
+        files: [{
+          id: "SKILL.md",
+          displayPath: "SKILL.md",
+          sourcePath: `${sourcePath}/SKILL.md`,
+          targetPath: `${targetPath}/SKILL.md`,
+          status: "modified",
+          linesAdded: sourcePath.endsWith("first-skill") ? 3 : 2,
+          linesRemoved: 1,
+          sourceMtime: 2,
+          targetMtime: 1,
+        }],
+      };
+    });
+    useStore.setState({
+      tab: "installed",
+      ...openPluginDetail(plugin),
+      installedPlugins: [plugin],
+      // The row derives its live status directly. Its detail must do the same.
+      pluginDriftMap: {},
+    });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(
+        stdout.lastFrame,
+        (frame) => frame.includes("Skills (2): Drifted") && frame.includes("Enter view diff"),
+      );
+      sendKey(stdin, KEYS.enter);
+      const frame = await waitForFrame(
+        stdout.lastFrame,
+        (value) => value.includes("Diff View · test-plugin — Skills diff"),
+      );
+      expect(frame).toContain("skills/first-skill/SKILL.md");
+      expect(frame).toContain("skills/second-skill/SKILL.md");
+    } finally {
+      unmount();
+    }
+  });
+
   it("incomplete plugin shows an Install-from-source action", async () => {
     useStore.setState({
       tab: "installed",
@@ -956,10 +1012,38 @@ describe("App E2E — Plugin Detail", () => {
 
   it("consults the configured advisor from installed detail and focuses an accepted existing action without dispatching it", async () => {
     const plugin = createPlugin();
+    vi.mocked(resolvePluginSourcePaths).mockReturnValue({ pluginDir: "/source", repoRoot: "/repo" });
+    vi.mocked(buildFileDiffTarget).mockImplementation((title, _displayPath, sourcePath, targetPath, instance) => {
+      if (sourcePath !== "/source/skills/test-skill") {
+        return { kind: "file", title, instance, files: [] };
+      }
+      return {
+        kind: "file",
+        title,
+        instance,
+        files: [{
+          id: "SKILL.md",
+          displayPath: "SKILL.md",
+          sourcePath,
+          targetPath,
+          status: "modified",
+          linesAdded: 3,
+          linesRemoved: 1,
+          sourceMtime: Date.parse("2026-08-11T16:00:00.000Z"),
+          targetMtime: Date.parse("2026-08-10T16:00:00.000Z"),
+        }],
+      };
+    });
     vi.mocked(runConsultation).mockResolvedValue({
       ok: true,
       response: {
         summary: "Inspect the current plugin list before changing anything.",
+        analysis: {
+          recommendedProposalId: "inspect-back",
+          whatChanged: "The current plugin list is available for review.",
+          recency: "No changed-file timestamps are available.",
+          assessment: "Open the list after reviewing the detail state.",
+        },
         proposals: [{
           id: "inspect-back",
           operation: "select_action",
@@ -974,6 +1058,9 @@ describe("App E2E — Plugin Detail", () => {
       ...openPluginDetail(plugin),
       installedPlugins: [plugin],
       tools: createToolInstances(),
+      pluginDriftMap: {
+        [plugin.name]: { "skill:test-skill": "target-changed" },
+      },
       toolDetection: {
         opencode: {
           toolId: "opencode",
@@ -1001,6 +1088,36 @@ describe("App E2E — Plugin Detail", () => {
         model: "openai/gpt-5.6",
         binaryPath: "/usr/local/bin/opencode",
       }));
+      const consultationInput = vi.mocked(runConsultation).mock.calls[0]?.[0];
+      const snapshotPayload = consultationInput?.prompt.match(/<consultation-snapshot>\n(.*)\n<\/consultation-snapshot>/s)?.[1];
+      expect(snapshotPayload).toBeDefined();
+      const snapshot = JSON.parse(snapshotPayload!).snapshot;
+      expect(snapshot.components).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: "plugin-component:skill:test-skill",
+          syncStatus: "target-changed",
+          diffSummary: {
+            label: { untrustedText: "skills/test-skill" },
+            added: 3,
+            removed: 1,
+          },
+          diffEvidence: [{
+            component: { untrustedText: "skills/test-skill" },
+            path: { untrustedText: "SKILL.md" },
+            status: "modified",
+            added: 3,
+            removed: 1,
+            sourceModifiedAt: "2026-08-11T16:00:00.000Z",
+            installedModifiedAt: "2026-08-10T16:00:00.000Z",
+            excerpts: [],
+          }],
+        }),
+      ]));
+      expect(snapshot.availableActions).toEqual(expect.arrayContaining([
+        { id: "status_skills", label: { untrustedText: "Review Skills (1) diff" } },
+      ]));
+      expect(consultationInput?.prompt).not.toContain("/source");
+      expect(consultationInput?.prompt).not.toContain("/store");
       sendKey(stdin, KEYS.space);
       sendKey(stdin, KEYS.enter);
       await waitForFrame(stdout.lastFrame, (frame) => frame.includes("❯ Back to plugin list"));
@@ -1031,6 +1148,12 @@ describe("App E2E — Plugin Detail", () => {
       ok: true,
       response: {
         summary: "Inspect the changed skill before reinstalling it.",
+        analysis: {
+          recommendedProposalId: "select-diff",
+          whatChanged: "The installed skill differs from its source.",
+          recency: "The current detail carries the latest detected drift.",
+          assessment: "Inspect the diff before selecting a mutation.",
+        },
         proposals: [{
           id: "select-diff",
           operation: "select_action",
@@ -1243,6 +1366,12 @@ describe("App E2E — Advisory Consultation", () => {
       ok: true,
       response: {
         summary: "Add the available architecture skill for the requested design work.",
+        analysis: {
+          recommendedProposalId: "add-architecture",
+          whatChanged: "The requested architecture skill is not in the project.",
+          recency: "No file timestamps are available for the project inventory.",
+          assessment: "Adding the available source skill directly addresses the request.",
+        },
         proposals: [{
           id: "add-architecture",
           operation: "install",
@@ -1298,6 +1427,12 @@ describe("App E2E — Advisory Consultation", () => {
       ok: true,
       response: {
         summary: "Remove the no-longer-needed frontend skill from this profile.",
+        analysis: {
+          recommendedProposalId: "remove-frontend",
+          whatChanged: "The current profile still includes the frontend skill.",
+          recency: "No file timestamps are available for the profile draft.",
+          assessment: "Removing it aligns the draft with the stated non-frontend scope.",
+        },
         proposals: [{
           id: "remove-frontend",
           operation: "remove",

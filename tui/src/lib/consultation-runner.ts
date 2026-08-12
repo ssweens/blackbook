@@ -123,7 +123,13 @@ export function buildConsultationArgs(
 }
 
 const ConsultationResponseSchema = z.object({
-  summary: z.string(),
+  summary: z.string().min(1).max(480),
+  analysis: z.object({
+    recommendedProposalId: z.string().min(1).max(160).nullable(),
+    whatChanged: z.string().min(1).max(480),
+    recency: z.string().min(1).max(480),
+    assessment: z.string().min(1).max(480),
+  }).strict(),
   proposals: z.array(z.object({
     id: z.string(),
     operation: z.enum(["install", "remove", "enable", "disable", "resync", "keep", "select_action"]),

@@ -157,10 +157,16 @@ describe("handleItemAction", () => {
     const diffTarget = { kind: "file" as const, title: "test", instance, files: [] };
     vi.mocked(callbacks.buildPluginDiffTarget).mockResolvedValue(diffTarget);
     const item = createItem({ _plugin: plugin });
-    const action: ItemAction = { id: "d", label: "Claude", type: "diff", instance };
+    const action: ItemAction = { id: "d", label: "Claude", type: "diff", instance, componentKind: "skill" };
     const result = await handleItemAction(item, action, callbacks);
     expect(result).toBe(true);
     expect(callbacks.setDiffTarget).toHaveBeenCalledWith(diffTarget);
+    expect(callbacks.buildPluginDiffTarget).toHaveBeenCalledWith(
+      plugin,
+      "claude-code",
+      "main",
+      "skill",
+    );
   });
 
   it("diff with no instance is a no-op", async () => {

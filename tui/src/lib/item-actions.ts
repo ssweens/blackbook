@@ -106,7 +106,7 @@ export function buildPluginActions(
       const missing = missingSkills.size;
       if (drifted) anyDrift = true;
       if (missing > 0) anyMissing = true;
-      actions.push(componentStatusRow("skills", "Skills", plugin.skills.length, drifted, added, removed, missing));
+      actions.push(componentStatusRow("skills", "Skills", "skill", plugin.skills.length, drifted, added, removed, missing));
     }
 
     // Commands/agents: one row each, diffed once against the single shared
@@ -118,7 +118,7 @@ export function buildPluginActions(
       const { drifted, added, removed, missing } = perComponentDrift(plugin, kind, names, sourcePaths);
       if (drifted) anyDrift = true;
       if (missing > 0) anyMissing = true;
-      actions.push(componentStatusRow(`${kind}s`, label, names.length, drifted, added, removed, missing));
+      actions.push(componentStatusRow(`${kind}s`, label, kind, names.length, drifted, added, removed, missing));
     }
 
     if (plugin.hooks.length > 0) {
@@ -176,6 +176,7 @@ const SHARED_REF: DiffInstanceRef = {
 function componentStatusRow(
   idKind: string,
   label: string,
+  componentKind: "skill" | "command" | "agent",
   count: number,
   drifted: boolean,
   added: number,
@@ -183,26 +184,29 @@ function componentStatusRow(
   missing: number,
 ): PluginAction {
   const rowLabel = `${label} (${count})`;
+  const row = {
+    id: `status_${idKind}`,
+    label: rowLabel,
+    componentKind,
+  };
   if (missing > 0) {
     return {
-      id: `status_${idKind}`,
+      ...row,
       type: "status",
-      label: rowLabel,
       statusColor: "red",
       statusLabel: missing === count ? "Missing" : `Missing (${missing}/${count})`,
     };
   }
   if (drifted) {
     return {
-      id: `status_${idKind}`,
+      ...row,
       type: "diff",
-      label: rowLabel,
       instance: { ...SHARED_REF, totalAdded: added, totalRemoved: removed },
       statusColor: "yellow",
       statusLabel: "Drifted",
     };
   }
-  return { id: `status_${idKind}`, type: "status", label: rowLabel, statusColor: "green", statusLabel: "In sync" };
+  return { ...row, type: "status", statusColor: "green", statusLabel: "In sync" };
 }
 
 /**

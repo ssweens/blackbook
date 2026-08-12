@@ -21,17 +21,25 @@ describe("ConsultationPanel", () => {
           prompt: "Which marketplace actions are worth taking?",
           response: {
             summary: "Review the proposed marketplace changes before applying them.",
+            analysis: {
+              recommendedProposalId: "install-search",
+              whatChanged: "The requested search capability is not installed.",
+              recency: "No timestamps were supplied for marketplace metadata.",
+              assessment: "Install the focused capability; the legacy helper does not address the request.",
+            },
             proposals: [
               {
                 id: "install-search",
                 operation: "install",
                 target: "search-tools",
+                targetLabel: "Install search tools",
                 reason: "It fills a gap in the current marketplace.",
               },
               {
                 id: "disable-legacy",
                 operation: "disable",
                 target: "legacy-helper",
+                targetLabel: "Disable legacy helper",
                 reason: "It overlaps with the current workflow.",
               },
             ],
@@ -43,7 +51,11 @@ describe("ConsultationPanel", () => {
     );
 
     expect(lastFrame()).toContain("Consult advisor");
-    expect(lastFrame()).toContain("search-tools");
+    expect(lastFrame()).toContain("Install search tools");
+    expect(lastFrame()).toContain("Advisor assessment");
+    expect(lastFrame()).toContain("Recommended: Install search tools");
+    expect(lastFrame()).toContain("What changed:");
+    expect(lastFrame()).toContain("[recommended]");
 
     act(() => {
       stdin.write(" ");

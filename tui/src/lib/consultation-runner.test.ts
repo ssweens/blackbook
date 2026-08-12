@@ -54,9 +54,21 @@ describe("consultation runner", () => {
   it("launches only the detected absolute Pi executable with safe, capability-free argv", async () => {
     const { child, spawnSpy, runner } = runnerWithChild();
     const run = runner.run(input({ prompt: "untrusted; $(touch should-not-run)" }));
-    child.complete(messageEvent('{"summary":"Keep it","proposals":[]}'));
+    child.complete(messageEvent('{"summary":"Keep it","analysis":{"recommendedProposalId":null,"whatChanged":"No changes are present.","recency":"No timestamps are available.","assessment":"Keep the current state."},"proposals":[]}'));
 
-    await expect(run).resolves.toEqual({ ok: true, response: { summary: "Keep it", proposals: [] } });
+    await expect(run).resolves.toEqual({
+      ok: true,
+      response: {
+        summary: "Keep it",
+        analysis: {
+          recommendedProposalId: null,
+          whatChanged: "No changes are present.",
+          recency: "No timestamps are available.",
+          assessment: "Keep the current state.",
+        },
+        proposals: [],
+      },
+    });
     expect(spawnSpy).toHaveBeenCalledWith(
       "/Users/example/.bun/bin/pi",
       [

@@ -84,7 +84,7 @@ import {
   type ConsultationOperation,
   type ConsultationSnapshot,
   type InstalledSkillDiffEvidence,
-  type PluginComponentDiffSummary,
+  type PluginComponentDiffEvidence,
 } from "./lib/consultation-context.js";
 import { runConsultation as invokeConsultation } from "./lib/consultation-runner.js";
 
@@ -1073,51 +1073,72 @@ export function App() {
     }
   }, [detail, detailFileItem, detailSkillItem, detailPluginItem, detailPiPkgItem, detailNamespaceItem, pluginDriftMap]);
 
-  const buildPluginDiffSummaries = (
-    plugin: Plugin,
-    drift: PluginDrift | null | undefined,
-  ): PluginComponentDiffSummary[] => {
-    const sourcePaths = resolvePluginSourcePaths(plugin);
-    if (!sourcePaths || !drift) return [];
+  const buildDiffExcerpts = (file: DiffFileSummary): Array<{ kind: "installed-only" | "source-only"; text: string }> => {
+    if (file.status === "binary") return [];
 
-    const summaries: PluginComponentDiffSummary[] = [];
-    for (const [componentKey, status] of Object.entries(drift)) {
-      if (status === "in-sync" || summaries.length >= 48) continue;
-      const separator = componentKey.indexOf(":");
-      const kind = componentKey.slice(0, separator);
-      const name = componentKey.slice(separator + 1);
-      if (!name || !["skill", "command", "agent"].includes(kind)) continue;
-
-      const sourcePath = join(
-        sourcePaths.pluginDir,
-        `${kind}s`,
-        kind === "skill" ? name : `${name}.md`,
-      );
-      const targetPath = kind === "skill"
-        ? pluginSkillStorePath(plugin.name, name)
-        : agentsComponentDir(kind as "command" | "agent", plugin.name, name);
-      if (!targetPath || !existsSync(targetPath)) continue;
-
-      try {
-        const diff = buildFileDiffTarget(
-          `${kind}s/${name}`,
-          kind === "skill" ? name : `${name}.md`,
-          sourcePath,
-          targetPath,
-          { toolId: "agents", instanceId: "shared", instanceName: "~/.agents", configDir: "" },
-        );
-        summaries.push({
-          componentId: pluginComponentTarget(kind as "skill" | "command" | "agent", name),
-          label: `${kind}s/${name}`,
-          added: diff.files.reduce((total, file) => total + file.linesAdded, 0),
-          removed: diff.files.reduce((total, file) => total + file.linesRemoved, 0),
-        });
-      } catch {
-        // The snapshot still carries the drift status; a transient diff failure
-        // must not turn it into a fabricated line count.
+    const excerpts: Array<{ kind: "installed-only" | "source-only"; text: string }> = [];
+    collectExcerpts:
+    for (const hunk of computeFileDetail(file).hunks) {
+      for (const line of hunk.lines) {
+        if (line.type === "add") excerpts.push({ kind: "installed-only", text: line.content });
+        if (line.type === "remove") excerpts.push({ kind: "source-only", text: line.content });
+        if (excerpts.length === 8) break collectExcerpts;
       }
     }
-    return summaries;
+    return excerpts;
+  };
+
+  const buildPluginDiffEvidence = (plugin: Plugin): PluginComponentDiffEvidence[] => {
+    const sourcePaths = resolvePluginSourcePaths(plugin);
+    if (!sourcePaths) return [];
+
+    const evidence: PluginComponentDiffEvidence[] = [];
+    for (const kind of ["skill", "command", "agent"] as const) {
+      const names = kind === "skill"
+        ? plugin.skills
+        : kind === "command"
+          ? plugin.commands
+          : plugin.agents;
+      for (const name of names) {
+        if (evidence.length >= 8) return evidence;
+        const sourcePath = join(
+          sourcePaths.pluginDir,
+          `${kind}s`,
+          kind === "skill" ? name : `${name}.md`,
+        );
+        const targetPath = kind === "skill"
+          ? pluginSkillStorePath(plugin.name, name)
+          : agentsComponentDir(kind, plugin.name, name);
+        if (!targetPath) continue;
+
+        try {
+          const target = buildFileDiffTarget(
+            `${kind}s/${name}`,
+            kind === "skill" ? name : `${name}.md`,
+            sourcePath,
+            targetPath,
+            { toolId: "agents", instanceId: "shared", instanceName: "~/.agents", configDir: "" },
+          );
+          for (const file of target.files) {
+            if (evidence.length >= 8) return evidence;
+            evidence.push({
+              componentId: pluginComponentTarget(kind, name),
+              component: `${kind}s/${name}`,
+              path: file.displayPath,
+              status: file.status,
+              added: file.linesAdded,
+              removed: file.linesRemoved,
+              sourceMtime: file.sourceMtime,
+              targetMtime: file.targetMtime,
+              excerpts: buildDiffExcerpts(file),
+            });
+          }
+        } catch {
+          // Keep other component evidence available when one file is unreadable.
+        }
+      }
+    }
+    return evidence;
   };
 
   const buildStandaloneSkillDiffEvidence = (skill: StandaloneSkill): InstalledSkillDiffEvidence[] => {
@@ -1135,24 +1156,15 @@ export function App() {
         if (!target) continue;
         for (const file of target.files) {
           if (evidence.length >= 8) break;
-          const excerpts: Array<{ kind: "installed-only" | "source-only"; text: string }> = [];
-          if (file.status !== "binary") {
-            collectExcerpts:
-            for (const hunk of computeFileDetail(file).hunks) {
-              for (const line of hunk.lines) {
-                if (line.type === "add") excerpts.push({ kind: "installed-only", text: line.content });
-                if (line.type === "remove") excerpts.push({ kind: "source-only", text: line.content });
-                if (excerpts.length === 8) break collectExcerpts;
-              }
-            }
-          }
           evidence.push({
             installation: installation.instanceName,
             path: file.displayPath,
             status: file.status,
             added: file.linesAdded,
             removed: file.linesRemoved,
-            excerpts,
+            sourceMtime: file.sourceMtime,
+            targetMtime: file.targetMtime,
+            excerpts: buildDiffExcerpts(file),
           });
         }
       } catch {
@@ -1181,12 +1193,17 @@ export function App() {
       const actions = activeDetail?.item._skill?.diskPath === skill.diskPath
         ? activeDetail.actions
         : getSkillActions(skill);
+      // Try to identify which marketplace plugin ships this skill by name.
+      const originPlugin = allPlugins.find(
+        (p) => p.skills.some((s) => s === skill.name),
+      );
       return buildInstalledSkillConsultationSnapshot(skill, {
         actions: actions.map((action) => ({
           id: action.id,
           label: action.type === "diff" ? `Review ${action.label} diff` : action.label,
         })),
         diffEvidence: buildStandaloneSkillDiffEvidence(skill),
+        ...(originPlugin ? { sourceOrigin: originPlugin.name } : {}),
       });
     }
 
@@ -1200,15 +1217,18 @@ export function App() {
     const drift = detailPlugin?.name === plugin.name && detailPlugin.marketplace === plugin.marketplace
       ? detailPluginDrift ?? pluginDriftMap[plugin.name]
       : pluginDriftMap[plugin.name];
-    const actionIds = activeDetail?.item._plugin?.name === plugin.name
+    const actions = activeDetail?.item._plugin?.name === plugin.name
       && activeDetail.item._plugin.marketplace === plugin.marketplace
-      ? activeDetail.actions.map((action) => action.id)
-      : buildItemActions(pluginToManagedItem(plugin), drift).map((action) => action.id);
+      ? activeDetail.actions
+      : buildItemActions(pluginToManagedItem(plugin), drift);
     return buildInstalledPluginConsultationSnapshot(plugin, {
       componentConfig: getPluginComponentConfig(plugin.marketplace, plugin.name),
       drift,
-      diffSummaries: buildPluginDiffSummaries(plugin, drift),
-      validActionIds: actionIds,
+      actions: actions.map((action) => ({
+        id: action.id,
+        label: action.type === "diff" ? `Review ${action.label} diff` : action.label,
+      })),
+      diffEvidence: buildPluginDiffEvidence(plugin),
     });
   };
 
@@ -2059,46 +2079,82 @@ export function App() {
     }
   });
 
-  // Build plugin diff target for unified action dispatch
-  const buildPluginDiffTargetCb = async (plugin: Plugin, toolId: string, instanceId: string) => {
+  // Build plugin diff target for unified action dispatch.
+  const buildPluginDiffTargetCb = async (
+    plugin: Plugin,
+    toolId: string,
+    instanceId: string,
+    componentKind?: ItemAction["componentKind"],
+  ) => {
     const sourcePaths = resolvePluginSourcePaths(plugin);
     if (!sourcePaths) return null;
-    const pluginDrift = detailPluginDrift ?? pluginDriftMap[plugin.name];
-    if (!pluginDrift) return null;
 
     // ── Shared-store branch (Component Status rows in plugin detail) ──
-    // Component status rows (Skills/Commands/Agents) carry instance
-    // { toolId: "agents", instanceId: "shared" } — a fictional identifier for
-    // the shared ~/.agents store. Real-tool lookup would fail, so this branch
-    // builds per-component diffs directly against ~/.agents.
+    // Status rows are computed directly from source versus ~/.agents, so their
+    // detail must use the same source of truth—not the asynchronously refreshed
+    // list badge. Scope the target to the selected row; otherwise Skills opens a
+    // mixed Commands/Agents list that cannot explain the row the user selected.
     if (toolId === "agents" && instanceId === "shared") {
-      const allFiles: DiffFileSummary[] = [];
+      const files: DiffFileSummary[] = [];
       const instance: DiffInstanceRef = {
         toolId: "agents", instanceId: "shared",
         instanceName: "~/.agents", configDir: "",
       };
-      for (const [key, status] of Object.entries(pluginDrift)) {
-        if (status === "in-sync") continue;
-        const [kind, name] = key.split(":");
-        const srcSuffix = kind === "skill" ? name : `${name}.md`;
-        const srcPath = join(sourcePaths.pluginDir, `${kind}s`, srcSuffix);
-        let storePath: string | null = null;
-        if (kind === "skill") {
-          storePath = pluginSkillStorePath(plugin.name, name);
-        } else {
-          storePath = agentsComponentDir(kind as "command" | "agent", plugin.name, name);
+      const componentKinds: NonNullable<ItemAction["componentKind"]>[] = componentKind
+        ? [componentKind]
+        : ["skill", "command", "agent"];
+
+      for (const kind of componentKinds) {
+        const names = kind === "skill"
+          ? plugin.skills
+          : kind === "command"
+            ? plugin.commands
+            : plugin.agents;
+        for (const name of names) {
+          const sourcePath = join(
+            sourcePaths.pluginDir,
+            `${kind}s`,
+            kind === "skill" ? name : `${name}.md`,
+          );
+          const targetPath = kind === "skill"
+            ? pluginSkillStorePath(plugin.name, name)
+            : agentsComponentDir(kind, plugin.name, name);
+          if (!targetPath) continue;
+
+          try {
+            const diff = buildFileDiffTarget(
+              `${kind}s/${name}`,
+              kind === "skill" ? name : `${name}.md`,
+              sourcePath,
+              targetPath,
+              instance,
+            );
+            const prefix = kind === "skill" ? `skills/${name}` : `${kind}s`;
+            files.push(...diff.files.map((file) => ({
+              ...file,
+              id: `${prefix}/${file.id}`,
+              displayPath: `${prefix}/${file.displayPath}`,
+            })));
+          } catch {
+            // Keep other components inspectable if one file cannot be read.
+          }
         }
-        if (!storePath) continue;
-        if (!existsSync(storePath)) continue;
-        try {
-          const dt = buildFileDiffTarget(`${kind}s/${name}`, srcSuffix, srcPath, storePath, instance);
-          allFiles.push(...dt.files);
-        } catch { /* skip */ }
       }
-      return { kind: "file" as const, title: `${plugin.name} — Component diffs`, instance, files: allFiles };
+
+      const scope = componentKind
+        ? `${componentKind[0].toUpperCase()}${componentKind.slice(1)}s`
+        : "Component";
+      return {
+        kind: "file" as const,
+        title: `${plugin.name} — ${scope} diff${componentKind ? "" : "s"}`,
+        instance,
+        files,
+      };
     }
 
-    // ── Per-tool branch (existing) ──
+    // ── Per-tool branch (legacy callers) ──
+    const pluginDrift = detailPluginDrift ?? pluginDriftMap[plugin.name];
+    if (!pluginDrift) return null;
     const inst = tools.find((t) => t.toolId === toolId && t.instanceId === instanceId);
     if (!inst) return null;
 

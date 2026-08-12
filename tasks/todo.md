@@ -1,14 +1,15 @@
-## Diff-aware installed-skill advisory (2026-08-11) ✅ DONE
+## Diff-aware installed-component advisory (2026-08-11) ✅ DONE
 
 ### Contract
-- [x] Capture bounded, redacted source-versus-installation file evidence for a drifted standalone skill.
-- [x] Allow the advisor to select only a current detail action and render its user-facing label.
+- [x] Capture bounded, redacted source-versus-installation file evidence for drifted standalone skills and installed plugin components.
+- [x] Allow the advisor to select only a current detail action, render its user-facing label, and explain the evidence, recency, and recommendation.
 - [x] Detect standalone drift across the full skill directory and open the installation that actually differs.
+- [x] Open each drifted Component Status row as a current source-versus-shared-store diff scoped to its selected Skills, Commands, or Agents kind.
 
 ### Verification
 - [x] Unit, integration, and installed-detail E2E coverage passed.
-- [x] `pnpm test` (874 passed, 10 skipped), `pnpm typecheck`, and `pnpm build` passed.
-- [x] Built TUI showed the real drifted `file-todos` detail and opened the advisor prompt without invoking a provider.
+- [x] `pnpm test` (875 passed, 10 skipped), `pnpm typecheck`, and `pnpm build` passed.
+- [x] Built TUI showed the real `agentic-app-creator @ playbook` Component Status (`Skills (1): In sync`) and the focused E2E rendered the current scoped drift view and advisor result without invoking a provider.
 
 ## Configurable consultation runtime and model (2026-08-11) ✅ DONE
 

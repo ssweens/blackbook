@@ -43,6 +43,8 @@ export interface ItemAction {
     | "open_skill"
     | "back";
   instance?: DiffInstanceSummary | DiffInstanceRef;
+  /** Shared-store plugin component represented by a consolidated status row. */
+  componentKind?: "skill" | "command" | "agent";
   /** For install_tool / uninstall_tool actions — the target tool instance. */
   toolStatus?: { toolId: string; instanceId: string; name: string; installed?: boolean; enabled?: boolean; supported?: boolean; installedVersion?: string };
   statusColor?: "green" | "yellow" | "gray" | "red" | "magenta";
@@ -197,6 +199,7 @@ function ActionRow({ action, isSelected }: ActionRowProps) {
               </>
             ) : null
           )}
+          {action.type === "diff" && <Text color="gray"> (Enter view diff)</Text>}
           {action.type === "missing" && <Text color="yellow"> (click to view)</Text>}
         </Box>
       </Box>
