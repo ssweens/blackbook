@@ -53,6 +53,7 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Installed-plugin and standalone-skill consultations receive bounded, redacted per-file source-versus-installed evidence and select a labeled current action; standalone drift detects reference-file changes and targets the actual drifted install (unit, integration, E2E)
 - [x] Drifted Installed-tab Component Status rows open a current source-versus-shared-store diff scoped to the selected Skills, Commands, or Agents row; stale list drift state cannot suppress it or mix component files (E2E)
 - [x] Source-missing standalone-skill consultation identifies marketplace origin, recommends adding to source repo, and validates the `pullback` action proposal (unit)
+- [x] Advisor Model setting renders a searchable select with per-runtime model list, filtered navigation, and custom model entry (unit)
 
 ## Boundaries
 - [x] Marketplace fetch (remote marketplace.json)

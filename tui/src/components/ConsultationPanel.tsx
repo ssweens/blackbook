@@ -122,13 +122,8 @@ export function ConsultationPanel({
   const visibleProposals = proposals.slice(viewport.start, viewport.end);
 
   const submitPrompt = () => {
-    const trimmed = prompt.trim();
-    if (!trimmed) {
-      setPromptError("Enter a question for the advisor before continuing.");
-      return;
-    }
     setPromptError(null);
-    onSubmit(trimmed);
+    onSubmit(prompt.trim());
   };
 
   useInput((input, key) => {
@@ -185,7 +180,7 @@ export function ConsultationPanel({
                 setPrompt(value);
                 if (promptError) setPromptError(null);
               }}
-              placeholder="Ask for recommendations…"
+              placeholder="Ask for recommendations… (optional)"
             />
           </Box>
           {promptError && <Text color="red">{promptError}</Text>}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
+import { execFile } from "child_process";
 import { loadConfig } from "../lib/config/loader.js";
 import { saveConfig } from "../lib/config/writer.js";
 import type { Settings } from "../lib/config/schema.js";
@@ -19,7 +20,7 @@ type SettingKey = keyof Settings;
 interface SettingDef {
   key: SettingKey;
   label: string;
-  type: "enum" | "text" | "number" | "boolean";
+  type: "enum" | "text" | "number" | "boolean" | "model-select";
   enumValues?: string[];
   description: string;
 }
@@ -48,7 +49,7 @@ const SETTINGS_DEFS: SettingDef[] = [
   {
     key: "consultation_model",
     label: "Advisor Model",
-    type: "text",
+    type: "model-select",
     description: "Optional model ID; leave blank to use the selected runtime's default",
   },
   {
@@ -71,6 +72,75 @@ const SETTINGS_DEFS: SettingDef[] = [
     description: "How skill/plugin-component installs land on disk. Symlinked installs can't drift and need no resync — never applies to config files.",
   },
 ];
+
+/** Parse the first column of `pi --list-models` output (provider/model). */
+function parsePiModels(stdout: string): string[] {
+  const models: string[] = [];
+  for (const line of stdout.split("\n").slice(1)) {
+    const cols = line.trim().split(/\s+/);
+    if (cols.length >= 2 && cols[0] && cols[1]) {
+      models.push(`${cols[0]}/${cols[1]}`);
+    }
+  }
+  return [...new Set(models)];
+}
+
+/** Parse `opencode models` output (one model ID per line). */
+function parseOpenCodeModels(stdout: string): string[] {
+  return stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+}
+
+/** Parse `claude models` markdown table (| Name | ID | Best for |). */
+function parseClaudeCodeModels(stdout: string): string[] {
+  const models: string[] = [];
+  for (const line of stdout.split("\n")) {
+    const match = line.match(/^\|\s*\*\*[^*]+\*\*\s*\|\s*`([^`]+)`\s*\|/);
+    if (match?.[1]) models.push(match[1]);
+  }
+  return models;
+}
+
+/**
+ * Discover available models by shelling out to the selected runtime's CLI.
+ * Results are cached per runtime for the lifetime of the settings panel session.
+ */
+const modelCache = new Map<string, string[]>();
+
+function discoverModels(runtime: string | undefined): Promise<string[]> {
+  const rt = runtime ?? "pi";
+  const cached = modelCache.get(rt);
+  if (cached) return Promise.resolve(cached);
+
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve([]), 8000);
+
+    if (rt === "pi") {
+      execFile("pi", ["--list-models"], { timeout: 8000 }, (_err, stdout) => {
+        clearTimeout(timeout);
+        const models = parsePiModels(stdout ?? "");
+        modelCache.set(rt, models);
+        resolve(models);
+      });
+    } else if (rt === "opencode") {
+      execFile("opencode", ["models"], { timeout: 8000 }, (_err, stdout) => {
+        clearTimeout(timeout);
+        const models = parseOpenCodeModels(stdout ?? "");
+        modelCache.set(rt, models);
+        resolve(models);
+      });
+    } else if (rt === "claude-code") {
+      execFile("claude", ["models"], { timeout: 8000 }, (_err, stdout) => {
+        clearTimeout(timeout);
+        const models = parseClaudeCodeModels(stdout ?? "");
+        modelCache.set(rt, models);
+        resolve(models);
+      });
+    } else {
+      clearTimeout(timeout);
+      resolve([]);
+    }
+  });
+}
 
 function formatValue(def: SettingDef, value: unknown): string {
   if (value === undefined || value === null || value === "") {
@@ -234,8 +304,29 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
   const [diffLoading, setDiffLoading] = useState<string | null>(null);
   const [diffScroll, setDiffScroll] = useState(0);
   const [pullConfirmArmed, setPullConfirmArmed] = useState(false);
+  const [modelSelectActive, setModelSelectActive] = useState(false);
+  const [modelSearch, setModelSearch] = useState("");
+  const [modelModelIndex, setModelModelIndex] = useState(0);
+  const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
 
   const menuItems = buildMenuItems(repoStatus);
+
+  const filteredModels = useMemo(() => {
+    if (!modelSearch.trim()) return discoveredModels;
+    const lower = modelSearch.toLowerCase();
+    return discoveredModels.filter((m) => m.toLowerCase().includes(lower));
+  }, [discoveredModels, modelSearch]);
+
+  // Discover available models from the runtime CLI when the model select opens.
+  useEffect(() => {
+    if (!modelSelectActive) return;
+    setModelsLoading(true);
+    discoverModels(settings?.consultation_runtime).then((models) => {
+      setDiscoveredModels(models);
+      setModelsLoading(false);
+    });
+  }, [modelSelectActive, settings?.consultation_runtime]);
 
   const refreshRepoStatus = useCallback(async (options?: { force?: boolean; fetchRemote?: boolean }) => {
     setRepoLoading(true);
@@ -304,11 +395,16 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
     const item = menuItems[selectedIndex];
     if (!item) return "";
 
+    if (modelSelectActive) {
+      return "↑↓ navigate · Enter select · Esc cancel · type to filter";
+    }
+
     if (item.kind === "setting") {
       const def = item.def;
       if (editing) return "Enter to save · Esc to cancel";
       if (def.type === "enum") return `Enter to cycle (${def.enumValues?.join(", ")}) · ${def.description}`;
       if (def.type === "boolean") return `Enter to toggle · ${def.description}`;
+      if (def.type === "model-select") return `Enter to choose model · ${def.description}`;
       return `Enter to edit · ${def.description}`;
     }
 
@@ -329,6 +425,35 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
 
   useInput((input, key) => {
     if (!active || !settings) return;
+
+    // Model searchable-select mode
+    if (modelSelectActive) {
+      if (key.escape) {
+        setModelSelectActive(false);
+        setModelSearch("");
+        setModelModelIndex(0);
+        return;
+      }
+      if (key.upArrow) {
+        setModelModelIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setModelModelIndex((i) => Math.min(filteredModels.length - 1, i + 1));
+        return;
+      }
+      if (key.return) {
+        const selected = filteredModels[modelModelIndex] ?? modelSearch.trim();
+        if (selected) {
+          persistSettings({ ...settings, consultation_model: selected });
+        }
+        setModelSelectActive(false);
+        setModelSearch("");
+        setModelModelIndex(0);
+        return;
+      }
+      return;
+    }
 
     // Diff scrolling mode
     if (expandedDiff) {
@@ -447,6 +572,13 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
           persistSettings({ ...settings, [def.key]: !settings[def.key] as any });
           return;
         }
+        if (def.type === "model-select") {
+          const current = settings[def.key];
+          setModelSearch("");
+          setModelModelIndex(0);
+          setModelSelectActive(true);
+          return;
+        }
         const current = settings[def.key];
         setEditValue(current !== undefined && current !== null ? String(current) : "");
         setEditing(true);
@@ -526,20 +658,63 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
         }
 
         return (
-          <Box key={item.def.key}>
-            <Text color={isSelected ? "cyan" : "white"}>
-              {isSelected ? "❯ " : "  "}
-            </Text>
-            <Text bold={isSelected} color={isSelected ? "white" : "gray"}>
-              {item.def.label}
-            </Text>
-            <Text>  </Text>
-            {isEditing ? (
-              <TextInput value={editValue} onChange={setEditValue} />
-            ) : (
-              <Text color={isSelected ? "yellow" : "gray"}>
-                {displayValue}
+          <Box key={item.def.key} flexDirection="column">
+            <Box>
+              <Text color={isSelected ? "cyan" : "white"}>
+                {isSelected ? "❯ " : "  "}
               </Text>
+              <Text bold={isSelected} color={isSelected ? "white" : "gray"}>
+                {item.def.label}
+              </Text>
+              <Text>  </Text>
+              {isEditing ? (
+                <TextInput value={editValue} onChange={setEditValue} />
+              ) : (
+                <Text color={isSelected ? "yellow" : "gray"}>
+                  {displayValue}
+                </Text>
+              )}
+            </Box>
+            {isSelected && modelSelectActive && item.def.type === "model-select" && (
+              <Box flexDirection="column" marginLeft={2} marginTop={0} borderStyle="single" borderColor="gray" paddingX={1}>
+                <Box>
+                  <Text color="cyan">Search: </Text>
+                  <TextInput value={modelSearch} onChange={(v) => { setModelSearch(v); setModelModelIndex(0); }} />
+                </Box>
+                {modelsLoading && (
+                  <Box>
+                    <Text color="gray">  Loading models from {settings.consultation_runtime ?? "pi"}...</Text>
+                  </Box>
+                )}
+                {!modelsLoading && filteredModels.length === 0 && modelSearch.trim() && (
+                  <Box>
+                    <Text color="gray">  Enter to use "{modelSearch.trim()}" as custom model</Text>
+                  </Box>
+                )}
+                {!modelsLoading && filteredModels.length === 0 && !modelSearch.trim() && (
+                  <Box>
+                    <Text color="gray">  No models discovered — type a custom model ID</Text>
+                  </Box>
+                )}
+                {filteredModels.slice(0, 12).map((model, mi) => (
+                  <Box key={model}>
+                    <Text color={mi === modelModelIndex ? "cyan" : "gray"}>
+                      {mi === modelModelIndex ? "❯ " : "  "}
+                    </Text>
+                    <Text color={mi === modelModelIndex ? "white" : "gray"}>
+                      {model}
+                    </Text>
+                    {model === String(settings.consultation_model ?? "") && (
+                      <Text color="green"> (current)</Text>
+                    )}
+                  </Box>
+                ))}
+                {filteredModels.length > 12 && (
+                  <Box>
+                    <Text color="gray">  ...and {filteredModels.length - 12} more (type to filter)</Text>
+                  </Box>
+                )}
+              </Box>
             )}
           </Box>
         );

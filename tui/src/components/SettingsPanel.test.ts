@@ -46,7 +46,7 @@ describe("buildMenuItems", () => {
       }),
       expect.objectContaining({
         kind: "setting",
-        def: expect.objectContaining({ key: "consultation_model", type: "text" }),
+        def: expect.objectContaining({ key: "consultation_model", type: "model-select" }),
       }),
     ]));
   });
