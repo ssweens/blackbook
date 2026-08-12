@@ -3,7 +3,7 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 886 (876 passing, 10 skipped)
+- **Total Tests:** 888 (878 passing, 10 skipped)
 - **Test Files:** 71 (70 passing, 1 skipped)
 
 ## Critical Paths
@@ -54,6 +54,7 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Drifted Installed-tab Component Status rows open a current source-versus-shared-store diff scoped to the selected Skills, Commands, or Agents row; stale list drift state cannot suppress it or mix component files (E2E)
 - [x] Source-missing standalone-skill consultation identifies marketplace origin, recommends adding to source repo, and validates the `pullback` action proposal (unit)
 - [x] Advisor Model setting renders a searchable select with per-runtime model list, filtered navigation, and custom model entry (unit)
+- [x] Advisory consultations continue with optional follow-up questions from installed detail and Profiles; only the four newest redacted exchanges are sent, every turn includes a fresh snapshot, and current response validation still gates actions (unit, E2E)
 
 ## Boundaries
 - [x] Marketplace fetch (remote marketplace.json)

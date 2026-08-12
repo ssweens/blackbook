@@ -136,6 +136,8 @@ Press `c` in a project, while editing a profile, or from an installed-plugin det
 
 Blackbook sends a bounded, redacted snapshot of the current view. The runtime runs in advisory mode without project mutation capabilities. Recommendations remain selectable proposals: accepting them uses the existing project/profile/detail action and never runs an action automatically.
 
+After a response, press `c` to ask an optional follow-up. Blackbook carries the four newest redacted exchanges as conversational context, rebuilds the current snapshot for every turn, and shows the latest response with its turn number. Prior recommendations never override the current action contract.
+
 ### CLI Mode
 
 Running `blackbook` with a recognized subcommand skips the interactive TUI entirely and runs non-interactively, exiting with a status code — useful for scripts and agents. Bare `blackbook` (no subcommand) still launches the TUI as above.

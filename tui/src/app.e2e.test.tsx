@@ -1034,24 +1034,43 @@ describe("App E2E — Plugin Detail", () => {
         }],
       };
     });
-    vi.mocked(runConsultation).mockResolvedValue({
-      ok: true,
-      response: {
-        summary: "Inspect the current plugin list before changing anything.",
-        analysis: {
-          recommendedProposalId: "inspect-back",
-          whatChanged: "The current plugin list is available for review.",
-          recency: "No changed-file timestamps are available.",
-          assessment: "Open the list after reviewing the detail state.",
+    vi.mocked(runConsultation)
+      .mockResolvedValueOnce({
+        ok: true,
+        response: {
+          summary: "Inspect the current plugin list before changing anything.",
+          analysis: {
+            recommendedProposalId: "inspect-back",
+            whatChanged: "The current plugin list is available for review.",
+            recency: "No changed-file timestamps are available.",
+            assessment: "Open the list after reviewing the detail state.",
+          },
+          proposals: [{
+            id: "inspect-back",
+            operation: "select_action",
+            target: "back",
+            reason: "Return to the installed-plugin list after reviewing the status.",
+          }],
         },
-        proposals: [{
-          id: "inspect-back",
-          operation: "select_action",
-          target: "back",
-          reason: "Return to the installed-plugin list after reviewing the status.",
-        }],
-      },
-    });
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        response: {
+          summary: "The Skills status row is the first detail to inspect.",
+          analysis: {
+            recommendedProposalId: "inspect-back",
+            whatChanged: "The skill differs from the shared installed copy.",
+            recency: "The source copy is newer than the installed copy.",
+            assessment: "Review the component diff, then return to the plugin list.",
+          },
+          proposals: [{
+            id: "inspect-back",
+            operation: "select_action",
+            target: "back",
+            reason: "Return to the installed-plugin list after reviewing the status.",
+          }],
+        },
+      });
     vi.mocked(getConsultationSettings).mockReturnValue({ runtime: "opencode", model: "openai/gpt-5.6" });
     useStore.setState({
       tab: "installed",
@@ -1118,6 +1137,37 @@ describe("App E2E — Plugin Detail", () => {
       ]));
       expect(consultationInput?.prompt).not.toContain("/source");
       expect(consultationInput?.prompt).not.toContain("/store");
+      sendKey(stdin, "c");
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Ask a follow-up"));
+      act(() => {
+        stdin.write("Why should I inspect Skills first?");
+      });
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("The Skills status row is the first detail to inspect."));
+      expect(stdout.lastFrame()).toContain("turn 2");
+      expect(vi.mocked(runConsultation)).toHaveBeenCalledTimes(2);
+      const continuationInput = vi.mocked(runConsultation).mock.calls[1]?.[0];
+      const continuationPayloadText = continuationInput?.prompt.match(
+        /<consultation-snapshot>\n(.*)\n<\/consultation-snapshot>/s,
+      )?.[1];
+      expect(continuationPayloadText).toBeDefined();
+      const continuationPayload = JSON.parse(continuationPayloadText!);
+      expect(continuationPayload.request).toEqual({
+        untrustedText: "Why should I inspect Skills first?",
+      });
+      expect(continuationPayload.priorExchanges).toEqual([
+        expect.objectContaining({
+          request: { untrustedText: "What should I inspect first?" },
+          response: expect.objectContaining({
+            summary: {
+              untrustedText: "Inspect the current plugin list before changing anything.",
+            },
+          }),
+        }),
+      ]);
+      expect(continuationPayload.snapshot.components).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: "plugin-component:skill:test-skill" }),
+      ]));
       sendKey(stdin, KEYS.space);
       sendKey(stdin, KEYS.enter);
       await waitForFrame(stdout.lastFrame, (frame) => frame.includes("❯ Back to plugin list"));
@@ -1423,24 +1473,43 @@ describe("App E2E — Advisory Consultation", () => {
 
   it("consults the configured advisor while editing a profile and saves only the accepted draft membership change", async () => {
     const saveProfile = vi.fn().mockResolvedValue(true);
-    vi.mocked(runConsultation).mockResolvedValue({
-      ok: true,
-      response: {
-        summary: "Remove the no-longer-needed frontend skill from this profile.",
-        analysis: {
-          recommendedProposalId: "remove-frontend",
-          whatChanged: "The current profile still includes the frontend skill.",
-          recency: "No file timestamps are available for the profile draft.",
-          assessment: "Removing it aligns the draft with the stated non-frontend scope.",
+    vi.mocked(runConsultation)
+      .mockResolvedValueOnce({
+        ok: true,
+        response: {
+          summary: "Remove the no-longer-needed frontend skill from this profile.",
+          analysis: {
+            recommendedProposalId: "remove-frontend",
+            whatChanged: "The current profile still includes the frontend skill.",
+            recency: "No file timestamps are available for the profile draft.",
+            assessment: "Removing it aligns the draft with the stated non-frontend scope.",
+          },
+          proposals: [{
+            id: "remove-frontend",
+            operation: "remove",
+            target: "profile-member:frontend",
+            reason: "The profile is now intended for non-frontend work.",
+          }],
         },
-        proposals: [{
-          id: "remove-frontend",
-          operation: "remove",
-          target: "profile-member:frontend",
-          reason: "The profile is now intended for non-frontend work.",
-        }],
-      },
-    });
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        response: {
+          summary: "Yes. The current draft still supports removing frontend.",
+          analysis: {
+            recommendedProposalId: "remove-frontend",
+            whatChanged: "The current profile still includes the frontend skill.",
+            recency: "No file timestamps are available for the profile draft.",
+            assessment: "The follow-up does not change the safe recommendation.",
+          },
+          proposals: [{
+            id: "remove-frontend",
+            operation: "remove",
+            target: "profile-member:frontend",
+            reason: "The profile is now intended for non-frontend work.",
+          }],
+        },
+      });
     useStore.setState({
       tab: "profiles",
       profiles: { web: ["frontend"] },
@@ -1470,6 +1539,23 @@ describe("App E2E — Advisory Consultation", () => {
       });
       sendKey(stdin, KEYS.enter);
       await waitForFrame(stdout.lastFrame, (frame) => frame.includes("The advisor’s recommendations are ready."));
+      sendKey(stdin, "c");
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Ask a follow-up"));
+      act(() => {
+        stdin.write("Is that still safe?");
+      });
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Yes. The current draft still supports removing frontend."));
+      expect(stdout.lastFrame()).toContain("turn 2");
+      expect(vi.mocked(runConsultation)).toHaveBeenCalledTimes(2);
+      const continuationPrompt = vi.mocked(runConsultation).mock.calls[1]?.[0].prompt;
+      const continuationPayloadText = continuationPrompt.match(
+        /<consultation-snapshot>\n(.*)\n<\/consultation-snapshot>/s,
+      )?.[1];
+      const continuationPayload = JSON.parse(continuationPayloadText!);
+      expect(continuationPayload.priorExchanges[0].request).toEqual({
+        untrustedText: "What should change in this profile?",
+      });
       sendKey(stdin, KEYS.space);
       sendKey(stdin, KEYS.enter);
       await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Space toggle"));

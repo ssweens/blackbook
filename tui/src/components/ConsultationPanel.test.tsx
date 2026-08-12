@@ -5,6 +5,7 @@ import { ConsultationPanel } from "./ConsultationPanel.js";
 
 const callbacks = () => ({
   onSubmit: vi.fn(),
+  onContinue: vi.fn(),
   onCancel: vi.fn(),
   onRetry: vi.fn(),
   onToggleProposal: vi.fn(),
@@ -76,5 +77,61 @@ describe("ConsultationPanel", () => {
     expect(handlers.onToggleProposal).toHaveBeenCalledWith("install-search");
     expect(handlers.onAccept).toHaveBeenCalledWith(["disable-legacy"]);
     expect(handlers.onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens a follow-up input without closing the consultation", async () => {
+    const handlers = callbacks();
+    const { stdin, lastFrame } = render(
+      <ConsultationPanel
+        state={{
+          phase: "result",
+          prompt: "",
+          response: {
+            summary: "Keep the current plugin state.",
+            analysis: {
+              recommendedProposalId: null,
+              whatChanged: "The installed copy matches its source.",
+              recency: "The copies have matching timestamps.",
+              assessment: "No action is necessary.",
+            },
+            proposals: [],
+          },
+        }}
+        selectedProposalIds={[]}
+        turnCount={1}
+        {...handlers}
+      />,
+    );
+
+    act(() => {
+      stdin.write("c");
+    });
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain("Ask a follow-up");
+    });
+
+    act(() => {
+      stdin.write("\u001B");
+    });
+    await vi.waitFor(() => {
+      expect(lastFrame()).not.toContain("Ask a follow-up");
+    });
+    expect(handlers.onCancel).not.toHaveBeenCalled();
+
+    act(() => {
+      stdin.write("c");
+    });
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain("Ask a follow-up");
+    });
+    act(() => {
+      stdin.write("Why is no action necessary?");
+    });
+    act(() => {
+      stdin.write("\r");
+    });
+    await vi.waitFor(() => {
+      expect(handlers.onContinue).toHaveBeenCalledWith("Why is no action necessary?");
+    });
   });
 });

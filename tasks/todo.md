@@ -1,3 +1,21 @@
+## Continued advisory consultation (2026-08-12) ✅ DONE
+
+### Contract
+- [x] Let a user ask another optional question from a completed consultation.
+- [x] Preserve bounded prior exchanges as context while rebuilding the current snapshot for every turn.
+- [x] Treat prior replies as context only; current allowed proposals and response validation remain authoritative.
+- [x] Keep cancellation, retries, proposal selection, and acceptance behavior intact.
+
+### Verification
+- [x] Cover panel input, prompt history serialization, and installed-detail continuation end to end.
+- [x] Run the focused consultation flow, full test suite, typecheck, build, and visual TUI inspection.
+
+### Review
+- [x] Focused continuation scenarios passed for the panel, bounded prompt history, installed plugin detail, and Profiles.
+- [x] `pnpm test`: 878 passed, 10 skipped (888 total).
+- [x] `pnpm typecheck` and `pnpm build` passed.
+- [x] Real Ink render showed the completed turn, `c continue`, follow-up input, preserved assessment, turn number, and return hint; the smoke exited normally.
+
 ## Diff-aware installed-component advisory (2026-08-11) ✅ DONE
 
 ### Contract

@@ -81,6 +81,7 @@ import {
   filterConsultationProposals,
   pluginComponentTarget,
   validateConsultationResponse,
+  type ConsultationExchange,
   type ConsultationOperation,
   type ConsultationSnapshot,
   type InstalledSkillDiffEvidence,
@@ -157,6 +158,7 @@ interface AppConsultation {
   target: AppConsultationTarget;
   state: ConsultationPanelState;
   selectedProposalIds: string[];
+  exchanges: ConsultationExchange[];
 }
 
 export function App() {
@@ -1232,20 +1234,30 @@ export function App() {
     });
   };
 
-  const runConsultation = async (target: AppConsultationTarget, request: string) => {
+  const runConsultation = async (
+    target: AppConsultationTarget,
+    request: string,
+    priorExchanges: readonly ConsultationExchange[],
+  ) => {
     const snapshot = buildConsultationSnapshot(target);
     if (!snapshot) {
       setConsultation({
         target,
         state: { phase: "error", prompt: request, message: "This view changed before the advisor could inspect it. Reopen the consultation." },
         selectedProposalIds: [],
+        exchanges: [...priorExchanges],
       });
       return;
     }
 
     const controller = new AbortController();
     consultationAbortRef.current = controller;
-    setConsultation({ target, state: { phase: "running", prompt: request }, selectedProposalIds: [] });
+    setConsultation({
+      target,
+      state: { phase: "running", prompt: request },
+      selectedProposalIds: [],
+      exchanges: [...priorExchanges],
+    });
     const { runtime, model } = getConsultationSettings();
     const instance = tools.find((tool) => tool.toolId === runtime && tool.enabled) ?? null;
     const binaryPath = toolDetection[runtime]?.binaryPath ?? null;
@@ -1254,7 +1266,7 @@ export function App() {
       instance,
       binaryPath,
       model,
-      prompt: buildConsultationPrompt(snapshot, request),
+      prompt: buildConsultationPrompt(snapshot, request, priorExchanges),
       signal: controller.signal,
     });
     if (consultationAbortRef.current !== controller) return;
@@ -1263,12 +1275,18 @@ export function App() {
     if (result.ok) {
       const response = validateConsultationResponse(snapshot, result.response);
       if (response) {
-        setConsultation({ target, state: { phase: "result", prompt: request, response }, selectedProposalIds: [] });
+        setConsultation({
+          target,
+          state: { phase: "result", prompt: request, response },
+          selectedProposalIds: [],
+          exchanges: [...priorExchanges, { request, response }],
+        });
       } else {
         setConsultation({
           target,
           state: { phase: "error", prompt: request, message: "The advisor returned recommendations outside the current action contract." },
           selectedProposalIds: [],
+          exchanges: [...priorExchanges],
         });
       }
       return;
@@ -1281,6 +1299,7 @@ export function App() {
       target,
       state: { phase: "error", prompt: request, message: result.error.message },
       selectedProposalIds: [],
+      exchanges: [...priorExchanges],
     });
   };
 
@@ -1844,6 +1863,7 @@ export function App() {
             target: { kind: "project", path: project.path },
             state: { phase: "prompt" },
             selectedProposalIds: [],
+            exchanges: [],
           });
           return;
         }
@@ -1853,6 +1873,7 @@ export function App() {
           target: { kind: "installed-skill", diskPath: detailSkill.diskPath },
           state: { phase: "prompt" },
           selectedProposalIds: [],
+          exchanges: [],
         });
         return;
       }
@@ -1866,6 +1887,7 @@ export function App() {
           },
           state: { phase: "prompt" },
           selectedProposalIds: [],
+          exchanges: [],
         });
         return;
       }
@@ -2508,11 +2530,21 @@ export function App() {
           <ConsultationPanel
             state={consultation!.state}
             selectedProposalIds={consultation!.selectedProposalIds}
-            onSubmit={(request) => { void runConsultation(consultation!.target, request); }}
+            turnCount={consultation!.exchanges.length}
+            onSubmit={(request) => {
+              void runConsultation(consultation!.target, request, consultation!.exchanges);
+            }}
+            onContinue={(request) => {
+              void runConsultation(consultation!.target, request, consultation!.exchanges);
+            }}
             onCancel={cancelConsultation}
             onRetry={() => {
               if (consultation!.state.phase === "error") {
-                void runConsultation(consultation!.target, consultation!.state.prompt);
+                void runConsultation(
+                  consultation!.target,
+                  consultation!.state.prompt,
+                  consultation!.exchanges,
+                );
               }
             }}
             onToggleProposal={(proposalId) => {

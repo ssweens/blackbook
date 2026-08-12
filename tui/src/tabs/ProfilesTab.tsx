@@ -9,6 +9,7 @@ import {
   buildProfileConsultationSnapshot,
   profileMemberTarget,
   validateConsultationResponse,
+  type ConsultationExchange,
 } from "../lib/consultation-context.js";
 import { runConsultation as invokeConsultation } from "../lib/consultation-runner.js";
 import { useStore } from "../lib/store.js";
@@ -47,6 +48,7 @@ type TreeRow =
 interface ProfileConsultation {
   state: ConsultationPanelState;
   selectedProposalIds: string[];
+  exchanges: ConsultationExchange[];
 }
 
 export interface ProfilesTabProps {
@@ -160,13 +162,20 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
     );
   };
 
-  const runConsultation = async (request: string) => {
+  const runConsultation = async (
+    request: string,
+    priorExchanges: readonly ConsultationExchange[],
+  ) => {
     const snapshot = buildDraftSnapshot();
     if (!snapshot) return;
 
     const controller = new AbortController();
     consultationAbortRef.current = controller;
-    setConsultation({ state: { phase: "running", prompt: request }, selectedProposalIds: [] });
+    setConsultation({
+      state: { phase: "running", prompt: request },
+      selectedProposalIds: [],
+      exchanges: [...priorExchanges],
+    });
 
     const { runtime, model } = getConsultationSettings();
     const instance = tools.find((tool) => tool.toolId === runtime && tool.enabled) ?? null;
@@ -176,7 +185,7 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
       instance,
       binaryPath,
       model,
-      prompt: buildConsultationPrompt(snapshot, request),
+      prompt: buildConsultationPrompt(snapshot, request, priorExchanges),
       signal: controller.signal,
     });
     if (consultationAbortRef.current !== controller) return;
@@ -184,11 +193,16 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
     if (result.ok) {
       const response = validateConsultationResponse(snapshot, result.response);
       if (response) {
-        setConsultation({ state: { phase: "result", prompt: request, response }, selectedProposalIds: [] });
+        setConsultation({
+          state: { phase: "result", prompt: request, response },
+          selectedProposalIds: [],
+          exchanges: [...priorExchanges, { request, response }],
+        });
       } else {
         setConsultation({
           state: { phase: "error", prompt: request, message: "The advisor returned recommendations that no longer match this profile draft." },
           selectedProposalIds: [],
+          exchanges: [...priorExchanges],
         });
       }
       return;
@@ -197,7 +211,11 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
       setConsultation(null);
       return;
     }
-    setConsultation({ state: { phase: "error", prompt: request, message: result.error.message }, selectedProposalIds: [] });
+    setConsultation({
+      state: { phase: "error", prompt: request, message: result.error.message },
+      selectedProposalIds: [],
+      exchanges: [...priorExchanges],
+    });
   };
 
   const cancelConsultation = () => {
@@ -218,6 +236,7 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
           message: "The profile draft changed. Ask the advisor again before applying recommendations.",
         },
         selectedProposalIds: [],
+        exchanges: consultation.exchanges,
       });
       return;
     }
@@ -270,7 +289,7 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
     }
 
     if (input === "c") {
-      setConsultation({ state: { phase: "prompt" }, selectedProposalIds: [] });
+      setConsultation({ state: { phase: "prompt" }, selectedProposalIds: [], exchanges: [] });
       return;
     }
 
@@ -325,10 +344,14 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
       <ConsultationPanel
         state={consultation.state}
         selectedProposalIds={consultation.selectedProposalIds}
-        onSubmit={(request) => { void runConsultation(request); }}
+        turnCount={consultation.exchanges.length}
+        onSubmit={(request) => { void runConsultation(request, consultation.exchanges); }}
+        onContinue={(request) => { void runConsultation(request, consultation.exchanges); }}
         onCancel={cancelConsultation}
         onRetry={() => {
-          if (consultation.state.phase === "error") void runConsultation(consultation.state.prompt);
+          if (consultation.state.phase === "error") {
+            void runConsultation(consultation.state.prompt, consultation.exchanges);
+          }
         }}
         onToggleProposal={(proposalId) => {
           setConsultation((current) => {

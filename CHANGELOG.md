@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - 2026-08-11 — Advisory consultations are available from Projects (`c`), the Profiles builder (`c`), and installed plugin detail (`c`). Settings now select the Pi, Claude Code, or OpenCode runtime and an optional model ID; leaving the model blank uses that runtime’s configured default. Blackbook supplies a bounded, redacted snapshot and each runtime runs in its no-tools, non-persistent advisory mode. Recommendations remain proposals: project mutations use existing project actions only after explicit acceptance; profile recommendations update only the unsaved builder draft; installed-plugin recommendations can only highlight a currently available detail action. Failures, malformed output, timeouts, and cancellation remain visible and recoverable.
+- 2026-08-12 — Completed advisory consultations can continue with optional follow-up questions (`c`). Each turn carries only the four newest redacted exchanges as conversational context, rebuilds the current project/profile/plugin/skill snapshot, and revalidates proposals before they can be selected or accepted.
 
 ### Fixed
 - 2026-08-11 — Drifted Installed-tab Component Status rows now open a current, component-scoped source-versus-shared-store diff. The selected Skills, Commands, or Agents row no longer relies on a stale background drift map or mixes files from other component kinds.

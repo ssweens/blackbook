@@ -17,10 +17,12 @@ export interface ConsultationPanelProps {
   state: ConsultationPanelState;
   selectedProposalIds: readonly string[];
   onSubmit: (prompt: string) => void;
+  onContinue: (prompt: string) => void;
   onCancel: () => void;
   onRetry: () => void;
   onToggleProposal: (proposalId: string) => void;
   onAccept: (proposalIds: string[]) => void;
+  turnCount?: number;
   maxVisibleProposals?: number;
 }
 
@@ -93,16 +95,19 @@ export function ConsultationPanel({
   state,
   selectedProposalIds,
   onSubmit,
+  onContinue,
   onCancel,
   onRetry,
   onToggleProposal,
   onAccept,
+  turnCount = 0,
   maxVisibleProposals = DEFAULT_VISIBLE_PROPOSALS,
 }: ConsultationPanelProps) {
   const initialPrompt = state.phase === "prompt" ? state.initialPrompt ?? "" : "";
   const [prompt, setPrompt] = useState(initialPrompt);
-  const [promptError, setPromptError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [followUpOpen, setFollowUpOpen] = useState(false);
+  const [followUpPrompt, setFollowUpPrompt] = useState("");
   const visibleCount = Math.max(1, Math.floor(maxVisibleProposals));
   const response = state.phase === "result" ? state.response : null;
   const proposals = response?.proposals ?? [];
@@ -110,7 +115,8 @@ export function ConsultationPanel({
 
   useEffect(() => {
     setPrompt(initialPrompt);
-    setPromptError(null);
+    setFollowUpOpen(false);
+    setFollowUpPrompt("");
   }, [initialPrompt, state.phase]);
 
   useEffect(() => {
@@ -122,11 +128,21 @@ export function ConsultationPanel({
   const visibleProposals = proposals.slice(viewport.start, viewport.end);
 
   const submitPrompt = () => {
-    setPromptError(null);
     onSubmit(prompt.trim());
   };
 
   useInput((input, key) => {
+    if (state.phase === "result" && followUpOpen) {
+      if (key.escape) {
+        setFollowUpOpen(false);
+        setFollowUpPrompt("");
+      } else if (key.return) {
+        setFollowUpOpen(false);
+        onContinue(followUpPrompt.trim());
+      }
+      return;
+    }
+
     if (key.escape) {
       onCancel();
       return;
@@ -143,6 +159,12 @@ export function ConsultationPanel({
       if (key.return) onRetry();
       return;
     }
+    if (input === "c") {
+      setFollowUpOpen(true);
+      setFollowUpPrompt("");
+      return;
+    }
+
 
     if (proposals.length === 0) return;
 
@@ -168,6 +190,7 @@ export function ConsultationPanel({
       <Box marginBottom={1}>
         <Text bold>Consult advisor</Text>
         <Text color="gray"> · advisory only</Text>
+        {turnCount > 0 && <Text color="gray"> · turn {turnCount}</Text>}
       </Box>
 
       {state.phase === "prompt" && (
@@ -176,14 +199,10 @@ export function ConsultationPanel({
           <Box marginTop={1} marginBottom={1}>
             <TextInput
               value={prompt}
-              onChange={(value) => {
-                setPrompt(value);
-                if (promptError) setPromptError(null);
-              }}
+              onChange={setPrompt}
               placeholder="Ask for recommendations… (optional)"
             />
           </Box>
-          {promptError && <Text color="red">{promptError}</Text>}
           <Text color="gray" italic>Enter to consult advisor · Esc to cancel</Text>
         </>
       )}
@@ -254,11 +273,27 @@ export function ConsultationPanel({
             </Box>
           )}
 
-          <Text color="gray" italic>
-            {proposals.length > 0
-              ? "↑↓ select · Space toggle · Enter accept selected · Esc to close"
-              : "Esc to close"}
-          </Text>
+          {followUpOpen && (
+            <Box flexDirection="column" marginBottom={1}>
+              <Text bold>Ask a follow-up</Text>
+              <Box marginTop={1}>
+                <TextInput
+                  value={followUpPrompt}
+                  onChange={setFollowUpPrompt}
+                  placeholder="Ask another question… (optional)"
+                />
+              </Box>
+              <Text color="gray" italic>Enter to continue · Esc to return to recommendations</Text>
+            </Box>
+          )}
+
+          {!followUpOpen && (
+            <Text color="gray" italic>
+              {proposals.length > 0
+                ? "↑↓ select · Space toggle · Enter accept selected · c continue · Esc to close"
+                : "c continue · Esc to close"}
+            </Text>
+          )}
         </>
       )}
     </Box>
