@@ -47,11 +47,16 @@ export type ToolInstanceConfig = z.infer<typeof ToolInstanceSchema>;
 // Settings
 // ─────────────────────────────────────────────────────────────────────────────
 
+export const ConsultationRuntimeSchema = z.enum(["pi", "claude-code", "opencode"]);
+export type ConsultationRuntime = z.infer<typeof ConsultationRuntimeSchema>;
+
 export const SettingsSchema = z.object({
   source_repo: z.string().optional(),
   package_manager: z.enum(["npm", "pnpm", "bun"]).default("npm"),
   backup_retention: z.number().int().min(1).max(100).default(3),
   config_management: z.boolean().default(false),
+  consultation_runtime: ConsultationRuntimeSchema.default("pi"),
+  consultation_model: z.string().trim().max(200).default(""),
   disabled_marketplaces: z.array(z.string()).default([]),
   disabled_pi_marketplaces: z.array(z.string()).default([]),
   // Opt-in: symlink skill/plugin-component dirs into a tool instead of copying

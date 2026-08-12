@@ -352,20 +352,32 @@ export const createPluginsSlice: SliceCreator<PluginsSlice> = (set, get) => ({
   installPlugin: async (plugin) => {
     const { notify, clearNotification } = get();
     if (pluginActionInFlight.has(plugin.name)) {
-      notify(`Already installing ${plugin.name}...`, "warning");
+      notify(`Another action is already running for ${plugin.name}.`, "warning");
       return false;
     }
     pluginActionInFlight.add(plugin.name);
     try {
       invalidatePluginToolStatusCache();
       const marketplace = get().marketplaces.find((m) => m.name === plugin.marketplace);
-      if (!marketplace) { notify(`Marketplace not found for ${plugin.name}`, "error"); return false; }
-      const result = await withSpinner(`Installing ${plugin.name}...`,
-        () => installPlugin(plugin, marketplace.url), notify, clearNotification);
+      if (!marketplace) {
+        notify(`Marketplace not found for ${plugin.name}`, "error");
+        return false;
+      }
+      const result = await withSpinner(
+        `Installing ${plugin.name}...`,
+        async () => {
+          try {
+            return await installPlugin(plugin, marketplace.url);
+          } finally {
+            await get().refreshAll({ silent: true });
+            get().refreshDetail();
+          }
+        },
+        notify,
+        clearNotification,
+      );
 
       if (result.success) {
-        await get().refreshAll({ silent: true });
-
         const totalLinked = Object.values(result.linkedInstances).reduce((sum, count) => sum + count, 0);
         if (totalLinked > 0) {
           const summary = summarizePluginComponents(plugin);
@@ -377,6 +389,9 @@ export const createPluginsSlice: SliceCreator<PluginsSlice> = (set, get) => ({
         notify(`✗ Failed to install ${plugin.name}: ${result.errors.join("; ")}`, "error");
       }
       return result.success;
+    } catch (error) {
+      notify(`✗ Failed to install ${plugin.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
+      return false;
     } finally {
       pluginActionInFlight.delete(plugin.name);
     }
@@ -385,36 +400,51 @@ export const createPluginsSlice: SliceCreator<PluginsSlice> = (set, get) => ({
   uninstallPlugin: async (plugin) => {
     const { notify, clearNotification } = get();
     if (pluginActionInFlight.has(plugin.name)) {
-      notify(`Already uninstalling ${plugin.name}...`, "warning");
+      notify(`Another action is already running for ${plugin.name}.`, "warning");
       return false;
     }
     pluginActionInFlight.add(plugin.name);
     try {
       invalidatePluginToolStatusCache();
       const enabledInstances = getEnabledToolInstances();
-      if (enabledInstances.length === 0) { notify("No tools enabled in config.", "error"); return false; }
-      const success = await withSpinner(`Uninstalling ${plugin.name}...`, () => uninstallPlugin(plugin), notify, clearNotification);
-      await get().refreshAll({ silent: true });
+      if (enabledInstances.length === 0) {
+        notify("No tools enabled in config.", "error");
+        return false;
+      }
+      const success = await withSpinner(
+        `Uninstalling ${plugin.name}...`,
+        async () => {
+          try {
+            return await uninstallPlugin(plugin);
+          } finally {
+            await get().refreshAll({ silent: true });
+            get().refreshDetail();
+          }
+        },
+        notify,
+        clearNotification,
+      );
       // uninstallPlugin() returns false when nothing was removed from any enabled
       // tool (every removal failed, or the plugin wasn't present). Reporting that
       // as a green "success" hides a real failure — surface it as an error instead.
-      // Underlying per-tool errors are only logged (install.ts logs via logError),
-      // so the message points the user there rather than inventing details.
       if (success) {
         notify(`✓ Uninstalled ${plugin.name}`, "success");
       } else {
         notify(`✗ Failed to uninstall ${plugin.name} — nothing was removed (see logs)`, "error");
       }
       return success;
+    } catch (error) {
+      notify(`✗ Failed to uninstall ${plugin.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
+      return false;
     } finally {
       pluginActionInFlight.delete(plugin.name);
     }
   },
 
   updatePlugin: async (plugin) => {
-    const { notify } = get();
+    const { notify, clearNotification } = get();
     if (pluginActionInFlight.has(plugin.name)) {
-      notify(`Already updating ${plugin.name}...`, "warning");
+      notify(`Another action is already running for ${plugin.name}.`, "warning");
       return false;
     }
     pluginActionInFlight.add(plugin.name);
@@ -428,86 +458,119 @@ export const createPluginsSlice: SliceCreator<PluginsSlice> = (set, get) => ({
         return false;
       }
 
-      notify(`Updating ${plugin.name}...`, "info");
-      const result = await updatePlugin(plugin, marketplace.url);
-
+      const result = await withSpinner(
+        `Updating ${plugin.name}...`,
+        async () => {
+          try {
+            return await updatePlugin(plugin, marketplace.url);
+          } finally {
+            await get().refreshAll({ silent: true });
+            get().refreshDetail();
+          }
+        },
+        notify,
+        clearNotification,
+      );
       if (result.success) {
-        await get().refreshAll({ silent: true });
-        get().refreshDetail();
-
         const summary = summarizePluginComponents(plugin);
         notify(`✓ Updated ${plugin.name}${summary ? ` — ${summary}` : ""}`, "success");
       } else {
         notify(`✗ Failed to update ${plugin.name}: ${result.errors.join("; ")}`, "error");
       }
       return result.success;
+    } catch (error) {
+      notify(`✗ Failed to update ${plugin.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
+      return false;
     } finally {
       pluginActionInFlight.delete(plugin.name);
     }
   },
 
   removePluginFromGit: async (plugin) => {
-    const { notify } = get();
+    const { notify, clearNotification } = get();
     const sourceRepo = getConfigRepoPath();
     if (!sourceRepo) {
       notify("No source repo configured.", "error");
       return false;
     }
-    // plugin.name originates from marketplace manifest data (potentially from
-    // an untrusted source). safePath rejects traversal so a name like "../.."
-    // can never resolve outside the repo's plugins/ dir before rmSync runs.
     let pluginDir: string;
     try {
+      // Reject traversal before any destructive filesystem or git operation.
       pluginDir = safePath(join(sourceRepo, "plugins"), plugin.name);
-    } catch (e) {
-      notify(`Invalid plugin name: ${e instanceof Error ? e.message : String(e)}`, "error");
+    } catch (error) {
+      notify(`Invalid plugin name: ${error instanceof Error ? error.message : String(error)}`, "error");
       return false;
     }
-    const marketplacePath = join(sourceRepo, ".claude-plugin", "marketplace.json");
-    const commitPaths: string[] = [];
-    if (existsSync(pluginDir)) {
-      try {
-        rmSync(pluginDir, { recursive: true, force: true });
-        commitPaths.push(pluginDir);
-      } catch (e) {
-        notify(`Failed to remove plugin dir: ${e instanceof Error ? e.message : String(e)}`, "error");
-        return false;
+    if (pluginActionInFlight.has(plugin.name)) {
+      notify(`Another action is already running for ${plugin.name}.`, "warning");
+      return false;
+    }
+    pluginActionInFlight.add(plugin.name);
+    try {
+      const pushError = await withSpinner(
+        `Removing ${plugin.name} from source repo...`,
+        async () => {
+          try {
+            const marketplacePath = join(sourceRepo, ".claude-plugin", "marketplace.json");
+            const commitPaths: string[] = [];
+            if (existsSync(pluginDir)) {
+              rmSync(pluginDir, { recursive: true, force: true });
+              commitPaths.push(pluginDir);
+            }
+            removeFromSourceRepoMarketplace(sourceRepo, plugin.name);
+            if (existsSync(marketplacePath)) commitPaths.push(marketplacePath);
+
+            let pushFailure: string | undefined;
+            if (commitPaths.length > 0 && existsSync(join(sourceRepo, ".git"))) {
+              let committed = false;
+              try {
+                for (const path of commitPaths) {
+                  await execFileAsync("git", ["-C", sourceRepo, "add", path], { encoding: "utf-8", timeout: 10000 });
+                }
+                // Scope the commit to the paths we touched so unrelated local
+                // changes are never swept into it.
+                await execFileAsync(
+                  "git",
+                  ["-C", sourceRepo, "commit", "-m", `remove: ${plugin.name} from git`, "--", ...commitPaths],
+                  { encoding: "utf-8", timeout: 10000 },
+                );
+                committed = true;
+              } catch {
+                // Nothing to commit is non-fatal and leaves nothing to push.
+              }
+              if (committed) {
+                try {
+                  await execFileAsync("git", ["-C", sourceRepo, "push"], { encoding: "utf-8", timeout: 30000 });
+                } catch (error) {
+                  pushFailure = error instanceof Error ? error.message : String(error);
+                }
+              }
+            }
+            return pushFailure;
+          } finally {
+            await get().refreshAll({ silent: true });
+            get().refreshDetail();
+          }
+        },
+        notify,
+        clearNotification,
+      );
+      if (pushError) {
+        notify(`Removed ${plugin.name} locally, but git push failed: ${pushError}`, "warning");
+      } else {
+        notify(`Removed ${plugin.name} from git`, "info");
       }
+      return true;
+    } catch (error) {
+      notify(`Failed to remove ${plugin.name} from git: ${error instanceof Error ? error.message : String(error)}`, "error");
+      return false;
+    } finally {
+      pluginActionInFlight.delete(plugin.name);
     }
-    removeFromSourceRepoMarketplace(sourceRepo, plugin.name);
-    if (existsSync(marketplacePath)) commitPaths.push(marketplacePath);
-    let pushError: string | undefined;
-    if (commitPaths.length > 0 && existsSync(join(sourceRepo, ".git"))) {
-      let committed = false;
-      try {
-        for (const p of commitPaths) {
-          await execFileAsync("git", ["-C", sourceRepo, "add", p], { encoding: "utf-8", timeout: 10000 });
-        }
-        // Scope the commit to the paths we touched so unrelated local changes
-        // in the repo are never swept into it.
-        await execFileAsync("git", ["-C", sourceRepo, "commit", "-m", `remove: ${plugin.name} from git`, "--", ...commitPaths], { encoding: "utf-8", timeout: 10000 });
-        committed = true;
-      } catch { /* commit failed (e.g. nothing to commit) — non-fatal, nothing to push */ }
-      if (committed) {
-        try {
-          await execFileAsync("git", ["-C", sourceRepo, "push"], { encoding: "utf-8", timeout: 30000 });
-        } catch (e) {
-          // Do NOT swallow: the removal is committed locally but never reached origin.
-          pushError = e instanceof Error ? e.message : String(e);
-        }
-      }
-    }
-    await get().refreshAll({ silent: true });
-    if (pushError) {
-      notify(`Removed ${plugin.name} locally, but git push failed: ${pushError}`, "warning");
-    } else {
-      notify(`Removed ${plugin.name} from git`, "info");
-    }
-    return true;
   },
 
   trackPluginInSource: async (plugin) => {
-    const { notify } = get();
+    const { notify, clearNotification } = get();
     const sourceRepo = getConfigRepoPath();
     if (!sourceRepo) {
       notify("No source repo configured.", "error");
@@ -517,24 +580,39 @@ export const createPluginsSlice: SliceCreator<PluginsSlice> = (set, get) => ({
       notify(`No recoverable source found for ${plugin.name}.`, "error");
       return false;
     }
-
+    const sourcePath = plugin.source;
+    if (pluginActionInFlight.has(plugin.name)) {
+      notify(`Another action is already running for ${plugin.name}.`, "warning");
+      return false;
+    }
+    pluginActionInFlight.add(plugin.name);
     try {
-      // Reject path traversal in plugin.name before any destructive rmSync/cpSync.
-      const destDir = safePath(join(sourceRepo, "plugins"), plugin.name);
-      if (existsSync(destDir)) rmSync(destDir, { recursive: true, force: true });
-      mkdirSync(dirname(destDir), { recursive: true });
-      cpSync(plugin.source, destDir, { recursive: true });
-      ensurePluginJson(destDir, plugin);
-      upsertSourceRepoMarketplacePlugin(sourceRepo, plugin);
+      await withSpinner(
+        `Tracking ${plugin.name} in source repo...`,
+        async () => {
+          try {
+            const destDir = safePath(join(sourceRepo, "plugins"), plugin.name);
+            if (existsSync(destDir)) rmSync(destDir, { recursive: true, force: true });
+            mkdirSync(dirname(destDir), { recursive: true });
+            cpSync(sourcePath, destDir, { recursive: true });
+            ensurePluginJson(destDir, plugin);
+            upsertSourceRepoMarketplacePlugin(sourceRepo, plugin);
+          } finally {
+            await get().refreshAll({ silent: true });
+            get().refreshDetail();
+          }
+        },
+        notify,
+        clearNotification,
+      );
+      notify(`Tracked ${plugin.name} in source repo`, "success");
+      return true;
     } catch (error) {
       notify(`Failed to track ${plugin.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
       return false;
+    } finally {
+      pluginActionInFlight.delete(plugin.name);
     }
-
-    await get().refreshAll({ silent: true });
-    get().refreshDetail();
-    notify(`Tracked ${plugin.name} in source repo`, "success");
-    return true;
   },
 
   addMarketplace: (name, url) => {

@@ -32,6 +32,10 @@ export async function withSpinner<T>(
   clearFn: Store["clearNotification"],
 ): Promise<T> {
   const id = notifyFn(message, "info", { spinner: true });
+  // Ink cannot paint the notification while synchronous work still owns the
+  // current event-loop turn. Yield once after publishing it so every caller
+  // gets visible feedback before disk/network work begins.
+  await new Promise<void>((resolve) => setImmediate(resolve));
   try {
     return await fn();
   } finally {

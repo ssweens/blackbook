@@ -26,3 +26,7 @@
 - Namespace semantics must be consistent across write/read paths: if UI groups standalone skills by namespace, install/migrate/uninstall paths for non-flat tools must use `skills/<namespace>/<skill>` (with explicit compatibility handling for legacy flat paths).
 - When behavior should be identical across multiple UI entry points (Sync list, detail view, namespace tree), implement one canonical helper/action path and route all entry points through it; never ship one-off fixes per surface.
 - Do not stop after a partial symptom improvement when the user asked for an end-to-end fix. Verify the full requested set (all affected items and the broken action path), not just the first visible positive signal.
+
+- For model-assisted Blackbook features, reuse one already-installed and configured coding-agent CLI detected by Blackbook; do not add an embedded provider SDK, duplicate credential management, or ask users to configure the same model twice.
+- For Installed-detail shortcuts, cover every `ManagedItem` detail variant that presents component state—plugins, standalone skills, and namespaces—not just the initial plugin detail path.
+- Advisory snapshots must carry the bounded evidence behind a visible drift state—changed files, counts, and redacted excerpts—not only a boolean plus opaque action IDs.

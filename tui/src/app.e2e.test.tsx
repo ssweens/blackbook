@@ -65,10 +65,12 @@ import { render } from "ink-testing-library";
 import { App } from "./App.js";
 import { useStore } from "./lib/store.js";
 import type { Marketplace, Plugin, ToolInstance, FileStatus, FileInstanceStatus, PiPackage } from "./lib/types.js";
+import type { ProjectInfo } from "./lib/projects.js";
 import {
   getAllInstalledPlugins,
   getPluginToolStatus,
   installPlugin,
+  uninstallPlugin,
   syncPluginInstances,
   uninstallPluginFromInstance,
   groupSkillsByNamespace,
@@ -76,11 +78,13 @@ import {
 import { getPluginToolStatus as getPluginToolStatusDirect } from "./lib/plugin-status.js";
 import { skillPresentForInstance } from "./lib/adapters/shared.js";
 import { fetchMarketplace } from "./lib/marketplace.js";
-import { parseMarketplaces, getToolInstances, ensureConfigExists, getPluginComponentConfig } from "./lib/config.js";
+import { parseMarketplaces, getToolInstances, ensureConfigExists, getConsultationSettings, getPluginComponentConfig } from "./lib/config.js";
 import { detectTool } from "./lib/tool-detect.js";
 import { installTool, updateTool, uninstallTool } from "./lib/tool-lifecycle.js";
 import { computePluginDrift, resolvePluginSourcePaths } from "./lib/plugin-drift.js";
 import { buildFileDiffTarget } from "./lib/diff.js";
+import { buildPluginActions } from "./lib/item-actions.js";
+import { runConsultation } from "./lib/consultation-runner.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hoisted state
@@ -110,7 +114,14 @@ vi.mock("./lib/config/loader.js", async (importOriginal) => {
   return {
     ...actual,
     loadConfig: vi.fn().mockReturnValue({
-      config: { files: [], configs: [], settings: { source_repo: null }, tools: {} },
+      config: {
+        files: [],
+        configs: [],
+        projects: [],
+        pi_marketplaces: {},
+        settings: { source_repo: null, disabled_pi_marketplaces: ["npm"] },
+        tools: {},
+      },
       errors: [],
     }),
     getConfigPath: vi.fn().mockReturnValue("/tmp/blackbook-test.yaml"),
@@ -129,6 +140,15 @@ vi.mock("./lib/config.js", async (importOriginal) => {
       disabledCommands: [],
       disabledAgents: [],
     }),
+    getConsultationSettings: vi.fn().mockReturnValue({ runtime: "pi", model: "" }),
+  };
+});
+
+vi.mock("./lib/consultation-runner.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lib/consultation-runner.js")>();
+  return {
+    ...actual,
+    runConsultation: vi.fn(),
   };
 });
 
@@ -147,6 +167,7 @@ vi.mock("./lib/install.js", async (importOriginal) => {
     getAllInstalledPlugins: vi.fn(),
     getPluginToolStatus: vi.fn(),
     installPlugin: vi.fn(),
+    uninstallPlugin: vi.fn(),
     syncPluginInstances: vi.fn(),
     uninstallPluginFromInstance: vi.fn(),
   };
@@ -181,6 +202,7 @@ vi.mock("./lib/diff.js", async (importOriginal) => {
     }),
   };
 });
+
 
 vi.mock("./lib/adapters/shared.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/adapters/shared.js")>();
@@ -435,6 +457,19 @@ const createToolInstances = (): ToolInstance[] => [
   },
 ];
 
+const createPiTool = (): ToolInstance => ({
+  toolId: "pi",
+  instanceId: "default",
+  name: "Pi",
+  enabled: true,
+  configDir: "/tmp/pi",
+  skillsSubdir: "agent/skills",
+  commandsSubdir: null,
+  agentsSubdir: null,
+  kind: "tool",
+  pluginFlatInstall: false,
+});
+
 const toolStatusBothInstalled = [
   { toolId: "claude-code", instanceId: "default", name: "Claude", installed: true, supported: true, enabled: true },
   { toolId: "opencode", instanceId: "default", name: "OpenCode", installed: true, supported: true, enabled: true },
@@ -490,11 +525,14 @@ function setupMocks() {
   vi.mocked(computePluginDrift).mockResolvedValue({});
   vi.mocked(resolvePluginSourcePaths).mockReturnValue(null);
   vi.mocked(installPlugin).mockResolvedValue({ success: true, linkedInstances: {}, skippedInstances: [], errors: [] });
+  vi.mocked(uninstallPlugin).mockResolvedValue(true);
   vi.mocked(syncPluginInstances).mockResolvedValue({ success: true, syncedInstances: {}, errors: [] });
   vi.mocked(detectTool).mockClear();
   vi.mocked(installTool).mockClear();
   vi.mocked(updateTool).mockClear();
   vi.mocked(uninstallTool).mockClear();
+  vi.mocked(getConsultationSettings).mockReturnValue({ runtime: "pi", model: "" });
+  vi.mocked(runConsultation).mockReset();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -861,6 +899,193 @@ describe("App E2E — Plugin Detail", () => {
     }
   });
 
+  it("shows uninstall progress immediately and reconciles detail to current marketplace state", async () => {
+    const plugin = createPlugin();
+    const originalRefreshAll = useStore.getState().refreshAll;
+    let finishUninstall: (() => void) | undefined;
+    vi.mocked(uninstallPlugin).mockImplementation(() => new Promise<boolean>((resolve) => {
+      finishUninstall = () => resolve(true);
+    }));
+    useStore.setState({
+      tab: "installed",
+      ...openPluginDetail(plugin),
+      installedPlugins: [plugin],
+      refreshAll: async () => {
+        useStore.setState({
+          installedPlugins: [],
+          marketplaces: [createMarketplace({ plugins: [createPlugin({ installed: false })] })],
+        });
+      },
+    });
+
+    const uninstallIndex = buildPluginActions(plugin, toolStatusBothInstalled)
+      .findIndex((action) => action.type === "uninstall");
+    expect(uninstallIndex).toBeGreaterThanOrEqual(0);
+
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Component status:"));
+      for (let index = 0; index < uninstallIndex; index += 1) {
+        sendKey(stdin, KEYS.down);
+        await settleInput();
+      }
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("❯ Remove from all tools"));
+
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Uninstalling test-plugin..."));
+      expect(useStore.getState().detail?.kind).toBe("plugin");
+      await waitForFrame(stdout.lastFrame, () => finishUninstall !== undefined);
+      expect(finishUninstall).toBeDefined();
+      finishUninstall!();
+      await waitForFrame(
+        stdout.lastFrame,
+        () => useStore.getState().detail?.kind === "plugin"
+          && !useStore.getState().detailPlugin?.installed,
+      );
+
+      const reconciledFrame = stdout.lastFrame()!;
+      expect(reconciledFrame).not.toContain("Component status:");
+      expect(reconciledFrame).not.toContain("Remove from all tools");
+      expect(reconciledFrame).toContain("❯ Install");
+      expect(useStore.getState().notifications.some((notification) => notification.spinner)).toBe(false);
+    } finally {
+      useStore.setState({ refreshAll: originalRefreshAll });
+      unmount();
+    }
+  });
+
+  it("consults the configured advisor from installed detail and focuses an accepted existing action without dispatching it", async () => {
+    const plugin = createPlugin();
+    vi.mocked(runConsultation).mockResolvedValue({
+      ok: true,
+      response: {
+        summary: "Inspect the current plugin list before changing anything.",
+        proposals: [{
+          id: "inspect-back",
+          operation: "select_action",
+          target: "back",
+          reason: "Return to the installed-plugin list after reviewing the status.",
+        }],
+      },
+    });
+    vi.mocked(getConsultationSettings).mockReturnValue({ runtime: "opencode", model: "openai/gpt-5.6" });
+    useStore.setState({
+      tab: "installed",
+      ...openPluginDetail(plugin),
+      installedPlugins: [plugin],
+      tools: createToolInstances(),
+      toolDetection: {
+        opencode: {
+          toolId: "opencode",
+          installed: true,
+          binaryPath: "/usr/local/bin/opencode",
+          installedVersion: "1.0.0",
+          latestVersion: "1.0.0",
+          hasUpdate: false,
+          error: null,
+        },
+      },
+    });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Component status:"));
+      sendKey(stdin, "c");
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("What would you like the advisor to review?"));
+      act(() => {
+        stdin.write("What should I inspect first?");
+      });
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("The advisor’s recommendations are ready."));
+      expect(vi.mocked(runConsultation)).toHaveBeenCalledWith(expect.objectContaining({
+        runtime: "opencode",
+        model: "openai/gpt-5.6",
+        binaryPath: "/usr/local/bin/opencode",
+      }));
+      sendKey(stdin, KEYS.space);
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("❯ Back to plugin list"));
+      expect(useStore.getState().detail?.kind).toBe("plugin");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("consults from an installed standalone skill detail and focuses an accepted action without dispatching it", async () => {
+    const skill = {
+      name: "file-todos",
+      installations: [{
+        toolId: "opencode",
+        instanceId: "default",
+        instanceName: "OpenCode",
+        diskPath: "/tmp/blackbook/skills/file-todos",
+        drifted: true,
+      }],
+      diskPath: "/tmp/blackbook/skills/file-todos",
+      toolId: "opencode",
+      instanceName: "OpenCode",
+      instanceId: "default",
+      sourcePath: "/tmp/blackbook/source/file-todos",
+      drifted: true,
+    };
+    vi.mocked(runConsultation).mockResolvedValue({
+      ok: true,
+      response: {
+        summary: "Inspect the changed skill before reinstalling it.",
+        proposals: [{
+          id: "select-diff",
+          operation: "select_action",
+          target: "status",
+          reason: "Review the currently drifted installation first.",
+        }],
+      },
+    });
+    vi.mocked(getConsultationSettings).mockReturnValue({ runtime: "opencode", model: "openai/gpt-5.6" });
+    useStore.setState({
+      tab: "installed",
+      detail: { kind: "skill", data: skill },
+      standaloneSkills: [skill],
+      installedPluginsLoaded: true,
+      filesLoaded: true,
+      piPackagesLoaded: true,
+      tools: createToolInstances(),
+      toolDetection: {
+        opencode: {
+          toolId: "opencode",
+          installed: true,
+          binaryPath: "/usr/local/bin/opencode",
+          installedVersion: "1.0.0",
+          latestVersion: "1.0.0",
+          hasUpdate: false,
+          error: null,
+        },
+      },
+    });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("file-todos") && frame.includes("c consult advisor"));
+      sendKey(stdin, "c");
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("What would you like the advisor to review?"));
+      act(() => {
+        stdin.write("How should I resolve this skill drift?");
+      });
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("The advisor’s recommendations are ready."));
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Review file-todos diff · select action"));
+      expect(vi.mocked(runConsultation)).toHaveBeenCalledWith(expect.objectContaining({
+        runtime: "opencode",
+        model: "openai/gpt-5.6",
+        binaryPath: "/usr/local/bin/opencode",
+        prompt: expect.stringContaining("\"kind\":\"installed-skill\""),
+      }));
+      sendKey(stdin, KEYS.space);
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("❯ file-todos"));
+      expect(useStore.getState().detail?.kind).toBe("skill");
+    } finally {
+      unmount();
+    }
+  });
+
   it("shows a single Install action (no per-tool enumeration) for a not-installed plugin", async () => {
     vi.mocked(getPluginToolStatusDirect).mockReturnValue(toolStatusPartial);
     useStore.setState({
@@ -903,7 +1128,7 @@ describe("App E2E — Plugin Detail", () => {
     vi.mocked(buildFileDiffTarget).mockReturnValue({
       kind: "file",
       title: "test",
-      instance: { toolId: "agents", instanceId: "shared", instanceName: "Shared store", configDir: "" },
+      instance: { toolId: "agents", instanceId: "shared", instanceName: "~/.agents", configDir: "" },
       files: [{ id: "f1", displayPath: "SKILL.md", sourcePath: "/a", targetPath: "/b", status: "modified", linesAdded: 10, linesRemoved: 5, sourceMtime: null, targetMtime: null }],
     });
     vi.mocked(getPluginToolStatusDirect).mockReturnValue(toolStatusBothInstalled);
@@ -933,7 +1158,7 @@ describe("App E2E — Plugin Detail", () => {
     vi.mocked(resolvePluginSourcePaths).mockReturnValue({ pluginDir: "/src/plugins/test", repoRoot: "/src" });
     vi.mocked(buildFileDiffTarget).mockReturnValue({
       kind: "file", title: "t",
-      instance: { toolId: "agents", instanceId: "shared", instanceName: "Shared store", configDir: "" },
+      instance: { toolId: "agents", instanceId: "shared", instanceName: "~/.agents", configDir: "" },
       files: [{ id: "f1", displayPath: "SKILL.md", sourcePath: "/a", targetPath: "/b", status: "modified", linesAdded: 1, linesRemoved: 1, sourceMtime: null, targetMtime: null }],
     });
 
@@ -972,6 +1197,7 @@ describe("App E2E — Plugin Detail", () => {
         skillsSubdir: "skills",
         commandsSubdir: "commands",
         agentsSubdir: "agents",
+
         kind: "tool" as const,
         pluginFlatInstall: true,
       },
@@ -994,6 +1220,129 @@ describe("App E2E — Plugin Detail", () => {
     } finally {
       unmount();
       vi.mocked(skillPresentForInstance).mockReturnValue(true);
+    }
+  });
+});
+describe("App E2E — Advisory Consultation", () => {
+  beforeEach(() => {
+    setupMocks();
+    useStore.setState(defaultStoreState());
+  });
+
+  it("consults the configured advisor for the selected project and applies an accepted source-skill proposal through the project action", async () => {
+    const project: ProjectInfo = {
+      path: "/tmp/project",
+      name: "Project",
+      exists: true,
+      hasAgentsDir: true,
+      skills: [],
+      available: [{ name: "architecture", sourcePath: "/tmp/source/architecture" }],
+    };
+    const pushProjectSkill = vi.fn().mockResolvedValue(true);
+    vi.mocked(runConsultation).mockResolvedValue({
+      ok: true,
+      response: {
+        summary: "Add the available architecture skill for the requested design work.",
+        proposals: [{
+          id: "add-architecture",
+          operation: "install",
+          target: "available-project-skill:architecture",
+          reason: "It is available from the configured source repository.",
+        }],
+      },
+    });
+    useStore.setState({
+      tab: "projects",
+      projects: [project],
+      projectsLoaded: true,
+      tools: [...createToolInstances(), createPiTool()],
+      toolDetection: {
+        pi: {
+          toolId: "pi",
+          installed: true,
+          binaryPath: "/usr/local/bin/pi",
+          installedVersion: "1.0.0",
+          latestVersion: "1.0.0",
+          hasUpdate: false,
+          error: null,
+        },
+      },
+      pushProjectSkill,
+    });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Project"));
+      sendKey(stdin, "c");
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("What would you like the advisor to review?"));
+      act(() => {
+        stdin.write("What should this project gain?");
+      });
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("The advisor’s recommendations are ready."));
+      sendKey(stdin, KEYS.space);
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, () => pushProjectSkill.mock.calls.length === 1);
+      expect(pushProjectSkill).toHaveBeenCalledWith(
+        "/tmp/project",
+        "architecture",
+        "/tmp/source/architecture",
+      );
+    } finally {
+      unmount();
+    }
+  });
+
+  it("consults the configured advisor while editing a profile and saves only the accepted draft membership change", async () => {
+    const saveProfile = vi.fn().mockResolvedValue(true);
+    vi.mocked(runConsultation).mockResolvedValue({
+      ok: true,
+      response: {
+        summary: "Remove the no-longer-needed frontend skill from this profile.",
+        proposals: [{
+          id: "remove-frontend",
+          operation: "remove",
+          target: "profile-member:frontend",
+          reason: "The profile is now intended for non-frontend work.",
+        }],
+      },
+    });
+    useStore.setState({
+      tab: "profiles",
+      profiles: { web: ["frontend"] },
+      tools: [...createToolInstances(), createPiTool()],
+      toolDetection: {
+        pi: {
+          toolId: "pi",
+          installed: true,
+          binaryPath: "/usr/local/bin/pi",
+          installedVersion: "1.0.0",
+          latestVersion: "1.0.0",
+          hasUpdate: false,
+          error: null,
+        },
+      },
+      saveProfile,
+    });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("web"));
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Enter save"));
+      sendKey(stdin, "c");
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("What would you like the advisor to review?"));
+      act(() => {
+        stdin.write("What should change in this profile?");
+      });
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("The advisor’s recommendations are ready."));
+      sendKey(stdin, KEYS.space);
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Space toggle"));
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, () => saveProfile.mock.calls.length === 1);
+      expect(saveProfile).toHaveBeenCalledWith("web", []);
+    } finally {
+      unmount();
     }
   });
 });

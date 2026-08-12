@@ -51,7 +51,7 @@ import { listBackups } from "./modules/backup.js";
 import { togglePluginComponent } from "./plugin-status.js";
 import type { FileStatus } from "./types.js";
 import { invalidatePluginToolStatusCache } from "./plugin-status.js";
-import { getCacheDir, getToolInstances, updateToolInstanceConfig, TOOL_IDS } from "./config.js";
+import { addMarketplace, getCacheDir, getToolInstances, updateToolInstanceConfig, TOOL_IDS } from "./config.js";
 import { getConfigPath as getYamlConfigPath, loadConfig as loadYamlConfig } from "./config/loader.js";
 import { saveConfig as saveYamlConfig } from "./config/writer.js";
 import type { Plugin, ToolInstance } from "./types.js";
@@ -1430,6 +1430,25 @@ describe("standalone skill scanning compatibility", () => {
     ).toBe(true);
   });
 
+  it("marks a standalone skill drifted when a reference file differs", () => {
+    const skillName = "reference-drift";
+    const sourceRepo = configureSourceRepoWithSsmpSkill(skillName);
+    const sourceSkillDir = join(sourceRepo, "skills", "ssmp", skillName);
+    mkdirSync(join(sourceSkillDir, "references"), { recursive: true });
+    writeFileSync(join(sourceSkillDir, "references", "guide.md"), "source reference\n");
+
+    const piInstance = getInstance("pi");
+    const flatSkillDir = resolveInstanceSubdirPath(piInstance.configDir, piInstance.skillsSubdir!, skillName);
+    mkdirSync(join(flatSkillDir, "references"), { recursive: true });
+    writeFileSync(join(flatSkillDir, "SKILL.md"), `# ${skillName}\n\nsource copy\n`);
+    writeFileSync(join(flatSkillDir, "references", "guide.md"), "local reference\n");
+
+    const found = getStandaloneSkills([]).find((skill) => skill.name === skillName);
+
+    expect(found?.drifted).toBe(true);
+    expect(found?.installations.find((installation) => installation.toolId === "pi")?.drifted).toBe(true);
+  });
+
   it("installs standalone skills to namespaced paths on non-flat tools", () => {
     const skillName = "midi-drum-production";
     const sourceRepo = configureSourceRepoWithSsmpSkill(skillName);
@@ -2011,7 +2030,7 @@ describe("claude derived view (~/.claude/skills as symlinks into ~/.agents/skill
   });
 
   it("plugin install materializes the store copy when only claude is enabled", async () => {
-    enableClaude();
+    const claude = enableClaude();
     // Disable every .agents-sharing tool so nothing else can materialize it.
     for (const toolId of TOOL_IDS) {
       if (toolId !== "claude-code") {
@@ -2026,6 +2045,9 @@ describe("claude derived view (~/.claude/skills as symlinks into ~/.agents/skill
 
     const storePath = join(agentsRoot(), TEST_PLUGIN_NAME, TEST_SKILL_NAME);
     expect(existsSync(join(storePath, "SKILL.md"))).toBe(true);
+    expect(
+      getInstalledPluginsForInstance(claude).some((candidate) => candidate.name === plugin.name),
+    ).toBe(true);
   });
 
   it("claude uninstall unlinks the derived view without destroying the store copy", async () => {
@@ -2092,6 +2114,78 @@ describe("claude derived view (~/.claude/skills as symlinks into ~/.agents/skill
 
     // The physical store copy is fully gone — no orphan left behind.
     expect(existsSync(storeNsDir)).toBe(false);
+  });
+
+  it("uninstallPlugin removes Claude's legacy native registration", async () => {
+    const claude = enableClaude();
+    createTestPluginInCache();
+    const plugin = createTestPlugin();
+    await enablePlugin(plugin);
+
+    const registryPath = join(claude.configDir, "plugins", "installed_plugins.json");
+    mkdirSync(join(claude.configDir, "plugins"), { recursive: true });
+    writeFileSync(registryPath, JSON.stringify({
+      version: 2,
+      plugins: {
+        [`${plugin.name}@${plugin.marketplace}`]: [{ version: "1.0.0" }],
+        "keep-me@other-marketplace": [{ version: "2.0.0" }],
+      },
+    }));
+
+    expect(await uninstallPlugin(plugin)).toBe(true);
+
+    const registry = JSON.parse(readFileSync(registryPath, "utf-8"));
+    expect(registry.plugins[`${plugin.name}@${plugin.marketplace}`]).toBeUndefined();
+    expect(registry.plugins["keep-me@other-marketplace"]).toBeDefined();
+  });
+
+  it("counts stale native registration cleanup as a successful uninstall", async () => {
+    const claude = enableClaude();
+    const plugin = createTestPlugin();
+    const registryPath = join(claude.configDir, "plugins", "installed_plugins.json");
+    mkdirSync(join(claude.configDir, "plugins"), { recursive: true });
+    writeFileSync(registryPath, JSON.stringify({
+      version: 2,
+      plugins: {
+        [`${plugin.name}@${plugin.marketplace}`]: [{ version: "1.0.0" }],
+      },
+    }));
+
+    // No managed manifest or shared-store files exist. The native registry is
+    // the only stale state left by the legacy lifecycle.
+    expect(await uninstallPlugin(plugin)).toBe(true);
+    const registry = JSON.parse(readFileSync(registryPath, "utf-8"));
+    expect(registry.plugins[`${plugin.name}@${plugin.marketplace}`]).toBeUndefined();
+  });
+
+  it("treats an empty Claude registry as authoritative over leftover cache", () => {
+    addMarketplace(
+      "claude-plugins-official",
+      "https://example.invalid/claude-plugins-official/marketplace.json",
+    );
+    const claude = enableClaude();
+    const pluginName = "cache-only-plugin";
+    const skillName = "cache-only-skill";
+    const cachedSkillDir = join(
+      claude.configDir,
+      "plugins",
+      "cache",
+      "claude-plugins-official",
+      pluginName,
+      "unknown",
+      "skills",
+      skillName,
+    );
+    mkdirSync(cachedSkillDir, { recursive: true });
+    writeFileSync(join(cachedSkillDir, "SKILL.md"), "# Cache only");
+
+    const registryPath = join(claude.configDir, "plugins", "installed_plugins.json");
+    mkdirSync(join(claude.configDir, "plugins"), { recursive: true });
+    writeFileSync(registryPath, JSON.stringify({ version: 2, plugins: {} }));
+
+    expect(
+      getInstalledPluginsForInstance(claude).some((candidate) => candidate.name === pluginName),
+    ).toBe(false);
   });
 
   it("uninstallPlugin fully removes every entry even after reinstalls stack a `previous` chain", async () => {

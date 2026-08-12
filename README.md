@@ -31,6 +31,8 @@ Plugin manager for agentic coding tools built with React/Ink. Install skills, co
 - **Repo-prescribed installed rows** — Installed tab shows marketplace/source-repo plugins as `in git` even before local installation
 - **Per-component control** — Disable individual skills, commands, or agents within a plugin
 
+- **Advisory consultations** — Ask the configured Pi, Claude Code, or OpenCode runtime for bounded recommendations without automatic mutations
+
 ## Plugin Model
 
 Everything is a plugin. Plugins can include skills, commands, agents, hooks, MCP servers, and LSP servers.
@@ -128,6 +130,12 @@ Blackbook opens on the **Sync** tab by default.
 
 Blackbook hydrates the initial tab on startup. Refresh/load data on the current tab with `R`. A loading indicator is shown while refresh is in progress.
 
+### Advisory consultations
+
+Press `c` in a project, while editing a profile, or from an installed-plugin detail. In **Settings**, select **Advisor Runtime** (`pi`, `claude-code`, or `opencode`) and optionally set **Advisor Model**; leave the model blank to use the selected CLI’s configured default.
+
+Blackbook sends a bounded, redacted snapshot of the current view. The runtime runs in advisory mode without project mutation capabilities. Recommendations remain selectable proposals: accepting them uses the existing project/profile/detail action and never runs an action automatically.
+
 ### CLI Mode
 
 Running `blackbook` with a recognized subcommand skips the interactive TUI entirely and runs non-interactively, exiting with a status code — useful for scripts and agents. Bare `blackbook` (no subcommand) still launches the TUI as above.
@@ -166,6 +174,8 @@ settings:
   source_repo: ~/src/playbook
   package_manager: bun      # npm | pnpm | bun
   backup_retention: 3       # Number of backups to keep per file (1-100)
+  consultation_runtime: pi # pi | claude-code | opencode
+  consultation_model: ""   # Optional; blank uses the selected runtime default
 
 tools:
   claude-code:

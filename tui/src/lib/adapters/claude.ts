@@ -19,6 +19,7 @@ import { atomicWriteFileSync } from "../fs-utils.js";
 import { scanPluginContents } from "../path-utils.js";
 import {
   installPluginItemsToInstance,
+  listInstalledForManagedInstance,
   uninstallPluginItemsFromInstance,
 } from "./managed.js";
 import { pluginInstalledForManagedInstance } from "./shared.js";
@@ -31,22 +32,21 @@ import type {
 } from "./types.js";
 
 /**
- * Remove a plugin entry from Claude's `installed_plugins.json` for the given instance.
- * This file is the authoritative "what plugins are installed" record for Claude Code;
- * our scanner reads it, so we MUST keep it in sync on uninstall.
+ * Remove a native plugin registration from Claude's `installed_plugins.json`.
+ * Blackbook-managed components use the managed manifest instead.
  */
 export function removeFromClaudeInstalledPluginsJson(
   instance: ToolInstance,
   pluginName: string,
   marketplace: string,
-): void {
-  if (instance.toolId !== "claude-code") return;
+): boolean {
+  if (instance.toolId !== "claude-code") return false;
   const path = join(instance.configDir, "plugins", "installed_plugins.json");
-  if (!existsSync(path)) return;
+  if (!existsSync(path)) return false;
   try {
     const content = readFileSync(path, "utf-8");
     const data = JSON.parse(content);
-    if (!data?.plugins || typeof data.plugins !== "object") return;
+    if (!data?.plugins || typeof data.plugins !== "object") return false;
     const key = `${pluginName}@${marketplace}`;
     let changed = false;
     if (key in data.plugins) {
@@ -63,9 +63,11 @@ export function removeFromClaudeInstalledPluginsJson(
       // this file concurrently, so it must never observe a truncated/partial write.
       atomicWriteFileSync(path, JSON.stringify(data, null, 2) + "\n");
     }
+    return changed;
   } catch (error) {
     logError(`Failed to update ${path}`, error);
   }
+  return false;
 }
 
 function readClaudePluginMetadata(
@@ -88,22 +90,24 @@ function readClaudePluginMetadata(
   return {};
 }
 
-function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] {
+function getNativeInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] {
   const plugins: Plugin[] = [];
 
-  // Read installed_plugins.json for the authoritative list of installed plugins
+  // Read installed_plugins.json for the authoritative native plugin list.
   const installedPluginsPath = join(
     instance.configDir,
     "plugins/installed_plugins.json",
   );
   const installedPluginKeys = new Set<string>();
   const installedPluginRecords = new Map<string, { version?: string; installPath?: string }>();
+  let hasAuthoritativeRegistry = false;
 
   try {
     if (lstatSync(installedPluginsPath).isFile()) {
       const content = readFileSync(installedPluginsPath, "utf-8");
       const data = JSON.parse(content);
       if (data.plugins && typeof data.plugins === "object") {
+        hasAuthoritativeRegistry = true;
         // Keys are in format "pluginName@marketplace". Values are usually arrays
         // of install records containing version/installPath metadata.
         for (const [key, value] of Object.entries(data.plugins)) {
@@ -121,11 +125,9 @@ function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] 
     // Ignore if file doesn't exist or can't be read
   }
 
-  // If no installed_plugins.json or it's empty, fall back to scanning cache
-  // (for backwards compatibility with older Claude versions)
+  // Scan the cache for native plugin contents. A readable registry filters
+  // these entries, including when the registry is empty.
   const claudePluginsDir = join(instance.configDir, "plugins/cache");
-  // Don't early-return — even without plugins/cache, we still need to
-  // scan skills/commands/agents directories below
 
   // Only scan cache subdirs for marketplaces that are still configured
   const configuredMarketplaceNames = new Set(
@@ -152,13 +154,13 @@ function getInstalledPluginsForClaudeInstance(instance: ToolInstance): Plugin[] 
       const pluginDirs = readdirSync(mpDir);
 
       for (const pluginName of pluginDirs) {
-        // Check if this plugin is actually installed (in installed_plugins.json)
-        // If we have installed_plugins.json data, use it as the filter
-        if (installedPluginKeys.size > 0) {
+        // A readable installed_plugins.json is authoritative even when its
+        // plugin map is empty. Cache entries are downloads, not proof of an
+        // active install; treating an empty registry as "missing" resurrected
+        // plugins immediately after uninstall.
+        if (hasAuthoritativeRegistry) {
           const pluginKey = `${pluginName}@${marketplace}`;
-          if (!installedPluginKeys.has(pluginKey)) {
-            continue; // Skip plugins that are cached but not installed
-          }
+          if (!installedPluginKeys.has(pluginKey)) continue;
         }
 
         const pluginDir = join(mpDir, pluginName);
@@ -246,7 +248,16 @@ export const claudeAdapter: ToolAdapter = {
   },
 
   listInstalled(instance: ToolInstance): Plugin[] {
-    return getInstalledPluginsForClaudeInstance(instance);
+    const pluginsByKey = new Map<string, Plugin>();
+    for (const plugin of getNativeInstalledPluginsForClaudeInstance(instance)) {
+      pluginsByKey.set(`${plugin.name}@${plugin.marketplace}`, plugin);
+    }
+    // Blackbook-managed components do not depend on Claude's native registry.
+    // Prefer the managed record when a legacy native record has the same key.
+    for (const plugin of listInstalledForManagedInstance(instance)) {
+      pluginsByKey.set(`${plugin.name}@${plugin.marketplace}`, plugin);
+    }
+    return [...pluginsByKey.values()];
   },
 
   // Blackbook is the sole plugin manager: it NEVER runs `claude plugin
@@ -275,19 +286,36 @@ export const claudeAdapter: ToolAdapter = {
     sourcePath: string | null,
   ): Promise<PerInstanceResult> {
     if (!sourcePath) return { count: 0, errors: [] };
-    const { count, errors } = installPluginItemsToInstance(
+    const items = installPluginItemsToInstance(
       plugin.name,
       sourcePath,
       instance,
       plugin.marketplace,
     );
     const mcp = await installMcpServersToInstance(plugin.name, sourcePath, instance);
-    return { count: count + mcp.count, errors: [...errors, ...mcp.errors] };
+    const count = items.count + mcp.count;
+    const errors = [...items.errors, ...mcp.errors];
+    if (count > 0 && errors.length === 0) {
+      removeFromClaudeInstalledPluginsJson(
+        instance,
+        plugin.name,
+        plugin.installedMarketplace ?? plugin.marketplace,
+      );
+    }
+    return { count, errors };
   },
 
   async removeComponents(plugin: Plugin, instance: ToolInstance): Promise<number> {
     const removed = uninstallPluginItemsFromInstance(plugin.name, instance);
     const mcpRemoved = await uninstallMcpServersFromInstance(plugin.name, instance);
-    return removed + mcpRemoved;
+    // Blackbook owns Claude's managed lifecycle. Clear legacy native
+    // registration even when no managed files remain, otherwise Claude's cache
+    // scanner keeps reporting the plugin as installed after removal.
+    const nativeRemoved = removeFromClaudeInstalledPluginsJson(
+      instance,
+      plugin.name,
+      plugin.installedMarketplace ?? plugin.marketplace,
+    );
+    return removed + mcpRemoved + (nativeRemoved ? 1 : 0);
   },
 };

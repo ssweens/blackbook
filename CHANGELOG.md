@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- 2026-08-11 — Advisory consultations are available from Projects (`c`), the Profiles builder (`c`), and installed plugin detail (`c`). Settings now select the Pi, Claude Code, or OpenCode runtime and an optional model ID; leaving the model blank uses that runtime’s configured default. Blackbook supplies a bounded, redacted snapshot and each runtime runs in its no-tools, non-persistent advisory mode. Recommendations remain proposals: project mutations use existing project actions only after explicit acceptance; profile recommendations update only the unsaved builder draft; installed-plugin recommendations can only highlight a currently available detail action. Failures, malformed output, timeouts, and cancellation remain visible and recoverable.
+
+### Fixed
+- 2026-08-11 — Installed standalone-skill advisory consultations now receive bounded, redacted per-file diff evidence and user-facing action labels instead of only a drift boolean and opaque IDs. Standalone drift detection now hashes the full skill tree, so changed references, assets, and scripts are reported; selecting the drift row opens the installation that actually differs.
+- 2026-08-10 — Plugin detail lifecycle actions now show progress before work begins and keep it visible through installed-state reconciliation. Successful uninstall/update/install operations immediately refresh the open detail instead of leaving stale status/action rows. Mutating detail actions are single-flight, including source-repo and per-tool operations.
+- 2026-08-10 — “Remove from all tools” now removes legacy Claude native registrations, treats an empty `installed_plugins.json` as authoritative over leftover download cache, and counts registry-only cleanup as a successful uninstall. This prevents removed plugins from reappearing as installed.
+- 2026-08-10 — Failed Pi package install, update, and uninstall commands now reload package state and reconcile the open detail before clearing progress, preventing partial operations from leaving stale actions or status.
+
 ## [0.27.1] - 2026-07-18
 
 ### Fixed

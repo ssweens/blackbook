@@ -296,20 +296,54 @@ export const createPiSlice: SliceCreator<PiSlice> = (set, get) => ({
   installPiPackage: async (pkg) => {
     const { notify, clearNotification } = get();
     try {
-      const result = await withSpinner(`Installing ${pkg.name}...`, () => installPiPackage(pkg), notify, clearNotification);
-      if (result.success) { notify(`Installed ${pkg.name}`, "success"); await get().loadPiPackages({ silent: true }); return true; }
+      const result = await withSpinner(
+        `Installing ${pkg.name}...`,
+        async () => {
+          try {
+            return await installPiPackage(pkg);
+          } finally {
+            await get().loadPiPackages({ silent: true });
+            get().refreshDetail();
+          }
+        },
+        notify,
+        clearNotification,
+      );
+      if (result.success) {
+        notify(`Installed ${pkg.name}`, "success");
+        return true;
+      }
       notify(`Failed to install ${pkg.name}: ${result.error}`, "error");
-    } catch (error) { notify(`Error installing ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error"); }
+    } catch (error) {
+      notify(`Error installing ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
     return false;
   },
 
   uninstallPiPackage: async (pkg) => {
     const { notify, clearNotification } = get();
     try {
-      const result = await withSpinner(`Uninstalling ${pkg.name}...`, () => removePiPackage(pkg), notify, clearNotification);
-      if (result.success) { notify(`Uninstalled ${pkg.name}`, "success"); await get().loadPiPackages({ silent: true }); return true; }
+      const result = await withSpinner(
+        `Uninstalling ${pkg.name}...`,
+        async () => {
+          try {
+            return await removePiPackage(pkg);
+          } finally {
+            await get().loadPiPackages({ silent: true });
+            get().refreshDetail();
+          }
+        },
+        notify,
+        clearNotification,
+      );
+      if (result.success) {
+        notify(`Uninstalled ${pkg.name}`, "success");
+        return true;
+      }
       notify(`Failed to uninstall ${pkg.name}: ${result.error}`, "error");
-    } catch (error) { notify(`Error uninstalling ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error"); }
+    } catch (error) {
+      notify(`Error uninstalling ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
     return false;
   },
 
@@ -386,13 +420,23 @@ export const createPiSlice: SliceCreator<PiSlice> = (set, get) => ({
     const { notify, clearNotification } = get();
     try {
       const beforeInstalledVersion = pkg.installedVersion;
-      const result = await withSpinner(`Updating ${pkg.name}...`, () => updatePiPackage(pkg), notify, clearNotification);
+      const result = await withSpinner(
+        `Updating ${pkg.name}...`,
+        async () => {
+          try {
+            return await updatePiPackage(pkg);
+          } finally {
+            await get().loadPiPackages({ silent: true });
+            get().refreshDetail();
+          }
+        },
+        notify,
+        clearNotification,
+      );
       if (!result.success) {
         notify(`Failed to update ${pkg.name}: ${result.error}`, "error");
         return false;
       }
-
-      await get().loadPiPackages({ silent: true });
 
       const refreshed = get().piPackages.find((p) =>
         p.source === pkg.source ||
@@ -421,7 +465,9 @@ export const createPiSlice: SliceCreator<PiSlice> = (set, get) => ({
       const to = refreshed.installedVersion || refreshed.version || "unknown";
       notify(`Updated ${pkg.name} (${from} → ${to})`, "success");
       return true;
-    } catch (error) { notify(`Error updating ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error"); }
+    } catch (error) {
+      notify(`Error updating ${pkg.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
     return false;
   },
 

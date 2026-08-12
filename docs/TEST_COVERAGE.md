@@ -3,8 +3,8 @@
 This project tracks coverage by critical user journeys and system boundaries.
 
 ## Test Suite Summary
-- **Total Tests:** 796 (785 passing, 10 skipped — see CLI Mode section, 1 pre-existing failure unrelated to recent work: `install.integration.test.ts` "updatePlugin > updates only instances where plugin is already installed")
-- **Test Files:** 63
+- **Total Tests:** 884 (874 passing, 10 skipped)
+- **Test Files:** 71 (70 passing, 1 skipped)
 
 ## Critical Paths
 - [x] Plugin discovery list loads
@@ -47,6 +47,10 @@ This project tracks coverage by critical user journeys and system boundaries.
 - [x] Unified action dispatch refresh contract for skill uninstall-all (non-destructive action keeps detail state fresh)
 - [x] Sync flow refreshes open detail after file sync mutations
 - [x] Non-flat tool standalone scan compatibility: detects legacy flat skill layout on disk and maps namespace from source repo (Pi `ssmp` case)
+- [x] Configurable advisory runtime: Settings persists Pi, Claude Code, or OpenCode plus an optional model; every CLI argv remains non-interactive and constrained (unit)
+- [x] Advisory consultation: `c` from Projects applies only accepted current source-skill proposals through the canonical project action (E2E)
+- [x] Advisory consultation: `c` in Profiles updates only the in-memory builder draft, then uses the existing save action; installed plugin detail highlights only an accepted, currently valid action without dispatching it (E2E)
+- [x] Installed standalone-skill consultation receives bounded, redacted per-file evidence and selects a labeled current action; standalone drift detects reference-file changes and targets the actual drifted install (unit, integration, E2E)
 
 ## Boundaries
 - [x] Marketplace fetch (remote marketplace.json)

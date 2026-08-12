@@ -1,3 +1,48 @@
+## Diff-aware installed-skill advisory (2026-08-11) ✅ DONE
+
+### Contract
+- [x] Capture bounded, redacted source-versus-installation file evidence for a drifted standalone skill.
+- [x] Allow the advisor to select only a current detail action and render its user-facing label.
+- [x] Detect standalone drift across the full skill directory and open the installation that actually differs.
+
+### Verification
+- [x] Unit, integration, and installed-detail E2E coverage passed.
+- [x] `pnpm test` (874 passed, 10 skipped), `pnpm typecheck`, and `pnpm build` passed.
+- [x] Built TUI showed the real drifted `file-todos` detail and opened the advisor prompt without invoking a provider.
+
+## Configurable consultation runtime and model (2026-08-11) ✅ DONE
+
+### Contract
+- [x] Persist a consultation runtime (`Pi`, `Claude Code`, or `OpenCode`) and optional model.
+- [x] Use only the selected, enabled, detected runtime for the next advisory consultation.
+- [x] Keep consultation copy and recovery states provider-neutral.
+
+### Verification
+- [x] Cover settings persistence and all supported runtime argument contracts.
+- [x] Run the configured consultation flow and final quality gates.
+
+### Review
+- [x] `pnpm test`: 870 passed, 10 skipped (880 total).
+- [x] `pnpm typecheck` and `pnpm build` passed.
+- [x] Built TUI rendered Settings with runtime/model controls and exited normally.
+
+## Pi-backed advisory consultations (2026-08-11) ✅ DONE
+
+### Flow contract
+- [x] `c` from Projects proposes bounded, current skill actions without changing a project until the user accepts.
+- [x] `c` in Profiles proposes a draft selection without writing configuration before existing builder save.
+- [x] `c` in installed plugin detail explains component status and highlights an existing action without dispatching it.
+- [x] Pi consult runs with configured auth/provider and no tools, session persistence, project context, extensions, skills, or prompt templates.
+- [x] A runner failure, malformed response, timeout, or cancellation stays recoverable and visible.
+
+### Implementation
+- [x] Add Pi runner, validation, and bounded state snapshot builders.
+- [x] Add shared consultation panel and wire all three state surfaces.
+- [x] Add unit/E2E coverage and complete interactive verification.
+
+### Verification
+- [x] Run final typecheck, build, and full test suite.
+
 ## Pi plugin bridge removal + flat-install namespacing + MCP support (v0.27.0) ✅ DONE
 
 ### Problem

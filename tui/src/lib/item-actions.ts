@@ -164,7 +164,7 @@ export function buildPluginActions(
 
 /** Shared-store diff instance ref — the single "location" every tool reads from. */
 const SHARED_REF: DiffInstanceRef = {
-  toolId: "agents", instanceId: "shared", instanceName: "Shared store", configDir: "",
+  toolId: "agents", instanceId: "shared", instanceName: "~/.agents", configDir: "",
 };
 
 /**
@@ -376,7 +376,9 @@ import type { StandaloneSkill } from "./install.js";
 export function getSkillActions(skill: StandaloneSkill): ItemAction[] {
   const actions: ItemAction[] = [];
   const isInstalled = skill.installations.length > 0;
-  const isDrifted = skill.installations.some((i) => i.drifted);
+  const driftedInstallation = skill.installations.find((installation) => installation.drifted)
+    ?? skill.installations[0];
+  const isDrifted = driftedInstallation?.drifted === true;
 
   // ONE status line — installed or not, drifted or synced.
   if (isInstalled) {
@@ -386,11 +388,11 @@ export function getSkillActions(skill: StandaloneSkill): ItemAction[] {
       type: isDrifted ? "diff" : "status",
       statusColor: isDrifted ? "yellow" : "green",
       statusLabel: isDrifted ? "Drifted" : "In sync",
-      instance: isDrifted && skill.diskPath ? {
-        toolId: skill.toolId,
-        instanceId: skill.instanceId,
-        instanceName: skill.instanceName,
-        configDir: skill.diskPath,
+      instance: isDrifted && driftedInstallation ? {
+        toolId: driftedInstallation.toolId,
+        instanceId: driftedInstallation.instanceId,
+        instanceName: driftedInstallation.instanceName,
+        configDir: driftedInstallation.diskPath,
       } : undefined,
     });
   } else {

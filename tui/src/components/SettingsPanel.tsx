@@ -39,6 +39,19 @@ const SETTINGS_DEFS: SettingDef[] = [
     description: "Git remote URL of the source repository (the local checkout is managed automatically)",
   },
   {
+    key: "consultation_runtime",
+    label: "Advisor Runtime",
+    type: "enum",
+    enumValues: ["pi", "claude-code", "opencode"],
+    description: "CLI used for advisory consultations",
+  },
+  {
+    key: "consultation_model",
+    label: "Advisor Model",
+    type: "text",
+    description: "Optional model ID; leave blank to use the selected runtime's default",
+  },
+  {
     key: "backup_retention",
     label: "Backup Retention",
     type: "number",

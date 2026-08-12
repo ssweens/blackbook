@@ -1,12 +1,19 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { homedir } from "os";
 import { join } from "path";
+import { ConsultationPanel, type ConsultationPanelState } from "../components/ConsultationPanel.js";
+import {
+  buildConsultationPrompt,
+  buildProfileConsultationSnapshot,
+  profileMemberTarget,
+  validateConsultationResponse,
+} from "../lib/consultation-context.js";
+import { runConsultation as invokeConsultation } from "../lib/consultation-runner.js";
 import { useStore } from "../lib/store.js";
-import { getConfigRepoPath } from "../lib/config.js";
+import { getConfigRepoPath, getConsultationSettings } from "../lib/config.js";
 import { indexSourceSkillTree, type SourceSkillNamespace } from "../lib/projects.js";
-
 /**
  * Profiles tab — named skill bundles (config `profiles:`) that can be applied
  * to any workspace. List view for browsing, builder sub-view for creating and
@@ -37,6 +44,11 @@ type TreeRow =
   | { kind: "namespace"; name: string; skills: string[]; expanded: boolean }
   | { kind: "skill"; name: string; depth: 0 | 1 };
 
+interface ProfileConsultation {
+  state: ConsultationPanelState;
+  selectedProposalIds: string[];
+}
+
 export interface ProfilesTabProps {
   contentHeight: number;
 }
@@ -62,17 +74,21 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
   const profiles = useStore((s) => s.profiles);
   const saveProfile = useStore((s) => s.saveProfile);
   const deleteProfile = useStore((s) => s.deleteProfile);
+  const tools = useStore((s) => s.tools);
+  const toolDetection = useStore((s) => s.toolDetection);
 
   const [mode, setMode] = useState<Mode>({ kind: "list" });
   const [listIndex, setListIndex] = useState(0);
+  const [consultation, setConsultation] = useState<ProfileConsultation | null>(null);
+  const consultationAbortRef = useRef<AbortController | null>(null);
 
   // Tell App's global input handler to stand down while the builder or the
   // delete confirm owns the keyboard (digits/q/etc. must not fire).
   const setProfilesEditing = useStore((s) => s.setProfilesEditing);
   useEffect(() => {
-    setProfilesEditing(mode.kind !== "list");
+    setProfilesEditing(mode.kind !== "list" || consultation !== null);
     return () => setProfilesEditing(false);
-  }, [mode.kind, setProfilesEditing]);
+  }, [consultation, mode.kind, setProfilesEditing]);
 
   const names = useMemo(() => Object.keys(profiles).sort(), [profiles]);
 
@@ -110,6 +126,11 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
     [tree],
   );
 
+  const knownSkillNames = useMemo(
+    () => [...tree.namespaces.flatMap((namespace) => namespace.skills), ...tree.topLevel],
+    [tree],
+  );
+
   const rows = useMemo(
     () => (mode.kind === "edit" ? buildRows(tree.namespaces, tree.topLevel, mode.expanded) : []),
     [tree, mode],
@@ -128,7 +149,98 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
     });
   };
 
+  const buildDraftSnapshot = () => {
+    if (mode.kind !== "edit") return null;
+    const name = mode.name.trim();
+    if (!name) return null;
+    return buildProfileConsultationSnapshot(
+      name,
+      { ...profiles, [name]: [...mode.selected] },
+      { knownSkills: knownSkillNames },
+    );
+  };
+
+  const runConsultation = async (request: string) => {
+    const snapshot = buildDraftSnapshot();
+    if (!snapshot) return;
+
+    const controller = new AbortController();
+    consultationAbortRef.current = controller;
+    setConsultation({ state: { phase: "running", prompt: request }, selectedProposalIds: [] });
+
+    const { runtime, model } = getConsultationSettings();
+    const instance = tools.find((tool) => tool.toolId === runtime && tool.enabled) ?? null;
+    const binaryPath = toolDetection[runtime]?.binaryPath ?? null;
+    const result = await invokeConsultation({
+      runtime,
+      instance,
+      binaryPath,
+      model,
+      prompt: buildConsultationPrompt(snapshot, request),
+      signal: controller.signal,
+    });
+    if (consultationAbortRef.current !== controller) return;
+    consultationAbortRef.current = null;
+    if (result.ok) {
+      const response = validateConsultationResponse(snapshot, result.response);
+      if (response) {
+        setConsultation({ state: { phase: "result", prompt: request, response }, selectedProposalIds: [] });
+      } else {
+        setConsultation({
+          state: { phase: "error", prompt: request, message: "The advisor returned recommendations that no longer match this profile draft." },
+          selectedProposalIds: [],
+        });
+      }
+      return;
+    }
+    if (result.error.category === "cancelled") {
+      setConsultation(null);
+      return;
+    }
+    setConsultation({ state: { phase: "error", prompt: request, message: result.error.message }, selectedProposalIds: [] });
+  };
+
+  const cancelConsultation = () => {
+    consultationAbortRef.current?.abort();
+    consultationAbortRef.current = null;
+    setConsultation(null);
+  };
+
+  const applyConsultationProposals = (proposalIds: string[]) => {
+    if (!consultation || consultation.state.phase !== "result" || mode.kind !== "edit") return;
+    const snapshot = buildDraftSnapshot();
+    const response = snapshot && validateConsultationResponse(snapshot, consultation.state.response);
+    if (!snapshot || !response) {
+      setConsultation({
+        state: {
+          phase: "error",
+          prompt: consultation.state.prompt,
+          message: "The profile draft changed. Ask the advisor again before applying recommendations.",
+        },
+        selectedProposalIds: [],
+      });
+      return;
+    }
+
+    const namesByTarget = new Map(
+      [...new Set([...knownSkillNames, ...Object.values(profiles).flat(), ...mode.selected])]
+        .map((skillName) => [profileMemberTarget(skillName), skillName]),
+    );
+    const selected = new Set(mode.selected);
+    for (const proposal of response.proposals) {
+      if (!proposalIds.includes(proposal.id)) continue;
+      const skillName = namesByTarget.get(proposal.target);
+      if (!skillName) continue;
+      if (proposal.operation === "install") selected.add(skillName);
+      if (proposal.operation === "remove") selected.delete(skillName);
+    }
+    setMode({ ...mode, selected });
+    setConsultation(null);
+  };
+
   useInput((input, key) => {
+    if (consultation) return;
+
     if (mode.kind === "list") {
       if (key.upArrow) setListIndex((i) => Math.max(0, i - 1));
       else if (key.downArrow) setListIndex((i) => Math.min(Math.max(0, names.length - 1), i + 1));
@@ -150,11 +262,15 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
       }
       return;
     }
-
     // Builder. While naming, TextInput owns typed characters — only handle
     // escape here (submit is TextInput's onSubmit).
     if (mode.naming) {
       if (key.escape) setMode({ kind: "list" });
+      return;
+    }
+
+    if (input === "c") {
+      setConsultation({ state: { phase: "prompt" }, selectedProposalIds: [] });
       return;
     }
 
@@ -203,6 +319,30 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
       setMode({ kind: "list" });
     }
   });
+
+  if (consultation) {
+    return (
+      <ConsultationPanel
+        state={consultation.state}
+        selectedProposalIds={consultation.selectedProposalIds}
+        onSubmit={(request) => { void runConsultation(request); }}
+        onCancel={cancelConsultation}
+        onRetry={() => {
+          if (consultation.state.phase === "error") void runConsultation(consultation.state.prompt);
+        }}
+        onToggleProposal={(proposalId) => {
+          setConsultation((current) => {
+            if (!current) return current;
+            const selectedProposalIds = current.selectedProposalIds.includes(proposalId)
+              ? current.selectedProposalIds.filter((id) => id !== proposalId)
+              : [...current.selectedProposalIds, proposalId];
+            return { ...current, selectedProposalIds };
+          });
+        }}
+        onAccept={applyConsultationProposals}
+      />
+    );
+  }
 
   if (mode.kind === "confirmDelete") {
     return (
@@ -276,7 +416,7 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
             );
           })
         )}
-        <Text color="gray">Space toggle (namespace = all its skills) · →/← expand · Enter save · r rename · Esc cancel</Text>
+        <Text color="gray">Space toggle (namespace = all its skills) · →/← expand · c consult advisor · Enter save · r rename · Esc cancel</Text>
       </Box>
     );
   }

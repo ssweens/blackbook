@@ -1590,11 +1590,10 @@ export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSki
               skill.namespace = parts[0];
             }
           }
-          // Lightweight per-install drift: compare each disk SKILL.md to the source one.
-          // Deduplicate by physical path first — symlinked installs that resolve
-          // to the same directory share one SKILL.md and must not be double-counted.
+          // Compare the whole skill tree, not only SKILL.md: references, assets,
+          // and scripts are part of a skill's installed contract too.
           try {
-            const sourceSkillMd = readFileSync(candidate, "utf-8");
+            const sourceHash = hashDirectory(sourceDir);
             const seenPaths = new Set<string>();
             for (const inst of skill.installations) {
               let realPath: string;
@@ -1606,16 +1605,22 @@ export function getStandaloneSkills(prescribedPlugins?: Plugin[]): StandaloneSki
                   try { rp = realpathSync(i.diskPath); } catch { rp = i.diskPath; }
                   return rp === realPath && i !== inst;
                 });
-                inst.drifted = peer?.drifted ?? false;
+                inst.drifted = peer?.drifted ?? true;
                 continue;
               }
               seenPaths.add(realPath);
-              const diskSkillMd = join(inst.diskPath, "SKILL.md");
-              if (!existsSync(diskSkillMd)) { inst.drifted = true; continue; }
-              inst.drifted = readFileSync(diskSkillMd, "utf-8") !== sourceSkillMd;
+              try {
+                inst.drifted = !existsSync(inst.diskPath) || hashDirectory(inst.diskPath) !== sourceHash;
+              } catch {
+                // Do not claim an installation is in sync when it cannot be read.
+                inst.drifted = true;
+              }
             }
             skill.drifted = skill.installations.some((i) => i.drifted);
-          } catch { /* ignore */ }
+          } catch {
+            for (const inst of skill.installations) inst.drifted = true;
+            skill.drifted = skill.installations.length > 0;
+          }
           // Git status for the source path — is it committed?
           skill.gitStatus = gitStatusForPath(sourceRepo, sourceDir, repoGitStatus);
         }

@@ -29,7 +29,7 @@ import { installPiPackage, removePiPackage, repairPiPackageManager, updatePiPack
 import { resolveSourcePath, expandPath as expandConfigPath } from "./config/path.js";
 import { getAllPlaybooks, resolveToolInstances, isSyncTarget } from "./config/playbooks.js";
 import { runCheck, runApply } from "./modules/orchestrator.js";
-import type { Plugin, Marketplace, ToolInstance, ManagedToolRow, ToolDetectionResult, FileStatus } from "./types.js";
+import type { Plugin, Marketplace, ToolInstance, ManagedToolRow, ToolDetectionResult, FileStatus, PiPackage } from "./types.js";
 
 // Mock config functions to avoid writing to real config file
 vi.mock("./config.js", async (importOriginal) => {
@@ -1689,19 +1689,47 @@ describe("Store syncTools with toolFilter", () => {
 
   it("skips tool and piPackage items that don't match the filter", async () => {
     const updateToolAction = vi.fn().mockResolvedValue(true);
-    const installPiPackage = vi.fn().mockResolvedValue(true);
-    useStore.setState({ tools: [], updateToolAction, installPiPackage } as any);
+    const installPiPackageAction = vi.fn().mockResolvedValue(true);
+    const originalUpdateToolAction = useStore.getState().updateToolAction;
+    const originalInstallPiPackage = useStore.getState().installPiPackage;
+    useStore.setState({
+      tools: [],
+      updateToolAction,
+      installPiPackage: installPiPackageAction,
+    });
 
-    await useStore.getState().syncTools(
-      [
-        { kind: "tool", toolId: "amp-code", name: "Amp", installedVersion: "1.0.0", latestVersion: "1.1.0" },
-        { kind: "piPackage", piPackage: { name: "pkg", description: "", version: "1", source: "npm:pkg", sourceType: "npm", marketplace: "npm", installed: false } as any },
-      ],
-      { toolFilter: (toolId) => toolId === "claude-code" },
-    );
+    try {
+      await useStore.getState().syncTools(
+        [
+          { kind: "tool", toolId: "amp-code", name: "Amp", installedVersion: "1.0.0", latestVersion: "1.1.0" },
+          {
+            kind: "piPackage",
+            piPackage: {
+              name: "pkg",
+              description: "",
+              version: "1",
+              source: "npm:pkg",
+              sourceType: "npm",
+              marketplace: "npm",
+              installed: false,
+              extensions: [],
+              skills: [],
+              prompts: [],
+              themes: [],
+            },
+          },
+        ],
+        { toolFilter: (toolId) => toolId === "claude-code" },
+      );
 
-    expect(updateToolAction).not.toHaveBeenCalled();
-    expect(installPiPackage).not.toHaveBeenCalled();
+      expect(updateToolAction).not.toHaveBeenCalled();
+      expect(installPiPackageAction).not.toHaveBeenCalled();
+    } finally {
+      useStore.setState({
+        updateToolAction: originalUpdateToolAction,
+        installPiPackage: originalInstallPiPackage,
+      });
+    }
   });
 });
 
@@ -1744,6 +1772,49 @@ describe("Repo-prescribed Pi packages", () => {
     vi.mocked(updatePiPackage).mockResolvedValue({ success: true });
   });
 
+  it("reconciles Pi package detail after failed lifecycle commands", async () => {
+    const pkg: PiPackage = {
+      name: "pi-test",
+      description: "Lifecycle test package",
+      version: "1.0.0",
+      source: "npm:pi-test",
+      sourceType: "npm",
+      marketplace: "npm",
+      installed: true,
+      extensions: [],
+      skills: [],
+      prompts: [],
+      themes: [],
+    };
+    const originalLoadPiPackages = useStore.getState().loadPiPackages;
+    const originalRefreshDetail = useStore.getState().refreshDetail;
+    const loadPiPackages = vi.fn(async () => {});
+    const refreshDetail = vi.fn();
+    useStore.setState({ loadPiPackages, refreshDetail, notifications: [] });
+    vi.mocked(installPiPackage).mockResolvedValue({ success: false, error: "install failed" });
+    vi.mocked(removePiPackage).mockResolvedValue({ success: false, error: "uninstall failed" });
+    vi.mocked(updatePiPackage).mockRejectedValue(new Error("update failed"));
+
+    try {
+      const results = {
+        install: await useStore.getState().installPiPackage(pkg),
+        uninstall: await useStore.getState().uninstallPiPackage(pkg),
+        update: await useStore.getState().updatePiPackage(pkg),
+      };
+      expect(results).toEqual({ install: false, uninstall: false, update: false });
+
+      expect(loadPiPackages).toHaveBeenCalledTimes(3);
+      expect(loadPiPackages).toHaveBeenCalledWith({ silent: true });
+      expect(refreshDetail).toHaveBeenCalledTimes(3);
+      expect(useStore.getState().notifications.some((notification) => notification.spinner)).toBe(false);
+    } finally {
+      useStore.setState({
+        loadPiPackages: originalLoadPiPackages,
+        refreshDetail: originalRefreshDetail,
+      });
+    }
+  });
+
   it("loads desired Pi packages from local source_repo config even when not installed locally", async () => {
     const sourceRepo = mkdtempSync(join(tmpdir(), "blackbook-source-repo-for-prescribed-"));
     const sourceRepoConfigPath = join(sourceRepo, "config", "blackbook", "config.yaml");
@@ -1753,7 +1824,7 @@ describe("Repo-prescribed Pi packages", () => {
     vi.mocked(loadYamlConfig).mockImplementation((configPath?: string) => ({
       config: configPath === sourceRepoConfigPath
         ? {
-          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, consultation_runtime: "pi", consultation_model: "", disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
           marketplaces: {},
           pi_marketplaces: {},
           tools: {},
@@ -1765,7 +1836,7 @@ describe("Repo-prescribed Pi packages", () => {
           profiles: {},
         }
         : {
-          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, consultation_runtime: "pi", consultation_model: "", disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
           marketplaces: {},
           pi_marketplaces: {},
           tools: {},
@@ -1820,7 +1891,7 @@ describe("Repo-prescribed Pi packages", () => {
     vi.mocked(loadYamlConfig).mockImplementation((configPath?: string) => ({
       config: configPath === sourceRepoConfigPath
         ? {
-          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, consultation_runtime: "pi", consultation_model: "", disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
           marketplaces: {},
           pi_marketplaces: {},
           tools: {},
@@ -1832,7 +1903,7 @@ describe("Repo-prescribed Pi packages", () => {
           profiles: {},
         }
         : {
-          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, consultation_runtime: "pi", consultation_model: "", disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
           marketplaces: {},
           pi_marketplaces: {},
           tools: {},
@@ -1882,7 +1953,7 @@ describe("Repo-prescribed Pi packages", () => {
 
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: {
-        settings: { source_repo: "https://github.com/example/playbook.git", package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
+        settings: { source_repo: "https://github.com/example/playbook.git", package_manager: "npm", backup_retention: 3, config_management: false, consultation_runtime: "pi", consultation_model: "", disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
         marketplaces: {},
         pi_marketplaces: {},
         tools: {},
@@ -1924,7 +1995,7 @@ describe("Repo-prescribed Pi packages", () => {
   it("includes installed non-npm Pi packages from settings when not marketplace-listed", async () => {
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: {
-        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
+        settings: { package_manager: "npm", backup_retention: 3, config_management: false, consultation_runtime: "pi", consultation_model: "", disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
         marketplaces: {},
         pi_marketplaces: {},
         tools: {},
@@ -1958,7 +2029,7 @@ describe("Repo-prescribed Pi packages", () => {
   it("does not duplicate installed git package when source uses equivalent git forms", async () => {
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: {
-        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
+        settings: { package_manager: "npm", backup_retention: 3, config_management: false, consultation_runtime: "pi", consultation_model: "", disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
         marketplaces: {},
         pi_marketplaces: {},
         tools: {},
@@ -2017,7 +2088,7 @@ describe("Repo-prescribed Pi packages", () => {
     // warning) and showed the package twice in every list.
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: {
-        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
+        settings: { package_manager: "npm", backup_retention: 3, config_management: false, consultation_runtime: "pi", consultation_model: "", disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
         marketplaces: {},
         pi_marketplaces: {},
         tools: {},
@@ -2048,7 +2119,7 @@ describe("Repo-prescribed Pi packages", () => {
   it("keeps separate rows for same package name across npm and local sources", async () => {
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: {
-        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
+        settings: { package_manager: "npm", backup_retention: 3, config_management: false, consultation_runtime: "pi", consultation_model: "", disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
         marketplaces: {},
         pi_marketplaces: {},
         tools: {},
@@ -2110,7 +2181,7 @@ describe("Repo-prescribed Pi packages", () => {
   it("does not duplicate installed npm package when source differs only by case", async () => {
     vi.mocked(loadYamlConfig).mockReturnValue({
       config: {
-        settings: { package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
+        settings: { package_manager: "npm", backup_retention: 3, config_management: false, consultation_runtime: "pi", consultation_model: "", disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
         marketplaces: {},
         pi_marketplaces: {},
         tools: {},
@@ -2170,7 +2241,7 @@ describe("Repo-prescribed Pi packages", () => {
     vi.mocked(loadYamlConfig).mockImplementation((configPath?: string) => ({
       config: configPath === sourceConfigPath
         ? {
-          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, consultation_runtime: "pi", consultation_model: "", disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
           marketplaces: {},
           pi_marketplaces: {},
           tools: {},
@@ -2182,7 +2253,7 @@ describe("Repo-prescribed Pi packages", () => {
           profiles: {},
         }
         : {
-          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, consultation_runtime: "pi", consultation_model: "", disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
           marketplaces: {},
           pi_marketplaces: {},
           tools: {},
@@ -2228,7 +2299,7 @@ describe("Repo-prescribed Pi packages", () => {
     writeFileSync(sourceConfigPath, "pi_packages: []\n");
 
     const localConfig = {
-      settings: { source_repo: sourceRepo, package_manager: "npm" as const, backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" as const },
+      settings: { source_repo: sourceRepo, package_manager: "npm" as const, backup_retention: 3, config_management: false, consultation_runtime: "pi" as const, consultation_model: "", disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" as const },
       marketplaces: {},
       pi_marketplaces: {},
       tools: {},
@@ -2294,7 +2365,7 @@ describe("Repo-prescribed Pi packages", () => {
     vi.mocked(loadYamlConfig).mockImplementation((configPath?: string) => ({
       config: configPath === sourceConfigPath
         ? {
-          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, consultation_runtime: "pi", consultation_model: "", disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
           marketplaces: {},
           pi_marketplaces: {},
           tools: {},
@@ -2306,7 +2377,7 @@ describe("Repo-prescribed Pi packages", () => {
           profiles: {},
         }
         : {
-          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
+          settings: { source_repo: sourceRepo, package_manager: "npm", backup_retention: 3, config_management: false, consultation_runtime: "pi", consultation_model: "", disabled_marketplaces: [], disabled_pi_marketplaces: [], skill_sync_mode: "copy" },
           marketplaces: {},
           pi_marketplaces: {},
           tools: {},
@@ -2545,7 +2616,7 @@ describe("Store plugin action busy-guard", () => {
     expect(vi.mocked(updatePlugin)).toHaveBeenCalledTimes(1);
     // ...and the user was told the duplicate was ignored.
     const notes = useStore.getState().notifications;
-    expect(notes.some((n) => n.type === "warning" && /Already updating/.test(n.message))).toBe(true);
+    expect(notes.some((n) => n.type === "warning" && /Another action is already running/.test(n.message))).toBe(true);
 
     // Guard is released, so a later update is allowed again.
     vi.mocked(updatePlugin).mockResolvedValue({ success: true, linkedInstances: {}, skippedInstances: [], errors: [] });
@@ -2628,6 +2699,27 @@ describe("Store uninstallPlugin failure surfacing", () => {
     }
   });
 
+  it("reconciles and reports an uninstall that throws", async () => {
+    const plugin = createMockPlugin({ name: "partial-uninstall" });
+    const refreshAll = vi.fn(async () => {});
+    const originalRefreshAll = useStore.getState().refreshAll;
+    vi.mocked(uninstallPlugin).mockRejectedValue(new Error("permission denied"));
+    useStore.setState({ refreshAll });
+
+    try {
+      await expect(useStore.getState().uninstallPlugin(plugin)).resolves.toBe(false);
+
+      expect(refreshAll).toHaveBeenCalledWith({ silent: true });
+      expect(useStore.getState().notifications.some(
+        (notification) => notification.type === "error"
+          && notification.message.includes("permission denied"),
+      )).toBe(true);
+      expect(useStore.getState().notifications.some((notification) => notification.spinner)).toBe(false);
+    } finally {
+      useStore.setState({ refreshAll: originalRefreshAll });
+    }
+  });
+
   it("reports a genuine uninstall as a success", async () => {
     const plugin = createMockPlugin({ name: "clean-plugin" });
     vi.mocked(uninstallPlugin).mockResolvedValue(true);
@@ -2643,6 +2735,39 @@ describe("Store uninstallPlugin failure surfacing", () => {
         notes.some((n) => n.type === "success" && /Uninstalled clean-plugin/.test(n.message)),
       ).toBe(true);
       expect(notes.some((n) => n.type === "error")).toBe(false);
+    } finally {
+      useStore.setState({ refreshAll: originalRefreshAll });
+    }
+  });
+
+  it("keeps progress visible until uninstall reconciliation closes stale detail", async () => {
+    const plugin = createMockPlugin({ name: "reconciled-plugin", installed: true });
+    vi.mocked(uninstallPlugin).mockResolvedValue(true);
+
+    const originalRefreshAll = useStore.getState().refreshAll;
+    const refreshDetail = useStore.getState().refreshDetail;
+    const lifecycle: string[] = [];
+    useStore.setState({
+      detail: { kind: "plugin", data: plugin },
+      installedPlugins: [plugin],
+      refreshAll: async () => {
+        lifecycle.push(
+          useStore.getState().notifications.some((notification) => notification.spinner)
+            ? "spinner-visible"
+            : "spinner-missing",
+        );
+        useStore.setState({ installedPlugins: [] });
+        refreshDetail();
+        lifecycle.push(useStore.getState().detail === null ? "detail-closed" : "detail-stale");
+      },
+    });
+
+    try {
+      await useStore.getState().uninstallPlugin(plugin);
+
+      expect(lifecycle).toEqual(["spinner-visible", "detail-closed"]);
+      expect(useStore.getState().notifications.some((notification) => notification.spinner)).toBe(false);
+      expect(useStore.getState().detail).toBeNull();
     } finally {
       useStore.setState({ refreshAll: originalRefreshAll });
     }

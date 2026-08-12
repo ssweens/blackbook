@@ -6,7 +6,7 @@ import { useStore, withSpinner } from "./lib/store.js";
 import { TabBar } from "./components/TabBar.js";
 import { SearchBox } from "./components/SearchBox.js";
 import { PluginPreview } from "./components/PluginPreview.js";
-import { buildItemActions, getPiPackageActions } from "./lib/item-actions.js";
+import { buildItemActions, getPiPackageActions, getSkillActions } from "./lib/item-actions.js";
 import { MarketplaceList } from "./components/MarketplaceList.js";
 import { MarketplaceDetailView } from "./components/MarketplaceDetailView.js";
 import { AddMarketplaceModal } from "./components/AddMarketplaceModal.js";
@@ -29,6 +29,7 @@ import { PiPackageSummary } from "./components/PiPackageSummary.js";
 import { PiPackagePreview } from "./components/PiPackagePreview.js";
 // PiPackageDetail actions built via toPiPkgItemActions in lib/item-actions.ts
 import { SettingsPanel } from "./components/SettingsPanel.js";
+import { ConsultationPanel, type ConsultationPanelState } from "./components/ConsultationPanel.js";
 import { ToolsTab } from "./tabs/ToolsTab.js";
 import { SettingsTab } from "./tabs/SettingsTab.js";
 import { MarketplacesTab } from "./tabs/MarketplacesTab.js";
@@ -45,12 +46,15 @@ import {
   syncPluginInstances,
   uninstallPluginFromInstance,
   groupSkillsByNamespace,
+  type StandaloneSkill,
 } from "./lib/install.js";
 import { resolvePluginSourcePaths, computeAllPluginsDrift, type PluginDrift } from "./lib/plugin-drift.js";
 import { resolveInstalledPluginComponentPath } from "./lib/pi-bridge.js";
+import { agentsComponentDir } from "./lib/path-utils.js";
+import { pluginSkillStorePath } from "./lib/adapters/shared.js";
 import { computeItemDrift } from "./lib/item-drift.js";
-import { buildFileDiffTarget } from "./lib/diff.js";
-import { getPackageManager } from "./lib/config.js";
+import { buildFileDiffTarget, buildSkillDiffTarget, computeFileDetail } from "./lib/diff.js";
+import { getConsultationSettings, getPackageManager, getPluginComponentConfig } from "./lib/config.js";
 import { setupSourceRepository, shouldShowSourceSetupWizard, pullSourceRepo } from "./lib/source-setup.js";
 import { ItemList, FILE_COLUMNS, PLUGIN_COLUMNS } from "./components/ItemList.js";
 import { ItemDetail, PluginMetadata, FileMetadata, PiPackageMetadata, SkillMetadata, NamespaceMetadata, type ItemAction } from "./components/ItemDetail.js";
@@ -61,7 +65,7 @@ import { getMarketplaceDetailActions, type MarketplaceDetailContext } from "./li
 import { buildMarketplaceRows, type MarketplaceRow } from "./lib/marketplace-row.js";
 import { useDetailInput, useDiffInput, useListInput } from "./lib/input-hooks.js";
 import { handleItemAction } from "./lib/action-dispatch.js";
-import type { Tab, SyncPreviewItem, Plugin, PiPackage, PiMarketplace, DiffInstanceRef, DiscoverSection, DiscoverSubView, FileStatus, Marketplace } from "./lib/types.js";
+import type { Tab, SyncPreviewItem, Plugin, PiPackage, PiMarketplace, DiffInstanceRef, DiffFileSummary, DiscoverSection, DiscoverSubView, FileStatus, Marketplace } from "./lib/types.js";
 import { countAppRender } from "./lib/perf.js";
 import { useContentHeight } from "./lib/use-content-height.js";
 import { useToolActions } from "./lib/use-tool-actions.js";
@@ -69,6 +73,35 @@ import { useNamespaceTree } from "./lib/use-namespace-tree.js";
 import { buildDetailCallbacks } from "./lib/detail-callbacks.js";
 import { getSyncItemKey, sortAndFilterPiPackages } from "./lib/derived.js";
 import { buildProjectSkillRows, collectUnmanagedSkills } from "./lib/projects.js";
+import {
+  buildConsultationPrompt,
+  buildInstalledPluginConsultationSnapshot,
+  buildInstalledSkillConsultationSnapshot,
+  buildProjectConsultationSnapshot,
+  filterConsultationProposals,
+  pluginComponentTarget,
+  validateConsultationResponse,
+  type ConsultationOperation,
+  type ConsultationSnapshot,
+  type InstalledSkillDiffEvidence,
+  type PluginComponentDiffSummary,
+} from "./lib/consultation-context.js";
+import { runConsultation as invokeConsultation } from "./lib/consultation-runner.js";
+
+const MUTATING_DETAIL_ACTIONS: Partial<Record<ItemAction["type"], true>> = {
+  sync: true,
+  install: true,
+  uninstall: true,
+  update: true,
+  install_tool: true,
+  uninstall_tool: true,
+  pullback: true,
+  track: true,
+  remove_from_git: true,
+  delete_everywhere: true,
+  delete_source: true,
+  remove_redundant: true,
+};
 
 const TABS: Tab[] = ["sync", "tools", "discover", "installed", "marketplaces", "projects", "profiles", "settings"];
 
@@ -113,6 +146,17 @@ function TabContent({ tab, searchFocused, onSearchFocus, onSearchBlur }: TabCont
     case "settings":
       return <SettingsTab />;
   }
+}
+
+type AppConsultationTarget =
+  | { kind: "project"; path: string }
+  | { kind: "installed-plugin"; name: string; marketplace: string }
+  | { kind: "installed-skill"; diskPath: string };
+
+interface AppConsultation {
+  target: AppConsultationTarget;
+  state: ConsultationPanelState;
+  selectedProposalIds: string[];
 }
 
 export function App() {
@@ -254,8 +298,11 @@ export function App() {
   const profiles = useStore((s) => s.profiles);
   const applyProfile = useStore((s) => s.applyProfile);
   const [profileTargetPath, setProfileTargetPath] = useState<string | null>(null);
+  const [consultation, setConsultation] = useState<AppConsultation | null>(null);
+  const consultationAbortRef = useRef<AbortController | null>(null);
 
   const [actionIndex, setActionIndex] = useState(0);
+  const detailMutationInFlight = useRef(false);
   const openSkillDetail = (skill: import("./lib/install.js").StandaloneSkill) => {
     setDetail({ kind: "skill", data: skill });
     setActionIndex(0);
@@ -1026,6 +1073,292 @@ export function App() {
     }
   }, [detail, detailFileItem, detailSkillItem, detailPluginItem, detailPiPkgItem, detailNamespaceItem, pluginDriftMap]);
 
+  const buildPluginDiffSummaries = (
+    plugin: Plugin,
+    drift: PluginDrift | null | undefined,
+  ): PluginComponentDiffSummary[] => {
+    const sourcePaths = resolvePluginSourcePaths(plugin);
+    if (!sourcePaths || !drift) return [];
+
+    const summaries: PluginComponentDiffSummary[] = [];
+    for (const [componentKey, status] of Object.entries(drift)) {
+      if (status === "in-sync" || summaries.length >= 48) continue;
+      const separator = componentKey.indexOf(":");
+      const kind = componentKey.slice(0, separator);
+      const name = componentKey.slice(separator + 1);
+      if (!name || !["skill", "command", "agent"].includes(kind)) continue;
+
+      const sourcePath = join(
+        sourcePaths.pluginDir,
+        `${kind}s`,
+        kind === "skill" ? name : `${name}.md`,
+      );
+      const targetPath = kind === "skill"
+        ? pluginSkillStorePath(plugin.name, name)
+        : agentsComponentDir(kind as "command" | "agent", plugin.name, name);
+      if (!targetPath || !existsSync(targetPath)) continue;
+
+      try {
+        const diff = buildFileDiffTarget(
+          `${kind}s/${name}`,
+          kind === "skill" ? name : `${name}.md`,
+          sourcePath,
+          targetPath,
+          { toolId: "agents", instanceId: "shared", instanceName: "~/.agents", configDir: "" },
+        );
+        summaries.push({
+          componentId: pluginComponentTarget(kind as "skill" | "command" | "agent", name),
+          label: `${kind}s/${name}`,
+          added: diff.files.reduce((total, file) => total + file.linesAdded, 0),
+          removed: diff.files.reduce((total, file) => total + file.linesRemoved, 0),
+        });
+      } catch {
+        // The snapshot still carries the drift status; a transient diff failure
+        // must not turn it into a fabricated line count.
+      }
+    }
+    return summaries;
+  };
+
+  const buildStandaloneSkillDiffEvidence = (skill: StandaloneSkill): InstalledSkillDiffEvidence[] => {
+    const evidence: InstalledSkillDiffEvidence[] = [];
+    const comparedInstallations = new Set<string>();
+
+    for (const installation of skill.installations) {
+      if (!installation.drifted || evidence.length >= 8) continue;
+      const installationKey = `${installation.toolId}:${installation.instanceId}:${installation.diskPath}`;
+      if (comparedInstallations.has(installationKey)) continue;
+      comparedInstallations.add(installationKey);
+
+      try {
+        const target = buildSkillDiffTarget(skill, installation.toolId, installation.instanceId);
+        if (!target) continue;
+        for (const file of target.files) {
+          if (evidence.length >= 8) break;
+          const excerpts: Array<{ kind: "installed-only" | "source-only"; text: string }> = [];
+          if (file.status !== "binary") {
+            collectExcerpts:
+            for (const hunk of computeFileDetail(file).hunks) {
+              for (const line of hunk.lines) {
+                if (line.type === "add") excerpts.push({ kind: "installed-only", text: line.content });
+                if (line.type === "remove") excerpts.push({ kind: "source-only", text: line.content });
+                if (excerpts.length === 8) break collectExcerpts;
+              }
+            }
+          }
+          evidence.push({
+            installation: installation.instanceName,
+            path: file.displayPath,
+            status: file.status,
+            added: file.linesAdded,
+            removed: file.linesRemoved,
+            excerpts,
+          });
+        }
+      } catch {
+        // The status remains authoritative; unreadable diff content is omitted.
+      }
+    }
+    return evidence;
+  };
+
+  const buildConsultationSnapshot = (
+    target: AppConsultationTarget,
+  ): ConsultationSnapshot | null => {
+    if (target.kind === "project") {
+      const project = projects.find((candidate) => candidate.path === target.path);
+      return project
+        ? buildProjectConsultationSnapshot(project, { profiles })
+        : null;
+    }
+
+    if (target.kind === "installed-skill") {
+      const skill = detailSkill?.diskPath === target.diskPath
+        ? detailSkill
+        : standaloneSkills.find((candidate) => candidate.diskPath === target.diskPath);
+      if (!skill || skill.installations.length === 0) return null;
+
+      const actions = activeDetail?.item._skill?.diskPath === skill.diskPath
+        ? activeDetail.actions
+        : getSkillActions(skill);
+      return buildInstalledSkillConsultationSnapshot(skill, {
+        actions: actions.map((action) => ({
+          id: action.id,
+          label: action.type === "diff" ? `Review ${action.label} diff` : action.label,
+        })),
+        diffEvidence: buildStandaloneSkillDiffEvidence(skill),
+      });
+    }
+
+    const plugin = detailPlugin?.name === target.name && detailPlugin.marketplace === target.marketplace
+      ? detailPlugin
+      : installedPlugins.find(
+        (candidate) => candidate.name === target.name && candidate.marketplace === target.marketplace,
+      );
+    if (!plugin?.installed) return null;
+
+    const drift = detailPlugin?.name === plugin.name && detailPlugin.marketplace === plugin.marketplace
+      ? detailPluginDrift ?? pluginDriftMap[plugin.name]
+      : pluginDriftMap[plugin.name];
+    const actionIds = activeDetail?.item._plugin?.name === plugin.name
+      && activeDetail.item._plugin.marketplace === plugin.marketplace
+      ? activeDetail.actions.map((action) => action.id)
+      : buildItemActions(pluginToManagedItem(plugin), drift).map((action) => action.id);
+    return buildInstalledPluginConsultationSnapshot(plugin, {
+      componentConfig: getPluginComponentConfig(plugin.marketplace, plugin.name),
+      drift,
+      diffSummaries: buildPluginDiffSummaries(plugin, drift),
+      validActionIds: actionIds,
+    });
+  };
+
+  const runConsultation = async (target: AppConsultationTarget, request: string) => {
+    const snapshot = buildConsultationSnapshot(target);
+    if (!snapshot) {
+      setConsultation({
+        target,
+        state: { phase: "error", prompt: request, message: "This view changed before the advisor could inspect it. Reopen the consultation." },
+        selectedProposalIds: [],
+      });
+      return;
+    }
+
+    const controller = new AbortController();
+    consultationAbortRef.current = controller;
+    setConsultation({ target, state: { phase: "running", prompt: request }, selectedProposalIds: [] });
+    const { runtime, model } = getConsultationSettings();
+    const instance = tools.find((tool) => tool.toolId === runtime && tool.enabled) ?? null;
+    const binaryPath = toolDetection[runtime]?.binaryPath ?? null;
+    const result = await invokeConsultation({
+      runtime,
+      instance,
+      binaryPath,
+      model,
+      prompt: buildConsultationPrompt(snapshot, request),
+      signal: controller.signal,
+    });
+    if (consultationAbortRef.current !== controller) return;
+    consultationAbortRef.current = null;
+
+    if (result.ok) {
+      const response = validateConsultationResponse(snapshot, result.response);
+      if (response) {
+        setConsultation({ target, state: { phase: "result", prompt: request, response }, selectedProposalIds: [] });
+      } else {
+        setConsultation({
+          target,
+          state: { phase: "error", prompt: request, message: "The advisor returned recommendations outside the current action contract." },
+          selectedProposalIds: [],
+        });
+      }
+      return;
+    }
+    if (result.error.category === "cancelled") {
+      setConsultation(null);
+      return;
+    }
+    setConsultation({
+      target,
+      state: { phase: "error", prompt: request, message: result.error.message },
+      selectedProposalIds: [],
+    });
+  };
+
+  const cancelConsultation = () => {
+    consultationAbortRef.current?.abort();
+    consultationAbortRef.current = null;
+    setConsultation(null);
+  };
+
+  const applyProjectConsultationProposal = async (
+    target: Extract<AppConsultationTarget, { kind: "project" }>,
+    operation: ConsultationOperation,
+    proposalTarget: string,
+  ) => {
+    const project = useStore.getState().projects.find((candidate) => candidate.path === target.path);
+    if (!project) return;
+    if (operation === "install" && proposalTarget.startsWith("available-project-skill:")) {
+      const name = proposalTarget.slice("available-project-skill:".length);
+      const skill = project.available.find((candidate) => candidate.name === name);
+      if (skill) await pushProjectSkill(project.path, skill.name, skill.sourcePath);
+      return;
+    }
+    if (operation === "remove" && proposalTarget.startsWith("project-skill:")) {
+      const name = proposalTarget.slice("project-skill:".length);
+      const skill = project.skills.find((candidate) => candidate.name === name);
+      if (skill) await removeProjectSkill(skill.name, skill.diskPath);
+      return;
+    }
+    if ((operation === "enable" || operation === "disable") && proposalTarget.startsWith("project-skill:")) {
+      const name = proposalTarget.slice("project-skill:".length);
+      const skill = project.skills.find((candidate) => candidate.name === name);
+      if (skill && ((operation === "enable" && !skill.enabled) || (operation === "disable" && skill.enabled))) {
+        await toggleProjectSkill(project.path, skill.name, skill.enabled);
+      }
+      return;
+    }
+    if (operation === "resync" && proposalTarget.startsWith("project-skill:")) {
+      const name = proposalTarget.slice("project-skill:".length);
+      const skill = project.skills.find((candidate) => candidate.name === name);
+      if (skill?.sourcePath) await pushProjectSkill(project.path, skill.name, skill.sourcePath);
+    }
+  };
+
+  const acceptConsultationProposals = (proposalIds: string[]) => {
+    if (!consultation || consultation.state.phase !== "result") return;
+    const snapshot = buildConsultationSnapshot(consultation.target);
+    if (!snapshot) {
+      setConsultation({
+        ...consultation,
+        state: {
+          phase: "error",
+          prompt: consultation.state.prompt,
+          message: "The inspected state changed. Ask the advisor again before applying recommendations.",
+        },
+        selectedProposalIds: [],
+      });
+      return;
+    }
+
+    const proposals = filterConsultationProposals(snapshot, consultation.state.response.proposals)
+      .filter((proposal) => proposalIds.includes(proposal.id));
+    if (proposals.length !== proposalIds.length) {
+      setConsultation({
+        ...consultation,
+        state: {
+          phase: "error",
+          prompt: consultation.state.prompt,
+          message: "One or more recommendations are stale. Ask the advisor again before applying them.",
+        },
+        selectedProposalIds: [],
+      });
+      return;
+    }
+
+    if (consultation.target.kind === "installed-plugin" || consultation.target.kind === "installed-skill") {
+      const action = proposals.find((proposal) => proposal.operation === "select_action");
+      const matchingDetail = consultation.target.kind === "installed-plugin"
+        ? activeDetail?.item._plugin?.name === consultation.target.name
+          && activeDetail.item._plugin.marketplace === consultation.target.marketplace
+        : activeDetail?.item._skill?.diskPath === consultation.target.diskPath;
+      if (action && matchingDetail && activeDetail) {
+        const index = activeDetail.actions.findIndex((candidate) => candidate.id === action.target);
+        if (index >= 0) setActionIndex(index);
+      }
+      setConsultation(null);
+      return;
+    }
+
+    setConsultation(null);
+    for (const proposal of proposals) {
+      void applyProjectConsultationProposal(
+        consultation.target,
+        proposal.operation,
+        proposal.target,
+      );
+    }
+  };
+
   const activeMarketplaceDetail = useMemo((): { detail: MarketplaceDetailContext; actions: ReturnType<typeof getMarketplaceDetailActions> } | null => {
     if (detailMarketplace) {
       const detail: MarketplaceDetailContext = { kind: "plugin", marketplace: detailMarketplace };
@@ -1087,7 +1420,7 @@ export function App() {
   };
 
   type OverlayKind =
-    | "sourceSetupWizard" | "diff" | "missingSummary" | "editToolModal"
+    | "consultation" | "sourceSetupWizard" | "diff" | "missingSummary" | "editToolModal"
     | "addMarketplace" | "addPiMarketplace" | "addProject" | "adoptSkills" | "applyProfile" | "toolActionModal"
     | "toolDetail" | "itemDetail" | "marketplaceDetail";
   interface OverlayEntry {
@@ -1097,6 +1430,7 @@ export function App() {
     escClose?: () => void;
   }
   const overlayEntries: OverlayEntry[] = [
+    { kind: "consultation", active: consultation !== null, inputMode: "modal" },
     { kind: "sourceSetupWizard", active: showSourceSetupWizard, inputMode: "modal" },
     // diff/missingSummary self-handle Esc via their own useInput (multi-step back
     // nav, then close). Without an escClose here, .find() below would skip past
@@ -1480,6 +1814,43 @@ export function App() {
       return;
     }
 
+    if (input === "c" && !consultation) {
+      if (tab === "projects" && !activeOverlay) {
+        const project = projectDetailPath
+          ? projects.find((candidate) => candidate.path === projectDetailPath)
+          : projects[selectedIndex];
+        if (project) {
+          setConsultation({
+            target: { kind: "project", path: project.path },
+            state: { phase: "prompt" },
+            selectedProposalIds: [],
+          });
+          return;
+        }
+      }
+      if (tab === "installed" && activeOverlay?.kind === "itemDetail" && detailSkill?.installations.length) {
+        setConsultation({
+          target: { kind: "installed-skill", diskPath: detailSkill.diskPath },
+          state: { phase: "prompt" },
+          selectedProposalIds: [],
+        });
+        return;
+      }
+
+      if (tab === "installed" && activeOverlay?.kind === "itemDetail" && detailPlugin?.installed) {
+        setConsultation({
+          target: {
+            kind: "installed-plugin",
+            name: detailPlugin.name,
+            marketplace: detailPlugin.marketplace,
+          },
+          state: { phase: "prompt" },
+          selectedProposalIds: [],
+        });
+        return;
+      }
+    }
+
     // The Profiles tab builder (name input / skill picker / delete confirm) owns
     // input while engaged — including Esc, which backs out one builder step.
     // Without this, typed characters hit global single-key shortcuts (digits
@@ -1694,10 +2065,44 @@ export function App() {
     if (!sourcePaths) return null;
     const pluginDrift = detailPluginDrift ?? pluginDriftMap[plugin.name];
     if (!pluginDrift) return null;
+
+    // ── Shared-store branch (Component Status rows in plugin detail) ──
+    // Component status rows (Skills/Commands/Agents) carry instance
+    // { toolId: "agents", instanceId: "shared" } — a fictional identifier for
+    // the shared ~/.agents store. Real-tool lookup would fail, so this branch
+    // builds per-component diffs directly against ~/.agents.
+    if (toolId === "agents" && instanceId === "shared") {
+      const allFiles: DiffFileSummary[] = [];
+      const instance: DiffInstanceRef = {
+        toolId: "agents", instanceId: "shared",
+        instanceName: "~/.agents", configDir: "",
+      };
+      for (const [key, status] of Object.entries(pluginDrift)) {
+        if (status === "in-sync") continue;
+        const [kind, name] = key.split(":");
+        const srcSuffix = kind === "skill" ? name : `${name}.md`;
+        const srcPath = join(sourcePaths.pluginDir, `${kind}s`, srcSuffix);
+        let storePath: string | null = null;
+        if (kind === "skill") {
+          storePath = pluginSkillStorePath(plugin.name, name);
+        } else {
+          storePath = agentsComponentDir(kind as "command" | "agent", plugin.name, name);
+        }
+        if (!storePath) continue;
+        if (!existsSync(storePath)) continue;
+        try {
+          const dt = buildFileDiffTarget(`${kind}s/${name}`, srcSuffix, srcPath, storePath, instance);
+          allFiles.push(...dt.files);
+        } catch { /* skip */ }
+      }
+      return { kind: "file" as const, title: `${plugin.name} — Component diffs`, instance, files: allFiles };
+    }
+
+    // ── Per-tool branch (existing) ──
     const inst = tools.find((t) => t.toolId === toolId && t.instanceId === instanceId);
     if (!inst) return null;
 
-    const allFiles: import("./lib/types.js").DiffFileSummary[] = [];
+    const allFiles: DiffFileSummary[] = [];
     const instance: DiffInstanceRef = {
       toolId: inst.toolId, instanceId: inst.instanceId,
       instanceName: inst.name, configDir: inst.configDir,
@@ -1724,14 +2129,25 @@ export function App() {
     if (!toolStatus) return;
     const mkt = marketplaces.find((m) => m.name === plugin.marketplace);
     const { notify: n, clearNotification: cn } = useStore.getState();
-    const result = await withSpinner(`Installing ${plugin.name} to ${toolStatus.name}...`,
-      () => syncPluginInstances(plugin, mkt?.url, [toolStatus]), n, cn);
+    const result = await withSpinner(
+      `Installing ${plugin.name} to ${toolStatus.name}...`,
+      async () => {
+        try {
+          return await syncPluginInstances(plugin, mkt?.url, [toolStatus]);
+        } finally {
+          await useStore.getState().refreshAll({ silent: true });
+        }
+      },
+      n,
+      cn,
+    );
     const count = result.syncedInstances[`${toolStatus.toolId}:${toolStatus.instanceId}`] ?? 0;
-    n(count > 0
-      ? `✓ Installed ${plugin.name} to ${toolStatus.name} (${count})`
-      : `✗ Failed to install ${plugin.name} to ${toolStatus.name}: ${result.errors.join("; ") || "No components linked"}`,
-      count > 0 ? "success" : "error");
-    await useStore.getState().refreshAll({ silent: true });
+    n(
+      count > 0
+        ? `✓ Installed ${plugin.name} to ${toolStatus.name} (${count})`
+        : `✗ Failed to install ${plugin.name} to ${toolStatus.name}: ${result.errors.join("; ") || "No components linked"}`,
+      count > 0 ? "success" : "error",
+    );
   };
 
   // Uninstall plugin from specific tool instance (for unified dispatch)
@@ -1739,10 +2155,24 @@ export function App() {
     const toolStatus = getPluginToolStatus(plugin).find((s) => s.toolId === toolId && s.instanceId === instanceId);
     const { notify: n, clearNotification: cn } = useStore.getState();
     const name = toolStatus?.name ?? instanceId;
-    await withSpinner(`Uninstalling ${plugin.name} from ${name}...`,
-      () => Promise.resolve(uninstallPluginFromInstance(plugin, toolId, instanceId)), n, cn);
-    n(`✓ Uninstalled ${plugin.name} from ${name}`, "success");
-    await useStore.getState().refreshAll({ silent: true });
+    const removed = await withSpinner(
+      `Uninstalling ${plugin.name} from ${name}...`,
+      async () => {
+        try {
+          return await uninstallPluginFromInstance(plugin, toolId, instanceId);
+        } finally {
+          await useStore.getState().refreshAll({ silent: true });
+        }
+      },
+      n,
+      cn,
+    );
+    n(
+      removed
+        ? `✓ Uninstalled ${plugin.name} from ${name}`
+        : `✗ Failed to uninstall ${plugin.name} from ${name} — nothing was removed`,
+      removed ? "success" : "error",
+    );
   };
 
   const pullbackPluginInstanceCb = async (plugin: Plugin, instance: DiffInstanceRef) => {
@@ -1768,35 +2198,39 @@ export function App() {
     let copied = 0;
 
     await withSpinner(`Pulling ${plugin.name} from ${tool.name}...`, async () => {
-      for (const [driftKey, status] of Object.entries(pluginDrift)) {
-        if (status === "in-sync") continue;
+      try {
+        for (const [driftKey, status] of Object.entries(pluginDrift)) {
+          if (status === "in-sync") continue;
 
-        const [kind, name] = driftKey.split(":");
-        if (kind !== "skill" && kind !== "command" && kind !== "agent") continue;
+          const [kind, name] = driftKey.split(":");
+          if (kind !== "skill" && kind !== "command" && kind !== "agent") continue;
 
-        const suffix = kind === "skill" ? name : `${name}.md`;
-        const sourcePath = join(sourcePaths.pluginDir, `${kind}s`, suffix);
-        const targetPath = resolveInstalledPluginComponentPath(tool, plugin, kind, name);
+          const suffix = kind === "skill" ? name : `${name}.md`;
+          const sourcePath = join(sourcePaths.pluginDir, `${kind}s`, suffix);
+          const targetPath = resolveInstalledPluginComponentPath(tool, plugin, kind, name);
 
-        if (!targetPath || !existsSync(targetPath)) continue;
+          if (!targetPath || !existsSync(targetPath)) continue;
 
-        let hasDiff = false;
-        try {
-          const dt = buildFileDiffTarget(`${plugin.name}/${name}`, suffix, sourcePath, targetPath, instance);
-          hasDiff = dt.files.length > 0;
-        } catch {
-          hasDiff = false;
+          let hasDiff = false;
+          try {
+            const dt = buildFileDiffTarget(`${plugin.name}/${name}`, suffix, sourcePath, targetPath, instance);
+            hasDiff = dt.files.length > 0;
+          } catch {
+            hasDiff = false;
+          }
+          if (!hasDiff) continue;
+
+          if (kind === "skill") {
+            rmSync(sourcePath, { recursive: true, force: true });
+            cpSync(targetPath, sourcePath, { recursive: true });
+          } else {
+            mkdirSync(dirname(sourcePath), { recursive: true });
+            copyFileSync(targetPath, sourcePath);
+          }
+          copied += 1;
         }
-        if (!hasDiff) continue;
-
-        if (kind === "skill") {
-          rmSync(sourcePath, { recursive: true, force: true });
-          cpSync(targetPath, sourcePath, { recursive: true });
-        } else {
-          mkdirSync(dirname(sourcePath), { recursive: true });
-          copyFileSync(targetPath, sourcePath);
-        }
-        copied += 1;
+      } finally {
+        await useStore.getState().refreshAll({ silent: true });
       }
     }, n, cn);
 
@@ -1806,7 +2240,6 @@ export function App() {
       n(`⚠ No changed components to pull from ${tool.name}`, "warning");
     }
 
-    await useStore.getState().refreshAll({ silent: true });
     return copied > 0;
   };
 
@@ -1817,44 +2250,54 @@ export function App() {
     const action = actions[index];
     if (!action) return;
 
-    // Any dispatched action can rebuild the detail's action list with a different
-    // shape (e.g. "Uninstall from all tools" replaces per-instance rows with
-    // Sync rows and shifts everything after them up). actionIndex is a raw numeric
-    // position with no reclamp against the new list, so leaving it untouched can
-    // silently land the cursor on a DIFFERENT, more destructive row than the one
-    // just used (e.g. landing on "Delete everywhere" right after an uninstall,
-    // one keypress from wiping the source-repo copy too — with no confirm gate).
-    // Every action-list builder places bulk/destructive actions after the
-    // per-instance status rows, so index 0 is always the safe row to land on.
+    const mutatesDetail = MUTATING_DETAIL_ACTIONS[action.type] === true;
+    if (mutatesDetail && detailMutationInFlight.current) {
+      useStore.getState().notify("An action is already in progress.", "warning");
+      return;
+    }
+
+    // A mutation can rebuild the detail action list with a different shape.
+    // Resetting before dispatch prevents the cursor from silently landing on a
+    // different, potentially destructive action after reconciliation.
     setActionIndex(0);
-    await handleItemAction(item, action, buildDetailCallbacks({
-      detail,
-      setDetail,
-      setDetailPluginDrift,
-      closeDetail,
-      openSkillDetail,
-      openDiffForFile,
-      openMissingSummaryForFile,
-      installPlugin: doInstall,
-      uninstallPlugin: doUninstall,
-      updatePlugin: doUpdate,
-      trackPluginInSource: doTrackPlugin,
-      removePluginFromGit: doRemovePluginFromGit,
-      installPluginToInstance: installPluginToInstanceCb,
-      uninstallPluginFromInstance: uninstallPluginFromInstanceCb,
-      refreshDetailPlugin,
-      syncFiles: syncTools,
-      pullbackFileInstance,
-      pullbackPluginInstance: pullbackPluginInstanceCb,
-      installPiPackage: doInstallPiPkg,
-      uninstallPiPackage: doUninstallPiPkg,
-      updatePiPackage: doUpdatePiPkg,
-      trackPiPackageInSource: doTrackPiPkg,
-      removePiPackageFromGit: doRemovePiPkgFromGit,
-      deletePiPackageEverywhere: doDeletePiPkg,
-      refreshDetailPiPackage,
-      buildPluginDiffTarget: buildPluginDiffTargetCb,
-    }));
+    if (mutatesDetail) detailMutationInFlight.current = true;
+    try {
+      await handleItemAction(item, action, buildDetailCallbacks({
+        detail,
+        setDetail,
+        setDetailPluginDrift,
+        closeDetail,
+        openSkillDetail,
+        openDiffForFile,
+        openMissingSummaryForFile,
+        installPlugin: doInstall,
+        uninstallPlugin: doUninstall,
+        updatePlugin: doUpdate,
+        trackPluginInSource: doTrackPlugin,
+        removePluginFromGit: doRemovePluginFromGit,
+        installPluginToInstance: installPluginToInstanceCb,
+        uninstallPluginFromInstance: uninstallPluginFromInstanceCb,
+        refreshDetailPlugin,
+        syncFiles: syncTools,
+        pullbackFileInstance,
+        pullbackPluginInstance: pullbackPluginInstanceCb,
+        installPiPackage: doInstallPiPkg,
+        uninstallPiPackage: doUninstallPiPkg,
+        updatePiPackage: doUpdatePiPkg,
+        trackPiPackageInSource: doTrackPiPkg,
+        removePiPackageFromGit: doRemovePiPkgFromGit,
+        deletePiPackageEverywhere: doDeletePiPkg,
+        refreshDetailPiPackage,
+        buildPluginDiffTarget: buildPluginDiffTargetCb,
+      }));
+    } catch (error) {
+      useStore.getState().notify(
+        `Action failed: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
+    } finally {
+      if (mutatesDetail) detailMutationInFlight.current = false;
+    }
   };
 
   const handleMarketplaceDetailAction = (index: number) => {
@@ -2004,6 +2447,30 @@ export function App() {
   // predicate (which gates the underlying state) is true.
   const renderActiveOverlay = (): React.ReactNode => {
     switch (activeOverlay?.kind) {
+      case "consultation":
+        return (
+          <ConsultationPanel
+            state={consultation!.state}
+            selectedProposalIds={consultation!.selectedProposalIds}
+            onSubmit={(request) => { void runConsultation(consultation!.target, request); }}
+            onCancel={cancelConsultation}
+            onRetry={() => {
+              if (consultation!.state.phase === "error") {
+                void runConsultation(consultation!.target, consultation!.state.prompt);
+              }
+            }}
+            onToggleProposal={(proposalId) => {
+              setConsultation((current) => {
+                if (!current) return current;
+                const selectedProposalIds = current.selectedProposalIds.includes(proposalId)
+                  ? current.selectedProposalIds.filter((id) => id !== proposalId)
+                  : [...current.selectedProposalIds, proposalId];
+                return { ...current, selectedProposalIds };
+              });
+            }}
+            onAccept={acceptConsultationProposals}
+          />
+        );
       case "sourceSetupWizard":
         return (
           <SourceSetupWizard
@@ -2138,6 +2605,7 @@ export function App() {
         tab={tab}
         hasDetail={isOverlayOpen}
         toolsHint={toolsHint}
+        consultationAvailable={tab === "installed" && (detailPlugin?.installed === true || (detailSkill?.installations.length ?? 0) > 0)}
       />
       <StatusBar />
     </Box>

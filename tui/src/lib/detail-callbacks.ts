@@ -44,12 +44,23 @@ export async function runMutation(
   opts: { refresh: "plugins" | "files" },
 ): Promise<void> {
   const store = useStore.getState();
-  await withSpinner(label, fn, store.notify, store.clearNotification);
-  if (opts.refresh === "plugins") {
-    await useStore.getState().loadInstalledPlugins({ silent: true });
-  } else {
-    await useStore.getState().loadFiles({ silent: true });
-  }
+  await withSpinner(
+    label,
+    async () => {
+      try {
+        await fn();
+      } finally {
+        if (opts.refresh === "plugins") {
+          await useStore.getState().loadInstalledPlugins({ silent: true });
+        } else {
+          await useStore.getState().loadFiles({ silent: true });
+        }
+        useStore.getState().refreshDetail();
+      }
+    },
+    store.notify,
+    store.clearNotification,
+  );
 }
 
 /**

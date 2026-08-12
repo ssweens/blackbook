@@ -35,7 +35,23 @@ describe("buildMenuItems", () => {
     expect(actionIds).not.toContain("commit_push");
     expect(actionIds).toContain("pull");
   });
+  it("includes editable advisor runtime and model settings", () => {
+    expect(buildMenuItems(null)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "setting",
+        def: expect.objectContaining({
+          key: "consultation_runtime",
+          enumValues: ["pi", "claude-code", "opencode"],
+        }),
+      }),
+      expect.objectContaining({
+        kind: "setting",
+        def: expect.objectContaining({ key: "consultation_model", type: "text" }),
+      }),
+    ]));
+  });
 });
+
 
 describe("wouldDiscardLocalWork", () => {
   it("is false for a clean, up-to-date repo", () => {

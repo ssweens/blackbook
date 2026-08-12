@@ -6,6 +6,7 @@ interface HintBarProps {
   tab: Tab;
   hasDetail: boolean;
   toolsHint?: string;
+  consultationAvailable?: boolean;
 }
 
 const HINTS: Record<Tab, string> = {
@@ -14,12 +15,17 @@ const HINTS: Record<Tab, string> = {
   marketplaces: "Enter select · u update · r remove · R refresh · q quit",
   tools: "Enter detail · i install · u update · d uninstall · e edit config · Space toggle · R refresh · q quit",
   sync: "y to sync missing/changed items (press twice) · Enter details · d diff/detail · R refresh · q quit",
-  projects: "Enter open · a add · A adopt · P apply profile · d remove · (in project) p push · u pull · e toggle · d delete · Esc back · R refresh · q quit",
-  profiles: "n new · Enter/e edit · d delete · (in builder) Space toggle · →/← expand namespace · Enter save · Esc back · q quit",
+  projects: "Enter open · c consult advisor · a add · A adopt · P apply profile · d remove · (in project) p push · u pull · e toggle · d delete · Esc back · R refresh · q quit",
+  profiles: "n new · Enter/e edit · d delete · (in builder) Space toggle · c consult advisor · →/← expand namespace · Enter save · Esc back · q quit",
   settings: "↑/↓ select · Enter edit · Esc cancel · R refresh · q quit",
 };
 
-export const HintBar = React.memo(function HintBar({ tab, hasDetail, toolsHint }: HintBarProps) {
+export const HintBar = React.memo(function HintBar({
+  tab,
+  hasDetail,
+  toolsHint,
+  consultationAvailable = false,
+}: HintBarProps) {
   // toolsHint already fully accounts for every tools-tab state, INCLUDING Tool
   // Detail being open (it has its own detailTool branch) — so it must be
   // checked before the generic hasDetail hint, not after. The old order meant
@@ -31,7 +37,7 @@ export const HintBar = React.memo(function HintBar({ tab, hasDetail, toolsHint }
     tab === "tools" && toolsHint
       ? toolsHint
       : hasDetail
-        ? "↑/↓ to navigate · Enter to select · p pullback (if available) · Esc to back"
+        ? `↑/↓ to navigate · Enter to select${consultationAvailable ? " · c consult advisor" : ""} · p pullback (if available) · Esc to back`
         : HINTS[tab];
 
   return (

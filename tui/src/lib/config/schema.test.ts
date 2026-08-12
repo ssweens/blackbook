@@ -6,6 +6,8 @@ describe("ConfigSchema", () => {
     const result = ConfigSchema.parse({});
     expect(result.settings.package_manager).toBe("npm");
     expect(result.settings.skill_sync_mode).toBe("copy");
+    expect(result.settings.consultation_runtime).toBe("pi");
+    expect(result.settings.consultation_model).toBe("");
     expect(result.marketplaces).toEqual({});
     expect(result.tools).toEqual({});
     expect(result.files).toEqual([]);
@@ -15,6 +17,16 @@ describe("ConfigSchema", () => {
   it("accepts skill_sync_mode: symlink as an explicit opt-in", () => {
     const result = ConfigSchema.parse({ settings: { skill_sync_mode: "symlink" } });
     expect(result.settings.skill_sync_mode).toBe("symlink");
+  });
+
+  it("accepts only supported advisory runtimes and a bounded model override", () => {
+    const configured = ConfigSchema.parse({
+      settings: { consultation_runtime: "opencode", consultation_model: "openai/gpt-5.6" },
+    });
+    expect(configured.settings.consultation_runtime).toBe("opencode");
+    expect(configured.settings.consultation_model).toBe("openai/gpt-5.6");
+    expect(ConfigSchema.safeParse({ settings: { consultation_runtime: "other-cli" } }).success).toBe(false);
+    expect(ConfigSchema.safeParse({ settings: { consultation_model: "x".repeat(201) } }).success).toBe(false);
   });
 
   it("accepts a full config", () => {

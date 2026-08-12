@@ -212,6 +212,8 @@ function buildInitialYamlConfig(): BlackbookConfig {
       package_manager: "npm",
       backup_retention: 3,
       config_management: false,
+      consultation_runtime: "pi",
+      consultation_model: "",
       disabled_marketplaces: [],
       disabled_pi_marketplaces: [],
       skill_sync_mode: "copy",
@@ -528,6 +530,18 @@ export function getAssetsRepoPath(): string | null {
 export function getPackageManager(): PackageManager {
   const { config } = loadYamlConfig();
   return config.settings.package_manager;
+}
+
+/** Advisory runtime settings. An empty model keeps the runtime's configured default. */
+export function getConsultationSettings(): {
+  runtime: BlackbookConfig["settings"]["consultation_runtime"];
+  model: string;
+} {
+  const { config } = loadYamlConfig();
+  return {
+    runtime: config.settings.consultation_runtime,
+    model: config.settings.consultation_model,
+  };
 }
 
 /** Opt-in sync strategy for skill/plugin-component installs — never applies to config files. */
