@@ -1243,7 +1243,7 @@ describe("App E2E — Plugin Detail", () => {
       });
       sendKey(stdin, KEYS.enter);
       await waitForFrame(stdout.lastFrame, (frame) => frame.includes("The advisor’s recommendations are ready."));
-      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Review file-todos diff · select action"));
+      expect(stdout.lastFrame()).toContain("↓ more response below");
       expect(vi.mocked(runConsultation)).toHaveBeenCalledWith(expect.objectContaining({
         runtime: "opencode",
         model: "openai/gpt-5.6",
@@ -1251,6 +1251,7 @@ describe("App E2E — Plugin Detail", () => {
         prompt: expect.stringContaining("\"kind\":\"installed-skill\""),
       }));
       sendKey(stdin, KEYS.space);
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Review file-todos diff · select action"));
       sendKey(stdin, KEYS.enter);
       await waitForFrame(stdout.lastFrame, (frame) => frame.includes("❯ file-todos"));
       expect(useStore.getState().detail?.kind).toBe("skill");

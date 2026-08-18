@@ -1,12 +1,12 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { Box, Text, useInput } from "ink";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Box, Text, useInput, useStdout } from "ink";
 import TextInput from "ink-text-input";
 import type { ConsultationProposal, ConsultationResponse } from "../lib/consultation-context.js";
 
-const DEFAULT_VISIBLE_PROPOSALS = 6;
-const MAX_SUMMARY_LENGTH = 480;
-const MAX_ANALYSIS_LENGTH = 320;
-const MAX_REASON_LENGTH = 180;
+const MAX_RESPONSE_TEXT_LENGTH = 480;
+const MAX_PROPOSAL_REASON_LENGTH = 480;
+const RESULT_VIEWPORT_CHROME_ROWS = 20;
+const FOLLOW_UP_VIEWPORT_CHROME_ROWS = 25;
 export type ConsultationPanelState =
   | { phase: "prompt"; initialPrompt?: string }
   | { phase: "running"; prompt: string }
@@ -23,7 +23,19 @@ export interface ConsultationPanelProps {
   onToggleProposal: (proposalId: string) => void;
   onAccept: (proposalIds: string[]) => void;
   turnCount?: number;
-  maxVisibleProposals?: number;
+}
+
+interface ResultLine {
+  id: string;
+  text: string;
+  color?: string;
+  bold?: boolean;
+  dimColor?: boolean;
+}
+
+interface ResultLineSet {
+  lines: ResultLine[];
+  proposalLineIndexes: number[];
 }
 
 function displayText(value: string, maximumLength: number): string {
@@ -54,41 +66,149 @@ function displayProposalTarget(proposal: ConsultationProposal): string {
   return proposal.operation === "select_action" ? "Review selected action" : action;
 }
 
-function proposalViewport(
-  proposalCount: number,
-  selectedIndex: number,
-  visibleCount: number,
-): { start: number; end: number } {
-  const maxStart = Math.max(0, proposalCount - visibleCount);
-  const start = Math.min(
-    Math.max(0, selectedIndex - Math.floor(visibleCount / 2)),
-    maxStart,
-  );
-  return { start, end: Math.min(proposalCount, start + visibleCount) };
+function takeWrappedLine(value: string, maximumLength: number): [line: string, rest: string] {
+  if (value.length <= maximumLength) return [value, ""];
+  const boundary = value.lastIndexOf(" ", maximumLength);
+  const splitAt = boundary > 0 ? boundary : maximumLength;
+  return [value.slice(0, splitAt).trimEnd(), value.slice(splitAt).trimStart()];
 }
 
-function ProposalRow({
-  proposal,
-  active,
-  selected,
-  recommended,
-}: {
-  proposal: ConsultationProposal;
-  active: boolean;
-  selected: boolean;
-  recommended: boolean;
-}) {
-  return (
-    <Box flexDirection="column">
-      <Text color={active ? "cyan" : undefined} bold={active} wrap="truncate">
-        {active ? "❯ " : "  "}[{selected ? "x" : " "}] {displayText(displayProposalTarget(proposal), MAX_REASON_LENGTH)} · {proposal.operation.replace("_", " ")}
-        {recommended ? <Text color="cyan"> [recommended]</Text> : null}
-      </Text>
-      <Box marginLeft={4}>
-        <Text color="gray" wrap="truncate">{displayText(proposal.reason, MAX_REASON_LENGTH)}</Text>
-      </Box>
-    </Box>
-  );
+function appendWrappedLines(
+  lines: ResultLine[],
+  {
+    id,
+    value,
+    width,
+    firstPrefix = "",
+    continuationPrefix = firstPrefix,
+    color,
+    bold,
+    dimColor,
+  }: {
+    id: string;
+    value: string;
+    width: number;
+    firstPrefix?: string;
+    continuationPrefix?: string;
+    color?: string;
+    bold?: boolean;
+    dimColor?: boolean;
+  },
+): number {
+  const start = lines.length;
+  let remaining = value || "—";
+  let prefix = firstPrefix;
+  let index = 0;
+
+  do {
+    const [line, rest] = takeWrappedLine(remaining, Math.max(8, width - prefix.length));
+    lines.push({
+      id: `${id}-${index}`,
+      text: `${prefix}${line}`,
+      color,
+      bold,
+      dimColor,
+    });
+    remaining = rest;
+    prefix = continuationPrefix;
+    index += 1;
+  } while (remaining.length > 0);
+
+  return start;
+}
+
+function appendAssessmentField(
+  lines: ResultLine[],
+  id: string,
+  label: string,
+  value: string,
+  width: number,
+): void {
+  lines.push({ id: `${id}-label`, text: `  ${label}`, bold: true });
+  appendWrappedLines(lines, {
+    id: `${id}-content`,
+    value: displayText(value, MAX_RESPONSE_TEXT_LENGTH),
+    width,
+    firstPrefix: "    ",
+  });
+}
+
+function buildResultLines(
+  response: ConsultationResponse,
+  proposals: readonly ConsultationProposal[],
+  selectedIds: ReadonlySet<string>,
+  selectedIndex: number,
+  width: number,
+): ResultLineSet {
+  const lines: ResultLine[] = [];
+  const proposalLineIndexes: number[] = [];
+
+  lines.push({ id: "ready", text: "The advisor’s recommendations are ready.", color: "green" });
+  lines.push({ id: "ready-gap", text: "" });
+  lines.push({ id: "recommendation-heading", text: "Recommendation", bold: true });
+  appendWrappedLines(lines, {
+    id: "recommendation-content",
+    value: displayText(response.summary, MAX_RESPONSE_TEXT_LENGTH),
+    width,
+    firstPrefix: "  ",
+  });
+
+  lines.push({ id: "assessment-gap", text: "" });
+  lines.push({ id: "assessment-heading", text: "Assessment", bold: true });
+  appendAssessmentField(lines, "what-changed", "What changed", response.analysis.whatChanged, width);
+  appendAssessmentField(lines, "recency", "Recency", response.analysis.recency, width);
+  appendAssessmentField(lines, "why", "Why this is safest", response.analysis.assessment, width);
+
+  const recommendedProposal = response.analysis.recommendedProposalId
+    ? proposals.find((proposal) => proposal.id === response.analysis.recommendedProposalId)
+    : null;
+  lines.push({ id: "recommended-gap", text: "" });
+  lines.push({ id: "recommended-heading", text: "Recommended action", bold: true });
+  appendWrappedLines(lines, {
+    id: "recommended-content",
+    value: recommendedProposal
+      ? displayText(displayProposalTarget(recommendedProposal), MAX_RESPONSE_TEXT_LENGTH)
+      : "Keep the current state",
+    width,
+    firstPrefix: "  ",
+    color: "cyan",
+  });
+
+  lines.push({ id: "proposals-gap", text: "" });
+  lines.push({ id: "proposals-heading", text: "Proposals", bold: true });
+  if (proposals.length === 0) {
+    lines.push({ id: "no-proposals", text: "  The advisor did not suggest any actions.", color: "gray" });
+  } else {
+    proposals.forEach((proposal, index) => {
+      const active = index === selectedIndex;
+      const selected = selectedIds.has(proposal.id);
+      const recommended = proposal.id === response.analysis.recommendedProposalId;
+      const target = displayText(displayProposalTarget(proposal), MAX_RESPONSE_TEXT_LENGTH);
+      const action = proposal.operation.replace("_", " ");
+      proposalLineIndexes.push(appendWrappedLines(lines, {
+        id: `proposal-${proposal.id}`,
+        value: `${active ? "❯ " : "  "}[${selected ? "x" : " "}] ${target} · ${action}${recommended ? " · recommended" : ""}`,
+        width,
+        continuationPrefix: "    ",
+        color: active ? "cyan" : undefined,
+        bold: active,
+      }));
+      appendWrappedLines(lines, {
+        id: `proposal-reason-${proposal.id}`,
+        value: displayText(proposal.reason, MAX_PROPOSAL_REASON_LENGTH),
+        width,
+        firstPrefix: "    ",
+        color: "gray",
+        dimColor: true,
+      });
+    });
+  }
+
+  return { lines, proposalLineIndexes };
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(Math.max(value, minimum), maximum);
 }
 
 export function ConsultationPanel({
@@ -101,17 +221,51 @@ export function ConsultationPanel({
   onToggleProposal,
   onAccept,
   turnCount = 0,
-  maxVisibleProposals = DEFAULT_VISIBLE_PROPOSALS,
 }: ConsultationPanelProps) {
+  const { stdout } = useStdout();
   const initialPrompt = state.phase === "prompt" ? state.initialPrompt ?? "" : "";
   const [prompt, setPrompt] = useState(initialPrompt);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [followUpOpen, setFollowUpOpen] = useState(false);
   const [followUpPrompt, setFollowUpPrompt] = useState("");
-  const visibleCount = Math.max(1, Math.floor(maxVisibleProposals));
+  const [resultScroll, setResultScroll] = useState(0);
+  const previousSelectedProposalId = useRef<string | null>(null);
   const response = state.phase === "result" ? state.response : null;
   const proposals = response?.proposals ?? [];
   const proposalKey = proposals.map((proposal) => proposal.id).join("\u0000");
+  const responseKey = response
+    ? [
+      response.summary,
+      response.analysis.recommendedProposalId ?? "",
+      response.analysis.whatChanged,
+      response.analysis.recency,
+      response.analysis.assessment,
+      ...proposals.flatMap((proposal) => [proposal.id, proposal.reason]),
+    ].join("\u0000")
+    : "";
+  const selectedIds = useMemo(() => new Set(selectedProposalIds), [selectedProposalIds]);
+  const terminalRows = stdout?.rows ?? 24;
+  const contentWidth = Math.max(20, (stdout?.columns ?? 80) - 6);
+  const resultViewportRows = Math.max(
+    3,
+    terminalRows - (followUpOpen ? FOLLOW_UP_VIEWPORT_CHROME_ROWS : RESULT_VIEWPORT_CHROME_ROWS),
+  );
+  const resultLineSet = useMemo(
+    () => response
+      ? buildResultLines(response, proposals, selectedIds, selectedIndex, contentWidth)
+      : { lines: [], proposalLineIndexes: [] },
+    [contentWidth, proposals, response, selectedIds, selectedIndex],
+  );
+  const maximumResultScroll = Math.max(0, resultLineSet.lines.length - resultViewportRows);
+  const visibleResultStart = clamp(resultScroll, 0, maximumResultScroll);
+  const visibleResultLines = resultLineSet.lines.slice(
+    visibleResultStart,
+    visibleResultStart + resultViewportRows,
+  );
+  const selectedProposalId = proposals[selectedIndex]?.id ?? null;
+  const selectedProposalLineIndex = selectedProposalId === null
+    ? null
+    : resultLineSet.proposalLineIndexes[selectedIndex] ?? null;
 
   useEffect(() => {
     setPrompt(initialPrompt);
@@ -123,12 +277,35 @@ export function ConsultationPanel({
     setSelectedIndex((current) => Math.min(current, Math.max(0, proposals.length - 1)));
   }, [proposalKey, proposals.length]);
 
-  const selectedIds = useMemo(() => new Set(selectedProposalIds), [selectedProposalIds]);
-  const viewport = proposalViewport(proposals.length, selectedIndex, visibleCount);
-  const visibleProposals = proposals.slice(viewport.start, viewport.end);
+  useEffect(() => {
+    setResultScroll(0);
+  }, [responseKey]);
+
+  useEffect(() => {
+    if (state.phase !== "result" || selectedProposalId === null || selectedProposalLineIndex === null) {
+      previousSelectedProposalId.current = null;
+      return;
+    }
+    const previous = previousSelectedProposalId.current;
+    previousSelectedProposalId.current = selectedProposalId;
+    if (previous === null || previous === selectedProposalId) return;
+
+    setResultScroll((current) => {
+      const scroll = clamp(current, 0, maximumResultScroll);
+      if (selectedProposalLineIndex < scroll) return selectedProposalLineIndex;
+      if (selectedProposalLineIndex >= scroll + resultViewportRows) {
+        return selectedProposalLineIndex - resultViewportRows + 1;
+      }
+      return scroll;
+    });
+  }, [maximumResultScroll, resultViewportRows, selectedProposalId, selectedProposalLineIndex, state.phase]);
 
   const submitPrompt = () => {
     onSubmit(prompt.trim());
+  };
+
+  const scrollResult = (amount: number) => {
+    setResultScroll((current) => clamp(current + amount, 0, maximumResultScroll));
   };
 
   useInput((input, key) => {
@@ -159,12 +336,28 @@ export function ConsultationPanel({
       if (key.return) onRetry();
       return;
     }
+
+    if (key.pageUp || (key.ctrl && input === "u")) {
+      scrollResult(-resultViewportRows);
+      return;
+    }
+    if (key.pageDown || (key.ctrl && input === "d")) {
+      scrollResult(resultViewportRows);
+      return;
+    }
+    if (key.home) {
+      setResultScroll(0);
+      return;
+    }
+    if (key.end) {
+      setResultScroll(maximumResultScroll);
+      return;
+    }
     if (input === "c") {
       setFollowUpOpen(true);
       setFollowUpPrompt("");
       return;
     }
-
 
     if (proposals.length === 0) return;
 
@@ -177,6 +370,16 @@ export function ConsultationPanel({
       return;
     }
     if (input === " ") {
+      if (selectedProposalLineIndex !== null) {
+        setResultScroll((current) => {
+          const scroll = clamp(current, 0, maximumResultScroll);
+          if (selectedProposalLineIndex < scroll) return selectedProposalLineIndex;
+          if (selectedProposalLineIndex >= scroll + resultViewportRows) {
+            return selectedProposalLineIndex - resultViewportRows + 1;
+          }
+          return scroll;
+        });
+      }
       onToggleProposal(proposals[selectedIndex].id);
       return;
     }
@@ -211,7 +414,7 @@ export function ConsultationPanel({
         <>
           <Text color="cyan">The advisor is reviewing your request…</Text>
           <Box marginTop={1}>
-            <Text color="gray" wrap="truncate">{displayText(state.prompt, MAX_REASON_LENGTH)}</Text>
+            <Text color="gray" wrap="truncate">{displayText(state.prompt, MAX_RESPONSE_TEXT_LENGTH)}</Text>
           </Box>
           <Text color="gray" italic>Esc to cancel</Text>
         </>
@@ -221,7 +424,7 @@ export function ConsultationPanel({
         <>
           <Text color="red">The advisor could not complete this consultation.</Text>
           <Box marginTop={1} marginBottom={1}>
-            <Text color="gray" wrap="wrap">{displayText(state.message, MAX_SUMMARY_LENGTH)}</Text>
+            <Text color="gray" wrap="wrap">{displayText(state.message, MAX_RESPONSE_TEXT_LENGTH)}</Text>
           </Box>
           <Text color="gray" italic>Enter to retry · Esc to cancel</Text>
         </>
@@ -229,52 +432,28 @@ export function ConsultationPanel({
 
       {state.phase === "result" && (
         <>
-          <Box flexDirection="column" marginBottom={1}>
-            <Text color="green">The advisor’s recommendations are ready.</Text>
-            <Text wrap="wrap">{displayText(state.response.summary, MAX_SUMMARY_LENGTH)}</Text>
-          </Box>
-          <Box flexDirection="column" marginBottom={1}>
-            <Text bold>Advisor assessment</Text>
-            <Text wrap="wrap">What changed: {displayText(state.response.analysis.whatChanged, MAX_ANALYSIS_LENGTH)}</Text>
-            <Text color="gray" wrap="wrap">Recency: {displayText(state.response.analysis.recency, MAX_ANALYSIS_LENGTH)}</Text>
-            <Text color="gray" wrap="wrap">Why: {displayText(state.response.analysis.assessment, MAX_ANALYSIS_LENGTH)}</Text>
-            {state.response.analysis.recommendedProposalId ? (
-              <Text color="cyan">
-                Recommended: {displayText(
-                  displayProposalTarget(
-                    proposals.find((proposal) => proposal.id === state.response.analysis.recommendedProposalId)!,
-                  ),
-                  MAX_REASON_LENGTH,
-                )}
+          <Box flexDirection="column">
+            {visibleResultStart > 0 && (
+              <Text color="gray" dimColor>↑ more response above</Text>
+            )}
+            {visibleResultLines.map((line) => (
+              <Text
+                key={line.id}
+                color={line.color}
+                bold={line.bold}
+                dimColor={line.dimColor}
+                wrap="truncate"
+              >
+                {line.text}
               </Text>
-            ) : (
-              <Text color="cyan">Recommended: Keep the current state</Text>
+            ))}
+            {visibleResultStart + visibleResultLines.length < resultLineSet.lines.length && (
+              <Text color="gray" dimColor>↓ more response below</Text>
             )}
           </Box>
 
-          {proposals.length > 0 ? (
-            <Box flexDirection="column" marginBottom={1}>
-              <Text bold>Proposals</Text>
-              {viewport.start > 0 && <Text color="gray">↑ more proposals above</Text>}
-              {visibleProposals.map((proposal, offset) => (
-                <ProposalRow
-                  key={proposal.id}
-                  proposal={proposal}
-                  active={viewport.start + offset === selectedIndex}
-                  selected={selectedIds.has(proposal.id)}
-                  recommended={proposal.id === state.response.analysis.recommendedProposalId}
-                />
-              ))}
-              {viewport.end < proposals.length && <Text color="gray">↓ more proposals below</Text>}
-            </Box>
-          ) : (
-            <Box marginBottom={1}>
-              <Text color="gray">The advisor did not suggest any actions.</Text>
-            </Box>
-          )}
-
           {followUpOpen && (
-            <Box flexDirection="column" marginBottom={1}>
+            <Box flexDirection="column" marginTop={1} marginBottom={1}>
               <Text bold>Ask a follow-up</Text>
               <Box marginTop={1}>
                 <TextInput
@@ -288,7 +467,8 @@ export function ConsultationPanel({
           )}
 
           {!followUpOpen && (
-            <Text color="gray" italic>
+            <Text color="gray" italic wrap="truncate">
+              {maximumResultScroll > 0 ? "PgUp/PgDn read · " : ""}
               {proposals.length > 0
                 ? "↑↓ select · Space toggle · Enter accept selected · c continue · Esc to close"
                 : "c continue · Esc to close"}

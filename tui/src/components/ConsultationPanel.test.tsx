@@ -52,14 +52,17 @@ describe("ConsultationPanel", () => {
     );
 
     expect(lastFrame()).toContain("Consult advisor");
-    expect(lastFrame()).toContain("Install search tools");
-    expect(lastFrame()).toContain("Advisor assessment");
-    expect(lastFrame()).toContain("Recommended: Install search tools");
-    expect(lastFrame()).toContain("What changed:");
-    expect(lastFrame()).toContain("[recommended]");
+    expect(lastFrame()).toContain("The advisor’s recommendations are ready.");
+    expect(lastFrame()).toContain("Recommendation");
+    expect(lastFrame()).toContain("↓ more response below");
+    expect(lastFrame()).not.toContain("Install search tools");
 
     act(() => {
       stdin.write(" ");
+    });
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain("Install search tools");
+      expect(lastFrame()).toContain("↑ more response above");
     });
     act(() => {
       stdin.write("\u001B[B");
@@ -77,6 +80,42 @@ describe("ConsultationPanel", () => {
     expect(handlers.onToggleProposal).toHaveBeenCalledWith("install-search");
     expect(handlers.onAccept).toHaveBeenCalledWith(["disable-legacy"]);
     expect(handlers.onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("pages through long responses without truncating their answer fields", async () => {
+    const handlers = callbacks();
+    const tail = "The final evidence remains available after paging.";
+    const { stdin, lastFrame } = render(
+      <ConsultationPanel
+        state={{
+          phase: "result",
+          prompt: "",
+          response: {
+            summary: `Start. ${"More detail. ".repeat(28)}${tail}`,
+            analysis: {
+              recommendedProposalId: null,
+              whatChanged: "No state changed.",
+              recency: "No timestamps are available.",
+              assessment: "Keeping the current state is safe.",
+            },
+            proposals: [],
+          },
+        }}
+        selectedProposalIds={[]}
+        {...handlers}
+      />,
+    );
+
+    expect(lastFrame()).toContain("Start.");
+    expect(lastFrame()).not.toContain(tail);
+
+    act(() => {
+      stdin.write("\u001B[6~");
+    });
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain("↑ more response above");
+      expect(lastFrame()).toContain(tail);
+    });
   });
 
   it("opens a follow-up input without closing the consultation", async () => {
