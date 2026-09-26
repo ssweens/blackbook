@@ -61,7 +61,7 @@ afterEach(() => {
 });
 
 describe("installMcpServersToInstance", () => {
-  it("writes to settings.json for a Claude instance", async () => {
+  it("writes to <configDir>/.claude.json for a Claude instance (where `claude mcp add` writes)", async () => {
     const pluginDir = join(TEST_ROOT, "plugin-claude");
     writePluginMcpJson(pluginDir, { search: { command: "npx", args: ["search-mcp"] } });
     const instance = claudeInstance(join(TEST_ROOT, "claude"));
@@ -72,11 +72,69 @@ describe("installMcpServersToInstance", () => {
     expect(result.count).toBe(1);
     expect(result.errors).toHaveLength(0);
 
-    // Should write to <configDir>/settings.json
-    const settingsPath = join(TEST_ROOT, "claude", "settings.json");
+    // Should write to <configDir>/.claude.json (settings.json is not read for MCP)
+    const settingsPath = join(TEST_ROOT, "claude", ".claude.json");
     expect(existsSync(settingsPath)).toBe(true);
     const written = JSON.parse(readFileSync(settingsPath, "utf-8"));
     expect(written.mcpServers.search).toEqual({ command: "npx", args: ["search-mcp"] });
+  });
+
+  it("resolves ${CLAUDE_PLUGIN_ROOT} to the plugin directory (Claude and Pi)", async () => {
+    const pluginDir = join(TEST_ROOT, "plugin-root-vars");
+    writePluginMcpJson(pluginDir, {
+      daw: {
+        command: "python3",
+        args: ["-m", "server", "--root", "$CLAUDE_PLUGIN_ROOT/x"],
+        cwd: "${CLAUDE_PLUGIN_ROOT}/daw",
+        env: { PYTHONPATH: "${CLAUDE_PLUGIN_ROOT}/daw", KEEP: "$CLAUDE_PLUGIN_ROOTS" },
+      },
+    });
+    const claudeDir = join(TEST_ROOT, "claude-vars");
+    mkdirSync(claudeDir, { recursive: true });
+    await installMcpServersToInstance("demo-plugin", pluginDir, claudeInstance(claudeDir));
+    const written = JSON.parse(readFileSync(join(claudeDir, ".claude.json"), "utf-8")).mcpServers.daw;
+    expect(written.cwd).toBe(join(pluginDir, "daw"));
+    expect(written.env.PYTHONPATH).toBe(join(pluginDir, "daw"));
+    expect(written.args).toEqual(["-m", "server", "--root", join(pluginDir, "x")]);
+    // Only the exact variable is replaced, not a longer name that starts with it.
+    expect(written.env.KEEP).toBe("$CLAUDE_PLUGIN_ROOTS");
+    expect(JSON.stringify(written)).not.toContain("${CLAUDE_PLUGIN_ROOT}");
+
+    await installMcpServersToInstance("demo-plugin", pluginDir, piInstance(join(TEST_ROOT, "pi-vars")));
+    const pi = JSON.parse(readFileSync(join(TEST_HOME, ".config", "mcp", "mcp.json"), "utf-8")).mcpServers.daw;
+    expect(pi.cwd).toBe(join(pluginDir, "daw"));
+  });
+
+  it("keeps every other .claude.json key, clears a legacy settings.json entry, and refuses unreadable JSON", async () => {
+    const pluginDir = join(TEST_ROOT, "plugin-merge");
+    writePluginMcpJson(pluginDir, { search: { command: "npx", args: ["search-mcp"] } });
+    const claudeDir = join(TEST_ROOT, "claude-merge");
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(join(claudeDir, ".claude.json"), JSON.stringify({ oauthAccount: { id: 1 }, projects: { "/p": {} }, mcpServers: { other: { command: "x" } } }));
+    writeFileSync(join(claudeDir, "settings.json"), JSON.stringify({ theme: "dark", mcpServers: { search: { command: "stale" } } }));
+
+    const r = await installMcpServersToInstance("demo-plugin", pluginDir, claudeInstance(claudeDir));
+    expect(r.errors).toEqual([]);
+    const cfg = JSON.parse(readFileSync(join(claudeDir, ".claude.json"), "utf-8"));
+    expect(cfg.oauthAccount).toEqual({ id: 1 });
+    expect(cfg.projects).toEqual({ "/p": {} });
+    expect(Object.keys(cfg.mcpServers).sort()).toEqual(["other", "search"]);
+    const settings = JSON.parse(readFileSync(join(claudeDir, "settings.json"), "utf-8"));
+    expect(settings).toEqual({ theme: "dark", mcpServers: {} });
+
+    writeFileSync(join(claudeDir, ".claude.json"), "{ not json");
+    const bad = await installMcpServersToInstance("demo-plugin", pluginDir, claudeInstance(claudeDir));
+    expect(bad.count).toBe(0);
+    expect(bad.errors.length).toBe(1);
+    expect(readFileSync(join(claudeDir, ".claude.json"), "utf-8")).toBe("{ not json");
+  });
+
+  it("uses ~/.claude.json for the default ~/.claude instance", async () => {
+    const pluginDir = join(TEST_ROOT, "plugin-default");
+    writePluginMcpJson(pluginDir, { search: { command: "npx" } });
+    await installMcpServersToInstance("demo-plugin", pluginDir, claudeInstance("~/.claude"));
+    expect(JSON.parse(readFileSync(join(TEST_HOME, ".claude.json"), "utf-8")).mcpServers.search).toEqual({ command: "npx" });
+    expect(existsSync(join(TEST_HOME, ".claude", ".claude.json"))).toBe(false);
   });
 
   it("writes a merged ~/.config/mcp/mcp.json for a Pi instance", async () => {
@@ -109,7 +167,7 @@ describe("installMcpServersToInstance", () => {
 });
 
 describe("uninstallMcpServersFromInstance", () => {
-  it("removes only the servers owned by the given plugin from Claude settings.json", async () => {
+  it("removes only the servers owned by the given plugin from Claude's .claude.json", async () => {
     const pluginDir = join(TEST_ROOT, "plugin-claude");
     writePluginMcpJson(pluginDir, { search: { command: "npx" } });
     const instance = claudeInstance(join(TEST_ROOT, "claude"));
@@ -119,8 +177,8 @@ describe("uninstallMcpServersFromInstance", () => {
     const removed = await uninstallMcpServersFromInstance("demo-plugin", instance);
 
     expect(removed).toBe(1);
-    // settings.json should have empty mcpServers
-    const settingsPath = join(TEST_ROOT, "claude", "settings.json");
+    // .claude.json should have empty mcpServers
+    const settingsPath = join(TEST_ROOT, "claude", ".claude.json");
     const written = JSON.parse(readFileSync(settingsPath, "utf-8"));
     expect(written.mcpServers).toEqual({});
   });

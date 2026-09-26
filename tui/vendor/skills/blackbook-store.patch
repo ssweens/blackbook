@@ -1,0 +1,618 @@
+diff --git a/src/add.ts b/src/add.ts
+index 2de9f59..3f9836a 100644
+--- a/src/add.ts
++++ b/src/add.ts
+@@ -49,6 +49,7 @@ import {
+   saveSelectedAgents,
+ } from './skill-lock.ts';
+ import { addSkillToLocalLock, computeSkillFolderHash } from './local-lock.ts';
++import { getDevShortcut, getStoreKey } from './store.ts';
+ import type { Skill, AgentType } from './types.ts';
+ import {
+   tryBlobInstall,
+@@ -649,6 +650,8 @@ async function handleWellKnownSkills(
+   options: AddOptions,
+   spinner: ReturnType<typeof p.spinner>
+ ): Promise<boolean> {
++  // BLACKBOOK PATCH: store namespace for this well-known endpoint.
++  const storeKey = getStoreKey({ type: 'well-known', url });
+   spinner.start('Discovering skills from well-known endpoint...');
+ 
+   // Fetch all skills from the well-known endpoint
+@@ -877,10 +880,10 @@ async function handleWellKnownSkills(
+     }
+ 
+     installMode = modeChoice as InstallMode;
+-  } else if (uniqueDirs.size <= 1) {
+-    // Single target directory — default to copy (no symlink needed)
+-    installMode = 'copy';
+   }
++  // BLACKBOOK PATCH: upstream forces copy when every target shares one
++  // directory. With the central store there is always something to link, so
++  // installs stay in symlink mode unless `--copy` is given.
+ 
+   const cwd = process.cwd();
+ 
+@@ -909,7 +912,7 @@ async function handleWellKnownSkills(
+   for (const skill of selectedSkills) {
+     if (summaryLines.length > 0) summaryLines.push('');
+ 
+-    const canonicalPath = getCanonicalPath(skill.installName, { global: installGlobally });
++    const canonicalPath = getCanonicalPath(skill.installName, { global: installGlobally, storeKey });
+     const shortCanonical = shortenPath(canonicalPath, cwd);
+     summaryLines.push(`${pc.cyan(shortCanonical)}`);
+     summaryLines.push(...buildAgentSummaryLines(targetAgents, installMode));
+@@ -960,6 +963,7 @@ async function handleWellKnownSkills(
+       const result = await installWellKnownSkillForAgent(skill, agent, {
+         global: installGlobally,
+         mode: installMode,
++        storeKey,
+       });
+       results.push({
+         skill: skill.installName,
+@@ -1283,6 +1287,13 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
+ 
+     spinner.start('Parsing source…');
+     const parsed = parseSource(effectiveSource);
++    // BLACKBOOK PATCH: store namespace for this source (one copy per source+skill).
++    const storeKey = getStoreKey(parsed);
++    // BLACKBOOK PATCH: dev shortcut — a local checkout standing in for this git source.
++    const devRoot =
++      parsed.type === 'github' || parsed.type === 'gitlab' || parsed.type === 'git'
++        ? getDevShortcut(storeKey)
++        : null;
+     let directDownload = parsed.type === 'download' || notionSourceLabel !== null;
+     spinner.stop(
+       notionSourceLabel !== null
+@@ -1340,7 +1351,15 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
+     let skills: Skill[];
+     let blobResult: BlobInstallResult | null = null;
+ 
+-    if (parsed.type === 'local') {
++    if (devRoot) {
++      // BLACKBOOK PATCH: discover from the dev-shortcut checkout; no network.
++      spinner.start('Discovering skills…');
++      skills = await discoverSkills(devRoot, parsed.subpath, {
++        includeInternal,
++        fullDepth: options.fullDepth,
++      });
++      spinner.stop(`Using dev shortcut ${devRoot}`);
++    } else if (parsed.type === 'local') {
+       // Use local path directly, no cloning needed
+       spinner.start('Validating local path…');
+       if (!existsSync(parsed.localPath!)) {
+@@ -1805,8 +1824,11 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
+       }
+ 
+       installMode = modeChoice as InstallMode;
+-    } else if (uniqueDirs.size <= 1 || allEve) {
+-      // Single target directory (or all-Eve) — default to copy (no symlink needed)
++    } else if (allEve) {
++      // All-Eve — default to copy (no symlink needed).
++      // BLACKBOOK PATCH: upstream also forces copy for a single target
++      // directory; with the central store there is always something to link,
++      // so installs stay in symlink mode unless `--copy` is given.
+       installMode = 'copy';
+     }
+ 
+@@ -1862,8 +1884,9 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
+                 global: installGlobally,
+                 agent: installTargets[0]!.agent,
+                 eveSubagent: installTargets[0]!.subagent,
++                storeKey,
+               })
+-            : getCanonicalPath(skill.name, { global: installGlobally });
++            : getCanonicalPath(skill.name, { global: installGlobally, storeKey });
+         const shortCanonical = shortenPath(canonicalPath, cwd);
+         summaryLines.push(`${pc.cyan(shortCanonical)}`);
+         summaryLines.push(...buildTargetSummaryLines(installTargets, installMode));
+@@ -1967,6 +1990,7 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
+               mode: installMode,
+               eveSubagent: subagent,
+               createMissingAgentRoot: explicitlySelectedAgents.has(agent),
++              storeKey,
+             }
+           );
+         } else {
+@@ -1980,6 +2004,8 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
+             mode: installMode,
+             eveSubagent: subagent,
+             createMissingAgentRoot: explicitlySelectedAgents.has(agent),
++            storeKey,
++            devLink: devRoot !== null,
+           });
+         }
+         results.push({
+@@ -2004,6 +2030,12 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
+       if (blobResult && 'repoPath' in skill) {
+         // Blob-based: repoPath is already the repo-relative path (e.g., "skills/react/SKILL.md")
+         skillFiles[skill.name] = (skill as BlobSkill).repoPath;
++      } else if (devRoot && (skill.path === devRoot || skill.path.startsWith(devRoot + sep))) {
++        // BLACKBOOK PATCH: dev shortcut — path relative to the checkout root.
++        skillFiles[skill.name] =
++          skill.path === devRoot
++            ? 'SKILL.md'
++            : skill.path.slice(devRoot.length + 1).split(sep).join('/') + '/SKILL.md';
+       } else if (tempDir && skill.path === tempDir) {
+         // Skill is at root level of repo
+         skillFiles[skill.name] = 'SKILL.md';
+diff --git a/src/installer.ts b/src/installer.ts
+index 71ebe2a..926dfc4 100644
+--- a/src/installer.ts
++++ b/src/installer.ts
+@@ -26,6 +26,7 @@ import {
+   EVE_SUBAGENTS_DIR,
+ } from './agents.ts';
+ import { AGENTS_DIR, SKILLS_SUBDIR } from './constants.ts';
++import { getStoreDir, isInStore } from './store.ts';
+ import { parseFrontmatter } from './frontmatter.ts';
+ import { stringify } from 'yaml';
+ import { parseSkillMd } from './skills.ts';
+@@ -39,6 +40,10 @@ interface InstallOptions {
+   eveSubagent?: string;
+   /** Create a missing agent-specific project root because the user selected this agent. */
+   createMissingAgentRoot?: boolean;
++  /** BLACKBOOK PATCH: store namespace for project installs (see store.ts). */
++  storeKey?: string;
++  /** BLACKBOOK PATCH: dev shortcut — make the store entry a live symlink to skill.path. */
++  devLink?: boolean;
+ }
+ 
+ interface InstallResult {
+@@ -125,11 +130,30 @@ async function isDirEntryOrSymlinkToDir(
+   }
+ }
+ 
+-export function getCanonicalSkillsDir(global: boolean, cwd?: string): string {
++/**
++ * BLACKBOOK PATCH: with a `storeKey`, installs (project and global) write their
++ * real files to the central store (see store.ts) instead of `.agents/skills`.
++ * Without one, this still returns the directory agents read — `.agents/skills`
++ * in the project or `~/.agents/skills` globally, both now holding symlinks —
++ * which is what list/remove scan.
++ */
++export function getCanonicalSkillsDir(global: boolean, cwd?: string, storeKey?: string): string {
++  if (storeKey) return getStoreDir(storeKey);
+   const baseDir = global ? homedir() : cwd || process.cwd();
+   return join(baseDir, AGENTS_DIR, SKILLS_SUBDIR);
+ }
+ 
++/** BLACKBOOK PATCH: symlink installs must say which store namespace they belong to. */
++function missingStoreKeyError(
++  isGlobal: boolean,
++  mode: InstallMode,
++  agentType: AgentType,
++  storeKey: string | undefined
++): string | null {
++  if (mode !== 'symlink' || agentType === 'eve' || storeKey) return null;
++  return `Internal error: ${isGlobal ? 'global' : 'project'} install has no store key (blackbook store patch)`;
++}
++
+ /**
+  * Resolve the skills directory for a specific Eve subagent, relative to the
+  * project root: `agent/subagents/<name>/skills`. The subagent name is
+@@ -283,7 +307,10 @@ async function createSymlink(target: string, linkPath: string): Promise<boolean>
+     const realLinkDir = await resolveParentSymlinks(linkDir);
+     const relativePath = relative(realLinkDir, target);
+     const symlinkType = platform() === 'win32' ? 'junction' : undefined;
+-    const symlinkTarget = symlinkType === 'junction' ? resolvedTarget : relativePath;
++    // BLACKBOOK PATCH: links into the central store are absolute so a project
++    // keeps working when it is moved or cloned to a different depth.
++    const symlinkTarget =
++      symlinkType === 'junction' || isInStore(resolvedTarget) ? resolvedTarget : relativePath;
+ 
+     await symlink(symlinkTarget, linkPath, symlinkType);
+     return true;
+@@ -322,8 +349,12 @@ export async function installSkillForAgent(
+   const canonicalBase =
+     agentType === 'eve' && installMode === 'symlink'
+       ? getAgentBaseDir(agentType, isGlobal, cwd, eveSubagent)
+-      : getCanonicalSkillsDir(isGlobal, cwd);
++      : getCanonicalSkillsDir(isGlobal, cwd, options.storeKey);
+   const canonicalDir = join(canonicalBase, skillName);
++  const storeKeyError = missingStoreKeyError(isGlobal, installMode, agentType, options.storeKey);
++  if (storeKeyError) {
++    return { success: false, path: canonicalDir, mode: installMode, error: storeKeyError };
++  }
+ 
+   // Agent-specific location (for symlink)
+   const agentBase = getAgentBaseDir(agentType, isGlobal, cwd, eveSubagent);
+@@ -386,13 +417,21 @@ export async function installSkillForAgent(
+     }
+ 
+     // Symlink mode: copy to canonical location and symlink to agent location
+-    await cleanAndCreateDirectory(canonicalDir);
+-    await copyDirectory(skill.path, canonicalDir, agentType);
++    if (options.devLink && options.storeKey) {
++      // BLACKBOOK PATCH: dev shortcut — the store entry links to the live checkout.
++      await rm(canonicalDir, { recursive: true, force: true });
++      await mkdir(dirname(canonicalDir), { recursive: true });
++      await symlink(resolve(skill.path), canonicalDir, platform() === 'win32' ? 'junction' : undefined);
++    } else {
++      await cleanAndCreateDirectory(canonicalDir);
++      await copyDirectory(skill.path, canonicalDir, agentType);
++    }
+ 
+     // For universal agents with global install, the skill is already in the canonical
+     // ~/.agents/skills directory. Skip creating a symlink to the agent-specific global dir
+     // (e.g. ~/.copilot/skills) to avoid duplicates.
+-    if (isGlobal && isUniversalAgent(agentType)) {
++    // BLACKBOOK PATCH: with the store, ~/.agents/skills/<name> is a link, not the copy.
++    if (isGlobal && isUniversalAgent(agentType) && resolve(canonicalDir) === resolve(agentDir)) {
+       return {
+         success: true,
+         path: canonicalDir,
+@@ -629,13 +668,20 @@ export function getInstallPath(
+  */
+ export function getCanonicalPath(
+   skillName: string,
+-  options: { global?: boolean; cwd?: string; agent?: AgentType; eveSubagent?: string } = {}
++  options: {
++    global?: boolean;
++    cwd?: string;
++    agent?: AgentType;
++    eveSubagent?: string;
++    /** BLACKBOOK PATCH: resolve inside the store instead of the project's link dir. */
++    storeKey?: string;
++  } = {}
+ ): string {
+   const sanitized = sanitizeName(skillName);
+   const canonicalBase =
+     options.agent === 'eve'
+       ? getAgentBaseDir('eve', options.global ?? false, options.cwd, options.eveSubagent)
+-      : getCanonicalSkillsDir(options.global ?? false, options.cwd);
++      : getCanonicalSkillsDir(options.global ?? false, options.cwd, options.storeKey);
+   const canonicalPath = join(canonicalBase, sanitized);
+ 
+   if (!isPathSafe(canonicalBase, canonicalPath)) {
+@@ -654,7 +700,14 @@ export function getCanonicalPath(
+ export async function installRemoteSkillForAgent(
+   skill: RemoteSkill,
+   agentType: AgentType,
+-  options: { global?: boolean; cwd?: string; mode?: InstallMode; eveSubagent?: string } = {}
++  options: {
++    global?: boolean;
++    cwd?: string;
++    mode?: InstallMode;
++    eveSubagent?: string;
++    /** BLACKBOOK PATCH: store namespace for project installs. */
++    storeKey?: string;
++  } = {}
+ ): Promise<InstallResult> {
+   const agent = agents[agentType];
+   const isGlobal = options.global ?? false;
+@@ -679,8 +732,12 @@ export async function installRemoteSkillForAgent(
+   const canonicalBase =
+     agentType === 'eve' && installMode === 'symlink'
+       ? getAgentBaseDir(agentType, isGlobal, cwd, eveSubagent)
+-      : getCanonicalSkillsDir(isGlobal, cwd);
++      : getCanonicalSkillsDir(isGlobal, cwd, options.storeKey);
+   const canonicalDir = join(canonicalBase, skillName);
++  const storeKeyError = missingStoreKeyError(isGlobal, installMode, agentType, options.storeKey);
++  if (storeKeyError) {
++    return { success: false, path: canonicalDir, mode: installMode, error: storeKeyError };
++  }
+ 
+   // Agent-specific location (for symlink)
+   const agentBase = getAgentBaseDir(agentType, isGlobal, cwd, eveSubagent);
+@@ -737,7 +794,8 @@ export async function installRemoteSkillForAgent(
+     );
+ 
+     // For universal agents with global install, skip creating agent-specific symlink
+-    if (isGlobal && isUniversalAgent(agentType)) {
++    // BLACKBOOK PATCH: with the store, ~/.agents/skills/<name> is a link, not the copy.
++    if (isGlobal && isUniversalAgent(agentType) && resolve(canonicalDir) === resolve(agentDir)) {
+       return {
+         success: true,
+         path: canonicalDir,
+@@ -795,7 +853,14 @@ export async function installRemoteSkillForAgent(
+ export async function installWellKnownSkillForAgent(
+   skill: WellKnownSkill,
+   agentType: AgentType,
+-  options: { global?: boolean; cwd?: string; mode?: InstallMode; eveSubagent?: string } = {}
++  options: {
++    global?: boolean;
++    cwd?: string;
++    mode?: InstallMode;
++    eveSubagent?: string;
++    /** BLACKBOOK PATCH: store namespace for project installs. */
++    storeKey?: string;
++  } = {}
+ ): Promise<InstallResult> {
+   const agent = agents[agentType];
+   const isGlobal = options.global ?? false;
+@@ -820,8 +885,12 @@ export async function installWellKnownSkillForAgent(
+   const canonicalBase =
+     agentType === 'eve' && installMode === 'symlink'
+       ? getAgentBaseDir(agentType, isGlobal, cwd, eveSubagent)
+-      : getCanonicalSkillsDir(isGlobal, cwd);
++      : getCanonicalSkillsDir(isGlobal, cwd, options.storeKey);
+   const canonicalDir = join(canonicalBase, skillName);
++  const storeKeyError = missingStoreKeyError(isGlobal, installMode, agentType, options.storeKey);
++  if (storeKeyError) {
++    return { success: false, path: canonicalDir, mode: installMode, error: storeKeyError };
++  }
+ 
+   // Agent-specific location (for symlink)
+   const agentBase = getAgentBaseDir(agentType, isGlobal, cwd, eveSubagent);
+@@ -892,7 +961,8 @@ export async function installWellKnownSkillForAgent(
+     await writeSkillFiles(canonicalDir);
+ 
+     // For universal agents with global install, skip creating agent-specific symlink
+-    if (isGlobal && isUniversalAgent(agentType)) {
++    // BLACKBOOK PATCH: with the store, ~/.agents/skills/<name> is a link, not the copy.
++    if (isGlobal && isUniversalAgent(agentType) && resolve(canonicalDir) === resolve(agentDir)) {
+       return {
+         success: true,
+         path: canonicalDir,
+@@ -990,8 +1060,12 @@ export async function installBlobSkillForAgent(
+   const canonicalBase =
+     agentType === 'eve' && installMode === 'symlink'
+       ? getAgentBaseDir(agentType, isGlobal, cwd, eveSubagent)
+-      : getCanonicalSkillsDir(isGlobal, cwd);
++      : getCanonicalSkillsDir(isGlobal, cwd, options.storeKey);
+   const canonicalDir = join(canonicalBase, skillName);
++  const storeKeyError = missingStoreKeyError(isGlobal, installMode, agentType, options.storeKey);
++  if (storeKeyError) {
++    return { success: false, path: canonicalDir, mode: installMode, error: storeKeyError };
++  }
+   const agentDir = join(agentBase, skillName);
+ 
+   if (!isPathSafe(canonicalBase, canonicalDir)) {
+@@ -1043,7 +1117,8 @@ export async function installBlobSkillForAgent(
+     await cleanAndCreateDirectory(canonicalDir);
+     await writeSkillFiles(canonicalDir);
+ 
+-    if (isGlobal && isUniversalAgent(agentType)) {
++    // BLACKBOOK PATCH: with the store, ~/.agents/skills/<name> is a link, not the copy.
++    if (isGlobal && isUniversalAgent(agentType) && resolve(canonicalDir) === resolve(agentDir)) {
+       return {
+         success: true,
+         path: canonicalDir,
+diff --git a/src/remove.ts b/src/remove.ts
+index 0da53ec..7ca5c04 100644
+--- a/src/remove.ts
++++ b/src/remove.ts
+@@ -1,6 +1,6 @@
+ import * as p from '@clack/prompts';
+ import pc from 'picocolors';
+-import { readdir, rm, lstat } from 'fs/promises';
++import { readdir, rm, lstat, stat } from 'fs/promises';
+ import { join } from 'path';
+ import { agents, detectInstalledAgents, getEveSubagents } from './agents.ts';
+ import { track } from './telemetry.ts';
+@@ -106,7 +106,14 @@ export async function removeCommand(skillNames: string[], options: RemoveOptions
+         // leading dots, so a skill can never be installed under such a name and
+         // removal could never address one either. Offering Codex's bundled
+         // `$CODEX_HOME/skills/.system` was always a dead entry.
+-        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
++        if (entry.name.startsWith('.')) continue;
++        // BLACKBOOK PATCH: with the central store every installed skill dir is a
++        // symlink, so follow links to directories instead of requiring a real dir.
++        if (!entry.isDirectory()) {
++          if (!entry.isSymbolicLink()) continue;
++          const target = await stat(join(dir, entry.name)).catch(() => null);
++          if (!target?.isDirectory()) continue;
++        }
+ 
+         // A directory is only a skill if it holds a SKILL.md, which is what
+         // listInstalledSkills() already requires. Without this, any directory
+diff --git a/src/store.ts b/src/store.ts
+new file mode 100644
+index 0000000..48c01f4
+--- /dev/null
++++ b/src/store.ts
+@@ -0,0 +1,150 @@
++/**
++ * BLACKBOOK PATCH — central skill store.
++ *
++ * Upstream keeps a project's real skill files in `<project>/.agents/skills`.
++ * In this vendored copy, project-scope installs keep them in one central
++ * store instead, namespaced by source, and `<project>/.agents/skills/<name>`
++ * (plus each non-universal agent dir, e.g. `.claude/skills/<name>`) becomes a
++ * symlink into it:
++ *
++ *   $SKILLS_STORE_DIR                  (default: $XDG_DATA_HOME/blackbook/skills,
++ *                                        i.e. ~/.local/share/blackbook/skills)
++ *     github.com/<owner>/<repo>/<skill>
++ *     gitlab.com/<group>/<repo>/<skill>
++ *     <host>/<path>/<skill>             generic git, well-known, direct download
++ *     local/<absolute/source/path>/<skill>
++ *     node_modules/<package>/<skill>
++ *
++ * There is exactly one copy per (source, skill): refs/branches are not part of
++ * the key, so every project shares the same version. Global installs (`-g`)
++ * are unchanged and still use `~/.agents/skills`.
++ */
++import { existsSync, statSync } from 'fs';
++import { homedir } from 'os';
++import { join, resolve, sep } from 'path';
++
++export function getStoreRoot(): string {
++  const override = process.env.SKILLS_STORE_DIR;
++  if (override) return resolve(override);
++  const dataHome = process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share');
++  return join(dataHome, 'blackbook', 'skills');
++}
++
++/** Hosts whose repo paths are case-insensitive, so the key is lowercased. */
++const CASE_INSENSITIVE_HOSTS = new Set(['github.com', 'gitlab.com']);
++
++function safeSegments(segments: string[]): string[] {
++  return segments
++    .filter((s) => s.length > 0)
++    .map((s) => (s === '.' || s === '..' ? '_' : s.replace(/[^A-Za-z0-9._@+-]/g, '_')));
++}
++
++/**
++ * `https://github.com/Owner/Repo.git`, `git@github.com:owner/repo.git`,
++ * `ssh://git@host:2222/group/repo.git`, `https://example.com/docs?x=1` →
++ * `host[/port]/path` with `.git`, query, fragment, and credentials removed.
++ */
++export function urlStoreKey(url: string): string {
++  const raw = url.trim();
++  let host: string;
++  let path: string;
++
++  const scheme = raw.match(/^[a-z][a-z0-9+.-]*:\/\//i);
++  if (scheme) {
++    const u = new URL(raw);
++    host = u.hostname.toLowerCase() + (u.port ? `/${u.port}` : '');
++    path = decodeURIComponent(u.pathname);
++  } else {
++    // scp-like git: [user@]host:path
++    const scp = raw.match(/^(?:[^@/\s]+@)?([^:/\s]+):(?!\/)(.+)$/);
++    if (!scp) throw new Error(`Cannot derive a store key from source URL: ${url}`);
++    host = scp[1]!.toLowerCase();
++    path = scp[2]!;
++  }
++
++  path = path.replace(/[?#].*$/, '').replace(/\/+$/, '').replace(/\.git$/i, '');
++  if (CASE_INSENSITIVE_HOSTS.has(host)) path = path.toLowerCase();
++  return safeSegments([...host.split('/'), ...path.split('/')]).join('/');
++}
++
++/** `/Users/me/src/playbook` → `local/Users/me/src/playbook` (Windows: `local/C/...`). */
++export function localStoreKey(localPath: string): string {
++  const abs = resolve(localPath);
++  const parts = abs.split(sep).map((p) => p.replace(/:$/, ''));
++  return safeSegments(['local', ...parts]).join('/');
++}
++
++export function nodeModulesStoreKey(packageName: string): string {
++  return safeSegments(['node_modules', ...packageName.split('/')]).join('/');
++}
++
++export type StoreKeySource =
++  | { type: 'github' | 'gitlab' | 'git' | 'well-known' | 'download'; url: string }
++  | { type: 'local'; url: string; localPath?: string }
++  | { type: 'node_modules'; packageName: string };
++
++/** The store namespace for a source. Every install method that writes files goes through this. */
++export function getStoreKey(source: StoreKeySource): string {
++  switch (source.type) {
++    case 'local':
++      return localStoreKey(source.localPath ?? source.url);
++    case 'node_modules':
++      return nodeModulesStoreKey(source.packageName);
++    default:
++      return urlStoreKey(source.url);
++  }
++}
++
++/** Absolute store directory for a source namespace. */
++export function getStoreDir(storeKey: string): string {
++  return join(getStoreRoot(), storeKey);
++}
++
++/** True if `path` is inside the store (used to make store symlinks absolute). */
++export function isInStore(path: string): boolean {
++  const root = getStoreRoot();
++  const abs = resolve(path);
++  return abs === root || abs.startsWith(root + sep);
++}
++
++/**
++ * BLACKBOOK PATCH — dev shortcuts.
++ *
++ * `SKILLS_DEV_SHORTCUTS` is a machine-local JSON map from a repo to a local
++ * checkout, e.g. `{"github.com/ssweens/playbook": "~/src/playbook"}` (Blackbook
++ * passes it from its config). When a git source's store key matches exactly,
++ * skills are discovered in that checkout instead of fetched, and the store
++ * entry is a symlink into it (live edits, no push/update). Lockfiles and store
++ * keys still record the original source, so nothing machine-specific leaks.
++ * Keys may be any repo form (`owner/repo` means GitHub). A missing checkout
++ * falls back to the normal fetch.
++ */
++export function getDevShortcut(storeKey: string): string | null {
++  const raw = process.env.SKILLS_DEV_SHORTCUTS;
++  if (!raw) return null;
++  let map: Record<string, unknown>;
++  try {
++    map = JSON.parse(raw) as Record<string, unknown>;
++  } catch {
++    return null;
++  }
++  for (const [key, value] of Object.entries(map)) {
++    if (typeof value !== 'string' || !value) continue;
++    let keyStore: string;
++    try {
++      const repo = key.trim();
++      keyStore = /^[\w.-]+\/[\w.-]+$/.test(repo) ? urlStoreKey(`https://github.com/${repo}`) : urlStoreKey(repo.includes('://') || repo.includes('@') ? repo : `https://${repo}`);
++    } catch {
++      continue;
++    }
++    if (keyStore !== storeKey) continue;
++    const dir = resolve(value.startsWith('~') ? join(homedir(), value.slice(1)) : value);
++    try {
++      if (existsSync(dir) && statSync(dir).isDirectory()) return dir;
++    } catch {
++      /* fall through */
++    }
++    return null;
++  }
++  return null;
++}
+diff --git a/src/sync.ts b/src/sync.ts
+index a0ee756..8e33fa1 100644
+--- a/src/sync.ts
++++ b/src/sync.ts
+@@ -5,6 +5,7 @@ import { join, sep } from 'path';
+ import { homedir } from 'os';
+ import { parseSkillMd } from './skills.ts';
+ import { installSkillForAgent, getCanonicalPath } from './installer.ts';
++import { getStoreKey } from './store.ts';
+ import {
+   detectInstalledAgents,
+   agents,
+@@ -324,7 +325,10 @@ export async function runSync(args: string[], options: SyncOptions = {}): Promis
+   // 4. Build summary
+   const summaryLines: string[] = [];
+   for (const skill of toInstall) {
+-    const canonicalPath = getCanonicalPath(skill.name, { global: false });
++    const canonicalPath = getCanonicalPath(skill.name, {
++      global: false,
++      storeKey: getStoreKey({ type: 'node_modules', packageName: skill.packageName }),
++    });
+     const shortCanonical = shortenPath(canonicalPath, cwd);
+     summaryLines.push(`${pc.cyan(skill.name)} ${pc.dim(`← ${skill.packageName}`)}`);
+     summaryLines.push(`  ${pc.dim(shortCanonical)}`);
+@@ -361,6 +365,8 @@ export async function runSync(args: string[], options: SyncOptions = {}): Promis
+         global: false,
+         cwd,
+         mode: 'symlink',
++        // BLACKBOOK PATCH: node_modules skills are namespaced by package.
++        storeKey: getStoreKey({ type: 'node_modules', packageName: skill.packageName }),
+       });
+       results.push({
+         skill: skill.name,
+diff --git a/src/telemetry.ts b/src/telemetry.ts
+index 5efccd0..d43f936 100644
+--- a/src/telemetry.ts
++++ b/src/telemetry.ts
+@@ -83,8 +83,10 @@ function isCI(): boolean {
+   );
+ }
+ 
++// BLACKBOOK PATCH: telemetry and the skills.sh audit lookup are always off in
++// the vendored CLI, however it is invoked.
+ function isEnabled(): boolean {
+-  return !process.env.DISABLE_TELEMETRY && !process.env.DO_NOT_TRACK;
++  return false;
+ }
+ 
+ export function setVersion(version: string): void {
+diff --git a/src/update.ts b/src/update.ts
+index 6e732d3..a78cf99 100644
+--- a/src/update.ts
++++ b/src/update.ts
+@@ -102,7 +102,8 @@ export function hasProjectSkills(cwd?: string): boolean {
+   try {
+     const entries = readdirSync(skillsDir, { withFileTypes: true });
+     for (const entry of entries) {
+-      if (entry.isDirectory()) {
++      // BLACKBOOK PATCH: store-backed skills are symlinks; existsSync follows them.
++      if (entry.isDirectory() || entry.isSymbolicLink()) {
+         const skillMd = join(skillsDir, entry.name, 'SKILL.md');
+         if (existsSync(skillMd)) {
+           return true;

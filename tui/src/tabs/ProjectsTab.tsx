@@ -1,3 +1,4 @@
+import type { ProfileCoverage } from "../lib/skill-profiles.js";
 import React from "react";
 import { Box, Text } from "ink";
 import { useStore } from "../lib/store.js";
@@ -8,6 +9,26 @@ const STATUS_META: Record<ProjectSkillStatus, { glyph: string; color: string; la
   drifted: { glyph: "≠", color: "yellow", label: "drifted" },
   "project-only": { glyph: "•", color: "gray", label: "project-only" },
 };
+
+/**
+ * One line per profile this workspace uses (or has been applied to): coverage,
+ * plus what applying it again would change. Profiles it doesn't touch at all
+ * are left out to keep the view short.
+ */
+function coverageLines(coverage: ProfileCoverage[] | undefined): Array<{ key: string; text: string; stale: boolean }> {
+  return (coverage ?? [])
+    .filter((c) => c.present.length > 0 || c.applied)
+    .map((c) => {
+      const delta = [c.missing.length ? `${c.missing.length} new` : "", c.removed.length ? `${c.removed.length} removed` : ""]
+        .filter(Boolean)
+        .join(", ");
+      return {
+        key: c.profile,
+        stale: delta.length > 0,
+        text: `profile ${c.profile}: ${c.present.length}/${c.total}${delta ? ` · ${delta} — P to apply` : " · up to date"}`,
+      };
+    });
+}
 
 export interface ProjectsTabProps {
   contentHeight: number;
@@ -57,6 +78,15 @@ export function ProjectsTab({ contentHeight }: ProjectsTabProps) {
             {project.synthetic ? "~/.agents/skills" : `${project.path}/.agents/skills`}
           </Text>
         </Box>
+        <Text color="gray" wrap="truncate">
+          {project.synthetic ? "global lock (~/.agents/.skill-lock.json)" : "skills-lock.json"}:{" "}
+          {project.lockEntries ? `${project.lockEntries} skill${project.lockEntries === 1 ? "" : "s"}` : "none yet"}
+        </Text>
+        {coverageLines(project.profileCoverage).map((line) => (
+          <Text key={line.key} color={line.stale ? "yellow" : "green"} wrap="truncate">
+            {line.text}
+          </Text>
+        ))}
         {rows.length === 0 ? (
           <Text color="gray">No skills here and none available in the source repo.</Text>
         ) : (
@@ -105,6 +135,10 @@ export function ProjectsTab({ contentHeight }: ProjectsTabProps) {
           ? "missing dir"
           : `${p.skills.length} skill${p.skills.length === 1 ? "" : "s"}${drifted ? ` · ${drifted} drifted` : ""} · ${p.available.length} available`;
         const location = p.synthetic ? "~/.agents/skills (global)" : p.path;
+        const profileTags = (p.profileCoverage ?? [])
+          .filter((c) => c.present.length > 0 || c.applied)
+          .map((c) => `${c.profile} ${c.present.length}/${c.total}`)
+          .join(", ");
         return (
           <Box key={p.path}>
             <Text color={isSel ? "cyan" : p.synthetic ? "magenta" : "white"}>
@@ -114,6 +148,7 @@ export function ProjectsTab({ contentHeight }: ProjectsTabProps) {
             <Text color="gray" wrap="truncate">
               {"  "}
               {location} · {summary}
+              {profileTags ? ` · ${profileTags}` : ""}
               {p.transient ? " · recent" : ""}
             </Text>
           </Box>

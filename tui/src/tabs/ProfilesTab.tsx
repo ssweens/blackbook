@@ -51,6 +51,13 @@ interface ProfileConsultation {
   exchanges: ConsultationExchange[];
 }
 
+/** "ssweens/playbook ×47, anthropics/skills ×1" — where a profile's skills come from. */
+function profileSources(lock: { skills: Record<string, { source: string }> }): string {
+  const counts = new Map<string, number>();
+  for (const e of Object.values(lock.skills)) counts.set(e.source, (counts.get(e.source) ?? 0) + 1);
+  return [...counts].sort((a, b) => b[1] - a[1]).map(([src, n]) => `${src} ×${n}`).join(", ");
+}
+
 export interface ProfilesTabProps {
   contentHeight: number;
 }
@@ -74,6 +81,7 @@ function buildRows(
 
 export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
   const profiles = useStore((s) => s.profiles);
+  const profileLocks = useStore((s) => s.profileLocks);
   const saveProfile = useStore((s) => s.saveProfile);
   const deleteProfile = useStore((s) => s.deleteProfile);
   const tools = useStore((s) => s.tools);
@@ -329,7 +337,7 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
       setMode({ ...mode, naming: true });
     } else if (key.return) {
       // Keep the source repo's skill order stable in config (sorted).
-      void saveProfile(mode.name, [...mode.selected].sort()).then((ok) => {
+      void saveProfile(mode.name, [...mode.selected].sort(), mode.original).then((ok) => {
         if (ok && mode.original && mode.original !== mode.name.trim()) {
           // Renamed: drop the old entry.
           void deleteProfile(mode.original);
@@ -449,7 +457,7 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
     <Box flexDirection="column">
       {names.length === 0 ? (
         <Box marginY={1}>
-          <Text color="gray">No profiles yet. A profile is a named skill bundle you can apply to any workspace. Press 'n' to create one.</Text>
+          <Text color="gray">No profiles yet. A profile is a reusable skills-lock.json fragment (saved to profiles/ in your source repo) you can apply to any project. Press 'n' to create one.</Text>
         </Box>
       ) : (
         names.slice(0, Math.max(1, contentHeight - 3)).map((n, i) => {
@@ -459,8 +467,9 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
             <Box key={n}>
               <Text color={isSel ? "cyan" : "gray"}>{isSel ? "❯ " : "  "}</Text>
               <Text bold={isSel} color={isSel ? "white" : "gray"}>{n}</Text>
-              <Text color="gray">
+              <Text color="gray" wrap="truncate">
                 {"  "}{skills.length} skill{skills.length === 1 ? "" : "s"}
+                {n in profileLocks ? ` · ${profileSources(profileLocks[n])}` : " · legacy (config.yaml) — save to convert"}
                 {skills.length > 0 ? ` · ${skills.slice(0, 4).join(", ")}${skills.length > 4 ? ", …" : ""}` : ""}
               </Text>
             </Box>

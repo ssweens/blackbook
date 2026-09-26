@@ -217,6 +217,7 @@ function buildInitialYamlConfig(): BlackbookConfig {
       disabled_marketplaces: [],
       disabled_pi_marketplaces: [],
       skill_sync_mode: "copy",
+      project_skill_mode: "link",
     },
     marketplaces: { ...DEFAULT_INITIAL_MARKETPLACES },
     pi_marketplaces: {},
@@ -548,6 +549,12 @@ export function getConsultationSettings(): {
 export function getSkillSyncMode(): "copy" | "symlink" {
   const { config } = loadYamlConfig();
   return config.settings.skill_sync_mode;
+}
+
+/** How skills are provisioned into a project: lockfile + symlink (default) or vendored copy. */
+export function getProjectSkillMode(): "link" | "copy" {
+  const { config } = loadYamlConfig();
+  return config.settings.project_skill_mode;
 }
 
 /**

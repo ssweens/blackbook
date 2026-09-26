@@ -26,6 +26,18 @@ export function getCacheDir(): string {
 }
 
 /**
+ * Durable, non-disposable data (XDG_DATA_HOME, default `~/.local/share`).
+ * Distinct from the cache dir on purpose: project skill symlinks point into
+ * the central skill store kept here (`<data>/skills`), so wiping the cache (a
+ * documented troubleshooting step) must never break linked projects.
+ */
+export function getDataDir(): string {
+  const xdgData = process.env.XDG_DATA_HOME;
+  const base = xdgData || join(homedir(), ".local", "share");
+  return join(base, "blackbook");
+}
+
+/**
  * Resolve a source path. Supports:
  * - Absolute paths (start with /)
  * - Home-relative paths (start with ~)

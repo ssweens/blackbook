@@ -65,6 +65,19 @@ export const SettingsSchema = z.object({
   // for config files (settings.json etc.), which tools rewrite in place; those
   // always stay copy + three-way state + pullback regardless of this setting.
   skill_sync_mode: z.enum(["copy", "symlink"]).default("copy"),
+  // How the Projects tab provisions skills into a project:
+  // - "link": run the bundled skills CLI (`skills add`, vendor/skills), which
+  //   records the skill in the project's `skills-lock.json` and symlinks it
+  //   from the central store ($XDG_DATA_HOME/blackbook/skills).
+  // - "copy": the legacy one-time copy into the project's `.agents/skills`.
+  project_skill_mode: z.enum(["link", "copy"]).default("link"),
+  // Machine-local dev shortcuts for the bundled skills CLI: repo -> local
+  // checkout, e.g. { "github.com/ssweens/playbook": "~/src/playbook" }. When a
+  // skill source matches a repo exactly, its store entry becomes a live
+  // symlink into the checkout (edits show up everywhere, no push/update).
+  // Lockfiles and store keys still record the repo, so nothing here leaks
+  // into projects or teammates' machines.
+  dev_shortcuts: z.record(z.string(), z.string()).optional(),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;

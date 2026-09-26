@@ -1,7 +1,8 @@
 import { Command } from "commander";
 import { runStatus, runList, runSync, runInstall, runUninstall, type CommandResult } from "./commands.js";
+import { runSkillsCli } from "../skills-cli.js";
 
-const SUBCOMMAND_NAMES = ["status", "list", "sync", "install", "uninstall"];
+const SUBCOMMAND_NAMES = ["status", "list", "sync", "install", "uninstall", "skills"];
 
 /** True if argv (post `node script.js`) is a headless CLI invocation rather than a bare TUI launch. */
 export function isCliInvocation(argv: string[]): boolean {
@@ -19,6 +20,13 @@ async function handle(result: Promise<CommandResult>): Promise<number> {
 
 /** Parse and run argv (post `node script.js`), returning the process exit code. */
 export async function runCli(argv: string[]): Promise<number> {
+  // `blackbook skills <anything>` is a straight passthrough to the vendored
+  // skills CLI (central-store patched); every flag belongs to it, so it never
+  // goes through commander.
+  if (argv[0] === "skills") {
+    return (await runSkillsCli(argv.slice(1), { inherit: true })).code;
+  }
+
   let exitCode = 0;
 
   const program = new Command();
@@ -74,6 +82,10 @@ export async function runCli(argv: string[]): Promise<number> {
     .action(async (name, opts) => {
       exitCode = await handle(runUninstall(name, { json: opts.json }));
     });
+
+  program
+    .command("skills")
+    .description("Run the bundled skills CLI (npx skills) with project skills kept in the central store");
 
   try {
     await program.parseAsync(argv, { from: "user" });

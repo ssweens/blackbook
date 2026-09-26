@@ -1562,7 +1562,7 @@ describe("App E2E — Advisory Consultation", () => {
       await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Space toggle"));
       sendKey(stdin, KEYS.enter);
       await waitForFrame(stdout.lastFrame, () => saveProfile.mock.calls.length === 1);
-      expect(saveProfile).toHaveBeenCalledWith("web", []);
+      expect(saveProfile).toHaveBeenCalledWith("web", [], "web");
     } finally {
       unmount();
     }

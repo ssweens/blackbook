@@ -18,11 +18,14 @@ import {
   renameSync,
   realpathSync,
   copyFileSync,
+  readFileSync,
+  writeFileSync,
   cpSync,
   symlinkSync,
 } from "fs";
+import { isCliManagedGlobalSkill, isCliManagedPath } from "../skills-cli-guard.js";
 import { basename, join, dirname, relative } from "path";
-import { agentsSkillsDir, flattenNamespacedName, isSharedSubdirPath, resolveInstanceSubdirPath } from "../path-utils.js";
+import { agentsSkillsDir, flattenNamespacedName, isSharedSubdirPath, resolveInstanceSubdirPath, resolvePluginRootVars } from "../path-utils.js";
 import type { Plugin, InstalledItem, ToolInstance } from "../types.js";
 import type { Manifest } from "../manifest.js";
 import { loadManifest, saveManifest } from "../manifest.js";
@@ -125,7 +128,14 @@ function copyPluginMcpJsonIntoSkill(instance: ToolInstance, sourcePath: string, 
     const src = join(sourcePath, relPath);
     if (existsSync(src)) {
       try {
-        copyFileSync(src, join(skillDest, "mcp.json"));
+        // Rewrite rather than copy, so ${CLAUDE_PLUGIN_ROOT} points at the plugin.
+        let text = readFileSync(src, "utf-8");
+        try {
+          text = JSON.stringify(resolvePluginRootVars(JSON.parse(text), sourcePath), null, 2) + "\n";
+        } catch {
+          // Not JSON: keep the bytes as-is (the reading tool will report it).
+        }
+        writeFileSync(join(skillDest, "mcp.json"), text);
       } catch (error) {
         logError(`Failed to copy ${relPath} into ${skillDest}`, error);
       }
@@ -342,7 +352,14 @@ export function installPluginItemsToInstance(
     const previous = toolManifest.items[key] || null;
     const sibling = findSiblingInstall(manifest, dest, pluginName, instanceKey(instance));
     let item: InstalledItem;
-    if (sibling) {
+    // The skills CLI owns this skill (store link): record it as shared so
+    // Blackbook neither writes it now nor deletes it on uninstall.
+    const cliManaged =
+      kind === "skill" &&
+      (isCliManagedGlobalSkill(name) ||
+        isCliManagedPath(dest) ||
+        (agentsStoreTarget !== undefined && isCliManagedPath(agentsStoreTarget)));
+    if (sibling || cliManaged) {
       item = { kind, name, source: src, dest, backup: null, owner: pluginName, previous, sharedInstall: true };
     } else if (agentsStoreTarget) {
       const { materialized } = ensureAgentsSkillMaterialized(src, pluginName, name);

@@ -272,8 +272,10 @@ export interface AppState {
   projectsLoaded: boolean;
   /** When set, the Projects tab is drilled into this project's skill list. */
   projectDetailPath: string | null;
-  /** Named skill bundles (config `profiles`) appliable to a workspace. */
+  /** Profile name -> skill names (derived from profileLocks, plus legacy config `profiles`). */
   profiles: Record<string, string[]>;
+  /** Skill-lock profiles: `<source repo>/profiles/<name>.skills-lock.json`. */
+  profileLocks: Record<string, import("./skill-profiles.js").SkillLockFile>;
   piMarketplaces: PiMarketplace[];
   managedItems: import("./managed-item.js").ManagedItem[];
   // Sort state

@@ -81,16 +81,16 @@ describe("toggleProjectSkill", () => {
 });
 
 describe("deleteProjectSkill", () => {
-  it("removes the skill directory", () => {
+  it("removes the skill directory", async () => {
     const dir = projectSkillDir(project, "gone");
     writeSkill(dir, "# gone\n");
 
-    const r = deleteProjectSkill(dir, "gone");
+    const r = await deleteProjectSkill(dir, "gone");
     expect(r.ok).toBe(true);
     expect(existsSync(dir)).toBe(false);
   });
 
-  it("errors when the skill is missing", () => {
-    expect(deleteProjectSkill(projectSkillDir(project, "nope"), "nope").ok).toBe(false);
+  it("errors when the skill is missing", async () => {
+    expect((await deleteProjectSkill(projectSkillDir(project, "nope"), "nope")).ok).toBe(false);
   });
 });

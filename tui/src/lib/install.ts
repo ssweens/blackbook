@@ -15,6 +15,13 @@ import {
   cpSync,
   rmSync,
 } from "fs";
+import { isCliManagedGlobalSkill, isCliManagedPath } from "./skills-cli-guard.js";
+import {
+  installPluginSkillsViaCli,
+  installStandaloneSkillViaCli,
+  removePluginSkillsViaCli,
+  removeSkillViaCli,
+} from "./plugin-skills-cli.js";
 import { promisify } from "util";
 import { execFile, execFileSync } from "child_process";
 import { hashBuffer, hashFile, hashPath, hashString, hashDirectory } from "./modules/hash.js";
@@ -473,6 +480,12 @@ export async function installPlugin(
     return result;
   }
 
+  // Skills go through the skills CLI (central store, flat names, global lock);
+  // the adapters below then treat them as CLI-managed and install the rest.
+  result.errors.push(
+    ...installPluginSkillsViaCli(plugin, sourcePath, enabledInstances.filter((i) => !isConfigOnlyInstance(i)), marketplaceUrl),
+  );
+
   for (const instance of enabledInstances) {
     if (isConfigOnlyInstance(instance)) continue;
     try {
@@ -509,6 +522,9 @@ export async function uninstallPluginFromInstance(
 
   // Component surface for every tool, INCLUDING Claude — never the native
   // `claude plugin uninstall` CLI. count > 0 means "removed".
+  // Skills: only a Claude instance's own links can be removed per instance
+  // (universal agents share ~/.agents/skills).
+  for (const e of removePluginSkillsViaCli(plugin, getPluginSourcePath(plugin), [instance])) logError(e, new Error(e));
   const count = await getAdapterForTool(instance.toolId).removeComponents(plugin, instance);
   return count > 0;
 }
@@ -528,6 +544,17 @@ export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
   // Every tool, INCLUDING Claude, was installed through the component surface
   // (see installPlugin), so removal always goes through removeComponents too —
   // never the native `claude plugin uninstall` CLI.
+  // Remove the plugin's skills through the skills CLI while the cached plugin
+  // copy (which names them) still exists.
+  for (const e of removePluginSkillsViaCli(
+    plugin,
+    getPluginSourcePath(plugin),
+    enabledInstances.filter((i) => !isConfigOnlyInstance(i)),
+    { everywhere: true },
+  )) {
+    logError(e, new Error(e));
+  }
+
   for (const instance of enabledInstances) {
     if (isConfigOnlyInstance(instance)) continue;
     const adapter = getAdapterForTool(instance.toolId);
@@ -565,6 +592,7 @@ function removeOrphanedStoreNamespace(namespace: string): void {
   try {
     const nsDir = join(homedir(), ".agents", "skills", namespace);
     if (!existsSync(nsDir)) return;
+    if (isCliManagedPath(nsDir)) return; // skills-CLI-managed store link
 
     const manifest = loadManifest();
     const prefix = nsDir.endsWith("/") ? nsDir : `${nsDir}/`;
@@ -721,6 +749,10 @@ export async function enablePlugin(
     return result;
   }
 
+  result.errors.push(
+    ...installPluginSkillsViaCli(plugin, sourcePath, enabledInstances.filter((i) => !isConfigOnlyInstance(i)), marketplaceUrl),
+  );
+
   // Enable (install) to all enabled instances via each adapter's component
   // surface (Pi bridge install; everyone else — including Claude here — file-copy).
   for (const instance of enabledInstances) {
@@ -848,6 +880,9 @@ export async function updatePlugin(
           logError(`Failed to remove stale plugin dir for ${plugin.name}`, error);
         }
       }
+
+      // Refresh the plugin's skills through the skills CLI first.
+      result.errors.push(...installPluginSkillsViaCli(plugin, sourcePath!, managedInstances, marketplaceUrl));
 
       for (const instance of managedInstances) {
         try {
@@ -1693,6 +1728,10 @@ export function uninstallSkillFromInstance(
     (i) => i.toolId === toolId && i.instanceId === instanceId,
   );
   if (!inst) return false;
+  if (isCliManagedPath(inst.diskPath)) {
+    const instance = getToolInstances().find((i) => i.toolId === toolId && i.instanceId === instanceId) ?? null;
+    return instance ? removeSkillViaCli(basename(inst.diskPath), instance) : false;
+  }
   try {
     removeSkillInstallPath(inst.diskPath);
     return true;
@@ -1707,6 +1746,8 @@ export function uninstallSkillFromInstance(
  * of a skill can't destroy the shared store copy other tools still read.
  */
 function removeSkillInstallPath(diskPath: string): void {
+  // Skills-CLI-managed (store link): `blackbook skills remove` owns removal.
+  if (isCliManagedPath(diskPath)) return;
   let isLink: boolean;
   try {
     isLink = lstatSync(diskPath).isSymbolicLink();
@@ -1723,6 +1764,10 @@ function removeSkillInstallPath(diskPath: string): void {
 /** Remove every installation of the skill. Returns the number successfully removed. */
 export function uninstallSkillAllInstances(skill: StandaloneSkill): number {
   let removed = 0;
+  const cliInstalls = skill.installations.filter((i) => isCliManagedPath(i.diskPath));
+  if (cliInstalls.length > 0 && removeSkillViaCli(basename(cliInstalls[0].diskPath), null, getToolInstances())) {
+    removed += cliInstalls.length;
+  }
   for (const inst of skill.installations) {
     try {
       removeSkillInstallPath(inst.diskPath);
@@ -2167,6 +2212,15 @@ export function installSkillToInstance(
   if (!target || !target.skillsSubdir) return false;
   const targetDir = getStandaloneSkillTargetDir(skill, target);
   if (!targetDir) return false;
+  // The skills CLI owns this skill (store link): never copy over or beside it.
+  if (isCliManagedGlobalSkill(skill.name) || isCliManagedPath(targetDir)) return true;
+  // Source-repo skills install through the skills CLI (central store, global
+  // lock). Falls back to Blackbook's copy below when the CLI can't serve it.
+  const sourceRepo = skill.sourcePath ? getConfigRepoPath() : null;
+  if (sourceRepo && skill.sourcePath) {
+    const viaCli = installStandaloneSkillViaCli(skill.sourcePath, sourceRepo, target);
+    if (viaCli !== null) return viaCli;
+  }
 
   // Flat tools (Claude) get a derived view of the shared ~/.agents/skills
   // store: materialize the skill there if needed, then link the tool's flat
@@ -2603,6 +2657,8 @@ export async function syncPluginInstances(
   }
 
   let stagedStandaloneRoot: string | null = null;
+
+  result.errors.push(...installPluginSkillsViaCli(plugin, sourcePath, missingInstances, marketplaceUrl));
 
   try {
     // Sync (install) to all missing instances via each adapter's component

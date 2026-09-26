@@ -11,11 +11,24 @@ import {
   pullSkillToSource,
   toggleProjectSkill as toggleProjectSkillFs,
   deleteProjectSkill as deleteProjectSkillFs,
+  addSourceSkillsToProject,
 } from "../project-actions.js";
 import { commitAndPushSourceRepo } from "../install.js";
 import { loadConfig as loadYamlConfig } from "../config/loader.js";
 import { saveConfig as saveYamlConfig } from "../config/writer.js";
-import { getConfigRepoPath } from "../config.js";
+import { getConfigRepoPath, getProjectSkillMode, getToolInstances } from "../config.js";
+import {
+  applyProfileToWorkspace,
+  buildProfileLock,
+  deleteProfileLock,
+  isGlobalWorkspace,
+  isValidProfileName,
+  listProfileLocks,
+  workspaceCoverage,
+  workspaceLock,
+  writeProfileLock,
+  type SkillLockFile,
+} from "../skill-profiles.js";
 import { expandPath } from "../config/path.js";
 
 export type ProjectsSlice = Pick<
@@ -25,6 +38,7 @@ export type ProjectsSlice = Pick<
   | "projectsLoaded"
   | "projectDetailPath"
   | "profiles"
+  | "profileLocks"
   // actions
   | "loadProjects"
   | "addProject"
@@ -61,6 +75,7 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
   projectsLoaded: false,
   projectDetailPath: null,
   profiles: {},
+  profileLocks: {},
   profilesEditing: false,
 
   setProfilesEditing: (editing) => set({ profilesEditing: editing }),
@@ -73,11 +88,13 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
     // Scanning is synchronous but can hit the disk for many skills; yield so the
     // UI can paint a loading state first.
     await new Promise<void>((r) => setImmediate(r));
-    set({
-      projects: getProjects(),
-      profiles: loadYamlConfig().config.profiles ?? {},
-      projectsLoaded: true,
-    });
+    const { profiles, profileLocks, coverageLocks } = loadAllProfiles();
+    const projects = getProjects().map((p) => ({
+      ...p,
+      profileCoverage: safeCoverage(p.path, coverageLocks),
+      lockEntries: safeLockCount(p.path),
+    }));
+    set({ projects, profiles, profileLocks, projectsLoaded: true });
   },
 
   addProject: async (path) => {
@@ -171,13 +188,18 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
 
   pushProjectSkill: async (projectPath, name, sourceSkillDir) => {
     const { notify } = get();
-    const result = await pushSkillToProject(projectPath, sourceSkillDir, name, backupRetention());
+    const mode = getProjectSkillMode();
+    const result = await pushSkillToProject(projectPath, sourceSkillDir, name, backupRetention(), {
+      mode,
+      sourceRepo: getConfigRepoPath(),
+    });
     if (!result.ok) {
       notify(`Push failed: ${result.error}`, "error");
       return false;
     }
     await get().loadProjects({ silent: true });
-    notify(`Pushed ${name} into workspace`, "success");
+    if (result.warnings?.length) notify(result.warnings[0], "warning");
+    else notify(mode === "link" ? `Installed ${name} (skills-lock.json, linked from the central store)` : `Pushed ${name} into workspace`, "success");
     return true;
   },
 
@@ -212,7 +234,7 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
 
   removeProjectSkill: async (name, skillDir) => {
     const { notify } = get();
-    const result = deleteProjectSkillFs(skillDir, name, backupRetention());
+    const result = await deleteProjectSkillFs(skillDir, name, backupRetention());
     if (!result.ok) {
       notify(`Delete failed: ${result.error}`, "error");
       return false;
@@ -261,75 +283,142 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
   applyProfile: async (workspacePath, name) => {
     const { notify } = get();
     const sourceRepo = getConfigRepoPath();
-    if (!sourceRepo) {
-      notify("No source repo configured — can't apply a profile", "error");
-      return false;
-    }
-    const skills = get().profiles[name];
-    if (!skills || skills.length === 0) {
+    const lock = get().profileLocks[name] ?? legacyProfileLock(name, sourceRepo);
+    if (!lock || Object.keys(lock.skills).length === 0) {
       notify(`Profile "${name}" is empty`, "warning");
       return false;
     }
 
-    const sourceIndex = indexSourceSkills(sourceRepo);
-    const retention = backupRetention();
-    let applied = 0;
-    const missing: string[] = [];
-    for (const skillName of skills) {
-      const sourceSkillDir = sourceIndex.get(skillName);
-      if (!sourceSkillDir) {
-        missing.push(skillName);
-        continue;
+    // Legacy vendored-copy mode for projects: copy source-repo skills as before.
+    if (getProjectSkillMode() === "copy" && !isGlobalWorkspace(workspacePath)) {
+      if (!sourceRepo) {
+        notify("No source repo configured — can't apply a profile in copy mode", "error");
+        return false;
       }
-      const result = await pushSkillToProject(workspacePath, sourceSkillDir, skillName, retention);
-      if (result.ok) applied += 1;
+      const sourceIndex = indexSourceSkills(sourceRepo);
+      let applied = 0;
+      for (const skillName of Object.keys(lock.skills)) {
+        const dir = sourceIndex.get(skillName);
+        if (!dir) continue;
+        const result = await pushSkillToProject(workspacePath, dir, skillName, backupRetention(), { mode: "copy" });
+        if (result.ok) applied += 1;
+      }
+      await get().loadProjects({ silent: true });
+      notify(`Applied profile "${name}" (${applied} copied)`, applied > 0 ? "success" : "warning");
+      return applied > 0;
     }
 
+    const result = await applyProfileToWorkspace(workspacePath, name, lock, getToolInstances());
     await get().loadProjects({ silent: true });
-    if (missing.length > 0) {
-      notify(`Applied ${applied}; not in source repo: ${missing.slice(0, 3).join(", ")}`, "error");
-    } else {
-      notify(`Applied profile "${name}" (${applied} skill${applied === 1 ? "" : "s"})`, "success");
+    if (result.errors.length > 0) {
+      notify(`Applied "${name}": +${result.added.length} −${result.removed.length}; failed — ${result.errors[0]}`, "error");
+      return result.added.length + result.removed.length > 0;
     }
-    return applied > 0;
+    if (result.added.length === 0 && result.removed.length === 0) {
+      notify(`"${name}" is already up to date here`, "success");
+      return true;
+    }
+    notify(`Applied "${name}": +${result.added.length} added, −${result.removed.length} removed`, "success");
+    return true;
   },
 
-  saveProfile: async (name, skills) => {
+  saveProfile: async (name, skills, previousName) => {
     const { notify } = get();
     const trimmed = name.trim();
-    if (!trimmed) {
-      notify("Profile name can't be empty", "error");
+    if (!trimmed || !isValidProfileName(trimmed)) {
+      notify("Profile names are letters, digits, space, dot, dash, or underscore", "error");
       return false;
     }
-    const { config, configPath } = loadYamlConfig();
+    const sourceRepo = getConfigRepoPath();
+    if (!sourceRepo) {
+      notify("No source repo configured — profiles live in <source repo>/profiles/", "error");
+      return false;
+    }
+    const existing = get().profileLocks[previousName ?? trimmed] ?? get().profileLocks[trimmed];
+    const { lock, unresolved } = buildProfileLock(skills, sourceRepo, existing);
     try {
-      saveYamlConfig({ ...config, profiles: { ...config.profiles, [trimmed]: skills } }, configPath);
+      writeProfileLock(sourceRepo, trimmed, lock);
+      dropLegacyProfile(trimmed);
     } catch (err) {
       notify(`Failed to save profile: ${err instanceof Error ? err.message : String(err)}`, "error");
       return false;
     }
-    set({ profiles: { ...get().profiles, [trimmed]: skills } });
-    notify(`Saved profile "${trimmed}" (${skills.length} skill${skills.length === 1 ? "" : "s"})`, "success");
+    await get().loadProjects({ silent: true });
+    const count = Object.keys(lock.skills).length;
+    notify(
+      unresolved.length > 0
+        ? `Saved "${trimmed}" (${count}); no known source for: ${unresolved.slice(0, 3).join(", ")}`
+        : `Saved profile "${trimmed}" (${count} skill${count === 1 ? "" : "s"}) to profiles/${trimmed}.skills-lock.json`,
+      unresolved.length > 0 ? "warning" : "success",
+    );
     return true;
   },
 
   deleteProfile: async (name) => {
     const { notify } = get();
-    const { config, configPath } = loadYamlConfig();
-    if (!(name in config.profiles)) {
+    const sourceRepo = getConfigRepoPath();
+    const removedFile = sourceRepo ? deleteProfileLock(sourceRepo, name) : false;
+    const removedLegacy = dropLegacyProfile(name);
+    if (!removedFile && !removedLegacy) {
       notify(`Profile "${name}" not found`, "warning");
       return false;
     }
-    const { [name]: _removed, ...rest } = config.profiles;
-    try {
-      saveYamlConfig({ ...config, profiles: rest }, configPath);
-    } catch (err) {
-      notify(`Failed to delete profile: ${err instanceof Error ? err.message : String(err)}`, "error");
-      return false;
-    }
-    const { [name]: _r2, ...stateRest } = get().profiles;
-    set({ profiles: stateRest });
+    await get().loadProjects({ silent: true });
     notify(`Deleted profile "${name}"`, "success");
     return true;
   },
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Profile loading helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Legacy config `profiles:` (skill names) as a lock, resolved on demand. */
+function legacyProfileLock(name: string, sourceRepo: string | null): SkillLockFile | null {
+  const names = loadYamlConfig().config.profiles?.[name];
+  return names ? buildProfileLock(names, sourceRepo).lock : null;
+}
+
+/** Remove a legacy config profile; true when one existed. */
+function dropLegacyProfile(name: string): boolean {
+  const { config, configPath } = loadYamlConfig();
+  if (!config.profiles || !(name in config.profiles)) return false;
+  const { [name]: _removed, ...rest } = config.profiles;
+  saveYamlConfig({ ...config, profiles: rest }, configPath);
+  return true;
+}
+
+function loadAllProfiles(): {
+  profiles: Record<string, string[]>;
+  profileLocks: Record<string, SkillLockFile>;
+  coverageLocks: Record<string, SkillLockFile>;
+} {
+  const sourceRepo = getConfigRepoPath();
+  const profileLocks = listProfileLocks(sourceRepo);
+  const profiles: Record<string, string[]> = {};
+  const coverageLocks: Record<string, SkillLockFile> = { ...profileLocks };
+  for (const [name, names] of Object.entries(loadYamlConfig().config.profiles ?? {})) {
+    if (name in profileLocks) continue;
+    profiles[name] = [...names];
+    const legacy = legacyProfileLock(name, sourceRepo);
+    if (legacy) coverageLocks[name] = legacy;
+  }
+  for (const [name, lock] of Object.entries(profileLocks)) profiles[name] = Object.keys(lock.skills).sort();
+  return { profiles, profileLocks, coverageLocks };
+}
+
+function safeCoverage(path: string, locks: Record<string, SkillLockFile>) {
+  try {
+    return workspaceCoverage(path, locks);
+  } catch {
+    return [];
+  }
+}
+
+function safeLockCount(path: string): number {
+  try {
+    return Object.keys(workspaceLock(path).skills).length;
+  } catch {
+    return 0;
+  }
+}

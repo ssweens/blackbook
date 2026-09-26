@@ -10,6 +10,8 @@ const loadConfigMock = vi.fn();
 const saveConfigMock = vi.fn();
 const statSyncMock = vi.fn();
 const pushSkillMock = vi.fn();
+const addSkillsMock = vi.fn();
+let projectSkillMode: "copy" | "link" = "copy";
 const pullSkillMock = vi.fn();
 const commitMock = vi.fn();
 const buildWorkspaceInfoMock = vi.fn();
@@ -31,9 +33,37 @@ vi.mock("../project-actions.js", () => ({
   pullSkillToSource: (...a: unknown[]) => pullSkillMock(...a),
   toggleProjectSkill: vi.fn(),
   deleteProjectSkill: vi.fn(),
+  addSourceSkillsToProject: (...a: unknown[]) => addSkillsMock(...a),
 }));
 vi.mock("../install.js", () => ({ commitAndPushSourceRepo: (...a: unknown[]) => commitMock(...a) }));
-vi.mock("../config.js", () => ({ getConfigRepoPath: () => "/src" }));
+vi.mock("../config.js", () => ({
+  getConfigRepoPath: () => "/src",
+  getProjectSkillMode: () => projectSkillMode,
+  getToolInstances: () => [],
+}));
+// Skill-lock profiles: in-memory stand-in for <source repo>/profiles/*.skills-lock.json.
+let profileFiles: Record<string, { version: number; skills: Record<string, { source: string; sourceType: string }> }> = {};
+const applyToWorkspaceMock = vi.fn();
+vi.mock("../skill-profiles.js", () => ({
+  listProfileLocks: () => ({ ...profileFiles }),
+  writeProfileLock: (_repo: string, name: string, lock: never) => {
+    profileFiles[name] = lock;
+  },
+  deleteProfileLock: (_repo: string, name: string) => {
+    const had = name in profileFiles;
+    delete profileFiles[name];
+    return had;
+  },
+  buildProfileLock: (names: string[]) => ({
+    lock: { version: 1, skills: Object.fromEntries(names.map((n) => [n, { source: "ssweens/playbook", sourceType: "github" }])) },
+    unresolved: [],
+  }),
+  isValidProfileName: (n: string) => /^[A-Za-z0-9][A-Za-z0-9 ._-]*$/.test(n),
+  isGlobalWorkspace: (p: string) => p === "/home",
+  applyProfileToWorkspace: (...a: unknown[]) => applyToWorkspaceMock(...a),
+  workspaceCoverage: () => [],
+  workspaceLock: () => ({ version: 1, skills: {} }),
+}));
 vi.mock("../config/loader.js", () => ({ loadConfig: () => loadConfigMock() }));
 vi.mock("../config/writer.js", () => ({ saveConfig: (...a: unknown[]) => saveConfigMock(...a) }));
 vi.mock("../config/path.js", () => ({ expandPath: (p: string) => p }));
@@ -60,6 +90,10 @@ beforeEach(() => {
   statSyncMock.mockReset();
   indexSourceSkillsMock.mockReset();
   pushSkillMock.mockReset();
+  addSkillsMock.mockReset();
+  projectSkillMode = "copy";
+  profileFiles = {};
+  applyToWorkspaceMock.mockReset();
   pullSkillMock.mockReset();
   commitMock.mockReset();
   buildWorkspaceInfoMock.mockReset();
@@ -206,75 +240,76 @@ describe("projects-slice", () => {
     expect(commitMock).not.toHaveBeenCalled();
   });
 
-  it("applyProfile pushes each profile skill that exists in source, skipping the rest", async () => {
-    // Profiles come from store state, populated by loadProjects from config.
-    loadConfigMock.mockReturnValue({
-      config: { projects: [], profiles: { web: ["a", "b", "missing"] }, settings: { backup_retention: 3 } },
-      configPath: "/cfg",
-    });
-    indexSourceSkillsMock.mockReturnValue(new Map([["a", "/src/skills/a"], ["b", "/src/skills/b"]]));
+  it("loadProjects reads profiles from skill-lock files, with legacy config profiles alongside", async () => {
+    profileFiles = { web: { version: 1, skills: { b: { source: "x/y", sourceType: "github" }, a: { source: "x/y", sourceType: "github" } } } };
+    loadConfigMock.mockReturnValue({ config: { projects: [], profiles: { old: ["z"], web: ["ignored"] }, settings: {} }, configPath: "/cfg" });
+    getProjectsMock.mockReturnValue([]);
+    const { get } = makeStore();
+    await get().loadProjects();
+    expect(get().profiles).toEqual({ web: ["a", "b"], old: ["z"] });
+    expect(Object.keys(get().profileLocks)).toEqual(["web"]);
+  });
+
+  it("applyProfile (link mode) applies the profile's lock entries to the workspace", async () => {
+    projectSkillMode = "link";
+    profileFiles = { web: { version: 1, skills: { a: { source: "x/y", sourceType: "github" } } } };
+    getProjectsMock.mockReturnValue([]);
+    applyToWorkspaceMock.mockResolvedValue({ added: ["a"], removed: [], errors: [] });
+    const { get } = makeStore();
+    await get().loadProjects();
+    expect(await get().applyProfile("/ws", "web")).toBe(true);
+    expect(applyToWorkspaceMock).toHaveBeenCalledWith("/ws", "web", profileFiles.web, []);
+    expect(get().notify).toHaveBeenLastCalledWith(expect.stringContaining("+1 added"), "success");
+  });
+
+  it("applyProfile in copy mode still copies source-repo skills into a project", async () => {
+    profileFiles = { web: { version: 1, skills: { a: { source: "x/y", sourceType: "github" }, missing: { source: "x/y", sourceType: "github" } } } };
+    indexSourceSkillsMock.mockReturnValue(new Map([["a", "/src/skills/a"]]));
     pushSkillMock.mockResolvedValue({ ok: true });
     getProjectsMock.mockReturnValue([]);
     const { get } = makeStore();
-    await get().loadProjects(); // populates state.profiles
-
-    const ok = await get().applyProfile("/ws", "web");
-    expect(ok).toBe(true);
-    // 'a' and 'b' pushed; 'missing' skipped (not in source index).
-    expect(pushSkillMock).toHaveBeenCalledTimes(2);
-    expect(pushSkillMock).toHaveBeenCalledWith("/ws", "/src/skills/a", "a", 3);
-    expect(pushSkillMock).toHaveBeenCalledWith("/ws", "/src/skills/b", "b", 3);
+    await get().loadProjects();
+    expect(await get().applyProfile("/ws", "web")).toBe(true);
+    expect(pushSkillMock).toHaveBeenCalledTimes(1);
+    expect(pushSkillMock).toHaveBeenCalledWith("/ws", "/src/skills/a", "a", 3, { mode: "copy" });
+    expect(applyToWorkspaceMock).not.toHaveBeenCalled();
   });
 
   it("applyProfile warns and no-ops for an empty/unknown profile", async () => {
     getProjectsMock.mockReturnValue([]);
     const { get } = makeStore();
-    await get().loadProjects(); // profiles = {} (default mock)
-    const ok = await get().applyProfile("/ws", "nope");
-    expect(ok).toBe(false);
-    expect(pushSkillMock).not.toHaveBeenCalled();
+    expect(await get().applyProfile("/ws", "nope")).toBe(false);
+    expect(applyToWorkspaceMock).not.toHaveBeenCalled();
+    expect(get().notify).toHaveBeenCalledWith(expect.stringContaining("empty"), "warning");
   });
 
-  it("saveProfile writes the profile to config and updates state", async () => {
-    const { get } = makeStore();
-    const ok = await get().saveProfile("web", ["a", "b"]);
-    expect(ok).toBe(true);
-    expect(saveConfigMock).toHaveBeenCalledWith(
-      expect.objectContaining({ profiles: { web: ["a", "b"] } }),
-      "/cfg",
-    );
-    expect(get().profiles).toEqual({ web: ["a", "b"] });
-  });
-
-  it("saveProfile rejects an empty name without writing", async () => {
-    const { get } = makeStore();
-    const ok = await get().saveProfile("   ", ["a"]);
-    expect(ok).toBe(false);
-    expect(saveConfigMock).not.toHaveBeenCalled();
-  });
-
-  it("deleteProfile removes the profile from config and state", async () => {
-    loadConfigMock.mockReturnValue({
-      config: { projects: [], profiles: { web: ["a"], db: ["b"] }, settings: { backup_retention: 3 } },
-      configPath: "/cfg",
-    });
+  it("saveProfile writes a skill-lock profile file and drops a same-named legacy config profile", async () => {
+    loadConfigMock.mockReturnValue({ config: { projects: [], profiles: { web: ["a"] }, settings: {} }, configPath: "/cfg" });
     getProjectsMock.mockReturnValue([]);
     const { get } = makeStore();
-    await get().loadProjects();
+    expect(await get().saveProfile("web", ["a", "b"])).toBe(true);
+    expect(Object.keys(profileFiles.web.skills)).toEqual(["a", "b"]);
+    expect(saveConfigMock).toHaveBeenCalledWith(expect.objectContaining({ profiles: {} }), "/cfg");
+  });
 
-    const ok = await get().deleteProfile("web");
-    expect(ok).toBe(true);
-    expect(saveConfigMock).toHaveBeenCalledWith(
-      expect.objectContaining({ profiles: { db: ["b"] } }),
-      "/cfg",
-    );
-    expect(get().profiles).toEqual({ db: ["b"] });
+  it("saveProfile rejects an empty or invalid name without writing", async () => {
+    const { get } = makeStore();
+    expect(await get().saveProfile("   ", ["a"])).toBe(false);
+    expect(await get().saveProfile("../x", ["a"])).toBe(false);
+    expect(profileFiles).toEqual({});
+  });
+
+  it("deleteProfile removes the profile file", async () => {
+    profileFiles = { web: { version: 1, skills: {} } };
+    getProjectsMock.mockReturnValue([]);
+    const { get } = makeStore();
+    expect(await get().deleteProfile("web")).toBe(true);
+    expect(profileFiles).toEqual({});
   });
 
   it("deleteProfile no-ops for an unknown profile", async () => {
     const { get } = makeStore();
-    const ok = await get().deleteProfile("nope");
-    expect(ok).toBe(false);
-    expect(saveConfigMock).not.toHaveBeenCalled();
+    expect(await get().deleteProfile("nope")).toBe(false);
+    expect(get().notify).toHaveBeenCalledWith(expect.stringContaining("not found"), "warning");
   });
 });

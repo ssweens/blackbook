@@ -38,6 +38,10 @@ export interface AvailableSkill {
 }
 
 export interface ProjectInfo {
+  /** Coverage of each skill-lock profile against this workspace's lock (set by the store). */
+  profileCoverage?: import("./skill-profiles.js").ProfileCoverage[];
+  /** Entries in this workspace's lock: skills-lock.json, or the global lock (set by the store). */
+  lockEntries?: number;
   /** Expanded absolute project directory. */
   path: string;
   /** Display name — config `name` or the directory basename. */

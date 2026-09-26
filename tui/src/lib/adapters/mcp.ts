@@ -17,7 +17,7 @@ import type { InstalledItem, ToolInstance } from "../types.js";
 import type { Manifest } from "../manifest.js";
 import { loadManifest, saveManifest } from "../manifest.js";
 import { instanceKey, buildManifestItemKey, migrateManifestKeys } from "../plugin-helpers.js";
-import { getPluginMcpServers } from "../path-utils.js";
+import { getPluginMcpServers, resolvePluginRootVars } from "../path-utils.js";
 import { atomicWriteFileSync } from "../fs-utils.js";
 import { logError } from "../validation.js";
 import { expandPath } from "../config/path.js";
@@ -29,46 +29,80 @@ function loadMigratedManifest(): Manifest {
 }
 
 // ── Claude MCP config ──────────────────────────────────────────────────────
-// Stored in <configDir>/settings.json under "mcpServers".
+// Claude Code reads user-scoped MCP servers from `.claude.json` in its config
+// dir (`claude mcp add --scope user` writes there). For the default instance
+// (~/.claude, no CLAUDE_CONFIG_DIR) that file is ~/.claude.json in $HOME;
+// for any other config dir it is <configDir>/.claude.json. `settings.json`
+// is NOT read for MCP servers — earlier Blackbook versions wrote there, so
+// install/uninstall also clear any leftover entry of the same name.
 
-function getClaudeSettingsPath(instance: ToolInstance): string {
+function getClaudeMcpPath(instance: ToolInstance): string {
+  const configDir = expandPath(instance.configDir);
+  return configDir === join(homedir(), ".claude") ? join(homedir(), ".claude.json") : join(configDir, ".claude.json");
+}
+
+function getClaudeLegacySettingsPath(instance: ToolInstance): string {
   return join(expandPath(instance.configDir), "settings.json");
 }
 
+/** Parse a JSON object file; `{}` when absent. Throws on unreadable JSON rather than risk overwriting it. */
+function readJsonObject(path: string): Record<string, unknown> {
+  if (!existsSync(path)) return {};
+  const parsed = JSON.parse(readFileSync(path, "utf-8"));
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`${path} is not a JSON object`);
+  return parsed as Record<string, unknown>;
+}
+
+function serversOf(obj: Record<string, unknown>): Record<string, unknown> {
+  const servers = obj.mcpServers;
+  return servers && typeof servers === "object" && !Array.isArray(servers) ? { ...(servers as Record<string, unknown>) } : {};
+}
+
 function readClaudeMcpServers(instance: ToolInstance): Record<string, unknown> {
-  const path = getClaudeSettingsPath(instance);
   try {
-    if (!existsSync(path)) return {};
-    const parsed = JSON.parse(readFileSync(path, "utf-8"));
-    const servers = parsed?.mcpServers;
-    return servers && typeof servers === "object" && !Array.isArray(servers) ? servers : {};
+    return serversOf(readJsonObject(getClaudeMcpPath(instance)));
   } catch {
     return {};
   }
 }
 
-function writeClaudeMcpServers(instance: ToolInstance, servers: Record<string, unknown>): void {
-  const path = getClaudeSettingsPath(instance);
-  let existing: Record<string, unknown> = {};
-  try {
-    if (existsSync(path)) existing = JSON.parse(readFileSync(path, "utf-8"));
-  } catch { /* start fresh */ }
+/** Replace only `mcpServers` in the file, keeping every other key (Claude keeps much more state here). */
+function updateServersIn(path: string, update: (servers: Record<string, unknown>) => boolean): void {
+  const existing = readJsonObject(path);
+  const servers = serversOf(existing);
+  if (!update(servers)) return;
   existing.mcpServers = servers;
   mkdirSync(dirname(path), { recursive: true });
   atomicWriteFileSync(path, JSON.stringify(existing, null, 2) + "\n");
 }
 
+function removeLegacySettingsServer(instance: ToolInstance, name: string): void {
+  try {
+    updateServersIn(getClaudeLegacySettingsPath(instance), (servers) => {
+      if (!(name in servers)) return false;
+      delete servers[name];
+      return true;
+    });
+  } catch {
+    // Unreadable legacy settings: leave it alone.
+  }
+}
+
 function writeClaudeMcpServer(instance: ToolInstance, name: string, config: unknown): void {
-  const servers = readClaudeMcpServers(instance);
-  servers[name] = config;
-  writeClaudeMcpServers(instance, servers);
+  updateServersIn(getClaudeMcpPath(instance), (servers) => {
+    servers[name] = config;
+    return true;
+  });
+  removeLegacySettingsServer(instance, name);
 }
 
 function removeClaudeMcpServer(instance: ToolInstance, name: string): void {
-  const servers = readClaudeMcpServers(instance);
-  if (!(name in servers)) return;
-  delete servers[name];
-  writeClaudeMcpServers(instance, servers);
+  updateServersIn(getClaudeMcpPath(instance), (servers) => {
+    if (!(name in servers)) return false;
+    delete servers[name];
+    return true;
+  });
+  removeLegacySettingsServer(instance, name);
 }
 
 // ── Pi MCP config ──────────────────────────────────────────────────────────
@@ -126,12 +160,13 @@ export async function installMcpServersToInstance(
   const key = instanceKey(instance);
   if (!manifest.tools[key]) manifest.tools[key] = { items: {} };
   const toolManifest = manifest.tools[key];
-  const dest = instance.toolId === "claude-code" ? getClaudeSettingsPath(instance) : getPiGlobalMcpPath();
+  const dest = instance.toolId === "claude-code" ? getClaudeMcpPath(instance) : getPiGlobalMcpPath();
 
   let count = 0;
   const errors: string[] = [];
 
-  for (const [serverName, config] of Object.entries(servers)) {
+  for (const [serverName, rawConfig] of Object.entries(servers)) {
+    const config = resolvePluginRootVars(rawConfig, sourcePath);
     try {
       if (instance.toolId === "claude-code") {
         writeClaudeMcpServer(instance, serverName, config);

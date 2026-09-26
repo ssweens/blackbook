@@ -275,6 +275,25 @@ function readJsonIfExists(path: string): unknown {
  *    plugin (resolved relative to `pluginDir`) holding the servers.
  * Returns null if no server definitions are found or parsable.
  */
+/**
+ * Claude Code substitutes `${CLAUDE_PLUGIN_ROOT}` only for servers loaded from
+ * a native plugin. When Blackbook copies a plugin's MCP config into a tool's
+ * own config (settings.json, Pi's mcp.json, a skill-bundled mcp.json), the
+ * variable would be passed through literally and the server fails to start
+ * ("Missing environment variables: CLAUDE_PLUGIN_ROOT"). Replace it — in every
+ * string, at any depth — with the plugin's actual directory.
+ */
+export function resolvePluginRootVars<T>(value: T, pluginRoot: string): T {
+  const root = resolve(pluginRoot);
+  const visit = (v: unknown): unknown => {
+    if (typeof v === "string") return v.replace(/\$\{CLAUDE_PLUGIN_ROOT\}|\$CLAUDE_PLUGIN_ROOT(?![A-Za-z0-9_])/g, root);
+    if (Array.isArray(v)) return v.map(visit);
+    if (v && typeof v === "object") return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, visit(x)]));
+    return v;
+  };
+  return visit(value) as T;
+}
+
 export function getPluginMcpServers(pluginDir: string): Record<string, unknown> | null {
   const fromFile = (relPath: string): Record<string, unknown> | null => {
     const parsed = readJsonIfExists(join(pluginDir, relPath));

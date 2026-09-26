@@ -30,6 +30,7 @@ Plugin manager for agentic coding tools built with React/Ink. Install skills, co
 - **Cross-tool sync** — Install plugins to multiple tools at once, detect incomplete installs
 - **Repo-prescribed installed rows** — Installed tab shows marketplace/source-repo plugins as `in git` even before local installation
 - **Per-component control** — Disable individual skills, commands, or agents within a plugin
+- **Per-project skills** — Bundled `npx skills` (`blackbook skills …`) that symlinks project skills from one central store instead of copying them into every repo
 
 - **Advisory consultations** — Ask the configured Pi, Claude Code, or OpenCode runtime for bounded recommendations without automatic mutations
 
@@ -148,6 +149,7 @@ blackbook list [--tool <id>] [--json]        # everything tracked, with install 
 blackbook sync [--tool <id>] [--yes] [--dry-run] [--json]
 blackbook install <name>[@marketplace] [--json]
 blackbook uninstall <name>[@marketplace] [--json]
+blackbook skills <args...>                   # bundled `npx skills`, project skills in the central store
 ```
 
 - `--tool <id>` scopes to one tool instance — matches a tool ID, display name, or `toolId:instanceId` (case-insensitive) when disambiguating multiple instances of the same tool.
@@ -156,6 +158,67 @@ blackbook uninstall <name>[@marketplace] [--json]
 - `install`/`uninstall` resolve `<name>` against marketplace plugins first, then standalone skills, applying to all enabled tools.
 - Exit code `0` on success, non-zero on any reported error (bad `--tool` value, unknown plugin/skill name, failed install, sync errors).
 - CLI commands skip the TUI's background tool-binary version checks (network-dependent, only feeds "tool" status items) — a scriptable command shouldn't pay for that round-trip on every invocation.
+
+## Project skills (`blackbook skills`)
+
+Blackbook bundles the [skills CLI](https://github.com/vercel-labs/skills) (`npx skills`) and runs it as `blackbook skills …`. Every command and flag works as in upstream: `add`, `remove`, `list`, `update`, `experimental_install`, `experimental_sync`, and the rest. One thing is different: where a project's skills are stored.
+
+Upstream copies each skill into `<project>/.agents/skills/<name>`. Blackbook's copy keeps **one shared copy per source and skill** in a central store and symlinks each project to it:
+
+```
+~/.local/share/blackbook/skills/              ($XDG_DATA_HOME/blackbook/skills)
+  github.com/ssweens/playbook/blast-radius/
+  local/Users/me/src/my-skills/pdf/
+  ...
+
+<project>/.agents/skills/blast-radius  -> ~/.local/share/blackbook/skills/github.com/ssweens/playbook/blast-radius
+<project>/.claude/skills/blast-radius  -> (same)
+<project>/skills-lock.json                (upstream format, commit this)
+```
+
+- **Only linked skills are active.** A project sees only the skills in its own `skills-lock.json`. Global installs (`-g`) also live in the store: `~/.agents/skills/<name>` and `~/.claude/skills/<name>` are links to it, so the store can hold skills that are active in some projects but not globally.
+- **One version.** The store key is the source (`github.com/<owner>/<repo>`, a git host and path, a well-known URL, a download URL, `local/<absolute path>`, or `node_modules/<package>`), never the ref. Every project shares the same copy. Running `blackbook skills update` in any project updates it for all projects.
+- **Teammates** restore a clone with `blackbook skills experimental_install`, or with plain `npx skills experimental_install` if they don't use Blackbook.
+- `remove` removes the links and lock entry and keeps the store copy for other projects.
+- **One manager per skill.** Blackbook's own install, sync, and uninstall never write over, copy beside, or delete a skill the CLI manages. The Projects tab's Global workspace runs the CLI with `-g`.
+
+The **Projects** tab uses the same CLI when `settings.project_skill_mode` is `link` (the default). Pushing a skill or applying a profile runs `skills add <source-repo origin> --skill … -a <enabled tools> -y` in the project. Deleting a linked skill runs `skills remove`. `copy` keeps the old behavior of copying into the project.
+
+**Plugins.** Blackbook still installs, updates and removes plugins. A plugin's skills go through the bundled CLI, from the plugin's own folder in its repo, into the store with flat names and the global lockfile. One call covers the tools that share `~/.agents/skills`, and one call covers each Claude instance through `CLAUDE_CONFIG_DIR`. Commands, agents and MCP config still use Blackbook's own engine. Source-repo skills from the Sync tab install the same way. A local-path marketplace resolves to its git remote, so the store entries match standalone installs.
+
+**Dev shortcuts.** Map a repo to a local checkout, on this machine only:
+
+```yaml
+settings:
+  dev_shortcuts:
+    github.com/ssweens/playbook: ~/src/playbook
+```
+
+When a skill source matches a repo exactly, its store entry is a live symlink into the checkout. Edits show up in every tool and project immediately, with no push or `update`. Lockfiles still record `ssweens/playbook`, so nothing machine-specific reaches projects or teammates. Remove the entry and reinstall to go back to normal copies.
+
+### Profiles
+
+A profile is a reusable piece of a `skills-lock.json`, stored in your source repo as `profiles/<name>.skills-lock.json`:
+
+```json
+{
+  "version": 1,
+  "skills": {
+    "making-good-tracks": { "source": "ssweens/playbook", "sourceType": "github", "skillPath": "skills/making-good-tracks/SKILL.md" },
+    "skill-creator": { "source": "anthropics/skills", "sourceType": "github", "skillPath": "skills/skill-creator/SKILL.md" }
+  }
+}
+```
+
+- **It's the upstream lockfile format,** so it works without Blackbook. Copy the entries into a project's `skills-lock.json` and run `npx skills experimental_install`.
+- **Build profiles in the Profiles tab.** Each skill keeps its real source: a third-party skill's entry comes from your global lockfile, and a playbook skill's from the source repo's GitHub remote.
+- **Apply one with `P`** from a project, or from the Global workspace. Blackbook runs one `skills add` per source for your enabled agents, so Claude gets links too, and uses `-g` for Global.
+- **A project's `skills-lock.json` is the source of truth.** The Projects tab shows its skill count and each profile's coverage, as in `profile Music: 46/48 · 2 new — P to apply`. It also shows skills removed from a profile since you applied it here. Applying again adds the new skills and removes the dropped ones. Nothing changes a project on its own.
+- **Coverage is computed** from the project's lock and the profile. The only extra state is a machine-local record of each apply, kept in `~/.cache/blackbook/profile-applications.json`, which is what makes the "removed" count possible.
+
+Older profiles in `config.yaml` (lists of names) still show as "legacy". Saving one in the Profiles tab converts it to a file.
+
+Vendoring details, the exact patch, and upgrade steps are in [`tui/vendor/skills/VENDOR.md`](tui/vendor/skills/VENDOR.md).
 
 ## Configuration
 
@@ -357,6 +420,8 @@ Downloaded plugins and HTTP cache are stored in:
 ```
 
 Remote plugin marketplace responses are cached for up to 10 minutes before refetch.
+
+The project **skill store** is deliberately *not* under the cache. It lives in `~/.local/share/blackbook/skills` (`$XDG_DATA_HOME`) because project symlinks point into it, so wiping the cache never breaks a project. If you delete the store, run `blackbook skills experimental_install` in each project to restore it.
 
 ## Development
 

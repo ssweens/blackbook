@@ -90,7 +90,7 @@ export interface Actions {
   /** Apply a named profile (skill bundle) to a workspace — pushes its skills in. */
   applyProfile: (workspacePath: string, name: string) => Promise<boolean>;
   /** Create or update a named profile in config.yaml. */
-  saveProfile: (name: string, skills: string[]) => Promise<boolean>;
+  saveProfile: (name: string, skills: string[], previousName?: string | null) => Promise<boolean>;
   /** Delete a named profile from config.yaml. */
   deleteProfile: (name: string) => Promise<boolean>;
   /** True while the Profiles tab builder/confirm owns input (suppresses global keys). */
