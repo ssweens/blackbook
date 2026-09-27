@@ -91,6 +91,8 @@ export interface Actions {
   applyProfile: (workspacePath: string, name: string) => Promise<boolean>;
   /** Create or update a named profile in config.yaml. */
   saveProfile: (name: string, skills: string[], previousName?: string | null) => Promise<boolean>;
+  /** Save a workspace's current skills lock as a new profile (never overwrites). */
+  saveLockAsProfile: (workspace: string, name: string) => Promise<boolean>;
   /** Delete a named profile from config.yaml. */
   deleteProfile: (name: string) => Promise<boolean>;
   /** True while the Profiles tab builder/confirm owns input (suppresses global keys). */

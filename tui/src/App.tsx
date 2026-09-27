@@ -42,6 +42,8 @@ import { ProfilesTab } from "./tabs/ProfilesTab.js";
 import { AddProjectModal } from "./components/AddProjectModal.js";
 import { AdoptModal } from "./components/AdoptModal.js";
 import { ProfilePickerModal } from "./components/ProfilePickerModal.js";
+import { SaveProfileModal } from "./components/SaveProfileModal.js";
+import { workspaceLock } from "./lib/skill-profiles.js";
 import { getPluginToolStatus } from "./lib/plugin-status.js";
 import {
   syncPluginInstances,
@@ -301,6 +303,7 @@ export function App() {
   const unmanagedSkills = useMemo(() => collectUnmanagedSkills(projects), [projects]);
   const profiles = useStore((s) => s.profiles);
   const applyProfile = useStore((s) => s.applyProfile);
+  const saveLockAsProfile = useStore((s) => s.saveLockAsProfile);
   const [profileTargetPath, setProfileTargetPath] = useState<string | null>(null);
   const [consultation, setConsultation] = useState<AppConsultation | null>(null);
   const consultationAbortRef = useRef<AbortController | null>(null);
@@ -323,7 +326,7 @@ export function App() {
   const pluginDriftMap = useStore((s) => s.pluginDriftMap);
   const setPluginDriftMap = useStore((s) => s.setPluginDriftMap);
   const [detailPiMarketplace, setDetailPiMarketplace] = useState<PiMarketplace | null>(null);
-  const [modalVisible, setModalVisible] = useState<"addMarketplace" | "addPiMarketplace" | "addProject" | "adoptSkills" | "applyProfile" | "sourceSetupWizard" | null>(null);
+  const [modalVisible, setModalVisible] = useState<"addMarketplace" | "addPiMarketplace" | "addProject" | "adoptSkills" | "applyProfile" | "saveLockProfile" | "sourceSetupWizard" | null>(null);
   const showAddMarketplace = modalVisible === "addMarketplace";
   const showAddPiMarketplace = modalVisible === "addPiMarketplace";
   const showSourceSetupWizard = modalVisible === "sourceSetupWizard";
@@ -1461,7 +1464,7 @@ export function App() {
 
   type OverlayKind =
     | "consultation" | "sourceSetupWizard" | "diff" | "missingSummary" | "editToolModal"
-    | "addMarketplace" | "addPiMarketplace" | "addProject" | "adoptSkills" | "applyProfile" | "toolActionModal"
+    | "addMarketplace" | "addPiMarketplace" | "addProject" | "adoptSkills" | "applyProfile" | "saveLockProfile" | "toolActionModal"
     | "toolDetail" | "skillFileBrowser" | "itemDetail" | "marketplaceDetail";
   interface OverlayEntry {
     kind: OverlayKind;
@@ -1486,6 +1489,7 @@ export function App() {
     { kind: "addProject", active: modalVisible === "addProject", inputMode: "modal" },
     { kind: "adoptSkills", active: modalVisible === "adoptSkills", inputMode: "modal" },
     { kind: "applyProfile", active: modalVisible === "applyProfile", inputMode: "modal" },
+    { kind: "saveLockProfile", active: modalVisible === "saveLockProfile", inputMode: "modal" },
     { kind: "toolActionModal", active: !!(toolModalAction && activeToolForModal), inputMode: "modal" },
     { kind: "toolDetail", active: !!detailTool, inputMode: "detail", escClose: () => setDetailToolKey(null) },
     // The file browser owns its own Esc behavior: back to its file list, then back to skill detail.
@@ -2039,6 +2043,15 @@ export function App() {
         if (target) {
           setProfileTargetPath(target.path);
           setModalVisible("applyProfile");
+        }
+        return;
+      }
+      // Save the current workspace's skills lock as a new profile.
+      if (input === "S") {
+        const target = projectDetailPath ? projects.find((p) => p.path === projectDetailPath) : projects[selectedIndex];
+        if (target) {
+          setProfileTargetPath(target.path);
+          setModalVisible("saveLockProfile");
         }
         return;
       }
@@ -2631,6 +2644,17 @@ export function App() {
             profiles={profiles}
             workspaceName={target?.name ?? "workspace"}
             onApply={(name) => { setModalVisible(null); if (profileTargetPath) void applyProfile(profileTargetPath, name); }}
+            onCancel={() => setModalVisible(null)}
+          />
+        );
+      }
+      case "saveLockProfile": {
+        const target = projects.find((p) => p.path === profileTargetPath);
+        return (
+          <SaveProfileModal
+            workspaceName={target?.name ?? "workspace"}
+            skillCount={profileTargetPath ? Object.keys(workspaceLock(profileTargetPath).skills).length : 0}
+            onSubmit={(name) => { setModalVisible(null); if (profileTargetPath) void saveLockAsProfile(profileTargetPath, name); }}
             onCancel={() => setModalVisible(null)}
           />
         );

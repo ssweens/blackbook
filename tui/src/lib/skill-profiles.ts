@@ -335,9 +335,35 @@ export async function applyProfileToWorkspace(
   return result;
 }
 
-/** Save a workspace's current lock (project or global) as a profile. */
-export function lockAsProfile(workspace: string): SkillLockFile {
-  return workspaceLock(workspace);
+/**
+ * A workspace's current lock (project or global) as a profile. A `local`
+ * entry inside the source repo becomes that repo's remote entry, so the profile
+ * works on any machine. Other `local` entries are kept but listed in
+ * `localOnly`, because their absolute paths only exist on this machine.
+ */
+export function lockAsProfile(workspace: string, sourceRepo: string | null): { lock: SkillLockFile; localOnly: string[] } {
+  const skills: Record<string, LockEntry> = {};
+  const localOnly: string[] = [];
+  for (const [name, entry] of Object.entries(workspaceLock(workspace).skills)) {
+    if (entry.sourceType !== "local") {
+      skills[name] = entry;
+      continue;
+    }
+    const skillDir = entry.skillPath ? join(entry.source, entry.skillPath.replace(/\/?SKILL\.md$/, "")) : entry.source;
+    const fromRepo = sourceRepo ? sourceRepoEntry(sourceRepo, skillDir) : null;
+    if (fromRepo) {
+      skills[name] = fromRepo;
+    } else {
+      skills[name] = entry;
+      localOnly.push(name);
+    }
+  }
+  return { lock: { version: 1, skills }, localOnly: localOnly.sort() };
+}
+
+/** Mark a profile as applied to a workspace with exactly these skills (after saving it from that workspace). */
+export function markProfileApplied(workspace: string, profile: string, names: string[]): void {
+  recordSnapshot(workspace, profile, names);
 }
 
 export function profileDisplayPath(sourceRepo: string, name: string): string {

@@ -196,6 +196,8 @@ settings:
 
 When a skill source matches a repo exactly, its store entry is a live symlink into the checkout. Edits show up in every tool and project immediately, with no push or `update`. Lockfiles still record `ssweens/playbook`, so nothing machine-specific reaches projects or teammates. Remove the entry and reinstall to go back to normal copies.
 
+Manage shortcuts in the **Settings** tab under Dev Shortcuts. Choose **Add dev shortcut** and enter the repo, then the checkout path. Press Enter on a shortcut to change its path, or `d` to remove it. A shortcut whose checkout is missing shows `(missing)`, and its repo is fetched normally.
+
 ### Profiles
 
 A profile is a reusable piece of a `skills-lock.json`, stored in your source repo as `profiles/<name>.skills-lock.json`:
@@ -213,6 +215,7 @@ A profile is a reusable piece of a `skills-lock.json`, stored in your source rep
 - **It's the upstream lockfile format,** so it works without Blackbook. Copy the entries into a project's `skills-lock.json` and run `npx skills experimental_install`.
 - **Build profiles in the Profiles tab.** Each skill keeps its real source: a third-party skill's entry comes from your global lockfile, and a playbook skill's from the source repo's GitHub remote.
 - **Apply one with `P`** from a project, or from the Global workspace. Blackbook runs one `skills add` per source for your enabled agents, so Claude gets links too, and uses `-g` for Global.
+- **Save a project's lock as a profile with `S`** from the Projects tab, or from inside a project. Blackbook asks for a name and never overwrites an existing profile. A `local` entry inside your source repo is saved as the repo's GitHub source, and any other local path gets a warning because it only exists on this machine.
 - **A project's `skills-lock.json` is the source of truth.** The Projects tab shows its skill count and each profile's coverage, as in `profile Music: 46/48 · 2 new — P to apply`. It also shows skills removed from a profile since you applied it here. Applying again adds the new skills and removes the dropped ones. Nothing changes a project on its own.
 - **Coverage is computed** from the project's lock and the profile. The only extra state is a machine-local record of each apply, kept in `~/.cache/blackbook/profile-applications.json`, which is what makes the "removed" count possible.
 

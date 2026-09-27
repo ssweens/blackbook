@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- 2026-09-26 — Settings tab: a Dev Shortcuts section to add, edit (Enter) and remove (`d`) repo-to-checkout mappings, with missing checkouts flagged. The Project Skill Mode setting (`link` or `copy`) is now editable there too.
+- 2026-09-26 — Save a workspace's skills lock as a profile with `S` on the Projects tab. Existing profiles are never overwritten, local sources inside the source repo become its GitHub source, and other local paths are flagged as machine-only.
 - 2026-09-26 — Skill file browser. Standalone and plugin skill details can browse a skill's files and preview them. Skill detail shows plugin provenance and the source-repo path.
 - 2026-09-26 — Maintenance scripts in `tui/scripts`: `plugin-status-doctor.mjs` checks every installed plugin's status invariants (`--json` for machine output), and `migrate-plugins-to-agents.mjs` reinstalls plugins stranded in legacy per-tool dirs into `~/.agents`.
 - 2026-09-25 — Bundled skills CLI with a central project-skill store. Blackbook vendors vercel-labs/skills 1.7.0 (`tui/vendor/skills`, MIT) and runs it as `blackbook skills …`, with all upstream commands and flags. The one patch: project-scope installs keep one copy per source and skill in `$XDG_DATA_HOME/blackbook/skills` (keyed `github.com/<owner>/<repo>`, git host/path, well-known or download URL, `local/<absolute path>`, or `node_modules/<package>`; refs are not part of the key) and symlink `.agents/skills/<name>` and each agent dir to it, instead of copying into the project. `skills-lock.json` keeps the upstream format. Global installs (`-g`) use the store too, linking `~/.agents/skills/<name>` and `~/.claude/skills/<name>`. `remove` leaves the shared store copy. Telemetry and the skills.sh audit lookup are always off. Blackbook's own skill install, sync, and uninstall skip CLI-managed (store-linked) skills, and the Projects tab's Global workspace uses `-g`. The Projects tab installs and removes through the CLI when the new `settings.project_skill_mode` is `link` (the default; `copy` keeps vendored copies). Profile apply makes one `skills add` call per profile.
@@ -17,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 2026-08-12 — Completed advisory consultations can continue with optional follow-up questions (`c`). Each turn carries only the four newest redacted exchanges as conversational context, rebuilds the current project/profile/plugin/skill snapshot, and revalidates proposals before they can be selected or accepted.
 
 ### Fixed
+- 2026-09-26 — `blackbook … --json` piped to another program no longer stops at 64 KB. The CLI now waits for stdout and stderr to flush before exiting.
+- 2026-09-26 — `tui/package-lock.json` was regenerated for ink 7, so `npm ci` works again.
 - 2026-09-26 — Diffs of in-sync items ask for confirmation instead of opening an empty diff. Advisor consultations allow up to 1 MB of prompt and output with a 5-minute timeout, and narratives are no longer truncated.
 - 2026-09-26 — Digits typed in the model search no longer switch tabs, and global shortcuts are suppressed while a text input has focus.
 - 2026-09-26 — Tests run against a temporary `HOME` and XDG dirs, so a full test run no longer writes into the real `~/.claude/skills`.

@@ -10,6 +10,7 @@ import {
   deleteProfileLock,
   isGlobalWorkspace,
   listProfileLocks,
+  lockAsProfile,
   profileCoverage,
   workspaceLock,
   writeProfileLock,
@@ -115,6 +116,28 @@ describe("coverage", () => {
     expect(addSourceFor({ source: "a/b", sourceType: "github" })).toBe("a/b");
     expect(addSourceFor({ source: "a/b", sourceType: "github", ref: "dev" })).toBe("a/b#dev");
     expect(addSourceFor({ source: "x", sourceType: "git", sourceUrl: "git@h:x.git" })).toBe("git@h:x.git");
+  });
+});
+
+describe("lockAsProfile", () => {
+  it("turns local entries inside the source repo into its remote, and flags other local paths", () => {
+    const project = join(root, "proj");
+    mkdirSync(project);
+    writeFileSync(join(project, "skills-lock.json"), JSON.stringify({
+      version: 1,
+      skills: {
+        alpha: { source: join(repo, "skills", "alpha"), sourceType: "local", computedHash: "h" },
+        beta: { source: repo, sourceType: "local", skillPath: "skills/ns/beta/SKILL.md" },
+        elsewhere: { source: join(root, "other", "skill"), sourceType: "local" },
+        remote: { source: "anthropics/skills", sourceType: "github", skillPath: "skills/pdf/SKILL.md", computedHash: "h" },
+      },
+    }));
+    const { lock, localOnly } = lockAsProfile(project, repo);
+    expect(lock.skills.alpha).toEqual({ source: "ssweens/playbook", sourceType: "github", skillPath: "skills/alpha/SKILL.md" });
+    expect(lock.skills.beta).toEqual({ source: "ssweens/playbook", sourceType: "github", skillPath: "skills/ns/beta/SKILL.md" });
+    expect(lock.skills.elsewhere).toEqual({ source: join(root, "other", "skill"), sourceType: "local" });
+    expect(lock.skills.remote).toEqual({ source: "anthropics/skills", sourceType: "github", skillPath: "skills/pdf/SKILL.md" });
+    expect(localOnly).toEqual(["elsewhere"]);
   });
 });
 

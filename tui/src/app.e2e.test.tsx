@@ -1695,6 +1695,36 @@ describe("App E2E — Plugin Detail", () => {
     }
   });
 });
+describe("App E2E — Save project lock as profile", () => {
+  beforeEach(() => {
+    setupMocks();
+    useStore.setState(defaultStoreState());
+  });
+
+  it("S on a project opens the name prompt and saves that workspace's lock under the typed name", async () => {
+    const saveLockAsProfile = vi.fn().mockResolvedValue(true);
+    const project: ProjectInfo = { path: "/tmp/project", name: "Project", exists: true, hasAgentsDir: true, skills: [], available: [] };
+    useStore.setState({ tab: "projects", projects: [project], projectsLoaded: true, tools: createToolInstances(), saveLockAsProfile });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Project"));
+      sendKey(stdin, "S");
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Save Project's skills lock as a profile"));
+      act(() => {
+        stdin.write("web-3");
+      });
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("web-3"));
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, () => saveLockAsProfile.mock.calls.length === 1);
+      expect(saveLockAsProfile).toHaveBeenCalledWith("/tmp/project", "web-3");
+      // Digits typed into the prompt must not switch tabs.
+      expect(useStore.getState().tab).toBe("projects");
+    } finally {
+      unmount();
+    }
+  });
+});
+
 describe("App E2E — Advisory Consultation", () => {
   beforeEach(() => {
     setupMocks();

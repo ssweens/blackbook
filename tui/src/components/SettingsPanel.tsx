@@ -2,6 +2,9 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { execFile } from "child_process";
+import { existsSync, statSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 import { loadConfig } from "../lib/config/loader.js";
 import { saveConfig } from "../lib/config/writer.js";
 import type { Settings } from "../lib/config/schema.js";
@@ -63,6 +66,13 @@ const SETTINGS_DEFS: SettingDef[] = [
     label: "Config Management",
     type: "boolean",
     description: "Track and sync tool config files (settings.json, etc.)",
+  },
+  {
+    key: "project_skill_mode",
+    label: "Project Skill Mode",
+    type: "enum",
+    enumValues: ["link", "copy"],
+    description: "Projects tab installs: link through the bundled skills CLI's central store, or copy into the project",
   },
   {
     key: "skill_sync_mode",
@@ -158,11 +168,45 @@ function formatValue(def: SettingDef, value: unknown): string {
 
 type MenuItem =
   | { kind: "setting"; def: SettingDef }
+  | { kind: "shortcut"; repo: string; path: string }
   | { kind: "change"; change: SourceRepoChange }
   | { kind: "action"; id: string; label: string };
 
-export function buildMenuItems(repoStatus: SourceRepoStatus | null): MenuItem[] {
+/** Whether a dev shortcut's checkout exists (`~` expands to the home dir). */
+export function shortcutCheckoutExists(path: string): boolean {
+  const dir = path.startsWith("~") ? join(homedir(), path.slice(1)) : path;
+  try {
+    return existsSync(dir) && statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Returns the shortcut map with `repo` set to `path`, or with `repo` removed
+ * when `path` is null. Returns undefined when no shortcuts remain.
+ */
+export function updateDevShortcuts(
+  current: Record<string, string> | undefined,
+  repo: string,
+  path: string | null,
+): Record<string, string> | undefined {
+  const next = { ...(current ?? {}) };
+  if (path === null) delete next[repo];
+  else next[repo] = path;
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+export function buildMenuItems(
+  repoStatus: SourceRepoStatus | null,
+  devShortcuts: Record<string, string> = {},
+): MenuItem[] {
   const items: MenuItem[] = SETTINGS_DEFS.map((def) => ({ kind: "setting" as const, def }));
+
+  for (const repo of Object.keys(devShortcuts).sort()) {
+    items.push({ kind: "shortcut", repo, path: devShortcuts[repo] });
+  }
+  items.push({ kind: "action", id: "add_shortcut", label: "Add dev shortcut" });
 
   if (repoStatus?.isGitRepo && repoStatus.hasChanges) {
     for (const change of repoStatus.changes) {
@@ -310,10 +354,12 @@ export function SettingsPanel({ active = true, onTextInputActiveChange }: Settin
   const [modelModelIndex, setModelModelIndex] = useState(0);
   const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
+  // Dev shortcut editing: "repo" while typing a new repo, "path" while typing its checkout.
+  const [shortcutEdit, setShortcutEdit] = useState<{ step: "repo" | "path"; repo: string; value: string } | null>(null);
 
   useEffect(() => () => onTextInputActiveChange?.(false), [onTextInputActiveChange]);
 
-  const menuItems = buildMenuItems(repoStatus);
+  const menuItems = buildMenuItems(repoStatus, settings?.dev_shortcuts ?? {});
 
   const filteredModels = useMemo(() => {
     if (!modelSearch.trim()) return discoveredModels;
@@ -411,6 +457,17 @@ export function SettingsPanel({ active = true, onTextInputActiveChange }: Settin
       return `Enter to edit · ${def.description}`;
     }
 
+    if (shortcutEdit) {
+      return shortcutEdit.step === "repo"
+        ? "Repo, e.g. github.com/owner/repo · Enter next · Esc cancel"
+        : "Local checkout path, e.g. ~/src/repo · Enter save · Esc cancel";
+    }
+
+    if (item.kind === "shortcut") {
+      const missing = shortcutCheckoutExists(item.path) ? "" : "Checkout not found, so the repo is fetched normally · ";
+      return `${missing}Enter to edit path · d to remove · skills from this repo link live to the checkout`;
+    }
+
     if (item.kind === "change") {
       if (expandedDiff === item.change.path) return "";
       return "Enter to view diff";
@@ -418,13 +475,14 @@ export function SettingsPanel({ active = true, onTextInputActiveChange }: Settin
 
     if (item.kind === "action") {
       if (commitEditing) return "";
+      if (item.id === "add_shortcut") return "Enter to map a repo to a local checkout (machine-local, never written to lockfiles)";
       if (item.id === "commit_push") return "Enter to commit and push all changes";
       if (repoStatus?.hasChanges) return "Commit/stash local changes before pulling";
       return "Enter to pull latest from remote";
     }
 
     return "";
-  }, [menuItems, selectedIndex, editing, expandedDiff, commitEditing, repoStatus]);
+  }, [menuItems, selectedIndex, editing, expandedDiff, commitEditing, repoStatus, shortcutEdit]);
 
   useInput((input, key) => {
     if (!active || !settings) return;
@@ -455,6 +513,36 @@ export function SettingsPanel({ active = true, onTextInputActiveChange }: Settin
         onTextInputActiveChange?.(false);
         setModelSearch("");
         setModelModelIndex(0);
+        return;
+      }
+      return;
+    }
+
+    // Dev shortcut add/edit mode
+    if (shortcutEdit) {
+      if (key.escape) {
+        setShortcutEdit(null);
+        onTextInputActiveChange?.(false);
+        return;
+      }
+      if (key.return) {
+        const value = shortcutEdit.value.trim();
+        if (!value) {
+          setActionMessage(shortcutEdit.step === "repo" ? "⚠ Enter a repo" : "⚠ Enter a checkout path");
+          return;
+        }
+        if (shortcutEdit.step === "repo") {
+          setShortcutEdit({ step: "path", repo: value, value: settings.dev_shortcuts?.[value] ?? "" });
+          return;
+        }
+        const dev_shortcuts = updateDevShortcuts(settings.dev_shortcuts, shortcutEdit.repo, value);
+        persistSettings({ ...settings, dev_shortcuts });
+        const repo = shortcutEdit.repo;
+        const savedIndex = buildMenuItems(repoStatus, dev_shortcuts).findIndex((i) => i.kind === "shortcut" && i.repo === repo);
+        if (savedIndex >= 0) setSelectedIndex(savedIndex);
+        if (!shortcutCheckoutExists(value)) setActionMessage(`⚠ ${value} does not exist yet`);
+        setShortcutEdit(null);
+        onTextInputActiveChange?.(false);
         return;
       }
       return;
@@ -555,6 +643,16 @@ export function SettingsPanel({ active = true, onTextInputActiveChange }: Settin
       return;
     }
 
+    if (input === "d") {
+      const item = menuItems[selectedIndex];
+      if (item?.kind === "shortcut") {
+        persistSettings({ ...settings, dev_shortcuts: updateDevShortcuts(settings.dev_shortcuts, item.repo, null) });
+        setActionMessage(`Removed dev shortcut for ${item.repo}`);
+        setSelectedIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+    }
+
     if (input === "R") {
       setActionMessage("Refreshing...");
       refreshRepoStatus({ force: true, fetchRemote: true }).then(() => {
@@ -601,7 +699,18 @@ export function SettingsPanel({ active = true, onTextInputActiveChange }: Settin
         return;
       }
 
+      if (item.kind === "shortcut") {
+        setShortcutEdit({ step: "path", repo: item.repo, value: item.path });
+        onTextInputActiveChange?.(true);
+        return;
+      }
+
       if (item.kind === "action") {
+        if (item.id === "add_shortcut") {
+          setShortcutEdit({ step: "repo", repo: "", value: "" });
+          onTextInputActiveChange?.(true);
+          return;
+        }
         if (item.id === "commit_push") {
           setCommitEditing(true);
           onTextInputActiveChange?.(true);
@@ -732,6 +841,56 @@ export function SettingsPanel({ active = true, onTextInputActiveChange }: Settin
         );
       })}
 
+      {/* Dev shortcuts — machine-local repo → checkout map for the skills CLI */}
+      <Box marginTop={1}>
+        <Text bold color="cyan">Dev Shortcuts</Text>
+        <Text color="gray">  repo → local checkout</Text>
+      </Box>
+      {menuItems.map((item, i) => {
+        const isSelected = i === selectedIndex;
+        if (item.kind === "shortcut") {
+          const editingThis = isSelected && shortcutEdit?.step === "path" && shortcutEdit.repo === item.repo;
+          const exists = shortcutCheckoutExists(item.path);
+          return (
+            <Box key={`shortcut-${item.repo}`}>
+              <Text color={isSelected ? "cyan" : "white"}>{isSelected ? "❯ " : "  "}</Text>
+              <Text bold={isSelected} color={isSelected ? "white" : "gray"}>{item.repo}</Text>
+              <Text color="gray"> → </Text>
+              {editingThis ? (
+                <TextInput value={shortcutEdit.value} onChange={(v) => setShortcutEdit((e) => (e ? { ...e, value: v } : e))} />
+              ) : (
+                <Text color={isSelected ? "yellow" : "gray"}>{item.path}</Text>
+              )}
+              {!editingThis && !exists && <Text color="red"> (missing)</Text>}
+            </Box>
+          );
+        }
+        if (item.kind === "action" && item.id === "add_shortcut") {
+          const adding = isSelected && shortcutEdit !== null;
+          return (
+            <Box key="add_shortcut" flexDirection="column">
+              <Box>
+                <Text color={isSelected ? "cyan" : "white"}>{isSelected ? "❯ " : "  "}</Text>
+                <Text bold={isSelected} color={isSelected ? "white" : "gray"}>{item.label}</Text>
+              </Box>
+              {adding && shortcutEdit.step === "repo" && (
+                <Box marginLeft={4}>
+                  <Text color="gray">Repo: </Text>
+                  <TextInput value={shortcutEdit.value} onChange={(v) => setShortcutEdit((e) => (e ? { ...e, value: v } : e))} />
+                </Box>
+              )}
+              {adding && shortcutEdit.step === "path" && (
+                <Box marginLeft={4}>
+                  <Text color="gray">{shortcutEdit.repo} → </Text>
+                  <TextInput value={shortcutEdit.value} onChange={(v) => setShortcutEdit((e) => (e ? { ...e, value: v } : e))} />
+                </Box>
+              )}
+            </Box>
+          );
+        }
+        return null;
+      })}
+
       {/* Source Repo header */}
       {repoStatus && repoStatus.isGitRepo && (
         <Box marginTop={1}>
@@ -773,7 +932,7 @@ export function SettingsPanel({ active = true, onTextInputActiveChange }: Settin
 
       {/* Repo actions — each is exactly 1 line */}
       {menuItems.map((item, i) => {
-        if (item.kind !== "action") return null;
+        if (item.kind !== "action" || item.id === "add_shortcut") return null;
         const isSelected = i === selectedIndex;
         const isCommitAction = item.id === "commit_push" && isSelected && commitEditing;
 

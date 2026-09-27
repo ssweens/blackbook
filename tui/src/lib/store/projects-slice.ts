@@ -27,6 +27,8 @@ import {
   workspaceCoverage,
   workspaceLock,
   writeProfileLock,
+  lockAsProfile,
+  markProfileApplied,
   type SkillLockFile,
 } from "../skill-profiles.js";
 import { expandPath } from "../config/path.js";
@@ -53,6 +55,7 @@ export type ProjectsSlice = Pick<
   | "adoptUnmanagedSkills"
   | "applyProfile"
   | "saveProfile"
+  | "saveLockAsProfile"
   | "deleteProfile"
   | "profilesEditing"
   | "setProfilesEditing"
@@ -350,6 +353,45 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
         ? `Saved "${trimmed}" (${count}); no known source for: ${unresolved.slice(0, 3).join(", ")}`
         : `Saved profile "${trimmed}" (${count} skill${count === 1 ? "" : "s"}) to profiles/${trimmed}.skills-lock.json`,
       unresolved.length > 0 ? "warning" : "success",
+    );
+    return true;
+  },
+
+  saveLockAsProfile: async (workspace, name) => {
+    const { notify } = get();
+    const trimmed = name.trim();
+    if (!trimmed || !isValidProfileName(trimmed)) {
+      notify("Profile names are letters, digits, space, dot, dash, or underscore", "error");
+      return false;
+    }
+    const sourceRepo = getConfigRepoPath();
+    if (!sourceRepo) {
+      notify("No source repo configured — profiles live in <source repo>/profiles/", "error");
+      return false;
+    }
+    if (get().profileLocks[trimmed] || get().profiles[trimmed]) {
+      notify(`Profile "${trimmed}" already exists — pick another name`, "error");
+      return false;
+    }
+    const { lock, localOnly } = lockAsProfile(workspace, sourceRepo);
+    const names = Object.keys(lock.skills);
+    if (names.length === 0) {
+      notify("This workspace's skills lock is empty — nothing to save", "warning");
+      return false;
+    }
+    try {
+      writeProfileLock(sourceRepo, trimmed, lock);
+      markProfileApplied(workspace, trimmed, names);
+    } catch (err) {
+      notify(`Failed to save profile: ${err instanceof Error ? err.message : String(err)}`, "error");
+      return false;
+    }
+    await get().loadProjects({ silent: true });
+    notify(
+      localOnly.length > 0
+        ? `Saved "${trimmed}" (${names.length}); local paths only work on this machine: ${localOnly.slice(0, 3).join(", ")}`
+        : `Saved profile "${trimmed}" (${names.length} skill${names.length === 1 ? "" : "s"}) to profiles/${trimmed}.skills-lock.json`,
+      localOnly.length > 0 ? "warning" : "success",
     );
     return true;
   },

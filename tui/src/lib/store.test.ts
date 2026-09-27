@@ -2998,6 +2998,7 @@ describe("composed store shape", () => {
     "adoptUnmanagedSkills",
     "applyProfile",
     "saveProfile",
+    "saveLockAsProfile",
     "deleteProfile",
     "setProfilesEditing",
   ] as const;

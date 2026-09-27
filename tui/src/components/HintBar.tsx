@@ -15,7 +15,7 @@ const HINTS: Record<Tab, string> = {
   marketplaces: "Enter select · u update · r remove · R refresh · q quit",
   tools: "Enter detail · i install · u update · d uninstall · e edit config · Space toggle · R refresh · q quit",
   sync: "y to sync missing/changed items (press twice) · Enter details · d diff/detail · R refresh · q quit",
-  projects: "Enter open · c consult advisor · a add · A adopt · P apply profile · d remove · (in project) p push · u pull · e toggle · d delete · Esc back · R refresh · q quit",
+  projects: "Enter open · c consult advisor · a add · A adopt · P apply profile · S save lock as profile · d remove · (in project) p push · u pull · e toggle · d delete · Esc back · R refresh · q quit",
   profiles: "n new · Enter/e edit · d delete · (in builder) Space toggle · c consult advisor · →/← expand namespace · Enter save · Esc back · q quit",
   settings: "↑/↓ select · Enter edit · Esc cancel · R refresh · q quit",
 };

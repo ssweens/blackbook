@@ -44,6 +44,8 @@ vi.mock("../config.js", () => ({
 // Skill-lock profiles: in-memory stand-in for <source repo>/profiles/*.skills-lock.json.
 let profileFiles: Record<string, { version: number; skills: Record<string, { source: string; sourceType: string }> }> = {};
 const applyToWorkspaceMock = vi.fn();
+const markAppliedMock = vi.fn();
+let lockAsProfileResult: { lock: { version: number; skills: Record<string, { source: string; sourceType: string }> }; localOnly: string[] } = { lock: { version: 1, skills: {} }, localOnly: [] };
 vi.mock("../skill-profiles.js", () => ({
   listProfileLocks: () => ({ ...profileFiles }),
   writeProfileLock: (_repo: string, name: string, lock: never) => {
@@ -63,6 +65,8 @@ vi.mock("../skill-profiles.js", () => ({
   applyProfileToWorkspace: (...a: unknown[]) => applyToWorkspaceMock(...a),
   workspaceCoverage: () => [],
   workspaceLock: () => ({ version: 1, skills: {} }),
+  lockAsProfile: () => lockAsProfileResult,
+  markProfileApplied: (...a: unknown[]) => markAppliedMock(...a),
 }));
 vi.mock("../config/loader.js", () => ({ loadConfig: () => loadConfigMock() }));
 vi.mock("../config/writer.js", () => ({ saveConfig: (...a: unknown[]) => saveConfigMock(...a) }));
@@ -94,6 +98,8 @@ beforeEach(() => {
   projectSkillMode = "copy";
   profileFiles = {};
   applyToWorkspaceMock.mockReset();
+  markAppliedMock.mockReset();
+  lockAsProfileResult = { lock: { version: 1, skills: {} }, localOnly: [] };
   pullSkillMock.mockReset();
   commitMock.mockReset();
   buildWorkspaceInfoMock.mockReset();
@@ -297,6 +303,38 @@ describe("projects-slice", () => {
     expect(await get().saveProfile("   ", ["a"])).toBe(false);
     expect(await get().saveProfile("../x", ["a"])).toBe(false);
     expect(profileFiles).toEqual({});
+  });
+
+  it("saveLockAsProfile writes the workspace lock as a new profile and marks it applied there", async () => {
+    getProjectsMock.mockReturnValue([]);
+    lockAsProfileResult = { lock: { version: 1, skills: { a: { source: "x/y", sourceType: "github" } } }, localOnly: [] };
+    const { get } = makeStore();
+    expect(await get().saveLockAsProfile("/ws", " web ")).toBe(true);
+    expect(profileFiles.web).toEqual(lockAsProfileResult.lock);
+    expect(markAppliedMock).toHaveBeenCalledWith("/ws", "web", ["a"]);
+    expect(get().notify).toHaveBeenCalledWith(expect.stringContaining('Saved profile "web" (1 skill)'), "success");
+  });
+
+  it("saveLockAsProfile never overwrites an existing profile and refuses an empty lock", async () => {
+    getProjectsMock.mockReturnValue([]);
+    profileFiles = { web: { version: 1, skills: {} } };
+    const { get } = makeStore();
+    await get().loadProjects({ silent: true });
+    lockAsProfileResult = { lock: { version: 1, skills: { a: { source: "x/y", sourceType: "github" } } }, localOnly: [] };
+    expect(await get().saveLockAsProfile("/ws", "web")).toBe(false);
+    expect(profileFiles.web.skills).toEqual({});
+    lockAsProfileResult = { lock: { version: 1, skills: {} }, localOnly: [] };
+    expect(await get().saveLockAsProfile("/ws", "other")).toBe(false);
+    expect(profileFiles.other).toBeUndefined();
+    expect(markAppliedMock).not.toHaveBeenCalled();
+  });
+
+  it("saveLockAsProfile warns about machine-local sources", async () => {
+    getProjectsMock.mockReturnValue([]);
+    lockAsProfileResult = { lock: { version: 1, skills: { a: { source: "/abs/a", sourceType: "local" } } }, localOnly: ["a"] };
+    const { get } = makeStore();
+    expect(await get().saveLockAsProfile("/ws", "web")).toBe(true);
+    expect(get().notify).toHaveBeenCalledWith(expect.stringContaining("only work on this machine: a"), "warning");
   });
 
   it("deleteProfile removes the profile file", async () => {

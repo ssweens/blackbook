@@ -155,7 +155,7 @@ export function ProjectsTab({ contentHeight }: ProjectsTabProps) {
         );
       })}
       <Box marginTop={1}>
-        <Text color="gray">Enter to open a project · a add · d remove</Text>
+        <Text color="gray">Enter to open a project · a add · d remove · P apply profile · S save lock as profile</Text>
       </Box>
     </Box>
   );

@@ -9,6 +9,7 @@ import { patchExistsSync, mark, measure, logReport, setStartupTime } from "./lib
 import { logError } from "./lib/validation.js";
 import { reconcileStaleInstallArtifacts } from "./lib/install.js";
 import { isCliInvocation, runCli } from "./lib/cli/program.js";
+import { flushStdio } from "./lib/cli/flush.js";
 
 // Safety net: a stray unhandled promise rejection (e.g. from a fire-and-forget
 // background refresh) must never terminate the whole TUI. Log it and degrade
@@ -24,6 +25,7 @@ process.on("unhandledRejection", (reason) => {
 const cliArgv = process.argv.slice(2);
 if (isCliInvocation(cliArgv)) {
   const exitCode = await runCli(cliArgv);
+  await flushStdio();
   process.exit(exitCode);
 }
 
