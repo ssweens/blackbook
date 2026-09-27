@@ -13,3 +13,6 @@
 .env.local
 *.log
 .claude/
+
+# Agent tool artifacts
+.pi-subagents/

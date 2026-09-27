@@ -9,12 +9,12 @@ import type { ConsultationResponse } from "./consultation-context.js";
 
 export type { ConsultationProposal, ConsultationResponse } from "./consultation-context.js";
 
-const DEFAULT_TIMEOUT_MS = 60_000;
-const DEFAULT_MAX_PROMPT_CHARS = 24_000;
-const DEFAULT_MAX_OUTPUT_BYTES = 256 * 1024;
+const DEFAULT_TIMEOUT_MS = 5 * 60_000;
+const DEFAULT_MAX_PROMPT_CHARS = 1_048_576;
+const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
+const MAX_STDERR_BYTES = 64 * 1024;
 const MAX_MODEL_CHARS = 200;
 const TERMINATION_GRACE_MS = 1_000;
-const MAX_EVENT_NODES = 2_000;
 const OPENCODE_ADVISOR_AGENT = "blackbook-advisor";
 
 export type ConsultationError =
@@ -39,7 +39,7 @@ export interface ConsultationInput {
   instance: Pick<ToolInstance, "toolId" | "enabled"> | null | undefined;
   /** The installed executable reported by tool detection. It must be absolute. */
   binaryPath: string | null | undefined;
-  /** A bounded, data-only advisory prompt created by the consultation context builder. */
+  /** A redacted, data-only advisory prompt subject to the aggregate prompt-size budget. */
   prompt: string;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -122,13 +122,22 @@ export function buildConsultationArgs(
   }
 }
 
+function formatTimeout(timeoutMs: number): string {
+  if (timeoutMs % 60_000 === 0) {
+    const minutes = timeoutMs / 60_000;
+    return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  }
+  const seconds = Math.ceil(timeoutMs / 1000);
+  return `${seconds} second${seconds === 1 ? "" : "s"}`;
+}
+
 const ConsultationResponseSchema = z.object({
-  summary: z.string().min(1).max(480),
+  summary: z.string().min(1),
   analysis: z.object({
     recommendedProposalId: z.string().min(1).max(160).nullable(),
-    whatChanged: z.string().min(1).max(480),
-    recency: z.string().min(1).max(480),
-    assessment: z.string().min(1).max(480),
+    whatChanged: z.string().min(1),
+    recency: z.string().min(1),
+    assessment: z.string().min(1),
   }).strict(),
   proposals: z.array(z.object({
     id: z.string(),
@@ -144,7 +153,7 @@ export function validateConsultationResponse(value: unknown): ConsultationResult
   if (!parsed.success) {
     return {
       ok: false,
-      error: { category: "schema-validation", message: parsed.error.issues[0]?.message ?? "Response does not match the consultation schema." },
+      error: { category: "schema-validation", message: "The advisor response did not match the required format. Retry or refine the request." },
     };
   }
   return { ok: true, response: parsed.data as ConsultationResponse };
@@ -193,7 +202,7 @@ function assistantTextCandidates(value: unknown): string[] {
   const seen = new Set<object>();
   const pending: unknown[] = [value];
 
-  while (pending.length > 0 && seen.size < MAX_EVENT_NODES) {
+  while (pending.length > 0) {
     const current = pending.pop();
     const text = textFromAssistantMessage(current) ?? textFromTextPart(current);
     if (text !== null) candidates.push(text);
@@ -326,7 +335,7 @@ export function createConsultationRunner(dependencies: ConsultationRunnerDepende
       return { ok: false, error: { category: "invalid-input", message: "Consultation limits must be positive integers." } };
     }
     if (input.prompt.length > maxPromptChars) {
-      return { ok: false, error: { category: "invalid-input", message: `Consultation prompt exceeds the ${maxPromptChars}-character limit.` } };
+      return { ok: false, error: { category: "invalid-input", message: `Advisor context exceeds the ${maxPromptChars.toLocaleString()}-character safety budget.` } };
     }
     if (input.signal?.aborted) return { ok: false, error: { category: "cancelled", message: "Consultation was cancelled before the advisor started." } };
 
@@ -356,7 +365,9 @@ export function createConsultationRunner(dependencies: ConsultationRunnerDepende
 
       let stdout = "";
       let stderr = "";
-      let outputBytes = 0;
+      let stdoutBytes = 0;
+      let stderrBytes = 0;
+      let stderrTruncated = false;
       let settled = false;
       let terminalError: ConsultationError | null = null;
       let forceKillTimer: TimerHandle | undefined;
@@ -383,13 +394,15 @@ export function createConsultationRunner(dependencies: ConsultationRunnerDepende
       };
 
       const onAbort = () => requestTermination({ category: "cancelled", message: "Consultation was cancelled." });
-      timeoutTimer = schedule(() => requestTermination({ category: "timeout", message: `Consultation exceeded the ${timeoutMs}ms limit.` }), timeoutMs);
+      const stderrText = () => stderr + (stderrTruncated ? "\n[stderr truncated]" : "");
+      timeoutTimer = schedule(() => requestTermination({ category: "timeout", message: `Consultation timed out after ${formatTimeout(timeoutMs)}.` }), timeoutMs);
 
       input.signal?.addEventListener("abort", onAbort, { once: true });
       child.stdout?.on("data", (chunk: string | Buffer) => {
         if (settled || terminalError) return;
-        outputBytes += typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.length;
-        if (outputBytes > maxOutputBytes) {
+        const bytes = typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.length;
+        stdoutBytes += bytes;
+        if (stdoutBytes > maxOutputBytes) {
           requestTermination({ category: "malformed-output", message: `Advisor output exceeded the ${maxOutputBytes}-byte limit.` });
           return;
         }
@@ -397,19 +410,18 @@ export function createConsultationRunner(dependencies: ConsultationRunnerDepende
       });
       child.stderr?.on("data", (chunk: string | Buffer) => {
         if (settled || terminalError) return;
-        outputBytes += typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.length;
-        if (outputBytes > maxOutputBytes) {
-          requestTermination({ category: "malformed-output", message: `Advisor output exceeded the ${maxOutputBytes}-byte limit.` });
-          return;
-        }
-        stderr += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+        const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+        const remaining = Math.max(0, MAX_STDERR_BYTES - stderrBytes);
+        if (remaining > 0) stderr += bytes.subarray(0, remaining).toString("utf8");
+        stderrBytes += bytes.length;
+        if (stderrBytes > MAX_STDERR_BYTES) stderrTruncated = true;
       });
       child.once("error", (error) => {
         if (terminalError) {
           settle({ ok: false, error: terminalError });
           return;
         }
-        settle({ ok: false, error: { category: "process", message: errorMessage(error), stderr: stderr || undefined } });
+        settle({ ok: false, error: { category: "process", message: errorMessage(error), stderr: stderrText() || undefined } });
       });
       child.once("close", (exitCode) => {
         if (terminalError) {
@@ -419,7 +431,7 @@ export function createConsultationRunner(dependencies: ConsultationRunnerDepende
         if (exitCode !== 0) {
           settle({
             ok: false,
-            error: { category: "process", message: `${runtimeLabel(input.runtime)} exited with code ${String(exitCode)}.`, exitCode, stderr: stderr || undefined },
+            error: { category: "process", message: `${runtimeLabel(input.runtime)} exited with code ${String(exitCode)}.`, exitCode, stderr: stderrText() || undefined },
           });
           return;
         }

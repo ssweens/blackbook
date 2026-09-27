@@ -68,6 +68,10 @@ export function DiffDetail({ file, title, instanceName, onBack, onPullBack }: Di
         <Box marginBottom={1}>
           <Text color="yellow">Binary files differ</Text>
         </Box>
+        <Box marginBottom={1} flexDirection="column">
+          <Text color="gray" dimColor>source repo  {file.sourceMtime != null ? formatMtime(file.sourceMtime) : "unavailable"}</Text>
+          <Text color="gray" dimColor>instance ({instanceName})  {file.targetMtime != null ? formatMtime(file.targetMtime) : "unavailable"}</Text>
+        </Box>
         <Box>
           <Text color="gray">{onPullBack ? "p pull to source · " : ""}Esc back</Text>
         </Box>

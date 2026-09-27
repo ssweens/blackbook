@@ -3,6 +3,23 @@ import { getSkillActions } from "./item-actions.js";
 import type { StandaloneSkill } from "./install.js";
 
 describe("getSkillActions", () => {
+  it("offers a file browser for the skill contents", () => {
+    const skill: StandaloneSkill = {
+      name: "example",
+      installations: [],
+      diskPath: "/skills/example",
+      toolId: "",
+      instanceId: "",
+      instanceName: "",
+    };
+
+    expect(getSkillActions(skill)).toContainEqual({
+      id: "browse_files",
+      label: "Browse skill files",
+      type: "browse_skill_files",
+    });
+  });
+
   it("opens the installation that is actually drifted", () => {
     const skill: StandaloneSkill = {
       name: "file-todos",

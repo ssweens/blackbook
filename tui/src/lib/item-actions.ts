@@ -189,10 +189,14 @@ function componentStatusRow(
     label: rowLabel,
     componentKind,
   };
+  // Every component row is actionable. In-sync and missing rows still open the
+  // source-vs-shared-store view, which confirms sync or explains missing files.
+  const instance = { ...SHARED_REF, totalAdded: added, totalRemoved: removed };
   if (missing > 0) {
     return {
       ...row,
-      type: "status",
+      type: "diff",
+      instance,
       statusColor: "red",
       statusLabel: missing === count ? "Missing" : `Missing (${missing}/${count})`,
     };
@@ -201,12 +205,12 @@ function componentStatusRow(
     return {
       ...row,
       type: "diff",
-      instance: { ...SHARED_REF, totalAdded: added, totalRemoved: removed },
+      instance,
       statusColor: "yellow",
       statusLabel: "Drifted",
     };
   }
-  return { ...row, type: "status", statusColor: "green", statusLabel: "In sync" };
+  return { ...row, type: "diff", instance, statusColor: "green", statusLabel: "In sync" };
 }
 
 /**
@@ -408,6 +412,8 @@ export function getSkillActions(skill: StandaloneSkill): ItemAction[] {
       statusLabel: "Not installed",
     });
   }
+
+  actions.push({ id: "browse_files", label: "Browse skill files", type: "browse_skill_files" });
 
   // Sync (install missing + fix drift) — ONE action.
   if (!isInstalled || isDrifted) {

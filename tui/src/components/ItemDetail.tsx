@@ -41,6 +41,7 @@ export interface ItemAction {
     | "delete_source"
     | "remove_redundant"
     | "open_skill"
+    | "browse_skill_files"
     | "back";
   instance?: DiffInstanceSummary | DiffInstanceRef;
   /** Shared-store plugin component represented by a consolidated status row. */
@@ -223,6 +224,8 @@ function ActionRow({ action, isSelected }: ActionRowProps) {
 
 function getActionColor(type: ItemAction["type"]): string {
   switch (type) {
+    case "browse_skill_files":
+      return "cyan";
     case "install":
     case "install_tool":
     case "sync":
@@ -245,14 +248,30 @@ function getActionColor(type: ItemAction["type"]): string {
 // Kind-specific Metadata Components
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Plugin metadata: scope, homepage, components. */
+/** Plugin metadata: scope, source, homepage, components. */
+function formatPluginSource(source: ManagedItem["source"]): string | null {
+  if (!source) return null;
+  if (typeof source === "string") return source;
+  return [source.source, source.repo ?? source.url, source.ref ? `ref ${source.ref}` : undefined]
+    .filter((part): part is string => !!part)
+    .join(" · ");
+}
+
 export function PluginMetadata({ item }: { item: ManagedItem }) {
+  const source = formatPluginSource(item.source);
   return (
     <>
       <Box marginBottom={1}>
         <Text color="gray">Scope: </Text>
         <Text>{item.scope}</Text>
       </Box>
+
+      {source && (
+        <Box marginBottom={1}>
+          <Text color="gray">Origin: </Text>
+          <Text color="cyan">{item.marketplace} · {source}</Text>
+        </Box>
+      )}
 
       {(item.installedVersion || item.latestVersion || item.version) && (
         <Box marginBottom={1}>
@@ -501,11 +520,13 @@ export function SkillMetadata({ item }: { item: ManagedItem }) {
       </Box>
 
       <Box marginBottom={1}>
-        <Text color="gray">Source: </Text>
+        <Text color="gray">Origin: </Text>
         {skill?.sourcePath ? (
-          <Text color={skill.drifted ? "yellow" : "green"}>{formatSourcePath(skill.sourcePath)}</Text>
+          <Text color={skill.drifted ? "yellow" : "green"}>
+            configured source repo · {formatSourcePath(skill.sourcePath)}
+          </Text>
         ) : (
-          <Text color="red">not in git</Text>
+          <Text color="yellow">not recorded by Blackbook</Text>
         )}
       </Box>
 

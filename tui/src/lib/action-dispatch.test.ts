@@ -103,6 +103,7 @@ function createCallbacks(): DispatchCallbacks {
     deletePiPackageEverywhere: vi.fn().mockResolvedValue(true),
     refreshDetailPiPackage: vi.fn(),
     buildPluginDiffTarget: vi.fn().mockResolvedValue(null),
+    openSkillFiles: vi.fn(),
     refreshDetailSkill: vi.fn(),
     uninstallSkillAll: vi.fn().mockResolvedValue(undefined),
   };
@@ -132,6 +133,24 @@ describe("handleItemAction", () => {
     const result = await handleItemAction(createItem(), action, callbacks);
     expect(result).toBe(true);
     expect(callbacks.closeDetail).toHaveBeenCalled();
+  });
+
+  it("opens the skill file browser", async () => {
+    const skill = {
+      name: "example",
+      installations: [],
+      diskPath: "/skills/example",
+      toolId: "",
+      instanceId: "",
+      instanceName: "",
+    };
+    const item = createItem({ _skill: skill });
+    const action: ItemAction = { id: "browse_files", label: "Browse skill files", type: "browse_skill_files" };
+
+    const result = await handleItemAction(item, action, callbacks);
+
+    expect(result).toBe(true);
+    expect(callbacks.openSkillFiles).toHaveBeenCalledWith(skill);
   });
 
   // ── status ───────────────────────────────────────────────────────────

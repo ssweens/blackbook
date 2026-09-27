@@ -82,16 +82,16 @@ describe("ConsultationPanel", () => {
     expect(handlers.onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it("pages through long responses without truncating their answer fields", async () => {
+  it("pages through complete long responses without truncating answer fields", async () => {
     const handlers = callbacks();
-    const tail = "The final evidence remains available after paging.";
+    const tailStart = "The final evidence remains available after";
     const { stdin, lastFrame } = render(
       <ConsultationPanel
         state={{
           phase: "result",
           prompt: "",
           response: {
-            summary: `Start. ${"More detail. ".repeat(28)}${tail}`,
+            summary: `Start. ${"More detail. ".repeat(45)}The final evidence remains available after paging.`,
             analysis: {
               recommendedProposalId: null,
               whatChanged: "No state changed.",
@@ -107,15 +107,16 @@ describe("ConsultationPanel", () => {
     );
 
     expect(lastFrame()).toContain("Start.");
-    expect(lastFrame()).not.toContain(tail);
+    expect(lastFrame()).not.toContain(tailStart);
 
-    act(() => {
-      stdin.write("\u001B[6~");
-    });
-    await vi.waitFor(() => {
-      expect(lastFrame()).toContain("↑ more response above");
-      expect(lastFrame()).toContain(tail);
-    });
+    for (let page = 0; page < 8 && !lastFrame()!.includes(tailStart); page += 1) {
+      const previousFrame = lastFrame();
+      act(() => stdin.write("\u001B[6~"));
+      await vi.waitFor(() => expect(lastFrame()).not.toBe(previousFrame));
+    }
+    expect(lastFrame()).toContain("↑ more response above");
+    expect(lastFrame()).toContain(tailStart);
+    expect(lastFrame()).toContain("paging.");
   });
 
   it("opens a follow-up input without closing the consultation", async () => {

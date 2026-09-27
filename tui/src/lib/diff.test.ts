@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, existsSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -196,6 +196,31 @@ describe("diff utilities", () => {
         h.lines.every((l) => l.type === "add" || l.type === "context")
       );
       expect(allAdds).toBe(true);
+    });
+
+    it("preserves source and target timestamps for binary files", () => {
+      const sourceFile = join(testDir, "source.bin");
+      const targetFile = join(testDir, "target.bin");
+      writeFileSync(sourceFile, Buffer.from([0x00, 0x01]));
+      writeFileSync(targetFile, Buffer.from([0x00, 0x02]));
+      const sourceTime = new Date("2026-08-11T16:00:00.000Z");
+      const targetTime = new Date("2026-08-10T16:00:00.000Z");
+      utimesSync(sourceFile, sourceTime, sourceTime);
+      utimesSync(targetFile, targetTime, targetTime);
+
+      const target = buildFileDiffTarget("binary", "source.bin", sourceFile, targetFile, {
+        toolId: "agents",
+        instanceId: "shared",
+        instanceName: "~/.agents",
+        configDir: "",
+      });
+
+      expect(target.files).toHaveLength(1);
+      expect(target.files[0]).toEqual(expect.objectContaining({
+        status: "binary",
+        sourceMtime: sourceTime.getTime(),
+        targetMtime: targetTime.getTime(),
+      }));
     });
 
     it("returns empty hunks for binary file", () => {

@@ -5,6 +5,7 @@ import {
   buildConsultationArgs,
   createConsultationRunner,
   extractFinalStructuredAssistantText,
+  validateConsultationResponse,
   type ConsultationInput,
   type SpawnConsultationProcess,
 } from "./consultation-runner.js";
@@ -111,7 +112,27 @@ describe("consultation runner", () => {
     expect(spawnSpy).not.toHaveBeenCalled();
   });
 
-  it("rejects oversized prompts before launch and terminates oversized streamed output", async () => {
+  it("accepts prompts above the former 24K ceiling within the aggregate budget", async () => {
+    const { child, spawnSpy, runner } = runnerWithChild();
+    const prompt = "Relevant diff context. ".repeat(1400);
+    const response = JSON.stringify({
+      summary: "Review the changed agent behavior.",
+      analysis: {
+        recommendedProposalId: null,
+        whatChanged: "The installed agent differs from source.",
+        recency: "Timestamps were unavailable.",
+        assessment: "Review the actual diff before changing either copy.",
+      },
+      proposals: [],
+    });
+    const run = runner.run(input({ prompt }));
+    child.complete(messageEvent(response));
+
+    await expect(run).resolves.toMatchObject({ ok: true });
+    expect(spawnSpy.mock.calls[0]?.[1]).toContain(prompt);
+  });
+
+  it("rejects explicitly over-budget prompts and terminates oversized streamed output", async () => {
     const promptLimited = runnerWithChild();
     await expect(promptLimited.runner.run(input({ maxPromptChars: 3 }))).resolves.toMatchObject({
       ok: false,
@@ -126,6 +147,72 @@ describe("consultation runner", () => {
     expect(outputLimited.child.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
+  it("accepts prompts above the former 24K ceiling within the aggregate budget", async () => {
+    const { child, spawnSpy, runner } = runnerWithChild();
+    const prompt = "Relevant diff context. ".repeat(1400);
+    const response = JSON.stringify({
+      summary: "Review the changed agent behavior.",
+      analysis: {
+        recommendedProposalId: null,
+        whatChanged: "The installed agent differs from source.",
+        recency: "Timestamps were unavailable.",
+        assessment: "Review the actual diff before changing either copy.",
+      },
+      proposals: [],
+    });
+    const run = runner.run(input({ prompt }));
+    child.complete(messageEvent(response));
+
+    await expect(run).resolves.toMatchObject({ ok: true });
+    expect(spawnSpy.mock.calls[0]?.[1]).toContain(prompt);
+  });
+
+  it("accepts structured advisor output above the previous 256 KiB default", async () => {
+    const { child, runner } = runnerWithChild();
+    const response = JSON.stringify({
+      summary: "Keep it",
+      analysis: {
+        recommendedProposalId: null,
+        whatChanged: "No changes are present.",
+        recency: "No timestamps are available.",
+        assessment: "Keep the current state.",
+      },
+      proposals: [],
+    });
+    const output = `${JSON.stringify({ type: "provider_debug", metadata: "x".repeat(300 * 1024) })}\n${messageEvent(response)}`;
+    const run = runner.run(input());
+    child.complete(output);
+
+    await expect(run).resolves.toMatchObject({ ok: true, response: { summary: "Keep it" } });
+  });
+
+  it("does not charge verbose stderr diagnostics against the advisor response limit", async () => {
+    const { child, runner } = runnerWithChild();
+    const response = JSON.stringify({
+      summary: "Keep it",
+      analysis: {
+        recommendedProposalId: null,
+        whatChanged: "No changes are present.",
+        recency: "No timestamps are available.",
+        assessment: "Keep the current state.",
+      },
+      proposals: [],
+    });
+    const run = runner.run(input());
+    child.complete(messageEvent(response), 0, "diagnostic ".repeat(30_000));
+
+    await expect(run).resolves.toMatchObject({ ok: true, response: { summary: "Keep it" } });
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  it("extracts assistant text from deeply wrapped events within the aggregate output budget", () => {
+    const response = '{"summary":"Full diff reviewed","proposals":[]}';
+    let event: unknown = JSON.parse(messageEvent(response));
+    for (let depth = 0; depth < 2_100; depth += 1) event = { nested: event };
+
+    expect(extractFinalStructuredAssistantText(JSON.stringify(event))).toBe(response);
+  });
+
   it("recognizes the authoritative final assistant event through a non-fixed outer shape", () => {
     const stdout = `${JSON.stringify({
       type: "message_end",
@@ -133,6 +220,27 @@ describe("consultation runner", () => {
     })}\n`;
 
     expect(extractFinalStructuredAssistantText(stdout)).toBe('{"summary":"Use local state","proposals":[]}');
+  });
+
+  it("preserves long advisor narrative fields without arbitrary truncation", () => {
+    const longText = `${"Long explanation. ".repeat(40)}end`;
+    const result = validateConsultationResponse({
+      summary: longText,
+      analysis: {
+        recommendedProposalId: null,
+        whatChanged: longText,
+        recency: longText,
+        assessment: longText,
+      },
+      proposals: [],
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.response.summary).toBe(longText);
+    expect(result.response.analysis.whatChanged).toBe(longText);
+    expect(result.response.analysis.recency).toBe(longText);
+    expect(result.response.analysis.assessment).toBe(longText);
   });
 
   it("distinguishes malformed JSON output from a well-formed but invalid consultation schema", async () => {
@@ -144,7 +252,13 @@ describe("consultation runner", () => {
     const invalidSchema = runnerWithChild();
     const schemaRun = invalidSchema.runner.run(input());
     invalidSchema.child.complete(messageEvent('{"summary":"Act","proposals":[{"id":"1","operation":"execute","target":"x","reason":"no"}]}'));
-    await expect(schemaRun).resolves.toMatchObject({ ok: false, error: { category: "schema-validation" } });
+    await expect(schemaRun).resolves.toMatchObject({
+      ok: false,
+      error: {
+        category: "schema-validation",
+        message: "The advisor response did not match the required format. Retry or refine the request.",
+      },
+    });
   });
 
   it("reports Pi process failures without treating stderr as advisory output", async () => {
@@ -166,6 +280,31 @@ describe("consultation runner", () => {
 
     await expect(run).resolves.toMatchObject({ ok: false, error: { category: "cancelled" } });
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("allows up to five minutes for an advisor response by default", async () => {
+    const { child, spawnSpy } = runnerWithChild();
+    const schedule = vi.fn(() => 1 as unknown as NodeJS.Timeout);
+    const runner = createConsultationRunner({
+      spawnProcess: spawnSpy,
+      setTimeout: schedule,
+      clearTimeout: vi.fn(),
+    });
+    const response = JSON.stringify({
+      summary: "Keep it",
+      analysis: {
+        recommendedProposalId: null,
+        whatChanged: "No changes are present.",
+        recency: "No timestamps are available.",
+        assessment: "Keep the current state.",
+      },
+      proposals: [],
+    });
+    const run = runner.run(input());
+
+    expect(schedule).toHaveBeenCalledWith(expect.any(Function), 300_000);
+    child.complete(messageEvent(response));
+    await expect(run).resolves.toMatchObject({ ok: true, response: { summary: "Keep it" } });
   });
 
   it("kills a stalled process and reports timeout", async () => {

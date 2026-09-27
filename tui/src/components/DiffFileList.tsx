@@ -11,6 +11,19 @@ interface DiffFileListProps {
   onPullBack?: () => void;
 }
 
+function formatMtime(ms: number | null): string {
+  if (ms == null) return "unavailable";
+  const date = new Date(ms);
+  if (Number.isNaN(date.getTime())) return "unavailable";
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 function statusIcon(status: DiffFileSummary["status"]): { icon: string; color: string } {
   switch (status) {
     case "modified":
@@ -106,7 +119,9 @@ export function DiffFileList({ title, instanceName, files, onSelect, onClose, on
                 </>
               )}
               {file.status === "binary" && (
-                <Text color="magenta">binary</Text>
+                <Text color="magenta">
+                  binary · source {formatMtime(file.sourceMtime)} · instance {formatMtime(file.targetMtime)}
+                </Text>
               )}
             </Box>
           );

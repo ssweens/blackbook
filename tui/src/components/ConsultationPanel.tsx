@@ -3,8 +3,6 @@ import { Box, Text, useInput, useStdout } from "ink";
 import TextInput from "ink-text-input";
 import type { ConsultationProposal, ConsultationResponse } from "../lib/consultation-context.js";
 
-const MAX_RESPONSE_TEXT_LENGTH = 480;
-const MAX_PROPOSAL_REASON_LENGTH = 480;
 const RESULT_VIEWPORT_CHROME_ROWS = 20;
 const FOLLOW_UP_VIEWPORT_CHROME_ROWS = 25;
 export type ConsultationPanelState =
@@ -38,11 +36,8 @@ interface ResultLineSet {
   proposalLineIndexes: number[];
 }
 
-function displayText(value: string, maximumLength: number): string {
-  const normalized = value.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim();
-  return normalized.length > maximumLength
-    ? `${normalized.slice(0, Math.max(0, maximumLength - 1)).trimEnd()}…`
-    : normalized;
+function displayText(value: string): string {
+  return value.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function displayProposalTarget(proposal: ConsultationProposal): string {
@@ -127,7 +122,7 @@ function appendAssessmentField(
   lines.push({ id: `${id}-label`, text: `  ${label}`, bold: true });
   appendWrappedLines(lines, {
     id: `${id}-content`,
-    value: displayText(value, MAX_RESPONSE_TEXT_LENGTH),
+    value: displayText(value),
     width,
     firstPrefix: "    ",
   });
@@ -148,7 +143,7 @@ function buildResultLines(
   lines.push({ id: "recommendation-heading", text: "Recommendation", bold: true });
   appendWrappedLines(lines, {
     id: "recommendation-content",
-    value: displayText(response.summary, MAX_RESPONSE_TEXT_LENGTH),
+    value: displayText(response.summary),
     width,
     firstPrefix: "  ",
   });
@@ -167,7 +162,7 @@ function buildResultLines(
   appendWrappedLines(lines, {
     id: "recommended-content",
     value: recommendedProposal
-      ? displayText(displayProposalTarget(recommendedProposal), MAX_RESPONSE_TEXT_LENGTH)
+      ? displayText(displayProposalTarget(recommendedProposal))
       : "Keep the current state",
     width,
     firstPrefix: "  ",
@@ -183,7 +178,7 @@ function buildResultLines(
       const active = index === selectedIndex;
       const selected = selectedIds.has(proposal.id);
       const recommended = proposal.id === response.analysis.recommendedProposalId;
-      const target = displayText(displayProposalTarget(proposal), MAX_RESPONSE_TEXT_LENGTH);
+      const target = displayText(displayProposalTarget(proposal));
       const action = proposal.operation.replace("_", " ");
       proposalLineIndexes.push(appendWrappedLines(lines, {
         id: `proposal-${proposal.id}`,
@@ -195,7 +190,7 @@ function buildResultLines(
       }));
       appendWrappedLines(lines, {
         id: `proposal-reason-${proposal.id}`,
-        value: displayText(proposal.reason, MAX_PROPOSAL_REASON_LENGTH),
+        value: displayText(proposal.reason),
         width,
         firstPrefix: "    ",
         color: "gray",
@@ -232,17 +227,6 @@ export function ConsultationPanel({
   const previousSelectedProposalId = useRef<string | null>(null);
   const response = state.phase === "result" ? state.response : null;
   const proposals = response?.proposals ?? [];
-  const proposalKey = proposals.map((proposal) => proposal.id).join("\u0000");
-  const responseKey = response
-    ? [
-      response.summary,
-      response.analysis.recommendedProposalId ?? "",
-      response.analysis.whatChanged,
-      response.analysis.recency,
-      response.analysis.assessment,
-      ...proposals.flatMap((proposal) => [proposal.id, proposal.reason]),
-    ].join("\u0000")
-    : "";
   const selectedIds = useMemo(() => new Set(selectedProposalIds), [selectedProposalIds]);
   const terminalRows = stdout?.rows ?? 24;
   const contentWidth = Math.max(20, (stdout?.columns ?? 80) - 6);
@@ -275,11 +259,11 @@ export function ConsultationPanel({
 
   useEffect(() => {
     setSelectedIndex((current) => Math.min(current, Math.max(0, proposals.length - 1)));
-  }, [proposalKey, proposals.length]);
+  }, [response]);
 
   useEffect(() => {
     setResultScroll(0);
-  }, [responseKey]);
+  }, [response]);
 
   useEffect(() => {
     if (state.phase !== "result" || selectedProposalId === null || selectedProposalLineIndex === null) {
@@ -414,7 +398,7 @@ export function ConsultationPanel({
         <>
           <Text color="cyan">The advisor is reviewing your request…</Text>
           <Box marginTop={1}>
-            <Text color="gray" wrap="truncate">{displayText(state.prompt, MAX_RESPONSE_TEXT_LENGTH)}</Text>
+            <Text color="gray" wrap="truncate">{displayText(state.prompt)}</Text>
           </Box>
           <Text color="gray" italic>Esc to cancel</Text>
         </>
@@ -424,7 +408,7 @@ export function ConsultationPanel({
         <>
           <Text color="red">The advisor could not complete this consultation.</Text>
           <Box marginTop={1} marginBottom={1}>
-            <Text color="gray" wrap="wrap">{displayText(state.message, MAX_RESPONSE_TEXT_LENGTH)}</Text>
+            <Text color="gray" wrap="wrap">{displayText(state.message)}</Text>
           </Box>
           <Text color="gray" italic>Enter to retry · Esc to cancel</Text>
         </>

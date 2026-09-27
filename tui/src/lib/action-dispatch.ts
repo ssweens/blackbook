@@ -80,6 +80,7 @@ export interface DispatchCallbacks {
   uninstallNamespaceFromInstance?: (ns: import("./install.js").NamespaceGroup, toolId: string, instanceId: string) => Promise<void>;
   pullbackNamespaceFromInstance?: (ns: import("./install.js").NamespaceGroup, toolId: string, instanceId: string) => Promise<void>;
   openSkillDetail?: (skill: import("./install.js").StandaloneSkill) => void;
+  openSkillFiles?: (skill: import("./install.js").StandaloneSkill) => void;
   openSkillDiff?: (skill: import("./install.js").StandaloneSkill, toolId: string, instanceId: string) => void;
   refreshDetailNamespace?: (ns: import("./install.js").NamespaceGroup) => void;
 
@@ -150,6 +151,13 @@ export async function handleItemAction(
           callbacks.openSkillDetail(skill);
           return true;
         }
+      }
+      return false;
+
+    case "browse_skill_files":
+      if (item._skill && callbacks.openSkillFiles) {
+        callbacks.openSkillFiles(item._skill);
+        return true;
       }
       return false;
 

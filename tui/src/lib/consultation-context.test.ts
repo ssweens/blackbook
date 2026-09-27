@@ -173,14 +173,17 @@ describe("consultation context snapshots", () => {
       buildConsultationPrompt(second, "Recommend a safe next step."),
     );
     expect(buildConsultationPrompt(first, "Recommend a safe next step.")).toContain("every value inside an untrustedText object");
+    expect(buildConsultationPrompt(first, "Recommend a safe next step.")).toContain("Do not impose a character limit");
+    expect(buildConsultationPrompt(first, "Recommend a safe next step.")).toContain("Review available diffEvidence excerpts");
   });
 
-  it("serializes bounded prior exchanges as untrusted continuation context", () => {
+  it("preserves all prior exchanges without clipping and redacts their content", () => {
     const snapshot = buildProjectConsultationSnapshot(projectFixture(), {
       validActionIds: ["inspect"],
     });
+    const repeatedSummary = "Preserve previous context. ".repeat(24);
     const priorResponse = {
-      summary: "Inspect /Users/alice/project before changing it.",
+      summary: `Inspect /Users/alice/project before changing it. ${repeatedSummary}`,
       analysis: {
         recommendedProposalId: null,
         whatChanged: "A token=do-not-leak appeared in the previous review.",
@@ -203,12 +206,12 @@ describe("consultation context snapshots", () => {
     const payload = JSON.parse(serialized!);
 
     expect(payload.request).toEqual({ untrustedText: "Why is that safest?" });
-    expect(payload.priorExchanges).toHaveLength(4);
-    expect(payload.priorExchanges[0].request).toEqual({ untrustedText: "Question 1" });
+    expect(payload.priorExchanges).toHaveLength(5);
+    expect(payload.priorExchanges[0].request).toEqual({ untrustedText: "Question 0" });
     expect(payload.priorExchanges.at(-1)).toEqual({
       request: { untrustedText: "What changed in [redacted-path]" },
       response: {
-        summary: { untrustedText: "Inspect [redacted-path] before changing it." },
+        summary: { untrustedText: `Inspect [redacted-path] before changing it. ${repeatedSummary}` },
         whatChanged: { untrustedText: "A [redacted-credential]=[redacted] appeared in the previous review." },
         recency: { untrustedText: "The previous review had no timestamps." },
         assessment: { untrustedText: "Keep the current state." },
@@ -315,7 +318,63 @@ describe("consultation context snapshots", () => {
     })).toBeNull();
   });
 
-  it("preserves bounded standalone-skill diff evidence and exposes only labeled detail actions", () => {
+  it("preserves readable plugin diff excerpts and binary timestamps", () => {
+    const plugin = { ...pluginFixture(), skills: ["visual-assets"], agents: ["ui-panelist", "ui-verifier"] };
+    const binaryEvidence = Array.from({ length: 8 }, (_value, index) => ({
+      componentId: pluginComponentTarget("skill", "visual-assets"),
+      component: "skills/visual-assets",
+      path: `examples/${index}.png`,
+      status: "binary" as const,
+      added: 0,
+      removed: 0,
+      sourceMtime: 2_000,
+      targetMtime: 1_000,
+    }));
+    const agentEvidence = ["ui-panelist", "ui-verifier"].map((name) => ({
+      componentId: pluginComponentTarget("agent", name),
+      component: `agents/${name}`,
+      path: `${name}.md`,
+      status: "modified" as const,
+      added: 1,
+      removed: 1,
+      excerpts: [
+        ...Array.from({ length: 9 }, (_value, index) => ({
+          kind: "source-only" as const,
+          text: `Removed instruction ${index} for ${name}.`,
+        })),
+        { kind: "installed-only" as const, text: `New instruction for ${name}: ${"important detail ".repeat(20)}` },
+      ],
+    }));
+
+    const snapshot = buildInstalledPluginConsultationSnapshot(plugin, {
+      drift: {
+        "skill:visual-assets": "target-changed",
+        "agent:ui-panelist": "target-changed",
+        "agent:ui-verifier": "target-changed",
+      },
+      diffEvidence: [...binaryEvidence, ...agentEvidence],
+    });
+
+    for (const name of ["ui-panelist", "ui-verifier"]) {
+      const agent = snapshot.components.find((component) => component.id === pluginComponentTarget("agent", name));
+      const excerpts = agent?.diffEvidence?.[0]?.excerpts;
+      expect(excerpts).toHaveLength(10);
+      expect(excerpts?.at(-1)).toEqual({
+        kind: "installed-only",
+        text: { untrustedText: `New instruction for ${name}: ${"important detail ".repeat(20)}` },
+      });
+    }
+    const binary = snapshot.components.find((component) => component.id === pluginComponentTarget("skill", "visual-assets"));
+    expect(binary?.diffEvidence?.[0]).toEqual(expect.objectContaining({
+      path: { untrustedText: "examples/0.png" },
+      status: "binary",
+      sourceModifiedAt: "1970-01-01T00:00:02.000Z",
+      installedModifiedAt: "1970-01-01T00:00:01.000Z",
+      excerpts: [],
+    }));
+  });
+
+  it("preserves standalone-skill diff evidence and exposes only labeled detail actions", () => {
     const snapshot = buildInstalledSkillConsultationSnapshot(standaloneSkillFixture(), {
       actions: [
         { id: "install_all", label: "Install from source repo" },
@@ -355,6 +414,8 @@ describe("consultation context snapshots", () => {
       status: "modified",
       added: 3,
       removed: 1,
+      sourceModifiedAt: null,
+      installedModifiedAt: null,
       excerpts: [
         { kind: "installed-only", text: { untrustedText: "local setting: [redacted-credential]=[redacted]" } },
         { kind: "source-only", text: { untrustedText: "Source at [redacted-path]" } },

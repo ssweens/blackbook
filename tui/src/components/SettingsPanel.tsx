@@ -286,9 +286,10 @@ function DiffPanel({
 
 interface SettingsPanelProps {
   active?: boolean;
+  onTextInputActiveChange?: (active: boolean) => void;
 }
 
-export function SettingsPanel({ active = true }: SettingsPanelProps) {
+export function SettingsPanel({ active = true, onTextInputActiveChange }: SettingsPanelProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState("");
@@ -309,6 +310,8 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
   const [modelModelIndex, setModelModelIndex] = useState(0);
   const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
+
+  useEffect(() => () => onTextInputActiveChange?.(false), [onTextInputActiveChange]);
 
   const menuItems = buildMenuItems(repoStatus);
 
@@ -430,6 +433,7 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
     if (modelSelectActive) {
       if (key.escape) {
         setModelSelectActive(false);
+        onTextInputActiveChange?.(false);
         setModelSearch("");
         setModelModelIndex(0);
         return;
@@ -448,6 +452,7 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
           persistSettings({ ...settings, consultation_model: selected });
         }
         setModelSelectActive(false);
+        onTextInputActiveChange?.(false);
         setModelSearch("");
         setModelModelIndex(0);
         return;
@@ -485,10 +490,12 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
     if (commitEditing) {
       if (key.escape) {
         setCommitEditing(false);
+        onTextInputActiveChange?.(false);
         return;
       }
       if (key.return) {
         setCommitEditing(false);
+        onTextInputActiveChange?.(false);
         const msg = commitMessage.trim() || "chore: update playbook config and assets";
         commitAndPushSourceRepo(msg).then((result) => {
           if (result.success) {
@@ -508,6 +515,7 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
     if (editing) {
       if (key.escape) {
         setEditing(false);
+        onTextInputActiveChange?.(false);
         return;
       }
       if (key.return) {
@@ -529,6 +537,7 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
           persistSettings({ ...settings, [def.key]: editValue || undefined });
         }
         setEditing(false);
+        onTextInputActiveChange?.(false);
         return;
       }
       return;
@@ -577,11 +586,13 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
           setModelSearch("");
           setModelModelIndex(0);
           setModelSelectActive(true);
+          onTextInputActiveChange?.(true);
           return;
         }
         const current = settings[def.key];
         setEditValue(current !== undefined && current !== null ? String(current) : "");
         setEditing(true);
+        onTextInputActiveChange?.(true);
         return;
       }
 
@@ -593,6 +604,7 @@ export function SettingsPanel({ active = true }: SettingsPanelProps) {
       if (item.kind === "action") {
         if (item.id === "commit_push") {
           setCommitEditing(true);
+          onTextInputActiveChange?.(true);
           return;
         }
         if (item.id === "pull") {

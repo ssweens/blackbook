@@ -18,6 +18,7 @@ import { ToolActionModal } from "./components/ToolActionModal.js";
 import { SyncList } from "./components/SyncList.js";
 import { SyncPreview } from "./components/SyncPreview.js";
 import { FilePreview } from "./components/FilePreview.js";
+import { SkillFileBrowser } from "./components/SkillFileBrowser.js";
 
 import { HintBar } from "./components/HintBar.js";
 import { StatusBar } from "./components/StatusBar.js";
@@ -111,9 +112,10 @@ interface TabContentProps {
   searchFocused: boolean;
   onSearchFocus: () => void;
   onSearchBlur: () => void;
+  onSettingsTextInputActiveChange: (active: boolean) => void;
 }
 
-function TabContent({ tab, searchFocused, onSearchFocus, onSearchBlur }: TabContentProps) {
+function TabContent({ tab, searchFocused, onSearchFocus, onSearchBlur, onSettingsTextInputActiveChange }: TabContentProps) {
   const contentHeight = useContentHeight();
   switch (tab) {
     case "discover":
@@ -145,7 +147,7 @@ function TabContent({ tab, searchFocused, onSearchFocus, onSearchBlur }: TabCont
     case "profiles":
       return <ProfilesTab contentHeight={contentHeight} />;
     case "settings":
-      return <SettingsTab />;
+      return <SettingsTab onTextInputActiveChange={onSettingsTextInputActiveChange} />;
   }
 }
 
@@ -304,11 +306,13 @@ export function App() {
   const consultationAbortRef = useRef<AbortController | null>(null);
 
   const [actionIndex, setActionIndex] = useState(0);
+  const [skillFileBrowser, setSkillFileBrowser] = useState<StandaloneSkill | null>(null);
   const detailMutationInFlight = useRef(false);
   const openSkillDetail = (skill: import("./lib/install.js").StandaloneSkill) => {
     setDetail({ kind: "skill", data: skill });
     setActionIndex(0);
   };
+  const openSkillFiles = (skill: StandaloneSkill) => setSkillFileBrowser(skill);
   const {
     expandedSkills,
     setExpandedSkills,
@@ -343,6 +347,7 @@ export function App() {
   const syncSelection = useStore((s) => s.syncSelection);
   const toggleSyncSelection = useStore((s) => s.toggleSyncSelection);
   const [searchFocused, setSearchFocused] = useState(false);
+  const [settingsTextInputActive, setSettingsTextInputActive] = useState(false);
   // Recompute when any data source the preview reads from changes. Without these
   // deps, maxIndex (computed from syncPreview.length) freezes to the first render
   // and caps cursor navigation — even though SyncTab itself renders the full list.
@@ -1079,68 +1084,65 @@ export function App() {
     if (file.status === "binary") return [];
 
     const excerpts: Array<{ kind: "installed-only" | "source-only"; text: string }> = [];
-    collectExcerpts:
     for (const hunk of computeFileDetail(file).hunks) {
       for (const line of hunk.lines) {
         if (line.type === "add") excerpts.push({ kind: "installed-only", text: line.content });
         if (line.type === "remove") excerpts.push({ kind: "source-only", text: line.content });
-        if (excerpts.length === 8) break collectExcerpts;
       }
     }
     return excerpts;
   };
 
-  const buildPluginDiffEvidence = (plugin: Plugin): PluginComponentDiffEvidence[] => {
+  const buildPluginDiffEvidence = (plugin: Plugin, drift?: PluginDrift): PluginComponentDiffEvidence[] => {
     const sourcePaths = resolvePluginSourcePaths(plugin);
     if (!sourcePaths) return [];
 
-    const evidence: PluginComponentDiffEvidence[] = [];
-    for (const kind of ["skill", "command", "agent"] as const) {
-      const names = kind === "skill"
-        ? plugin.skills
-        : kind === "command"
-          ? plugin.commands
-          : plugin.agents;
-      for (const name of names) {
-        if (evidence.length >= 8) return evidence;
-        const sourcePath = join(
-          sourcePaths.pluginDir,
-          `${kind}s`,
-          kind === "skill" ? name : `${name}.md`,
-        );
-        const targetPath = kind === "skill"
-          ? pluginSkillStorePath(plugin.name, name)
-          : agentsComponentDir(kind, plugin.name, name);
-        if (!targetPath) continue;
+    const components = ([
+      ...plugin.skills.map((name) => ({ kind: "skill" as const, name })),
+      ...plugin.commands.map((name) => ({ kind: "command" as const, name })),
+      ...plugin.agents.map((name) => ({ kind: "agent" as const, name })),
+    ]).filter(({ kind, name }) => drift?.[`${kind}:${name}`] !== "in-sync");
+    const evidenceByComponent: PluginComponentDiffEvidence[][] = [];
 
-        try {
-          const target = buildFileDiffTarget(
-            `${kind}s/${name}`,
-            kind === "skill" ? name : `${name}.md`,
-            sourcePath,
-            targetPath,
-            { toolId: "agents", instanceId: "shared", instanceName: "~/.agents", configDir: "" },
-          );
-          for (const file of target.files) {
-            if (evidence.length >= 8) return evidence;
-            evidence.push({
-              componentId: pluginComponentTarget(kind, name),
-              component: `${kind}s/${name}`,
-              path: file.displayPath,
-              status: file.status,
-              added: file.linesAdded,
-              removed: file.linesRemoved,
-              sourceMtime: file.sourceMtime,
-              targetMtime: file.targetMtime,
-              excerpts: buildDiffExcerpts(file),
-            });
-          }
-        } catch {
-          // Keep other component evidence available when one file is unreadable.
-        }
+    for (const { kind, name } of components) {
+      const sourcePath = join(
+        sourcePaths.pluginDir,
+        `${kind}s`,
+        kind === "skill" ? name : `${name}.md`,
+      );
+      const targetPath = kind === "skill"
+        ? pluginSkillStorePath(plugin.name, name)
+        : agentsComponentDir(kind, plugin.name, name);
+      if (!targetPath) continue;
+
+      try {
+        const target = buildFileDiffTarget(
+          `${kind}s/${name}`,
+          kind === "skill" ? name : `${name}.md`,
+          sourcePath,
+          targetPath,
+          { toolId: "agents", instanceId: "shared", instanceName: "~/.agents", configDir: "" },
+        );
+        const componentEvidence = target.files
+          .filter((file) => file.status !== "modified" || file.linesAdded > 0 || file.linesRemoved > 0)
+          .map((file) => ({
+            componentId: pluginComponentTarget(kind, name),
+            component: `${kind}s/${name}`,
+            path: file.displayPath,
+            status: file.status,
+            added: file.linesAdded,
+            removed: file.linesRemoved,
+            sourceMtime: file.sourceMtime,
+            targetMtime: file.targetMtime,
+            excerpts: buildDiffExcerpts(file),
+          }));
+        if (componentEvidence.length > 0) evidenceByComponent.push(componentEvidence);
+      } catch {
+        // Keep other component evidence available when one file is unreadable.
       }
     }
-    return evidence;
+
+    return evidenceByComponent.flat();
   };
 
   const buildStandaloneSkillDiffEvidence = (skill: StandaloneSkill): InstalledSkillDiffEvidence[] => {
@@ -1148,7 +1150,7 @@ export function App() {
     const comparedInstallations = new Set<string>();
 
     for (const installation of skill.installations) {
-      if (!installation.drifted || evidence.length >= 8) continue;
+      if (!installation.drifted) continue;
       const installationKey = `${installation.toolId}:${installation.instanceId}:${installation.diskPath}`;
       if (comparedInstallations.has(installationKey)) continue;
       comparedInstallations.add(installationKey);
@@ -1157,7 +1159,6 @@ export function App() {
         const target = buildSkillDiffTarget(skill, installation.toolId, installation.instanceId);
         if (!target) continue;
         for (const file of target.files) {
-          if (evidence.length >= 8) break;
           evidence.push({
             installation: installation.instanceName,
             path: file.displayPath,
@@ -1230,7 +1231,7 @@ export function App() {
         id: action.id,
         label: action.type === "diff" ? `Review ${action.label} diff` : action.label,
       })),
-      diffEvidence: buildPluginDiffEvidence(plugin),
+      diffEvidence: buildPluginDiffEvidence(plugin, drift),
     });
   };
 
@@ -1461,7 +1462,7 @@ export function App() {
   type OverlayKind =
     | "consultation" | "sourceSetupWizard" | "diff" | "missingSummary" | "editToolModal"
     | "addMarketplace" | "addPiMarketplace" | "addProject" | "adoptSkills" | "applyProfile" | "toolActionModal"
-    | "toolDetail" | "itemDetail" | "marketplaceDetail";
+    | "toolDetail" | "skillFileBrowser" | "itemDetail" | "marketplaceDetail";
   interface OverlayEntry {
     kind: OverlayKind;
     active: boolean;
@@ -1487,6 +1488,8 @@ export function App() {
     { kind: "applyProfile", active: modalVisible === "applyProfile", inputMode: "modal" },
     { kind: "toolActionModal", active: !!(toolModalAction && activeToolForModal), inputMode: "modal" },
     { kind: "toolDetail", active: !!detailTool, inputMode: "detail", escClose: () => setDetailToolKey(null) },
+    // The file browser owns its own Esc behavior: back to its file list, then back to skill detail.
+    { kind: "skillFileBrowser", active: !!skillFileBrowser, inputMode: "detail", escClose: () => {} },
     { kind: "itemDetail", active: !!activeDetail, inputMode: "detail", escClose: closeItemDetail },
     {
       kind: "marketplaceDetail",
@@ -1834,6 +1837,10 @@ export function App() {
     // resolved yet. handleToolModalInput itself no-ops safely without a tool.
     if (toolModalAction) { handleToolModalInput(input, key); return; }
 
+    // Settings text fields own their characters, including digits that otherwise
+    // switch tabs. Keep q/R/tab shortcuts available once text editing closes.
+    if (tab === "settings" && settingsTextInputActive) return;
+
     // Terminals can emit ESC in multiple forms:
     // - key.escape=true
     // - raw "\u001b"
@@ -2001,6 +2008,9 @@ export function App() {
     // and action dispatch. Owns (swallows) all keys while a namespace tree is open.
     if (handleNamespaceTreeInput(input, key)) return;
 
+    // The nested file browser owns navigation and Enter; do not dispatch those keys
+    // to the skill detail underneath it.
+    if (skillFileBrowser) return;
     if (handleDetailInput(input, key)) return;
     if (handleListInput(input, key)) return;
 
@@ -2261,11 +2271,15 @@ export function App() {
       return false;
     }
 
-    const tool = tools.find((t) => t.toolId === instance.toolId && t.instanceId === instance.instanceId);
-    if (!tool) {
+    const isSharedStore = instance.toolId === "agents" && instance.instanceId === "shared";
+    const tool = isSharedStore
+      ? undefined
+      : tools.find((t) => t.toolId === instance.toolId && t.instanceId === instance.instanceId);
+    if (!isSharedStore && !tool) {
       n(`✗ Unknown tool instance: ${instance.toolId}:${instance.instanceId}`, "error");
       return false;
     }
+    const sourceLabel = isSharedStore ? "~/.agents" : tool!.name;
 
     const pluginDrift = detailPluginDrift ?? pluginDriftMap[plugin.name];
     if (!pluginDrift) {
@@ -2275,7 +2289,7 @@ export function App() {
 
     let copied = 0;
 
-    await withSpinner(`Pulling ${plugin.name} from ${tool.name}...`, async () => {
+    await withSpinner(`Pulling ${plugin.name} from ${sourceLabel}...`, async () => {
       try {
         for (const [driftKey, status] of Object.entries(pluginDrift)) {
           if (status === "in-sync") continue;
@@ -2285,7 +2299,11 @@ export function App() {
 
           const suffix = kind === "skill" ? name : `${name}.md`;
           const sourcePath = join(sourcePaths.pluginDir, `${kind}s`, suffix);
-          const targetPath = resolveInstalledPluginComponentPath(tool, plugin, kind, name);
+          const targetPath = isSharedStore
+            ? kind === "skill"
+              ? pluginSkillStorePath(plugin.name, name)
+              : agentsComponentDir(kind, plugin.name, name)
+            : resolveInstalledPluginComponentPath(tool!, plugin, kind, name);
 
           if (!targetPath || !existsSync(targetPath)) continue;
 
@@ -2313,9 +2331,9 @@ export function App() {
     }, n, cn);
 
     if (copied > 0) {
-      n(`✓ Pulled ${plugin.name} from ${tool.name} (${copied})`, "success");
+      n(`✓ Pulled ${plugin.name} from ${sourceLabel} (${copied})`, "success");
     } else {
-      n(`⚠ No changed components to pull from ${tool.name}`, "warning");
+      n(`⚠ No changed components to pull from ${sourceLabel}`, "warning");
     }
 
     return copied > 0;
@@ -2346,6 +2364,7 @@ export function App() {
         setDetailPluginDrift,
         closeDetail,
         openSkillDetail,
+        openSkillFiles,
         openDiffForFile,
         openMissingSummaryForFile,
         installPlugin: doInstall,
@@ -2639,6 +2658,17 @@ export function App() {
             pending={toolDetectionPending[detailTool!.toolId] === true}
           />
         );
+      case "skillFileBrowser": {
+        const skill = skillFileBrowser!;
+        return (
+          <SkillFileBrowser
+            key={`${skill.name}:${skill.sourcePath ?? skill.diskPath}`}
+            skillName={skill.namespace ? `${skill.namespace}/${skill.name}` : skill.name}
+            rootPath={skill.sourcePath ?? skill.diskPath}
+            onClose={() => setSkillFileBrowser(null)}
+          />
+        );
+      }
       case "itemDetail":
         return detail?.kind === "namespace" && detailNamespace ? (
           <NamespaceDetail
@@ -2668,6 +2698,7 @@ export function App() {
             searchFocused={searchFocused}
             onSearchFocus={() => setSearchFocused(true)}
             onSearchBlur={() => setSearchFocused(false)}
+            onSettingsTextInputActiveChange={setSettingsTextInputActive}
           />
         );
     }
@@ -2693,7 +2724,7 @@ export function App() {
         tab={tab}
         hasDetail={isOverlayOpen}
         toolsHint={toolsHint}
-        consultationAvailable={tab === "installed" && (detailPlugin?.installed === true || (detailSkill?.installations.length ?? 0) > 0)}
+        consultationAvailable={!skillFileBrowser && tab === "installed" && (detailPlugin?.installed === true || (detailSkill?.installations.length ?? 0) > 0)}
       />
       <StatusBar />
     </Box>

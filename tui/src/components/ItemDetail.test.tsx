@@ -6,9 +6,11 @@ import {
   PluginMetadata,
   FileMetadata,
   PiPackageMetadata,
+  SkillMetadata,
   type ItemAction,
 } from "./ItemDetail.js";
 import type { ManagedItem, ItemInstanceStatus } from "../lib/managed-item.js";
+import type { StandaloneSkill } from "../lib/install.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Factories
@@ -294,6 +296,18 @@ describe("PluginMetadata", () => {
     expect(lastFrame()).toContain("skill-a, skill-b");
   });
 
+  it("shows plugin marketplace and repository provenance", () => {
+    const { lastFrame } = render(
+      React.createElement(PluginMetadata, {
+        item: createItem({
+          marketplace: "skills.sh",
+          source: { source: "github", repo: "owner/repo", ref: "main" },
+        }),
+      }),
+    );
+    expect(lastFrame()).toContain("Origin: skills.sh · github · owner/repo · ref main");
+  });
+
   it("renders MCP indicator", () => {
     const { lastFrame } = render(
       React.createElement(PluginMetadata, {
@@ -334,6 +348,48 @@ describe("FileMetadata", () => {
       }),
     );
     expect(lastFrame()).toContain("assets/AGENTS.md → AGENTS.md");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SkillMetadata
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("SkillMetadata", () => {
+  it("shows the configured source-repo path when a match exists", () => {
+    const skill: StandaloneSkill = {
+      name: "example-skill",
+      installations: [],
+      diskPath: "/tmp/source/skills/example-skill",
+      toolId: "",
+      instanceName: "",
+      instanceId: "",
+      sourcePath: "/tmp/source/skills/example-skill",
+    };
+    const { lastFrame } = render(
+      React.createElement(SkillMetadata, {
+        item: createItem({ kind: "file", marketplace: "source only", _skill: skill }),
+      }),
+    );
+    expect(lastFrame()).toContain("configured source repo");
+    expect(lastFrame()).toContain("/tmp/source/skills/example-skill");
+  });
+
+  it("does not guess the origin of an untracked skill", () => {
+    const skill: StandaloneSkill = {
+      name: "external-skill",
+      installations: [],
+      diskPath: "/tmp/installed/external-skill",
+      toolId: "",
+      instanceName: "",
+      instanceId: "",
+    };
+    const { lastFrame } = render(
+      React.createElement(SkillMetadata, {
+        item: createItem({ kind: "file", marketplace: "source only", _skill: skill }),
+      }),
+    );
+    expect(lastFrame()).toContain("not recorded by Blackbook");
   });
 });
 

@@ -75,6 +75,7 @@ export interface DetailCallbackDeps {
   setDetailPluginDrift: (drift: PluginDrift | null) => void;
   closeDetail: () => void;
   openSkillDetail: (skill: StandaloneSkill) => void;
+  openSkillFiles: (skill: StandaloneSkill) => void;
   openDiffForFile: DispatchCallbacks["openDiffForFile"];
   openMissingSummaryForFile: DispatchCallbacks["openMissingSummaryForFile"];
   installPlugin: DispatchCallbacks["installPlugin"];
@@ -110,7 +111,7 @@ export interface DetailCallbackDeps {
  * the reload, an ordering that must be preserved.
  */
 export function buildDetailCallbacks(deps: DetailCallbackDeps): DispatchCallbacks {
-  const { detail, setDetail, setDetailPluginDrift, closeDetail, openSkillDetail } = deps;
+  const { detail, setDetail, setDetailPluginDrift, closeDetail, openSkillDetail, openSkillFiles } = deps;
 
   return {
     // ── Pass-through navigation / plugin / file / pi-package handlers ──
@@ -347,6 +348,7 @@ export function buildDetailCallbacks(deps: DetailCallbackDeps): DispatchCallback
         { refresh: "plugins" },
       ),
     openSkillDetail,
+    openSkillFiles,
     openSkillDiff: (skill, toolId, instanceId) => {
       const diffTarget = buildSkillDiffTarget(skill, toolId, instanceId);
       if (!diffTarget) {
