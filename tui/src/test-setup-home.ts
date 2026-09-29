@@ -21,3 +21,9 @@ delete process.env.CLAUDE_CONFIG_DIR;
 delete process.env.CODEX_HOME;
 delete process.env.SKILLS_DEV_SHORTCUTS;
 delete process.env.SKILLS_STORE_DIR;
+// With no ~/.gitconfig in the throwaway HOME, git guesses an author email from
+// the hostname, which fails on hosts without a domain. Give commits a fixed identity.
+process.env.GIT_AUTHOR_NAME ??= "Blackbook Test";
+process.env.GIT_AUTHOR_EMAIL ??= "test@example.com";
+process.env.GIT_COMMITTER_NAME ??= "Blackbook Test";
+process.env.GIT_COMMITTER_EMAIL ??= "test@example.com";

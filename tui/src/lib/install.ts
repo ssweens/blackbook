@@ -19,9 +19,11 @@ import { isCliManagedGlobalSkill, isCliManagedPath } from "./skills-cli-guard.js
 import {
   installPluginSkillsViaCli,
   installStandaloneSkillViaCli,
+  installSkillFromSourceViaCli,
   removePluginSkillsViaCli,
   removeSkillViaCli,
 } from "./plugin-skills-cli.js";
+import { addSourceFor, globalLockEntries } from "./skill-profiles.js";
 import { promisify } from "util";
 import { execFile, execFileSync } from "child_process";
 import { hashBuffer, hashFile, hashPath, hashString, hashDirectory } from "./modules/hash.js";
@@ -2204,12 +2206,19 @@ export function installSkillToInstance(
 ): boolean {
   // Prefer source-repo path (canonical) over an existing disk install. Falls back to
   // an existing install when the skill isn't tracked in the source repo.
-  const sourcePath = skill.sourcePath ?? skill.installations[0]?.diskPath;
-  if (!sourcePath) return false;
   const target = getToolInstances().find(
     (i) => i.toolId === toolId && i.instanceId === instanceId,
   );
   if (!target || !target.skillsSubdir) return false;
+  // A global-lock skill installs from the source its lock entry records, so
+  // third-party skills work and a Claude-only gap still gets its link.
+  const lockEntry = globalLockEntries()[skill.name];
+  if (lockEntry) {
+    const viaLock = installSkillFromSourceViaCli(skill.name, addSourceFor(lockEntry), target);
+    if (viaLock !== null) return viaLock;
+  }
+  const sourcePath = skill.sourcePath ?? skill.installations[0]?.diskPath;
+  if (!sourcePath) return false;
   const targetDir = getStandaloneSkillTargetDir(skill, target);
   if (!targetDir) return false;
   // The skills CLI owns this skill (store link): never copy over or beside it.

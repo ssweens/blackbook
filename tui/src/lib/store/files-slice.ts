@@ -23,6 +23,8 @@ import { buildFileDiffTarget, buildFileMissingSummary, buildSkillDiffTarget } fr
 import { buildStateKey } from "../state.js";
 import { getAllInstalledPlugins, getPluginToolStatus, syncPluginInstances } from "../install.js";
 import { invalidatePluginToolStatusCache } from "../plugin-status.js";
+import { globalLockEntries } from "../skill-profiles.js";
+import { resolveInstanceSubdirPath } from "../path-utils.js";
 import { composeManagedItems, pluginActionInFlight, SYNC_TOOLS_KEY } from "./shared.js";
 import type { Store, SliceCreator } from "./types.js";
 
@@ -97,28 +99,35 @@ function buildFileSyncPreview(files: FileStatus[]): SyncPreviewItem[] {
   return preview;
 }
 
-function buildSkillSyncPreview(
+/**
+ * Skill rows for the Sync tab. The global skills lock (`~/.agents/.skill-lock.json`)
+ * defines which skills belong on the tools: only a lock skill can be "missing".
+ * A source-repo skill that isn't in the lock is just available, not missing.
+ * Drifted installs and installs with no source still show, lock or not.
+ */
+function hasSkillOnDisk(instance: ReturnType<typeof getToolInstances>[number], name: string): boolean {
+  if (!instance.skillsSubdir) return false;
+  return existsSync(join(resolveInstanceSubdirPath(instance.configDir, instance.skillsSubdir), name, "SKILL.md"));
+}
+
+export function buildSkillSyncPreview(
   skills: import("../install.js").StandaloneSkill[],
   toolInstances: ReturnType<typeof getToolInstances>,
+  lockNames: ReadonlySet<string> = new Set(Object.keys(globalLockEntries())),
 ): SyncPreviewItem[] {
   const preview: SyncPreviewItem[] = [];
-  if (!skills || skills.length === 0) return preview;
   if (!toolInstances) return preview;
   // Tools that support skills (enabled, have skillsSubdir).
   const skillCapable = toolInstances.filter(
     (i) => i.kind === "tool" && i.enabled && !!i.skillsSubdir,
   );
-  for (const skill of skills) {
-    // No source match (deleted, or never tracked) but real disk installations
-    // exist: unlike a normal not-yet-synced skill, there's nothing to sync FROM,
-    // so skip the missing-instance computation entirely and treat every current
-    // installation as needing attention — mirrors how a file with a deleted
-    // source but a surviving target is always surfaced as drift (never silently
-    // dropped), instead of vanishing from the one tab meant to show everything
-    // that needs a look. Previously this `continue`d here, unconditionally,
-    // making such a skill invisible on the Sync tab (still visible elsewhere,
-    // e.g. Installed's "not in git" tag).
-    if (!skill.sourcePath) {
+  const seen = new Set<string>();
+  for (const skill of skills ?? []) {
+    seen.add(skill.name);
+    const inLock = lockNames.has(skill.name);
+    // No source and not in the lock, but real disk installations exist:
+    // there's nothing to sync FROM, so every installation needs a look.
+    if (!skill.sourcePath && !inLock) {
       if (skill.installations.length === 0) continue;
       preview.push({
         kind: "skill",
@@ -131,14 +140,29 @@ function buildSkillSyncPreview(
     const installedKeys = new Set(
       skill.installations.map((i) => `${i.toolId}:${i.instanceId}`),
     );
-    const missingInstances = skillCapable
-      .filter((i) => !installedKeys.has(`${i.toolId}:${i.instanceId}`))
-      .map((i) => i.name);
+    const missingInstances = inLock
+      ? skillCapable.filter((i) => !installedKeys.has(`${i.toolId}:${i.instanceId}`)).map((i) => i.name)
+      : [];
     const driftedInstances = skill.installations
       .filter((i) => i.drifted)
       .map((i) => i.instanceName);
     if (missingInstances.length === 0 && driftedInstances.length === 0) continue;
     preview.push({ kind: "skill", skill, missingInstances, driftedInstances });
+  }
+  // Lock skills the standalone scan doesn't cover: no source-repo copy, or a
+  // name a plugin also claims. Check each tool's skills dir on disk directly.
+  for (const name of [...lockNames].sort()) {
+    if (seen.has(name)) continue;
+    const missingInstances = skillCapable
+      .filter((i) => !hasSkillOnDisk(i, name))
+      .map((i) => i.name);
+    if (missingInstances.length === 0) continue;
+    preview.push({
+      kind: "skill",
+      skill: { name, installations: [], diskPath: "", toolId: "", instanceId: "", instanceName: "" },
+      missingInstances,
+      driftedInstances: [],
+    });
   }
   return preview;
 }

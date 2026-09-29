@@ -239,6 +239,19 @@ export function installStandaloneSkillViaCli(skillDir: string, sourceRepo: strin
 }
 
 /**
+ * Install one skill for one tool instance from an explicit skills CLI source
+ * (`skills add <source> --skill <name> -g`), e.g. a global-lock entry's source.
+ * Returns null when the CLI can't serve this tool or is disabled.
+ */
+export function installSkillFromSourceViaCli(name: string, source: string, instance: ToolInstance): boolean | null {
+  if (!skillsCliEnabled()) return null;
+  const group = groupFor(instance);
+  if (!group) return null;
+  const args = ["add", source, "-g", "-y", "--skill", name, ...group.agents.flatMap((a) => ["-a", a])];
+  return runSkillsCliSync(args, group.env).ok;
+}
+
+/**
  * Remove a CLI-managed skill (by its installed, flat name). With an instance,
  * only a Claude instance's links can be removed on their own; universal agents
  * share ~/.agents/skills, so `instance === null` (everywhere) is required for them.

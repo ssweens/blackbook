@@ -14,6 +14,7 @@ let marketplacesMock: Array<{ name: string; url: string }> = [];
 const {
   installPluginSkillsViaCli,
   installStandaloneSkillViaCli,
+  installSkillFromSourceViaCli,
   pluginSkillNames,
   pluginSkillsSource,
   removePluginSkillsViaCli,
@@ -141,11 +142,25 @@ describe("skills CLI round trip (isolated HOME)", () => {
     expect(lstatSync(join(home, ".agents/skills/gamma")).isSymbolicLink()).toBe(true);
   }, 120_000);
 
+  it("installs one skill from an explicit source for a single instance (a lock entry's source)", () => {
+    const { home, instances } = isolate();
+    const repo = join(root, "third-party");
+    writeSkill(join(repo, "skills", "delta"), "delta");
+    writeSkill(join(repo, "skills", "other"), "other");
+    // Claude only: the universal ~/.agents link is left alone.
+    expect(installSkillFromSourceViaCli("delta", repo, instances[1])).toBe(true);
+    expect(lstatSync(join(home, ".claude/skills/delta")).isSymbolicLink()).toBe(true);
+    expect(existsSync(join(home, ".claude/skills/other"))).toBe(false);
+    // Unsupported tools return null so the caller can fall back.
+    expect(installSkillFromSourceViaCli("delta", repo, { toolId: "cursor" } as ToolInstance)).toBeNull();
+  }, 120_000);
+
   it("is a no-op when disabled", () => {
     isolate();
     process.env.BLACKBOOK_SKILLS_CLI = "0";
     expect(installPluginSkillsViaCli(plugin(), null, [])).toEqual([]);
     expect(installStandaloneSkillViaCli(root, root, { toolId: "claude-code" } as ToolInstance)).toBeNull();
     expect(removeSkillViaCli("x", null, [])).toBe(false);
+    expect(installSkillFromSourceViaCli("x", root, { toolId: "claude-code" } as ToolInstance)).toBeNull();
   });
 });

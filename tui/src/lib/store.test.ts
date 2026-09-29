@@ -2852,6 +2852,10 @@ describe("Store sync preview depends on standaloneSkills", () => {
   });
 
   it("reflects standaloneSkills, proving it is a real getSyncPreview input", () => {
+    // Only a skill in the global lock can be missing, so put this one in it.
+    const lockPath = join(process.env.HOME!, ".agents", ".skill-lock.json");
+    mkdirSync(join(process.env.HOME!, ".agents"), { recursive: true });
+    writeFileSync(lockPath, JSON.stringify({ version: 3, skills: { "my-skill": { source: "o/r", sourceType: "github" } } }));
     const skill = {
       name: "my-skill",
       installations: [],
@@ -2872,7 +2876,10 @@ describe("Store sync preview depends on standaloneSkills", () => {
     // change.
     useStore.setState({ standaloneSkills: [] });
     const withoutSkill = useStore.getState().getSyncPreview();
-    expect(withoutSkill.some((i) => i.kind === "skill")).toBe(false);
+    // The lock still lists it, so it shows as missing everywhere rather than vanishing.
+    expect(withoutSkill.filter((i) => i.kind === "skill").map((i) => (i as any).skill.name)).toEqual(["my-skill"]);
+    rmSync(lockPath);
+    expect(useStore.getState().getSyncPreview().some((i) => i.kind === "skill")).toBe(false);
   });
 });
 

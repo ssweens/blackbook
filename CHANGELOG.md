@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 2026-08-12 — Completed advisory consultations can continue with optional follow-up questions (`c`). Each turn carries only the four newest redacted exchanges as conversational context, rebuilds the current project/profile/plugin/skill snapshot, and revalidates proposals before they can be selected or accepted.
 
 ### Fixed
+- 2026-09-28 — The Sync tab's skill drift now follows the global skills lock. Only a skill in `~/.agents/.skill-lock.json` can be missing, and syncing it installs from the lock's recorded source, including third-party sources and Claude-only gaps. Every source-repo skill used to count as missing on every tool, so syncing reinstalled skills that had been pruned from global.
+- 2026-09-28 — Tests give git a fixed author identity, so commits in tests no longer fail on hosts whose hostname has no domain.
 - 2026-09-26 — `blackbook … --json` piped to another program no longer stops at 64 KB. The CLI now waits for stdout and stderr to flush before exiting.
 - 2026-09-26 — `tui/package-lock.json` was regenerated for ink 7, so `npm ci` works again.
 - 2026-09-26 — Diffs of in-sync items ask for confirmation instead of opening an empty diff. Advisor consultations allow up to 1 MB of prompt and output with a 5-minute timeout, and narratives are no longer truncated.

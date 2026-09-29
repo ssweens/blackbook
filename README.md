@@ -184,7 +184,9 @@ Upstream copies each skill into `<project>/.agents/skills/<name>`. Blackbook's c
 
 The **Projects** tab uses the same CLI when `settings.project_skill_mode` is `link` (the default). Pushing a skill or applying a profile runs `skills add <source-repo origin> --skill … -a <enabled tools> -y` in the project. Deleting a linked skill runs `skills remove`. `copy` keeps the old behavior of copying into the project.
 
-**Plugins.** Blackbook still installs, updates and removes plugins. A plugin's skills go through the bundled CLI, from the plugin's own folder in its repo, into the store with flat names and the global lockfile. One call covers the tools that share `~/.agents/skills`, and one call covers each Claude instance through `CLAUDE_CONFIG_DIR`. Commands, agents and MCP config still use Blackbook's own engine. Source-repo skills from the Sync tab install the same way. A local-path marketplace resolves to its git remote, so the store entries match standalone installs.
+**Plugins.** Blackbook still installs, updates and removes plugins. A plugin's skills go through the bundled CLI, from the plugin's own folder in its repo, into the store with flat names and the global lockfile. One call covers the tools that share `~/.agents/skills`, and one call covers each Claude instance through `CLAUDE_CONFIG_DIR`. Commands, agents and MCP config still use Blackbook's own engine. Source-repo skills from the Sync tab install the same way.
+
+**Sync tab skills.** The global lockfile (`~/.agents/.skill-lock.json`) decides which skills belong on your tools. A skill in the lock shows as missing on any enabled tool without it, and syncing installs it from the source the lock records. A source-repo skill that isn't in the lock is only available, never missing, so a lean global set stays lean. Drifted installs and installs with no known source still show for review. A local-path marketplace resolves to its git remote, so the store entries match standalone installs.
 
 **Dev shortcuts.** Map a repo to a local checkout, on this machine only:
 
