@@ -170,6 +170,8 @@ export type SyncPreviewItem =
   | {
       kind: "piPackage";
       piPackage: PiPackage;
+      /** Why it needs a sync: an update is available, or Pi's settings list it but it isn't on disk. */
+      problem?: "update" | "missing";
     };
 
 export interface Marketplace {

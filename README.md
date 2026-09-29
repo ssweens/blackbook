@@ -343,7 +343,7 @@ Blackbook includes a built-in npm marketplace for [Pi coding agent](https://gith
 
 Pi packages can include extensions, themes, custom tools, and skills. Install/uninstall uses `pi install` and `pi remove` CLI commands.
 
-To prescribe packages from your synced Blackbook config/source repo so they appear on every machine even before installation, add `pi_packages`:
+To recommend packages from your synced Blackbook config/source repo, so every machine sees them in Discover and Installed, add `pi_packages`:
 
 ```yaml
 pi_packages:
@@ -352,7 +352,7 @@ pi_packages:
     description: Ask the user from Pi workflows
 ```
 
-In-git packages appear in Discover, Installed, and Sync as installable missing items until the local Pi install catches up. Installed Pi packages that are not listed in `pi_packages` show `not in git` and offer `Track in source repo` from their detail view. Recoverable installed plugins whose marketplace prescription disappeared also offer `Track in source repo`, copying the plugin into `<source_repo>/plugins/<name>` and registering it in `<source_repo>/.claude-plugin/marketplace.json`.
+This list is a catalog, not a requirement: each machine installs what it wants. Pi's own `~/.pi/agent/settings.json` defines what an install should have, so the Sync tab shows a Pi package only when those settings list it and it has an update or is missing on disk. A missing npm package is reinstalled, and a missing local path is reported for you to restore or remove. Installed Pi packages that are not listed in `pi_packages` show `not in git` and offer `Track in source repo` from their detail view. Recoverable installed plugins whose marketplace prescription disappeared also offer `Track in source repo`, copying the plugin into `<source_repo>/plugins/<name>` and registering it in `<source_repo>/.claude-plugin/marketplace.json`.
 
 You can also add local Pi package directories as marketplaces:
 

@@ -851,6 +851,17 @@ export function getGlobalPiPackageVersions(preferredManager: PackageManager = ge
   return versions;
 }
 
+/**
+ * Whether a package Pi's settings list is actually present: an npm package
+ * found by some package manager, or a local path that exists. Git sources
+ * can't be checked cheaply and count as present.
+ */
+export function isPiPackageOnDisk(pkg: { source: string; sourceType: PiPackageSourceType; installedVersion?: string }): boolean {
+  if (pkg.sourceType === "npm") return !!pkg.installedVersion;
+  if (pkg.sourceType === "local") return existsSync(resolvePackagePath(pkg.source));
+  return true;
+}
+
 function resolvePackagePath(source: string): string {
   if (source.startsWith("npm:") || source.startsWith("git:") || source.startsWith("https://")) {
     return source;

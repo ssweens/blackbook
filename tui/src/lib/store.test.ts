@@ -1687,6 +1687,29 @@ describe("Store syncTools with toolFilter", () => {
     expect(installSkillToInstance).toHaveBeenCalledWith(skill, "claude-code", "default");
   });
 
+  it("syncs Pi packages by problem: update runs update, missing npm reinstalls, missing local path is reported", async () => {
+    const installPiPackageAction = vi.fn().mockResolvedValue(true);
+    const updatePiPackageAction = vi.fn().mockResolvedValue(true);
+    const notify = vi.fn();
+    const original = { installPiPackage: useStore.getState().installPiPackage, updatePiPackage: useStore.getState().updatePiPackage, notify: useStore.getState().notify };
+    useStore.setState({ tools: [], installPiPackage: installPiPackageAction, updatePiPackage: updatePiPackageAction, notify });
+    const base = { description: "", version: "2", marketplace: "npm", installed: true, extensions: [], skills: [], prompts: [], themes: [] };
+    try {
+      await useStore.getState().syncTools([
+        { kind: "piPackage", problem: "update", piPackage: { ...base, name: "upd", source: "npm:upd", sourceType: "npm", installedVersion: "1" } },
+        { kind: "piPackage", problem: "missing", piPackage: { ...base, name: "gone", source: "npm:gone", sourceType: "npm" } },
+        { kind: "piPackage", problem: "missing", piPackage: { ...base, name: "moved", source: "../../src/moved", sourceType: "local" } },
+      ]);
+      expect(updatePiPackageAction).toHaveBeenCalledTimes(1);
+      expect(updatePiPackageAction.mock.calls[0][0].name).toBe("upd");
+      expect(installPiPackageAction).toHaveBeenCalledTimes(1);
+      expect(installPiPackageAction.mock.calls[0][0].name).toBe("gone");
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining("moved: local path not found"), "error");
+    } finally {
+      useStore.setState(original);
+    }
+  });
+
   it("skips tool and piPackage items that don't match the filter", async () => {
     const updateToolAction = vi.fn().mockResolvedValue(true);
     const installPiPackageAction = vi.fn().mockResolvedValue(true);
@@ -1815,7 +1838,7 @@ describe("Repo-prescribed Pi packages", () => {
     }
   });
 
-  it("loads desired Pi packages from local source_repo config even when not installed locally", async () => {
+  it("loads desired Pi packages from local source_repo config even when not installed locally, without flagging them on Sync", async () => {
     const sourceRepo = mkdtempSync(join(tmpdir(), "blackbook-source-repo-for-prescribed-"));
     const sourceRepoConfigPath = join(sourceRepo, "config", "blackbook", "config.yaml");
     mkdirSync(join(sourceRepo, "config", "blackbook"), { recursive: true });
@@ -1876,10 +1899,10 @@ describe("Repo-prescribed Pi packages", () => {
       description: "Team subagent package",
     });
 
+    // A recommended package this machine's Pi settings don't list is a catalog
+    // entry for Discover, not something the Sync tab asks to install.
     const preview = useStore.getState().getSyncPreview();
-    expect(preview).toEqual([
-      { kind: "piPackage", piPackage: packages[0] },
-    ]);
+    expect(preview.filter((i) => i.kind === "piPackage")).toEqual([]);
   });
 
   it("loads desired Pi packages from local source_repo config", async () => {

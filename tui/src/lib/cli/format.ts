@@ -29,7 +29,9 @@ export function toStatusRows(items: SyncPreviewItem[]): StatusRow[] {
       case "tool":
         return { kind: "tool", name: item.name, missingInstances: [], driftedInstances: [`${item.installedVersion} → ${item.latestVersion}`] };
       case "piPackage":
-        return { kind: "piPackage", name: item.piPackage.name, missingInstances: ["not installed"], driftedInstances: [] };
+        return item.problem === "update"
+          ? { kind: "piPackage", name: item.piPackage.name, missingInstances: [], driftedInstances: [`${item.piPackage.installedVersion ?? "?"} → ${item.piPackage.version}`] }
+          : { kind: "piPackage", name: item.piPackage.name, missingInstances: ["not on disk"], driftedInstances: [] };
     }
   });
 }

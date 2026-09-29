@@ -74,7 +74,7 @@ export const SyncList = React.memo(function SyncList({
           : item.kind === "skill"
           ? `Skill drift (${items.filter((i) => i.kind === "skill").length})`
           : item.kind === "piPackage"
-          ? `Pi package installs (${items.filter((i) => i.kind === "piPackage").length})`
+          ? `Pi packages (${items.filter((i) => i.kind === "piPackage").length})`
           : `Plugin drift (${items.filter((i) => i.kind === "plugin").length})`;
 
         let name: string;
@@ -103,7 +103,11 @@ export const SyncList = React.memo(function SyncList({
           statusLabel = parts.join(" · ");
         } else if (item.kind === "piPackage") {
           name = item.piPackage.name;
-          statusLabel = "In git · Not installed";
+          statusLabel = item.problem === "update"
+            ? `Update ${item.piPackage.installedVersion ?? "?"} → ${item.piPackage.version}`
+            : item.piPackage.sourceType === "local"
+              ? "In Pi settings · local path not found"
+              : "In Pi settings · not on disk";
         } else {
           // item.kind === "file"
           name = item.file.name;

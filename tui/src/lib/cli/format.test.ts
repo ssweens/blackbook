@@ -50,7 +50,8 @@ describe("toStatusRows / formatStatusText / formatStatusJson", () => {
         driftedInstances: ["Claude"],
       },
       { kind: "tool", toolId: "opencode", name: "OpenCode", installedVersion: "1.0.0", latestVersion: "1.1.0" },
-      { kind: "piPackage", piPackage: { name: "pi-pkg", description: "", version: "1", source: "npm:pi-pkg", sourceType: "npm", marketplace: "npm", installed: false } as PiPackage },
+      { kind: "piPackage", problem: "missing", piPackage: { name: "pi-pkg", description: "", version: "1", source: "npm:pi-pkg", sourceType: "npm", marketplace: "npm", installed: true } as PiPackage },
+      { kind: "piPackage", problem: "update", piPackage: { name: "pi-new", description: "", version: "2.0.0", installedVersion: "1.0.0", source: "npm:pi-new", sourceType: "npm", marketplace: "npm", installed: true } as PiPackage },
     ];
 
     const rows = toStatusRows(items);
@@ -59,7 +60,8 @@ describe("toStatusRows / formatStatusText / formatStatusJson", () => {
       { kind: "file", name: "AGENTS.md", missingInstances: ["Claude"], driftedInstances: ["Codex"] },
       { kind: "skill", name: "sk1", missingInstances: [], driftedInstances: ["Claude"] },
       { kind: "tool", name: "OpenCode", missingInstances: [], driftedInstances: ["1.0.0 → 1.1.0"] },
-      { kind: "piPackage", name: "pi-pkg", missingInstances: ["not installed"], driftedInstances: [] },
+      { kind: "piPackage", name: "pi-pkg", missingInstances: ["not on disk"], driftedInstances: [] },
+      { kind: "piPackage", name: "pi-new", missingInstances: [], driftedInstances: ["1.0.0 → 2.0.0"] },
     ]);
   });
 

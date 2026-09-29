@@ -24,6 +24,7 @@ import { buildStateKey } from "../state.js";
 import { getAllInstalledPlugins, getPluginToolStatus, syncPluginInstances } from "../install.js";
 import { invalidatePluginToolStatusCache } from "../plugin-status.js";
 import { globalLockEntries } from "../skill-profiles.js";
+import { isPiPackageOnDisk } from "../marketplace.js";
 import { resolveInstanceSubdirPath } from "../path-utils.js";
 import { composeManagedItems, pluginActionInFlight, SYNC_TOOLS_KEY } from "./shared.js";
 import type { Store, SliceCreator } from "./types.js";
@@ -167,10 +168,20 @@ export function buildSkillSyncPreview(
   return preview;
 }
 
-function buildPiPackageSyncPreview(packages: PiPackage[]): SyncPreviewItem[] {
-  return packages
-    .filter((pkg) => pkg.recommended && !pkg.installed)
-    .map((pkg) => ({ kind: "piPackage" as const, piPackage: pkg }));
+/**
+ * Pi packages are per machine: Pi's own settings.json says what this install
+ * should have. A package shows here only when those settings list it and it
+ * is missing on disk or has an update. Recommended packages that aren't in
+ * the settings are a catalog (Discover), never "missing".
+ */
+export function buildPiPackageSyncPreview(packages: PiPackage[]): SyncPreviewItem[] {
+  const items: SyncPreviewItem[] = [];
+  for (const pkg of packages) {
+    if (!pkg.installed) continue;
+    if (!isPiPackageOnDisk(pkg)) items.push({ kind: "piPackage", piPackage: pkg, problem: "missing" });
+    else if (pkg.hasUpdate) items.push({ kind: "piPackage", piPackage: pkg, problem: "update" });
+  }
+  return items;
 }
 
 function buildToolSyncPreview(
@@ -668,11 +679,18 @@ export const createFilesSlice: SliceCreator<FilesSlice> = (set, get) => ({
         }
       } else if (item.kind === "piPackage") {
         if (toolFilter && !toolFilter("pi")) continue;
-        const success = await get().installPiPackage(item.piPackage);
+        if (item.problem !== "update" && item.piPackage.sourceType === "local") {
+          // Reinstalling can't recreate a local checkout.
+          errors.push(`${item.piPackage.name}: local path not found (${item.piPackage.source}); restore the checkout or remove it from Pi`);
+          continue;
+        }
+        const success = item.problem === "update"
+          ? await get().updatePiPackage(item.piPackage)
+          : await get().installPiPackage(item.piPackage);
         if (success) {
           syncedItems += 1;
         } else {
-          errors.push(`Failed to install ${item.piPackage.name}`);
+          errors.push(`Failed to ${item.problem === "update" ? "update" : "install"} ${item.piPackage.name}`);
         }
       } else if (item.kind === "tool") {
         if (toolFilter && !toolFilter(item.toolId)) continue;
