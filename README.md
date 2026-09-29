@@ -115,7 +115,7 @@ Blackbook opens on the **Sync** tab by default.
 | ↑ ↓ | Navigate lists |
 | Enter | Select / open details |
 | Space | Install/uninstall selected plugin |
-| / | Focus search (Discover/Installed) |
+| / | Focus search (Discover, Installed, a project's skills, the profile builder) |
 | d | View diff for changed item (Sync tab) |
 | p | Pull back config changes to source (Diff view) |
 | R | Refresh current tab data |
@@ -127,6 +127,8 @@ Blackbook opens on the **Sync** tab by default.
 - **Discover/Installed**: `s` cycle sort (name/installed), `r` reverse sort, `R` refresh tab data (`d` opens diff for selected managed file in Installed)
 - **Marketplaces**: `u` update marketplace, `r` remove marketplace, `R` refresh all marketplaces/packages
 - **Tools**: `Enter` open detail, `i` install, `u` update, `d` uninstall, `Space` toggle enabled, `e` edit config dir, `R` refresh detection
+- **Projects**: `Enter` open a project, `/` search its skills, `P` apply a profile, `S` save its lock as a profile, `a` add, `d` remove. Long lists scroll and show their position.
+- **Profiles**: `n` new, `Enter`/`e` edit, `d` delete. In the builder, `/` searches every skill as a flat list, `v` shows only the selected skills, `Space` toggles, `→`/`←` expand a group, `PgUp`/`PgDn` jump, and `Esc` clears a filter before leaving. Skills known only from a lock, such as `anthropics/skills`, are grouped under their source.
 - **Sync**: `y` sync selected items (missing plus `source-changed` / `target-changed` / `both-changed` files/plugins and tool updates; press twice to confirm), `R` refresh sync inputs
 
 Blackbook hydrates the initial tab on startup. Refresh/load data on the current tab with `R`. A loading indicator is shown while refresh is in progress.

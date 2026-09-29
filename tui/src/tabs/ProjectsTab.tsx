@@ -3,6 +3,8 @@ import React from "react";
 import { Box, Text } from "ink";
 import { useStore } from "../lib/store.js";
 import { buildProjectSkillRows, type ProjectSkillStatus } from "../lib/projects.js";
+import { computeWindow, windowLabel } from "../lib/list-window.js";
+import { SearchBox } from "../components/SearchBox.js";
 
 const STATUS_META: Record<ProjectSkillStatus, { glyph: string; color: string; label: string }> = {
   "in-sync": { glyph: "✓", color: "green", label: "in sync" },
@@ -32,14 +34,19 @@ function coverageLines(coverage: ProfileCoverage[] | undefined): Array<{ key: st
 
 export interface ProjectsTabProps {
   contentHeight: number;
+  searchFocused?: boolean;
+  onSearchFocus?: () => void;
+  onSearchBlur?: () => void;
 }
 
-export function ProjectsTab({ contentHeight }: ProjectsTabProps) {
+export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocus, onSearchBlur }: ProjectsTabProps) {
   const selectedIndex = useStore((s) => s.selectedIndex);
   const loading = useStore((s) => s.loading);
   const projects = useStore((s) => s.projects);
   const projectsLoaded = useStore((s) => s.projectsLoaded);
   const projectDetailPath = useStore((s) => s.projectDetailPath);
+  const search = useStore((s) => s.search);
+  const setSearch = useStore((s) => s.setSearch);
 
   if (projects.length === 0) {
     return (
@@ -55,7 +62,7 @@ export function ProjectsTab({ contentHeight }: ProjectsTabProps) {
     );
   }
 
-  // Drill-in: per-skill list for one project.
+  // Drill-in: per-skill list for one project, searchable and scrollable.
   if (projectDetailPath) {
     const project = projects.find((p) => p.path === projectDetailPath);
     if (!project) {
@@ -65,71 +72,83 @@ export function ProjectsTab({ contentHeight }: ProjectsTabProps) {
         </Box>
       );
     }
-    const rows = buildProjectSkillRows(project);
-    const maxRows = Math.max(1, contentHeight - 4);
+    const allCount = project.skills.length + project.available.length;
+    const rows = buildProjectSkillRows(project, search);
+    const coverage = coverageLines(project.profileCoverage);
+    // Header, lock line, coverage lines, search box (2), footer.
+    const maxRows = Math.max(1, contentHeight - 5 - coverage.length);
+    const { visible, startIndex } = computeWindow(rows, selectedIndex, maxRows);
+    const position = windowLabel(startIndex, visible.length, rows.length);
     return (
       <Box flexDirection="column">
-        <Box>
-          <Text color="cyan" bold>
-            {project.name}
-          </Text>
-          <Text color="gray" wrap="truncate">
-            {"  "}
-            {project.synthetic ? "~/.agents/skills" : `${project.path}/.agents/skills`}
-          </Text>
-        </Box>
-        <Text color="gray" wrap="truncate">
+        <Text wrap="truncate-end">
+          <Text color="cyan" bold>{project.name}</Text>
+          <Text color="gray">{"  "}{project.synthetic ? "~/.agents/skills" : `${project.path}/.agents/skills`}</Text>
+        </Text>
+        <Text color="gray" wrap="truncate-end">
           {project.synthetic ? "global lock (~/.agents/.skill-lock.json)" : "skills-lock.json"}:{" "}
           {project.lockEntries ? `${project.lockEntries} skill${project.lockEntries === 1 ? "" : "s"}` : "none yet"}
         </Text>
-        {coverageLines(project.profileCoverage).map((line) => (
-          <Text key={line.key} color={line.stale ? "yellow" : "green"} wrap="truncate">
+        {coverage.map((line) => (
+          <Text key={line.key} color={line.stale ? "yellow" : "green"} wrap="truncate-end">
             {line.text}
           </Text>
         ))}
+        <SearchBox
+          value={search}
+          onChange={setSearch}
+          placeholder="Search this project's skills..."
+          focus={searchFocused}
+          onFocus={onSearchFocus}
+          onBlur={onSearchBlur}
+        />
         {rows.length === 0 ? (
-          <Text color="gray">No skills here and none available in the source repo.</Text>
+          <Text color="gray">
+            {allCount === 0 ? "No skills here and none available in the source repo." : `No skills match "${search}".`}
+          </Text>
         ) : (
-          rows.slice(0, maxRows).map((row, i) => {
-            const isSel = i === selectedIndex;
+          visible.map((row, i) => {
+            const isSel = startIndex + i === selectedIndex;
             const marker = isSel ? "❯ " : "  ";
             if (row.kind === "available") {
               return (
-                <Box key={`a:${row.available.name}`}>
+                <Text key={`a:${row.available.name}`} wrap="truncate-end">
                   <Text color={isSel ? "cyan" : "gray"}>{marker}</Text>
                   <Text color="blue">+ </Text>
                   <Text color={isSel ? "white" : "gray"}>{row.available.name}</Text>
                   <Text color="gray">{"  "}available — p to add</Text>
-                </Box>
+                </Text>
               );
             }
             const m = STATUS_META[row.skill.status];
             return (
-              <Box key={`s:${row.skill.name}`}>
+              <Text key={`s:${row.skill.name}`} wrap="truncate-end">
                 <Text color={isSel ? "cyan" : "gray"}>{marker}</Text>
                 <Text color={m.color}>{m.glyph} </Text>
                 <Text color={row.skill.enabled ? "white" : "gray"}>
                   {row.skill.name}
                   {row.skill.enabled ? "" : " (disabled)"}
                 </Text>
-                <Text color="gray">
-                  {"  "}
-                  {m.label}
-                </Text>
-              </Box>
+                <Text color="gray">{"  "}{m.label}</Text>
+              </Text>
             );
           })
         )}
-        {rows.length > maxRows && <Text color="gray">…and {rows.length - maxRows} more</Text>}
+        <Text color="gray" wrap="truncate-end">
+          {position ? `${position} · ` : ""}{search && rows.length !== allCount ? `${rows.length} of ${allCount} match · ` : ""}/ search · ↑↓ scroll · Esc back
+        </Text>
       </Box>
     );
   }
 
-  // Project list.
+  // Project list, scrollable.
+  const maxRows = Math.max(1, contentHeight - 2);
+  const { visible, startIndex } = computeWindow(projects, selectedIndex, maxRows);
+  const position = windowLabel(startIndex, visible.length, projects.length);
   return (
     <Box flexDirection="column">
-      {projects.map((p, i) => {
-        const isSel = i === selectedIndex;
+      {visible.map((p, i) => {
+        const isSel = startIndex + i === selectedIndex;
         const drifted = p.skills.filter((s) => s.status === "drifted").length;
         const summary = !p.exists
           ? "missing dir"
@@ -140,22 +159,24 @@ export function ProjectsTab({ contentHeight }: ProjectsTabProps) {
           .map((c) => `${c.profile} ${c.present.length}/${c.total}`)
           .join(", ");
         return (
-          <Box key={p.path}>
+          <Text key={p.path} wrap="truncate-end">
             <Text color={isSel ? "cyan" : p.synthetic ? "magenta" : "white"}>
               {isSel ? "❯ " : "  "}
               {p.name}
             </Text>
-            <Text color="gray" wrap="truncate">
+            <Text color="gray">
               {"  "}
               {location} · {summary}
               {profileTags ? ` · ${profileTags}` : ""}
               {p.transient ? " · recent" : ""}
             </Text>
-          </Box>
+          </Text>
         );
       })}
       <Box marginTop={1}>
-        <Text color="gray">Enter to open a project · a add · d remove · P apply profile · S save lock as profile</Text>
+        <Text color="gray" wrap="truncate-end">
+          {position ? `${position} · ` : ""}Enter to open a project · a add · d remove · P apply profile · S save lock as profile
+        </Text>
       </Box>
     </Box>
   );

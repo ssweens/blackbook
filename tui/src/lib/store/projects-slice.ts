@@ -337,8 +337,11 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
       notify("No source repo configured — profiles live in <source repo>/profiles/", "error");
       return false;
     }
-    const existing = get().profileLocks[previousName ?? trimmed] ?? get().profileLocks[trimmed];
-    const { lock, unresolved } = buildProfileLock(skills, sourceRepo, existing);
+    const own = get().profileLocks[previousName ?? trimmed] ?? get().profileLocks[trimmed];
+    // A skill picked from another profile keeps that profile's source; this
+    // profile's own entries win.
+    const known = Object.assign({}, ...Object.values(get().profileLocks).map((l) => l.skills), own?.skills ?? {});
+    const { lock, unresolved } = buildProfileLock(skills, sourceRepo, { version: 1, skills: known });
     try {
       writeProfileLock(sourceRepo, trimmed, lock);
       dropLegacyProfile(trimmed);

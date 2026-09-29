@@ -45,6 +45,7 @@ vi.mock("../config.js", () => ({
 let profileFiles: Record<string, { version: number; skills: Record<string, { source: string; sourceType: string }> }> = {};
 const applyToWorkspaceMock = vi.fn();
 const markAppliedMock = vi.fn();
+const buildProfileLockCalls: unknown[] = [];
 let lockAsProfileResult: { lock: { version: number; skills: Record<string, { source: string; sourceType: string }> }; localOnly: string[] } = { lock: { version: 1, skills: {} }, localOnly: [] };
 vi.mock("../skill-profiles.js", () => ({
   listProfileLocks: () => ({ ...profileFiles }),
@@ -56,7 +57,7 @@ vi.mock("../skill-profiles.js", () => ({
     delete profileFiles[name];
     return had;
   },
-  buildProfileLock: (names: string[]) => ({
+  buildProfileLock: (names: string[], _repo: unknown, existing: unknown) => (buildProfileLockCalls.push(existing), {
     lock: { version: 1, skills: Object.fromEntries(names.map((n) => [n, { source: "ssweens/playbook", sourceType: "github" }])) },
     unresolved: [],
   }),
@@ -99,6 +100,7 @@ beforeEach(() => {
   profileFiles = {};
   applyToWorkspaceMock.mockReset();
   markAppliedMock.mockReset();
+  buildProfileLockCalls.length = 0;
   lockAsProfileResult = { lock: { version: 1, skills: {} }, localOnly: [] };
   pullSkillMock.mockReset();
   commitMock.mockReset();
@@ -296,6 +298,21 @@ describe("projects-slice", () => {
     expect(await get().saveProfile("web", ["a", "b"])).toBe(true);
     expect(Object.keys(profileFiles.web.skills)).toEqual(["a", "b"]);
     expect(saveConfigMock).toHaveBeenCalledWith(expect.objectContaining({ profiles: {} }), "/cfg");
+  });
+
+  it("saveProfile resolves sources from every profile, with the edited profile's own entries winning", async () => {
+    getProjectsMock.mockReturnValue([]);
+    profileFiles = {
+      Docs: { version: 1, skills: { docx: { source: "anthropics/skills", sourceType: "github" }, shared: { source: "other/docs", sourceType: "github" } } },
+      Coding: { version: 1, skills: { shared: { source: "mine/coding", sourceType: "github" } } },
+    };
+    const { get } = makeStore();
+    await get().loadProjects({ silent: true });
+    expect(await get().saveProfile("Coding", ["docx", "shared"])).toBe(true);
+    expect(buildProfileLockCalls.at(-1)).toEqual({
+      version: 1,
+      skills: { docx: { source: "anthropics/skills", sourceType: "github" }, shared: { source: "mine/coding", sourceType: "github" } },
+    });
   });
 
   it("saveProfile rejects an empty or invalid name without writing", async () => {

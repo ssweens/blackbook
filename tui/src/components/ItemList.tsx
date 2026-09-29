@@ -10,6 +10,7 @@
  */
 
 import React, { useMemo } from "react";
+import { computeWindow } from "../lib/list-window.js";
 import { Box, Text } from "ink";
 import type { ManagedItem, ItemKind } from "../lib/managed-item.js";
 
@@ -148,14 +149,6 @@ export function computeItemFlags(item: ManagedItem): ItemFlags {
 // Windowing
 // ─────────────────────────────────────────────────────────────────────────────
 
-function computeWindow<T>(items: T[], selectedIndex: number, maxHeight: number): { visible: T[]; startIndex: number } {
-  if (items.length <= maxHeight) {
-    return { visible: items, startIndex: 0 };
-  }
-  const maxStart = Math.max(0, items.length - maxHeight);
-  const start = Math.min(Math.max(0, selectedIndex - (maxHeight - 1)), maxStart);
-  return { visible: items.slice(start, start + maxHeight), startIndex: start };
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Column Presets

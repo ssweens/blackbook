@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- 2026-09-29 — Search and scrolling on Projects and Profiles. A project's skill list is searchable with `/` and scrolls past the screen height instead of stopping at "…and N more"; the project list scrolls too. The profile builder searches every skill as a flat list (`/`), can show only the selected skills (`v`), and pages with `PgUp`/`PgDn`. Long lists show their position, such as `11–30 of 52`.
 - 2026-09-26 — Settings tab: a Dev Shortcuts section to add, edit (Enter) and remove (`d`) repo-to-checkout mappings, with missing checkouts flagged. The Project Skill Mode setting (`link` or `copy`) is now editable there too.
 - 2026-09-26 — Save a workspace's skills lock as a profile with `S` on the Projects tab. Existing profiles are never overwritten, local sources inside the source repo become its GitHub source, and other local paths are flagged as machine-only.
 - 2026-09-26 — Skill file browser. Standalone and plugin skill details can browse a skill's files and preview them. Skill detail shows plugin provenance and the source-repo path.
@@ -19,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 2026-08-12 — Completed advisory consultations can continue with optional follow-up questions (`c`). Each turn carries only the four newest redacted exchanges as conversational context, rebuilds the current project/profile/plugin/skill snapshot, and revalidates proposals before they can be selected or accepted.
 
 ### Fixed
+- 2026-09-29 — The Profiles list shows one aligned line per profile, sorted case-insensitively. Rows used to wrap into blank lines with uneven indents.
+- 2026-09-29 — The profile builder lists skills known only from a profile or the global lock (such as `anthropics/skills`), grouped by source, so they can be seen and picked. Saving resolves a skill's source from any profile that has it, and a folder holding one same-named skill shows as a plain skill.
 - 2026-09-28 — The Sync tab's skill drift now follows the global skills lock. Only a skill in `~/.agents/.skill-lock.json` can be missing, and syncing it installs from the lock's recorded source, including third-party sources and Claude-only gaps. Every source-repo skill used to count as missing on every tool, so syncing reinstalled skills that had been pruned from global.
 - 2026-09-28 — Tests give git a fixed author identity, so commits in tests no longer fail on hosts whose hostname has no domain.
 - 2026-09-26 — `blackbook … --json` piped to another program no longer stops at 64 KB. The CLI now waits for stdout and stderr to flush before exiting.

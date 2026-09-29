@@ -1695,6 +1695,87 @@ describe("App E2E — Plugin Detail", () => {
     }
   });
 });
+describe("App E2E — Scrolling and search on Projects and Profiles", () => {
+  beforeEach(() => {
+    setupMocks();
+    useStore.setState(defaultStoreState());
+  });
+
+  it("project detail filters with / and actions apply to the filtered row", async () => {
+    const pushProjectSkill = vi.fn().mockResolvedValue(true);
+    const available = Array.from({ length: 60 }, (_v, i) => ({ name: `skill-${String(i).padStart(2, "0")}`, sourcePath: `/src/skill-${i}` }));
+    const project: ProjectInfo = { path: "/tmp/project", name: "Project", exists: true, hasAgentsDir: true, skills: [], available };
+    useStore.setState({ tab: "projects", projects: [project], projectsLoaded: true, projectDetailPath: "/tmp/project", tools: createToolInstances(), pushProjectSkill });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("press / to search") && frame.includes("of 60"));
+      // Scroll: moving past the bottom edge brings later rows into view.
+      for (let i = 0; i < 45; i++) sendKey(stdin, KEYS.down);
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("❯ + skill-45"));
+      expect(stdout.lastFrame()).not.toContain("skill-00");
+
+      sendKey(stdin, "/");
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Search this project's skills"));
+      act(() => {
+        stdin.write("skill-5");
+      });
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("10 of 60 match"));
+      sendKey(stdin, KEYS.enter); // keep the filter; the cursor is back on the first match
+      sendKey(stdin, KEYS.down);
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("❯ + skill-51"));
+      sendKey(stdin, "p");
+      await waitForFrame(stdout.lastFrame, () => pushProjectSkill.mock.calls.length === 1);
+      expect(pushProjectSkill).toHaveBeenCalledWith("/tmp/project", "skill-51", "/src/skill-51");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("profiles list shows one line per profile, and the builder searches every skill including lock-only sources", async () => {
+    const saveProfile = vi.fn().mockResolvedValue(true);
+    const gh = (source: string) => ({ source, sourceType: "github" });
+    useStore.setState({
+      tab: "profiles",
+      profiles: { Docs: ["docx", "pdf"], Coding: ["deslop"], global: ["the-algorithm"] },
+      profileLocks: {
+        Docs: { version: 1, skills: { docx: gh("anthropics/skills"), pdf: gh("anthropics/skills") } },
+        Coding: { version: 1, skills: { deslop: gh("ssweens/playbook") } },
+        global: { version: 1, skills: { "the-algorithm": gh("ssweens/playbook") } },
+      },
+      tools: createToolInstances(),
+      saveProfile,
+    });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Docs") && frame.includes("global"));
+      const lines = stdout.lastFrame()!.split("\n").filter((l) => /\d+ skills?/.test(l));
+      // Case-insensitive order, one row each, names aligned.
+      expect(lines.map((l) => l.trim().replace(/^❯ /, "").split(/\s+/)[0])).toEqual(["Coding", "Docs", "global"]);
+      expect(new Set(lines.map((l) => l.search(/ skills?\b/))).size).toBe(1);
+
+      sendKey(stdin, KEYS.enter); // edit Coding
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Enter save") && frame.includes("anthropics/skills"));
+      sendKey(stdin, "/");
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Search all skills"));
+      act(() => {
+        stdin.write("docx");
+      });
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("docx") && frame.includes("anthropics/skills"));
+      sendKey(stdin, KEYS.enter); // keep the filter
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("1 match"));
+      sendKey(stdin, KEYS.space);
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("2 of"));
+      sendKey(stdin, "v");
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("showing selected only"));
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, () => saveProfile.mock.calls.length === 1);
+      expect(saveProfile).toHaveBeenCalledWith("Coding", ["deslop", "docx"], "Coding");
+    } finally {
+      unmount();
+    }
+  });
+});
+
 describe("App E2E — Save project lock as profile", () => {
   beforeEach(() => {
     setupMocks();

@@ -15,6 +15,8 @@ import { runConsultation as invokeConsultation } from "../lib/consultation-runne
 import { useStore } from "../lib/store.js";
 import { getConfigRepoPath, getConsultationSettings } from "../lib/config.js";
 import { indexSourceSkillTree, type SourceSkillNamespace } from "../lib/projects.js";
+import { computeWindow, matchesQuery, windowLabel } from "../lib/list-window.js";
+import { globalLockEntries } from "../lib/skill-profiles.js";
 /**
  * Profiles tab — named skill bundles (config `profiles:`) that can be applied
  * to any workspace. List view for browsing, builder sub-view for creating and
@@ -37,13 +39,18 @@ type Mode =
       selected: Set<string>;
       cursor: number;
       expanded: Set<string>;
+      /** Name filter; when set, rows are a flat list of matching skills. */
+      query: string;
+      searching: boolean;
+      /** Show only the selected skills, flat. */
+      selectedOnly: boolean;
     }
   | { kind: "confirmDelete"; name: string };
 
 /** A flattened, navigable row in the builder tree. */
 type TreeRow =
   | { kind: "namespace"; name: string; skills: string[]; expanded: boolean }
-  | { kind: "skill"; name: string; depth: 0 | 1 };
+  | { kind: "skill"; name: string; depth: 0 | 1; namespace?: string };
 
 interface ProfileConsultation {
   state: ConsultationPanelState;
@@ -62,12 +69,27 @@ export interface ProfilesTabProps {
   contentHeight: number;
 }
 
-function buildRows(
+/**
+ * Builder rows. Normally a tree (namespaces expand to their skills); with a
+ * query or "selected only", a flat list of matching skills labelled with
+ * their namespace, so every match is visible without expanding anything.
+ */
+export function buildRows(
   namespaces: SourceSkillNamespace[],
   topLevel: string[],
   expanded: Set<string>,
+  filter: { query?: string; selectedOnly?: boolean; selected?: ReadonlySet<string> } = {},
 ): TreeRow[] {
   const rows: TreeRow[] = [];
+  const query = filter.query?.trim() ?? "";
+  if (query || filter.selectedOnly) {
+    const keep = (name: string) => matchesQuery(name, query) && (!filter.selectedOnly || !!filter.selected?.has(name));
+    const flat: TreeRow[] = [
+      ...namespaces.flatMap((ns) => ns.skills.filter(keep).map((name) => ({ kind: "skill" as const, name, depth: 0 as const, namespace: ns.name }))),
+      ...topLevel.filter(keep).map((name) => ({ kind: "skill" as const, name, depth: 0 as const })),
+    ];
+    return flat.sort((a, b) => a.name.localeCompare(b.name));
+  }
   for (const ns of namespaces) {
     const isExpanded = expanded.has(ns.name);
     rows.push({ kind: "namespace", name: ns.name, skills: ns.skills, expanded: isExpanded });
@@ -100,7 +122,7 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
     return () => setProfilesEditing(false);
   }, [consultation, mode.kind, setProfilesEditing]);
 
-  const names = useMemo(() => Object.keys(profiles).sort(), [profiles]);
+  const names = useMemo(() => Object.keys(profiles).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })), [profiles]);
 
   // Source repo + shared store skills grouped into namespaces + top-level.
   // Recomputed when entering the builder (cheap directory scan).
@@ -125,11 +147,29 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
     for (const s of [...repoTree.topLevel, ...agentsTree.topLevel]) {
       if (!seen.has(s)) { topLevel.push(s); seen.add(s); }
     }
+    // Skills known only from a lock entry (another profile, or the global
+    // lock) — e.g. anthropics/skills docx — grouped under their source repo.
+    const bySource = new Map<string, string[]>();
+    const lockEntries = [...Object.values(profileLocks).flatMap((l) => Object.entries(l.skills)), ...Object.entries(globalLockEntries())];
+    for (const [name, entry] of lockEntries) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      bySource.set(entry.source, [...(bySource.get(entry.source) ?? []), name]);
+    }
+    for (const [source, skills] of bySource) namespaces.push({ name: source, skills });
+    // A folder holding one skill of the same name (skills/big-brain/big-brain) is just that skill.
+    for (let i = namespaces.length - 1; i >= 0; i--) {
+      const ns = namespaces[i];
+      if (ns.skills.length === 1 && ns.skills[0] === ns.name) {
+        topLevel.push(ns.name);
+        namespaces.splice(i, 1);
+      }
+    }
     namespaces.forEach((ns) => ns.skills.sort());
     namespaces.sort((a, b) => a.name.localeCompare(b.name));
     topLevel.sort();
     return { namespaces, topLevel };
-  }, [mode.kind]);
+  }, [mode.kind, profileLocks]);
 
   const totalSkills = useMemo(
     () => tree.namespaces.reduce((n, ns) => n + ns.skills.length, 0) + tree.topLevel.length,
@@ -142,7 +182,9 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
   );
 
   const rows = useMemo(
-    () => (mode.kind === "edit" ? buildRows(tree.namespaces, tree.topLevel, mode.expanded) : []),
+    () => (mode.kind === "edit"
+      ? buildRows(tree.namespaces, tree.topLevel, mode.expanded, { query: mode.query, selectedOnly: mode.selectedOnly, selected: mode.selected })
+      : []),
     [tree, mode],
   );
 
@@ -156,6 +198,9 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
       selected: new Set(original ? profiles[original] ?? [] : []),
       cursor: 0,
       expanded: new Set(),
+      query: "",
+      searching: false,
+      selectedOnly: false,
     });
   };
 
@@ -296,17 +341,36 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
       return;
     }
 
+    // Search box owns typed characters; Enter keeps the filter, Esc clears it.
+    if (mode.searching) {
+      if (key.escape) setMode({ ...mode, searching: false, query: "", cursor: 0 });
+      else if (key.return) setMode({ ...mode, searching: false });
+      return;
+    }
+
+    if (input === "/") {
+      setMode({ ...mode, searching: true, cursor: 0 });
+      return;
+    }
+
+    if (input === "v") {
+      setMode({ ...mode, selectedOnly: !mode.selectedOnly, cursor: 0 });
+      return;
+    }
+
     if (input === "c") {
       setConsultation({ state: { phase: "prompt" }, selectedProposalIds: [], exchanges: [] });
       return;
     }
 
     if (key.escape) {
-      setMode({ kind: "list" });
+      // Back out of a filter first, then out of the builder.
+      if (mode.query || mode.selectedOnly) setMode({ ...mode, query: "", selectedOnly: false, cursor: 0 });
+      else setMode({ kind: "list" });
       return;
     }
 
-    const row = rows[mode.cursor];
+    const row = rows[Math.min(mode.cursor, Math.max(0, rows.length - 1))];
 
     if (key.upArrow) {
       setMode({ ...mode, cursor: Math.max(0, mode.cursor - 1) });
@@ -318,6 +382,10 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
       if (key.rightArrow) expanded.add(row.name);
       else expanded.delete(row.name);
       setMode({ ...mode, expanded });
+    } else if (key.pageDown || key.pageUp) {
+      const step = Math.max(1, contentHeight - 6);
+      const next = key.pageDown ? Math.min(Math.max(0, rows.length - 1), mode.cursor + step) : Math.max(0, mode.cursor - step);
+      setMode({ ...mode, cursor: next });
     } else if (input === " " && row) {
       const selected = new Set(mode.selected);
       if (row.kind === "namespace") {
@@ -406,53 +474,78 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
       );
     }
 
-    const maxRows = Math.max(1, contentHeight - 5);
-    const start = Math.max(0, Math.min(mode.cursor - Math.floor(maxRows / 2), rows.length - maxRows));
+    // Title, search line, footer.
+    const maxRows = Math.max(1, contentHeight - 4);
+    const cursor = Math.min(mode.cursor, Math.max(0, rows.length - 1));
+    const start = Math.max(0, Math.min(cursor - Math.floor(maxRows / 2), rows.length - maxRows));
     const visible = rows.slice(start, start + maxRows);
+    const position = windowLabel(start, visible.length, rows.length);
+    const filtered = !!mode.query.trim() || mode.selectedOnly;
     return (
       <Box flexDirection="column">
-        <Box>
+        <Text wrap="truncate-end">
           <Text bold color="cyan">{mode.name}</Text>
-          <Text color="gray">{"  "}{mode.selected.size} of {totalSkills} skills selected</Text>
+          <Text color="gray">{"  "}{mode.selected.size} of {totalSkills} skills selected{mode.selectedOnly ? " · showing selected only" : ""}</Text>
+        </Text>
+        <Box>
+          <Text color={mode.searching ? "cyan" : "gray"}>{mode.searching ? "● " : "○ "}</Text>
+          {mode.searching ? (
+            <TextInput
+              value={mode.query}
+              onChange={(v) => setMode({ ...mode, query: v, cursor: 0 })}
+              placeholder="Search all skills..."
+            />
+          ) : (
+            <Text color="gray">{mode.query ? `"${mode.query}" · ${rows.length} match${rows.length === 1 ? "" : "es"}` : "press / to search"}</Text>
+          )}
         </Box>
         {rows.length === 0 ? (
-          <Text color="gray">No skills found in the source repo.</Text>
+          <Text color="gray">{filtered ? "No skills match." : "No skills found in the source repo."}</Text>
         ) : (
           visible.map((row, i) => {
             const idx = start + i;
-            const isSel = idx === mode.cursor;
+            const isSel = idx === cursor;
             const marker = isSel ? "❯ " : "  ";
             if (row.kind === "namespace") {
               const selCount = row.skills.filter((s) => mode.selected.has(s)).length;
               const glyph = selCount === 0 ? "○" : selCount === row.skills.length ? "◉" : "◐";
               const glyphColor = selCount === 0 ? "gray" : selCount === row.skills.length ? "green" : "yellow";
               return (
-                <Box key={`ns:${row.name}`}>
+                <Text key={`ns:${row.name}`} wrap="truncate-end">
                   <Text color={isSel ? "cyan" : "gray"}>{marker}</Text>
                   <Text color={glyphColor}>{glyph} </Text>
                   <Text color="blue">{row.expanded ? "▾ " : "▸ "}</Text>
                   <Text bold color={isSel ? "white" : "gray"}>{row.name}</Text>
-                  <Text color="gray">{"  "}{selCount}/{row.skills.length} · →/← expand</Text>
-                </Box>
+                  <Text color="gray">{"  "}{selCount}/{row.skills.length}</Text>
+                </Text>
               );
             }
             const checked = mode.selected.has(row.name);
             return (
-              <Box key={`sk:${row.name}`}>
+              <Text key={`sk:${row.name}`} wrap="truncate-end">
                 <Text color={isSel ? "cyan" : "gray"}>{marker}</Text>
                 <Text>{row.depth === 1 ? "  " : ""}</Text>
                 <Text color={checked ? "green" : "gray"}>{checked ? "◉ " : "○ "}</Text>
-                <Text color={isSel ? "white" : checked ? "white" : "gray"}>{row.name}</Text>
-              </Box>
+                <Text color={isSel || checked ? "white" : "gray"}>{row.name}</Text>
+                {row.namespace ? <Text color="gray">{"  "}{row.namespace}</Text> : null}
+              </Text>
             );
           })
         )}
-        <Text color="gray">Space toggle (namespace = all its skills) · →/← expand · c consult advisor · Enter save · r rename · Esc cancel</Text>
+        <Text color="gray" wrap="truncate-end">
+          {position ? `${position} · ` : ""}Space toggle · Enter save · Esc {filtered ? "clear filter" : "cancel"} · / search · v {mode.selectedOnly ? "all" : "selected"} · →/← expand · r rename · c consult
+        </Text>
       </Box>
     );
   }
 
-  // List view
+  // List view — one line per profile, scrollable.
+  const maxRows = Math.max(1, contentHeight - 2);
+  const listCursor = Math.min(listIndex, Math.max(0, names.length - 1));
+  const { visible: visibleNames, startIndex: listStart } = computeWindow(names, listCursor, maxRows);
+  const listPosition = windowLabel(listStart, visibleNames.length, names.length);
+  const nameWidth = Math.max(0, ...names.map((n) => n.length));
+  const countWidth = Math.max(1, ...names.map((n) => String(profiles[n].length).length));
   return (
     <Box flexDirection="column">
       {names.length === 0 ? (
@@ -460,24 +553,25 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
           <Text color="gray">No profiles yet. A profile is a reusable skills-lock.json fragment (saved to profiles/ in your source repo) you can apply to any project. Press 'n' to create one.</Text>
         </Box>
       ) : (
-        names.slice(0, Math.max(1, contentHeight - 3)).map((n, i) => {
-          const isSel = i === listIndex;
+        visibleNames.map((n, i) => {
+          const isSel = listStart + i === listCursor;
           const skills = profiles[n];
+          const count = `${String(skills.length).padStart(countWidth)} ${skills.length === 1 ? "skill " : "skills"}`;
+          const detail = n in profileLocks ? profileSources(profileLocks[n]) : "legacy (config.yaml) — save to convert";
           return (
-            <Box key={n}>
+            <Text key={n} wrap="truncate-end">
               <Text color={isSel ? "cyan" : "gray"}>{isSel ? "❯ " : "  "}</Text>
-              <Text bold={isSel} color={isSel ? "white" : "gray"}>{n}</Text>
-              <Text color="gray" wrap="truncate">
-                {"  "}{skills.length} skill{skills.length === 1 ? "" : "s"}
-                {n in profileLocks ? ` · ${profileSources(profileLocks[n])}` : " · legacy (config.yaml) — save to convert"}
-                {skills.length > 0 ? ` · ${skills.slice(0, 4).join(", ")}${skills.length > 4 ? ", …" : ""}` : ""}
-              </Text>
-            </Box>
+              <Text bold={isSel} color={isSel ? "white" : "gray"}>{n.padEnd(nameWidth)}</Text>
+              <Text color={isSel ? "white" : "gray"}>{"  "}{count}</Text>
+              <Text color="gray">{"  "}{detail}</Text>
+            </Text>
           );
         })
       )}
       <Box marginTop={1}>
-        <Text color="gray">n new · Enter/e edit · d delete{names.length > 0 ? " · applied from a workspace with P" : ""}</Text>
+        <Text color="gray" wrap="truncate-end">
+          {listPosition ? `${listPosition} · ` : ""}n new · Enter/e edit (/ search, v selected only) · d delete{names.length > 0 ? " · apply from a workspace with P" : ""}
+        </Text>
       </Box>
     </Box>
   );

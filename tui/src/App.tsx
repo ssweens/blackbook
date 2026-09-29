@@ -145,7 +145,14 @@ function TabContent({ tab, searchFocused, onSearchFocus, onSearchBlur, onSetting
     case "sync":
       return <SyncTab contentHeight={contentHeight} />;
     case "projects":
-      return <ProjectsTab contentHeight={contentHeight} />;
+      return (
+        <ProjectsTab
+          contentHeight={contentHeight}
+          searchFocused={searchFocused}
+          onSearchFocus={onSearchFocus}
+          onSearchBlur={onSearchBlur}
+        />
+      );
     case "profiles":
       return <ProfilesTab contentHeight={contentHeight} />;
     case "settings":
@@ -890,12 +897,12 @@ export function App() {
     if (tab === "projects") {
       if (projectDetailPath) {
         const p = projects.find((pr) => pr.path === projectDetailPath);
-        return Math.max(0, (p ? p.skills.length + p.available.length : 0) - 1);
+        return Math.max(0, (p ? buildProjectSkillRows(p, search).length : 0) - 1);
       }
       return Math.max(0, projects.length - 1);
     }
     return Math.max(0, libraryCount - 1);
-  }, [discoverSubView, tab, marketplaceBrowsePlugins, filteredPlugins, filteredPiPackages, marketplaceRows, managedTools, syncPreview, projects, projectDetailPath, libraryCount]);
+  }, [discoverSubView, tab, marketplaceBrowsePlugins, filteredPlugins, filteredPiPackages, marketplaceRows, managedTools, syncPreview, projects, projectDetailPath, libraryCount, search]);
 
   useEffect(() => {
     if (selectedIndex > maxIndex) {
@@ -1563,6 +1570,7 @@ export function App() {
       // on any non-Global project always kick the cursor back to the top.
       const idx = projects.findIndex((p) => p.path === projectDetailPath);
       setProjectDetailPath(null);
+      setSearch("");
       setSelectedIndex(idx >= 0 ? idx : 0);
       return;
     }
@@ -1591,6 +1599,7 @@ export function App() {
         const target = projects[selectedIndex];
         if (target) {
           setProjectDetailPath(target.path);
+          setSearch("");
           setSelectedIndex(0);
         }
       }
@@ -1944,7 +1953,7 @@ export function App() {
     // global input path as every other shortcut — so focus is reliable. The
     // searchFocused guard above then routes all subsequent keystrokes to the
     // TextInput until Esc/Enter exits.
-    if (input === "/" && (tab === "discover" || tab === "installed") && !isOverlayOpen) {
+    if (input === "/" && (tab === "discover" || tab === "installed" || (tab === "projects" && projectDetailPath)) && !isOverlayOpen) {
       setSearchFocused(true);
       return;
     }
@@ -2058,7 +2067,7 @@ export function App() {
       const detailProject = projectDetailPath ? projects.find((p) => p.path === projectDetailPath) : null;
       if (detailProject) {
         // Drilled into a project — per-skill provisioning on the highlighted row.
-        const row = buildProjectSkillRows(detailProject)[selectedIndex];
+        const row = buildProjectSkillRows(detailProject, search)[selectedIndex];
         if (!row) return;
         if (input === "p") {
           // Push source → project (add an available skill, or reset a present one).

@@ -153,3 +153,17 @@ describe("collectUnmanagedSkills", () => {
     expect(collectUnmanagedSkills(projects)).toEqual([]);
   });
 });
+
+describe("buildProjectSkillRows filter", () => {
+  it("keeps installed then available rows whose name matches, case-insensitively", async () => {
+    const { buildProjectSkillRows } = await import("./projects.js");
+    const project = {
+      path: "/p", name: "p", exists: true, hasAgentsDir: true,
+      skills: [{ name: "qc-review", status: "in-sync", enabled: true, diskPath: "/p/.agents/skills/qc-review" }],
+      available: [{ name: "qc-lint", sourcePath: "/src/qc-lint" }, { name: "deslop", sourcePath: "/src/deslop" }],
+    } as never;
+    expect(buildProjectSkillRows(project).length).toBe(3);
+    expect(buildProjectSkillRows(project, "QC").map((r) => (r.kind === "present" ? r.skill.name : r.available.name))).toEqual(["qc-review", "qc-lint"]);
+    expect(buildProjectSkillRows(project, "zzz")).toEqual([]);
+  });
+});

@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, statSync } from "fs";
+import { matchesQuery } from "./list-window.js";
 import { join, basename } from "path";
 import { homedir } from "os";
 import { loadConfig } from "./config/loader.js";
@@ -310,11 +311,12 @@ export type ProjectSkillRow =
   | { kind: "available"; available: AvailableSkill };
 
 /** Flatten a project's present skills followed by its available-to-add skills. */
-export function buildProjectSkillRows(project: ProjectInfo): ProjectSkillRow[] {
+/** A project's skill rows (installed first, then available), filtered by name when a query is given. */
+export function buildProjectSkillRows(project: ProjectInfo, query = ""): ProjectSkillRow[] {
   return [
     ...project.skills.map((skill) => ({ kind: "present" as const, skill })),
     ...project.available.map((available) => ({ kind: "available" as const, available })),
-  ];
+  ].filter((row) => matchesQuery(row.kind === "present" ? row.skill.name : row.available.name, query));
 }
 
 function isDirectory(path: string): boolean {
