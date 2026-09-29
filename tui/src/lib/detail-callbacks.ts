@@ -76,6 +76,7 @@ export interface DetailCallbackDeps {
   closeDetail: () => void;
   openSkillDetail: (skill: StandaloneSkill) => void;
   openSkillFiles: (skill: StandaloneSkill) => void;
+  openSkillProfiles?: (skill: StandaloneSkill) => void;
   openDiffForFile: DispatchCallbacks["openDiffForFile"];
   openMissingSummaryForFile: DispatchCallbacks["openMissingSummaryForFile"];
   installPlugin: DispatchCallbacks["installPlugin"];
@@ -349,6 +350,7 @@ export function buildDetailCallbacks(deps: DetailCallbackDeps): DispatchCallback
       ),
     openSkillDetail,
     openSkillFiles,
+    openSkillProfiles: deps.openSkillProfiles,
     openSkillDiff: (skill, toolId, instanceId) => {
       const diffTarget = buildSkillDiffTarget(skill, toolId, instanceId);
       if (!diffTarget) {

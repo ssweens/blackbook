@@ -20,6 +20,13 @@ describe("getSkillActions", () => {
     });
   });
 
+  it("offers adding the skill to profiles, right after the file browser", () => {
+    const skill: StandaloneSkill = { name: "blast-radius", installations: [], diskPath: "/s/blast-radius", toolId: "", instanceId: "", instanceName: "" };
+    const ids = getSkillActions(skill).map((a) => a.id);
+    expect(ids.indexOf("profiles")).toBe(ids.indexOf("browse_files") + 1);
+    expect(getSkillActions(skill)).toContainEqual({ id: "profiles", label: "Add to profiles…", type: "edit_profiles" });
+  });
+
   it("opens the installation that is actually drifted", () => {
     const skill: StandaloneSkill = {
       name: "file-todos",

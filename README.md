@@ -128,6 +128,7 @@ Blackbook opens on the **Sync** tab by default.
 - **Marketplaces**: `u` update marketplace, `r` remove marketplace, `R` refresh all marketplaces/packages
 - **Tools**: `Enter` open detail, `i` install, `u` update, `d` uninstall, `Space` toggle enabled, `e` edit config dir, `R` refresh detection
 - **Projects**: `Enter` open a project, `/` search its skills, `P` apply a profile, `S` save its lock as a profile, `a` add, `d` remove. Long lists scroll and show their position.
+- **Skill detail**: `Add to profiles…` opens a checklist of profiles with the skill's current ones checked. `Space` toggles and `Enter` adds it to or removes it from each changed profile, keeping its known source.
 - **Profiles**: `n` new, `Enter`/`e` edit, `d` delete. In the builder, `/` searches every skill as a flat list, `v` shows only the selected skills, `Space` toggles, `→`/`←` expand a group, `PgUp`/`PgDn` jump, and `Esc` clears a filter before leaving. Skills known only from a lock, such as `anthropics/skills`, are grouped under their source.
 - **Sync**: `y` sync selected items (missing plus `source-changed` / `target-changed` / `both-changed` files/plugins and tool updates; press twice to confirm), `R` refresh sync inputs
 

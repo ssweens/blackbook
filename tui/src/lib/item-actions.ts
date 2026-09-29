@@ -414,6 +414,7 @@ export function getSkillActions(skill: StandaloneSkill): ItemAction[] {
   }
 
   actions.push({ id: "browse_files", label: "Browse skill files", type: "browse_skill_files" });
+  actions.push({ id: "profiles", label: "Add to profiles…", type: "edit_profiles" });
 
   // Sync (install missing + fix drift) — ONE action.
   if (!isInstalled || isDrifted) {

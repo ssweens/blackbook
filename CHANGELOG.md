@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- 2026-09-29 — Skill detail has an `Add to profiles…` action: a checklist of profiles with the skill's current memberships checked. Saving adds or removes the skill in each changed profile's `skills-lock.json` in one pass, taking its source from any profile that has it, then the global lock or source repo. A skill with no known source is refused with an error.
 - 2026-09-29 — Search and scrolling on Projects and Profiles. A project's skill list is searchable with `/` and scrolls past the screen height instead of stopping at "…and N more"; the project list scrolls too. The profile builder searches every skill as a flat list (`/`), can show only the selected skills (`v`), and pages with `PgUp`/`PgDn`. Long lists show their position, such as `11–30 of 52`.
 - 2026-09-26 — Settings tab: a Dev Shortcuts section to add, edit (Enter) and remove (`d`) repo-to-checkout mappings, with missing checkouts flagged. The Project Skill Mode setting (`link` or `copy`) is now editable there too.
 - 2026-09-26 — Save a workspace's skills lock as a profile with `S` on the Projects tab. Existing profiles are never overwritten, local sources inside the source repo become its GitHub source, and other local paths are flagged as machine-only.

@@ -1475,6 +1475,54 @@ describe("App E2E — Plugin Detail", () => {
     }
   });
 
+  it("adds a skill to profiles from its detail view through a checkbox picker", async () => {
+    const setSkillProfiles = vi.fn().mockResolvedValue(true);
+    const skill = {
+      name: "blast-radius",
+      installations: [],
+      diskPath: "/repo/skills/blast-radius",
+      toolId: "",
+      instanceName: "",
+      instanceId: "",
+      sourcePath: "/repo/skills/blast-radius",
+    };
+    useStore.setState({
+      tab: "installed",
+      detail: { kind: "skill", data: skill },
+      standaloneSkills: [skill],
+      installedPluginsLoaded: true,
+      filesLoaded: true,
+      piPackagesLoaded: true,
+      projectsLoaded: true,
+      profiles: { Coding: ["deslop"], Docs: ["blast-radius", "pdf"], UI: [] },
+      tools: createToolInstances(),
+      setSkillProfiles,
+    });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Add to profiles…"));
+      for (let i = 0; i < 10 && !stdout.lastFrame()!.includes("❯ Add to profiles…"); i++) {
+        sendKey(stdin, KEYS.down);
+        await settleInput();
+      }
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Profiles for blast-radius"));
+      // Docs already has it; check Coding (first row) and uncheck Docs (second).
+      expect(stdout.lastFrame()).toMatch(/◉ Docs/);
+      sendKey(stdin, KEYS.space);
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("will add"));
+      sendKey(stdin, KEYS.down);
+      sendKey(stdin, KEYS.space);
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("will remove") && frame.includes("2 changes"));
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, () => setSkillProfiles.mock.calls.length === 1);
+      expect(setSkillProfiles).toHaveBeenCalledWith("blast-radius", ["Coding"]);
+      await waitForFrame(stdout.lastFrame, (frame) => !frame.includes("Profiles for blast-radius") && frame.includes("Add to profiles…"));
+    } finally {
+      unmount();
+    }
+  });
+
   it("consults from an installed standalone skill detail and focuses an accepted action without dispatching it", async () => {
     const skill = {
       name: "file-todos",

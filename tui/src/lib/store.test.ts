@@ -3006,6 +3006,7 @@ describe("composed store shape", () => {
     "applyProfile",
     "saveProfile",
     "saveLockAsProfile",
+    "setSkillProfiles",
     "deleteProfile",
     "setProfilesEditing",
   ] as const;

@@ -43,6 +43,7 @@ import { AddProjectModal } from "./components/AddProjectModal.js";
 import { AdoptModal } from "./components/AdoptModal.js";
 import { ProfilePickerModal } from "./components/ProfilePickerModal.js";
 import { SaveProfileModal } from "./components/SaveProfileModal.js";
+import { SkillProfilesModal } from "./components/SkillProfilesModal.js";
 import { workspaceLock } from "./lib/skill-profiles.js";
 import { getPluginToolStatus } from "./lib/plugin-status.js";
 import {
@@ -311,6 +312,7 @@ export function App() {
   const profiles = useStore((s) => s.profiles);
   const applyProfile = useStore((s) => s.applyProfile);
   const saveLockAsProfile = useStore((s) => s.saveLockAsProfile);
+  const setSkillProfiles = useStore((s) => s.setSkillProfiles);
   const [profileTargetPath, setProfileTargetPath] = useState<string | null>(null);
   const [consultation, setConsultation] = useState<AppConsultation | null>(null);
   const consultationAbortRef = useRef<AbortController | null>(null);
@@ -323,6 +325,17 @@ export function App() {
     setActionIndex(0);
   };
   const openSkillFiles = (skill: StandaloneSkill) => setSkillFileBrowser(skill);
+  // Skill → profile membership picker, opened from skill detail.
+  const [skillProfilesTarget, setSkillProfilesTarget] = useState<StandaloneSkill | null>(null);
+  const openSkillProfiles = (skill: StandaloneSkill) => {
+    // Profiles load with the Projects data; make sure they're there before showing membership.
+    const state = useStore.getState();
+    if (state.projectsLoaded) {
+      setSkillProfilesTarget(skill);
+      return;
+    }
+    void state.loadProjects({ silent: true }).then(() => setSkillProfilesTarget(skill));
+  };
   const {
     expandedSkills,
     setExpandedSkills,
@@ -1472,7 +1485,7 @@ export function App() {
   type OverlayKind =
     | "consultation" | "sourceSetupWizard" | "diff" | "missingSummary" | "editToolModal"
     | "addMarketplace" | "addPiMarketplace" | "addProject" | "adoptSkills" | "applyProfile" | "saveLockProfile" | "toolActionModal"
-    | "toolDetail" | "skillFileBrowser" | "itemDetail" | "marketplaceDetail";
+    | "toolDetail" | "skillFileBrowser" | "skillProfiles" | "itemDetail" | "marketplaceDetail";
   interface OverlayEntry {
     kind: OverlayKind;
     active: boolean;
@@ -1501,6 +1514,7 @@ export function App() {
     { kind: "toolDetail", active: !!detailTool, inputMode: "detail", escClose: () => setDetailToolKey(null) },
     // The file browser owns its own Esc behavior: back to its file list, then back to skill detail.
     { kind: "skillFileBrowser", active: !!skillFileBrowser, inputMode: "detail", escClose: () => {} },
+    { kind: "skillProfiles", active: !!skillProfilesTarget, inputMode: "modal" },
     { kind: "itemDetail", active: !!activeDetail, inputMode: "detail", escClose: closeItemDetail },
     {
       kind: "marketplaceDetail",
@@ -2387,6 +2401,7 @@ export function App() {
         closeDetail,
         openSkillDetail,
         openSkillFiles,
+        openSkillProfiles,
         openDiffForFile,
         openMissingSummaryForFile,
         installPlugin: doInstall,
@@ -2691,6 +2706,17 @@ export function App() {
             pending={toolDetectionPending[detailTool!.toolId] === true}
           />
         );
+      case "skillProfiles": {
+        const skill = skillProfilesTarget!;
+        return (
+          <SkillProfilesModal
+            skillName={skill.name}
+            profiles={profiles}
+            onSave={(members) => { setSkillProfilesTarget(null); void setSkillProfiles(skill.name, members); }}
+            onCancel={() => setSkillProfilesTarget(null)}
+          />
+        );
+      }
       case "skillFileBrowser": {
         const skill = skillFileBrowser!;
         return (

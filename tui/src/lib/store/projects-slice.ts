@@ -56,6 +56,7 @@ export type ProjectsSlice = Pick<
   | "applyProfile"
   | "saveProfile"
   | "saveLockAsProfile"
+  | "setSkillProfiles"
   | "deleteProfile"
   | "profilesEditing"
   | "setProfilesEditing"
@@ -396,6 +397,54 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
         : `Saved profile "${trimmed}" (${names.length} skill${names.length === 1 ? "" : "s"}) to profiles/${trimmed}.skills-lock.json`,
       localOnly.length > 0 ? "warning" : "success",
     );
+    return true;
+  },
+
+  setSkillProfiles: async (skill, members) => {
+    const { notify, profiles, profileLocks } = get();
+    const sourceRepo = getConfigRepoPath();
+    if (!sourceRepo) {
+      notify("No source repo configured — profiles live in <source repo>/profiles/", "error");
+      return false;
+    }
+    const want = new Set(members);
+    const addTo = Object.keys(profiles).filter((p) => want.has(p) && !profiles[p].includes(skill));
+    const removeFrom = Object.keys(profiles).filter((p) => !want.has(p) && profiles[p].includes(skill));
+    if (addTo.length === 0 && removeFrom.length === 0) {
+      notify(`No profile changes for ${skill}`, "info");
+      return true;
+    }
+    // Where the skill comes from: any profile that already has it, then the global lock or source repo.
+    const known: SkillLockFile = { version: 1, skills: Object.assign({}, ...Object.values(profileLocks).map((l) => l.skills)) };
+    const { lock: resolved, unresolved } = buildProfileLock([skill], sourceRepo, known);
+    if (addTo.length > 0 && unresolved.length > 0) {
+      notify(`No known source for ${skill} — add it to the source repo or install it with the skills CLI first`, "error");
+      return false;
+    }
+    const failed: string[] = [];
+    for (const name of [...addTo, ...removeFrom]) {
+      // Legacy config.yaml profiles convert to a file on first change.
+      const base = profileLocks[name] ?? buildProfileLock(profiles[name], sourceRepo, known).lock;
+      const skills = { ...base.skills };
+      if (addTo.includes(name)) skills[skill] = resolved.skills[skill];
+      else delete skills[skill];
+      try {
+        writeProfileLock(sourceRepo, name, { version: 1, skills });
+        dropLegacyProfile(name);
+      } catch (err) {
+        failed.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    await get().loadProjects({ silent: true });
+    const parts = [
+      addTo.length ? `added to ${addTo.join(", ")}` : "",
+      removeFrom.length ? `removed from ${removeFrom.join(", ")}` : "",
+    ].filter(Boolean);
+    if (failed.length > 0) {
+      notify(`Failed to update profiles: ${failed.join("; ")}`, "error");
+      return false;
+    }
+    notify(`${skill}: ${parts.join("; ")}`, "success");
     return true;
   },
 

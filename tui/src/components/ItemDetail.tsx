@@ -42,6 +42,7 @@ export interface ItemAction {
     | "remove_redundant"
     | "open_skill"
     | "browse_skill_files"
+    | "edit_profiles"
     | "back";
   instance?: DiffInstanceSummary | DiffInstanceRef;
   /** Shared-store plugin component represented by a consolidated status row. */
@@ -225,6 +226,7 @@ function ActionRow({ action, isSelected }: ActionRowProps) {
 function getActionColor(type: ItemAction["type"]): string {
   switch (type) {
     case "browse_skill_files":
+    case "edit_profiles":
       return "cyan";
     case "install":
     case "install_tool":

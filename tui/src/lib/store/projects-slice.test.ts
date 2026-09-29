@@ -315,6 +315,33 @@ describe("projects-slice", () => {
     });
   });
 
+  it("setSkillProfiles adds a skill to checked profiles and removes it from unchecked ones, in one pass", async () => {
+    getProjectsMock.mockReturnValue([]);
+    profileFiles = {
+      Coding: { version: 1, skills: { deslop: { source: "ssweens/playbook", sourceType: "github" } } },
+      UI: { version: 1, skills: {} },
+      Docs: { version: 1, skills: { "blast-radius": { source: "ssweens/playbook", sourceType: "github" }, pdf: { source: "anthropics/skills", sourceType: "github" } } },
+    };
+    const { get } = makeStore();
+    await get().loadProjects({ silent: true });
+    expect(await get().setSkillProfiles("blast-radius", ["Coding", "UI"])).toBe(true);
+    expect(Object.keys(profileFiles.Coding.skills).sort()).toEqual(["blast-radius", "deslop"]);
+    expect(Object.keys(profileFiles.UI.skills)).toEqual(["blast-radius"]);
+    expect(Object.keys(profileFiles.Docs.skills)).toEqual(["pdf"]);
+    expect(get().notify).toHaveBeenCalledWith("blast-radius: added to Coding, UI; removed from Docs", "success");
+  });
+
+  it("setSkillProfiles with no changes writes nothing", async () => {
+    getProjectsMock.mockReturnValue([]);
+    profileFiles = { Coding: { version: 1, skills: { deslop: { source: "ssweens/playbook", sourceType: "github" } } } };
+    const { get } = makeStore();
+    await get().loadProjects({ silent: true });
+    const before = JSON.stringify(profileFiles);
+    expect(await get().setSkillProfiles("deslop", ["Coding"])).toBe(true);
+    expect(JSON.stringify(profileFiles)).toBe(before);
+    expect(get().notify).toHaveBeenCalledWith("No profile changes for deslop", "info");
+  });
+
   it("saveProfile rejects an empty or invalid name without writing", async () => {
     const { get } = makeStore();
     expect(await get().saveProfile("   ", ["a"])).toBe(false);
