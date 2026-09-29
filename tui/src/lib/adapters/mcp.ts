@@ -1,7 +1,7 @@
 /**
  * MCP server install/uninstall for the two tools that read a shared,
- * portable `{"mcpServers": {...}}` convention: Claude Code and Pi (via the
- * `pi-mcp-adapter` extension). Codex (TOML config), Amp, and OpenCode are
+ * portable `{"mcpServers": {...}}` convention: Claude Code and Pi (native MCP
+ * support, which reads `<Pi agent dir>/mcp.json`). Codex (TOML config), Amp, and OpenCode are
  * out of scope here — Amp/OpenCode instead get a plugin's `mcp.json` copied
  * alongside its skill (see `installPluginItemsToInstance` in managed.ts);
  * Codex has no shared-file convention to write to at all.
@@ -106,39 +106,65 @@ function removeClaudeMcpServer(instance: ToolInstance, name: string): void {
 }
 
 // ── Pi MCP config ──────────────────────────────────────────────────────────
-// Stored in ~/.config/mcp/mcp.json under "mcpServers".
+// Pi's native MCP support reads `<agent dir>/mcp.json` (the instance's config
+// dir, ~/.pi/agent by default) under "mcpServers". Older Blackbook versions
+// wrote ~/.config/mcp/mcp.json, which only the pi-mcp-adapter extension read.
 
-function getPiGlobalMcpPath(): string {
+export function getPiMcpPath(instance: ToolInstance): string {
+  return join(expandPath(instance.configDir), "mcp.json");
+}
+
+/** Where older Blackbook versions put Pi MCP servers (read only by pi-mcp-adapter). */
+export function getLegacyPiMcpPath(): string {
   return join(homedir(), ".config", "mcp", "mcp.json");
 }
 
-function readPiMcpServers(): Record<string, unknown> {
+/** The pi-plugins extension marks the servers it manages; Blackbook leaves those alone. */
+function isPiPluginsServer(config: unknown): boolean {
+  return !!config && typeof config === "object" && "_piPlugins" in config;
+}
+
+function readMcpDoc(path: string): Record<string, unknown> | null {
+  if (!existsSync(path)) return {};
   try {
-    const parsed = JSON.parse(readFileSync(getPiGlobalMcpPath(), "utf-8"));
-    const servers = parsed?.mcpServers;
-    return servers && typeof servers === "object" && !Array.isArray(servers) ? servers : {};
+    const parsed = JSON.parse(readFileSync(path, "utf-8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
   } catch {
-    return {};
+    return null;
   }
 }
 
-function writePiMcpServers(servers: Record<string, unknown>): void {
-  const path = getPiGlobalMcpPath();
+/**
+ * Read-modify-write the `mcpServers` of one mcp.json, keeping every other
+ * top-level key (e.g. `autoEnableCodemode`). Refuses to overwrite unreadable JSON.
+ */
+function updatePiServersIn(path: string, mutate: (servers: Record<string, unknown>) => boolean): void {
+  const doc = readMcpDoc(path);
+  if (doc === null) throw new Error(`${path} is not valid JSON; not overwriting it`);
+  const current = doc.mcpServers;
+  const servers: Record<string, unknown> =
+    current && typeof current === "object" && !Array.isArray(current) ? { ...(current as Record<string, unknown>) } : {};
+  if (!mutate(servers)) return;
   mkdirSync(dirname(path), { recursive: true });
-  atomicWriteFileSync(path, JSON.stringify({ mcpServers: servers }, null, 2) + "\n");
+  atomicWriteFileSync(path, JSON.stringify({ ...doc, mcpServers: servers }, null, 2) + "\n");
 }
 
-function writePiMcpServer(name: string, config: unknown): void {
-  const servers = readPiMcpServers();
-  servers[name] = config;
-  writePiMcpServers(servers);
+function writePiMcpServer(instance: ToolInstance, name: string, config: unknown): void {
+  updatePiServersIn(getPiMcpPath(instance), (servers) => {
+    if (isPiPluginsServer(servers[name])) {
+      throw new Error(`${name} is managed by pi-plugins in ${getPiMcpPath(instance)}; left unchanged`);
+    }
+    servers[name] = config;
+    return true;
+  });
 }
 
-function removePiMcpServer(name: string): void {
-  const servers = readPiMcpServers();
-  if (!(name in servers)) return;
-  delete servers[name];
-  writePiMcpServers(servers);
+function removePiMcpServerFrom(path: string, name: string): void {
+  updatePiServersIn(path, (servers) => {
+    if (!(name in servers) || isPiPluginsServer(servers[name])) return false;
+    delete servers[name];
+    return true;
+  });
 }
 
 /**
@@ -160,7 +186,7 @@ export async function installMcpServersToInstance(
   const key = instanceKey(instance);
   if (!manifest.tools[key]) manifest.tools[key] = { items: {} };
   const toolManifest = manifest.tools[key];
-  const dest = instance.toolId === "claude-code" ? getClaudeMcpPath(instance) : getPiGlobalMcpPath();
+  const dest = instance.toolId === "claude-code" ? getClaudeMcpPath(instance) : getPiMcpPath(instance);
 
   let count = 0;
   const errors: string[] = [];
@@ -171,7 +197,12 @@ export async function installMcpServersToInstance(
       if (instance.toolId === "claude-code") {
         writeClaudeMcpServer(instance, serverName, config);
       } else {
-        writePiMcpServer(serverName, config);
+        writePiMcpServer(instance, serverName, config);
+        // Blackbook put it in the legacy file before: drop that copy, which only pi-mcp-adapter read.
+        const itemKey = buildManifestItemKey(pluginName, "mcp", serverName);
+        if (toolManifest.items[itemKey]?.dest === getLegacyPiMcpPath()) {
+          removePiMcpServerFrom(getLegacyPiMcpPath(), serverName);
+        }
       }
       const itemKey = buildManifestItemKey(pluginName, "mcp", serverName);
       const item: InstalledItem = {
@@ -215,7 +246,7 @@ export async function uninstallMcpServersFromInstance(pluginName: string, instan
       if (instance.toolId === "claude-code") {
         removeClaudeMcpServer(instance, item.name);
       } else {
-        removePiMcpServer(item.name);
+        removePiMcpServerFrom(item.dest === getLegacyPiMcpPath() ? getLegacyPiMcpPath() : getPiMcpPath(instance), item.name);
       }
       removed++;
     } catch (error) {

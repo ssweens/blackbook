@@ -68,7 +68,7 @@ Upgrading from an older Blackbook version: existing flat installs keep their old
 
 A plugin that bundles an MCP server (`mcp.json`/`.mcp.json` at its root, or an inline `mcpServers` field in its marketplace/plugin manifest) gets it installed two ways, depending on what each tool actually reads:
 
-- **Claude Code and Pi** both read a shared `{"mcpServers": {...}}` convention — Claude via its native `claude mcp add-json`/`claude mcp remove` CLI (never hand-edited directly, since `~/.claude.json` is Claude-owned state), Pi via a direct merge into `~/.config/mcp/mcp.json` (the global location the community `pi-mcp-adapter` extension reads).
+- **Claude Code and Pi** both read a shared `{"mcpServers": {...}}` convention. Blackbook merges Claude's servers into `.claude.json` (`~/.claude.json` for the default instance), the file `claude mcp add` writes. Pi's go into `<Pi agent dir>/mcp.json` (`~/.pi/agent/mcp.json`), which Pi's built-in MCP support reads. `${CLAUDE_PLUGIN_ROOT}` is replaced with the plugin's directory, other keys in those files are kept, and servers the pi-plugins extension manages (marked `_piPlugins`) are never overwritten or removed. Servers older versions wrote to `~/.config/mcp/mcp.json` move on the next install.
 - **Amp and OpenCode** read a skill-bundled `mcp.json` colocated with the skill directory itself (`~/.agents/skills/<skill>/mcp.json`) — Amp natively, OpenCode via a common (non-core) plugin. Blackbook copies the plugin's `mcp.json` alongside each skill it installs for these two.
 - **Codex** has no shared-file MCP convention (its own config is TOML-based) and is out of scope for now.
 

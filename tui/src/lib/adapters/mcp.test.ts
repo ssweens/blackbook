@@ -5,6 +5,7 @@ import { join } from "path";
 import type { ToolInstance } from "../types.js";
 
 import { installMcpServersToInstance, uninstallMcpServersFromInstance } from "./mcp.js";
+import { loadManifest, saveManifest } from "../manifest.js";
 
 const TEST_ROOT = join(tmpdir(), `blackbook-mcp-test-${Date.now()}`);
 const TEST_HOME = join(TEST_ROOT, "home");
@@ -101,7 +102,7 @@ describe("installMcpServersToInstance", () => {
     expect(JSON.stringify(written)).not.toContain("${CLAUDE_PLUGIN_ROOT}");
 
     await installMcpServersToInstance("demo-plugin", pluginDir, piInstance(join(TEST_ROOT, "pi-vars")));
-    const pi = JSON.parse(readFileSync(join(TEST_HOME, ".config", "mcp", "mcp.json"), "utf-8")).mcpServers.daw;
+    const pi = JSON.parse(readFileSync(join(TEST_ROOT, "pi-vars", "mcp.json"), "utf-8")).mcpServers.daw;
     expect(pi.cwd).toBe(join(pluginDir, "daw"));
   });
 
@@ -137,7 +138,7 @@ describe("installMcpServersToInstance", () => {
     expect(existsSync(join(TEST_HOME, ".claude", ".claude.json"))).toBe(false);
   });
 
-  it("writes a merged ~/.config/mcp/mcp.json for a Pi instance", async () => {
+  it("writes <Pi agent dir>/mcp.json, the file Pi's native MCP support reads", async () => {
     const pluginDir = join(TEST_ROOT, "plugin-pi");
     writePluginMcpJson(pluginDir, { search: { command: "npx", args: ["search-mcp"] } });
     const instance = piInstance(join(TEST_ROOT, "pi"));
@@ -145,24 +146,60 @@ describe("installMcpServersToInstance", () => {
     const result = await installMcpServersToInstance("demo-plugin", pluginDir, instance);
 
     expect(result.count).toBe(1);
-    const mcpPath = join(TEST_HOME, ".config", "mcp", "mcp.json");
+    const mcpPath = join(TEST_ROOT, "pi", "mcp.json");
     expect(existsSync(mcpPath)).toBe(true);
+    expect(existsSync(join(TEST_HOME, ".config", "mcp", "mcp.json"))).toBe(false);
     const written = JSON.parse(readFileSync(mcpPath, "utf-8"));
     expect(written.mcpServers.search).toEqual({ command: "npx", args: ["search-mcp"] });
   });
 
-  it("merges into an existing ~/.config/mcp/mcp.json without clobbering other servers", async () => {
-    const mcpPath = join(TEST_HOME, ".config", "mcp", "mcp.json");
-    mkdirSync(join(TEST_HOME, ".config", "mcp"), { recursive: true });
-    writeFileSync(mcpPath, JSON.stringify({ mcpServers: { existing: { command: "other" } } }));
+  it("merges into an existing Pi mcp.json, keeping other servers and top-level keys", async () => {
+    const mcpPath = join(TEST_ROOT, "pi", "mcp.json");
+    mkdirSync(join(TEST_ROOT, "pi"), { recursive: true });
+    writeFileSync(mcpPath, JSON.stringify({ autoEnableCodemode: false, mcpServers: { existing: { command: "other" } } }));
 
     const pluginDir = join(TEST_ROOT, "plugin-pi-2");
     writePluginMcpJson(pluginDir, { search: { command: "npx" } });
     await installMcpServersToInstance("demo-plugin", pluginDir, piInstance(join(TEST_ROOT, "pi")));
 
     const written = JSON.parse(readFileSync(mcpPath, "utf-8"));
+    expect(written.autoEnableCodemode).toBe(false);
     expect(written.mcpServers.existing).toEqual({ command: "other" });
     expect(written.mcpServers.search).toEqual({ command: "npx" });
+  });
+
+  it("never overwrites or removes a server the pi-plugins extension manages", async () => {
+    const mcpPath = join(TEST_ROOT, "pi", "mcp.json");
+    mkdirSync(join(TEST_ROOT, "pi"), { recursive: true });
+    const owned = { command: "python3", _piPlugins: { plugin: "desk", marketplace: "desk" } };
+    writeFileSync(mcpPath, JSON.stringify({ mcpServers: { daw: owned } }));
+    const pluginDir = join(TEST_ROOT, "plugin-owned");
+    writePluginMcpJson(pluginDir, { daw: { command: "mine" } });
+    const instance = piInstance(join(TEST_ROOT, "pi"));
+
+    const result = await installMcpServersToInstance("desk", pluginDir, instance);
+    expect(result.count).toBe(0);
+    expect(result.errors[0]).toContain("managed by pi-plugins");
+    await uninstallMcpServersFromInstance("desk", instance);
+    expect(JSON.parse(readFileSync(mcpPath, "utf-8")).mcpServers.daw).toEqual(owned);
+  });
+
+  it("moves a server Blackbook put in the legacy ~/.config/mcp/mcp.json, leaving unrelated entries there", async () => {
+    const legacy = join(TEST_HOME, ".config", "mcp", "mcp.json");
+    mkdirSync(join(TEST_HOME, ".config", "mcp"), { recursive: true });
+    const pluginDir = join(TEST_ROOT, "plugin-legacy");
+    writePluginMcpJson(pluginDir, { daw: { command: "daw" } });
+    const instance = piInstance(join(TEST_ROOT, "pi"));
+    // Simulate an older install: the server and a hand-added one in the legacy file, recorded there.
+    writeFileSync(legacy, JSON.stringify({ mcpServers: { daw: { command: "daw" }, handmade: { command: "h" } } }));
+    const manifest = loadManifest();
+    const key = `${instance.toolId}:${instance.instanceId}`;
+    manifest.tools[key] = { items: { "demo:mcp:daw": { kind: "mcp", name: "daw", source: pluginDir, dest: legacy, backup: null, owner: "demo", previous: null } } };
+    saveManifest(manifest);
+
+    await installMcpServersToInstance("demo", pluginDir, instance);
+    expect(JSON.parse(readFileSync(join(TEST_ROOT, "pi", "mcp.json"), "utf-8")).mcpServers.daw).toEqual({ command: "daw" });
+    expect(JSON.parse(readFileSync(legacy, "utf-8")).mcpServers).toEqual({ handmade: { command: "h" } });
   });
 });
 
@@ -197,7 +234,7 @@ describe("uninstallMcpServersFromInstance", () => {
     const removed = await uninstallMcpServersFromInstance("plugin-a", instance);
     expect(removed).toBe(1);
 
-    const mcpPath = join(TEST_HOME, ".config", "mcp", "mcp.json");
+    const mcpPath = join(TEST_ROOT, "pi", "mcp.json");
     const written = JSON.parse(readFileSync(mcpPath, "utf-8"));
     expect(written.mcpServers["a-server"]).toBeUndefined();
     expect(written.mcpServers["b-server"]).toEqual({ command: "b" });
