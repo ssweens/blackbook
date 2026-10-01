@@ -7,6 +7,7 @@ import {
   buildLockDiffTarget,
   lockInstallFromRepo,
   lockUpdateSourceRepo,
+  summarizeLockSync,
   type LockGitStatus,
 } from "../lib/lock-git.js";
 import type { ManagedItem } from "../lib/managed-item.js";
@@ -20,23 +21,6 @@ export interface LockDetailProps {
   /** Display path shown under the title. */
   displayPath: string;
   onClose: () => void;
-}
-
-/**
- * Status label for the lock, in the skill detail's vocabulary — "In sync" /
- * "Drifted" — never git jargon. The direction a status implies maps to the
- * same two actions a skill offers: "Install from source repo" (repo→disk) and
- * "Update source repo from disk" (disk→repo).
- */
-function statusLabel(s: LockGitStatus | null): { label: string; color: ItemAction["statusColor"] } {
-  if (!s) return { label: "Checking…", color: "gray" };
-  if (!s.isRepo) return { label: "No source repo", color: "gray" };
-  if (s.fileState === "untracked") return { label: "Not in source repo", color: "yellow" };
-  if (s.fileState === "modified") return { label: "Drifted", color: "yellow" };
-  if (s.behind > 0 && s.ahead > 0) return { label: "Diverged from source repo", color: "red" };
-  if (s.ahead > 0) return { label: "Not pushed to source repo", color: "yellow" };
-  if (s.behind > 0) return { label: "Behind source repo", color: "magenta" };
-  return { label: "In sync", color: "green" };
 }
 
 /**
@@ -68,7 +52,7 @@ export function LockDetail({ filePath, label, displayPath, onClose }: LockDetail
   const added = diff?.files.reduce((n, f) => n + f.linesAdded, 0) ?? 0;
   const removed = diff?.files.reduce((n, f) => n + f.linesRemoved, 0) ?? 0;
   const hasDiff = (diff?.files.length ?? 0) > 0 && (added > 0 || removed > 0);
-  const { label: stateLabel, color } = statusLabel(status);
+  const { label: stateLabel, color } = summarizeLockSync(status, added, removed);
 
   // The lock as a ManagedItem (kind "file", like a standalone skill) so it
   // renders through ItemDetail unchanged.

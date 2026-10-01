@@ -2956,6 +2956,7 @@ describe("composed store shape", () => {
     "projectDetailPath",
     "profiles",
     "profileLocks",
+    "lockSync",
     "profilesEditing",
   ] as const;
 
@@ -3035,6 +3036,7 @@ describe("composed store shape", () => {
     "saveLockAsProfile",
     "setSkillProfiles",
     "deleteProfile",
+    "refreshLockSync",
     "setProfilesEditing",
   ] as const;
 

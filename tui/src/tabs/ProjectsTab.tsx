@@ -1,9 +1,11 @@
 import type { ProfileCoverage } from "../lib/skill-profiles.js";
-import React from "react";
+import React, { useEffect } from "react";
+import { join } from "path";
 import { Box, Text } from "ink";
 import { useStore } from "../lib/store.js";
 import { buildProjectRows, type ProjectSkillStatus } from "../lib/projects.js";
 import { computeWindow, windowLabel } from "../lib/list-window.js";
+import { lockSyncText } from "../lib/lock-sync-text.js";
 import { SearchBox } from "../components/SearchBox.js";
 
 const STATUS_META: Record<ProjectSkillStatus, { glyph: string; color: string; label: string }> = {
@@ -48,6 +50,17 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
   const collapsedProjectNamespaces = useStore((s) => s.collapsedProjectNamespaces);
   const search = useStore((s) => s.search);
   const setSearch = useStore((s) => s.setSearch);
+  const lockSync = useStore((s) => s.lockSync);
+  const refreshLockSync = useStore((s) => s.refreshLockSync);
+
+  // Compute each registered project's lock sync (its own repo's skills-lock.json)
+  // in the background. Synthetic (global) workspaces aren't in a repo, so skip.
+  const lockPaths = projects.filter((p) => !p.synthetic && p.exists).map((p) => join(p.path, "skills-lock.json"));
+  const lockPathsKey = lockPaths.join("\n");
+  useEffect(() => {
+    if (lockPaths.length > 0) void refreshLockSync(lockPaths);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lockPathsKey, refreshLockSync]);
 
   if (projects.length === 0) {
     return (
@@ -90,6 +103,11 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
         <Text color="gray" wrap="truncate-end">
           {project.synthetic ? "global lock (~/.agents/.skill-lock.json)" : "skills-lock.json"}:{" "}
           {project.lockEntries ? `${project.lockEntries} skill${project.lockEntries === 1 ? "" : "s"}` : "none yet"}
+          {(() => {
+            if (project.synthetic || !project.exists) return null;
+            const h = lockSyncText(lockSync[join(project.path, "skills-lock.json")]);
+            return <Text> · <Text color={h.color}>{h.text}</Text> <Text color="gray">(g)</Text></Text>;
+          })()}
         </Text>
         {coverage.map((line) => (
           <Text key={line.key} color={line.stale ? "yellow" : "green"} wrap="truncate-end">
@@ -173,6 +191,7 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
           .filter((c) => c.present.length > 0 || c.applied)
           .map((c) => `${c.profile} ${c.present.length}/${c.total}`)
           .join(", ");
+        const lockHint = p.synthetic || !p.exists ? null : lockSyncText(lockSync[join(p.path, "skills-lock.json")]);
         return (
           <Text key={p.path} wrap="truncate-end">
             <Text color={isSel ? "cyan" : p.synthetic ? "magenta" : "white"}>
@@ -184,6 +203,7 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
               {location} · {summary}
               {profileTags ? ` · ${profileTags}` : ""}
               {p.transient ? " · recent" : ""}
+              {lockHint ? <Text> · lock <Text color={lockHint.color}>{lockHint.text}</Text></Text> : null}
             </Text>
           </Text>
         );

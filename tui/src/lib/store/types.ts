@@ -97,6 +97,8 @@ export interface Actions {
   setSkillProfiles: (skill: string, members: string[]) => Promise<boolean>;
   /** Delete a named profile from config.yaml. */
   deleteProfile: (name: string) => Promise<boolean>;
+  /** Compute sync hints for the given lock-file paths in the background and merge them into `lockSync`. */
+  refreshLockSync: (filePaths: string[]) => Promise<void>;
   /** True while the Profiles tab builder/confirm owns input (suppresses global keys). */
   profilesEditing: boolean;
   setProfilesEditing: (editing: boolean) => void;

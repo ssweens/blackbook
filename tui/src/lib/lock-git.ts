@@ -92,6 +92,47 @@ export interface LockGitActionResult {
   error?: string;
 }
 
+/**
+ * A compact sync summary for a lock file, shared by the detail's status row and
+ * the Projects/Profiles list hints so they always agree. `label` is Title Case
+ * to match the skill detail ("In sync" / "Drifted"); the list lowercases it and
+ * appends the counts.
+ */
+export interface LockSyncHint {
+  state: "in-sync" | "drifted" | "untracked" | "ahead" | "behind" | "diverged" | "no-repo";
+  label: string;
+  color: "green" | "yellow" | "gray" | "red" | "magenta";
+  added: number;
+  removed: number;
+}
+
+/** Map a lock's git status (+ diff counts) to a sync hint — the single source for both the detail and the list. */
+export function summarizeLockSync(s: LockGitStatus | null, added = 0, removed = 0): LockSyncHint {
+  if (!s) return { state: "no-repo", label: "Checking…", color: "gray", added, removed };
+  if (!s.isRepo) return { state: "no-repo", label: "No source repo", color: "gray", added, removed };
+  if (s.fileState === "untracked") return { state: "untracked", label: "Not in source repo", color: "yellow", added, removed };
+  if (s.fileState === "modified") return { state: "drifted", label: "Drifted", color: "yellow", added, removed };
+  if (s.behind > 0 && s.ahead > 0) return { state: "diverged", label: "Diverged from source repo", color: "red", added, removed };
+  if (s.ahead > 0) return { state: "ahead", label: "Not pushed to source repo", color: "yellow", added, removed };
+  if (s.behind > 0) return { state: "behind", label: "Behind source repo", color: "magenta", added, removed };
+  return { state: "in-sync", label: "In sync", color: "green", added, removed };
+}
+
+/** Compute the sync hint for one lock file (status + diff counts). Best-effort; never throws. */
+export async function computeLockHint(filePath: string): Promise<LockSyncHint> {
+  try {
+    const [status, diff] = await Promise.all([
+      lockGitStatus(filePath),
+      buildLockDiffTarget(filePath, "lock"),
+    ]);
+    const added = diff?.files.reduce((n, f) => n + f.linesAdded, 0) ?? 0;
+    const removed = diff?.files.reduce((n, f) => n + f.linesRemoved, 0) ?? 0;
+    return summarizeLockSync(status, added, removed);
+  } catch {
+    return summarizeLockSync(null);
+  }
+}
+
 /** `git pull --ff-only` on the lock file's repo (bring teammate changes). */
 export async function lockGitPull(filePath: string): Promise<LockGitActionResult> {
   const repoRoot = findGitRoot(filePath.replace(/\/[^/]*$/, "") || "/");

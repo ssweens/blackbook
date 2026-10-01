@@ -522,6 +522,7 @@ const defaultStoreState = () => ({
   projectDetailPath: null,
   profiles: {},
   profileLocks: {},
+  lockSync: {},
   standaloneSkills: [] as never,
 });
 
@@ -1922,6 +1923,29 @@ describe("App E2E — Lock file source-repo detail", () => {
       await waitForFrame(stdout.lastFrame, (f) => f.includes("Update source repo from disk") && !f.includes("↑/↓ scroll"));
       sendKey(stdin, KEYS.escape); // close detail → back to project list
       await waitForFrame(stdout.lastFrame, (f) => f.includes("g source repo") && !f.includes("demo project lock"));
+    } finally {
+      unmount();
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("shows a lock sync hint on the project list row", { timeout: 30000 }, async () => {
+    const repo = mkdtempSync(join(tmpdir(), "blackbook-lockhint-"));
+    execSync("git init -q", { cwd: repo });
+    execSync("git config user.email t@e && git config user.name T", { cwd: repo });
+    writeFileSync(join(repo, "skills-lock.json"), '{"version":1,"skills":{}}\n');
+    execSync("git add -A && git commit -qm init", { cwd: repo });
+    // Clean, committed lock → "in sync" on the list row.
+    const project: ProjectInfo = { path: repo, name: "demo", exists: true, hasAgentsDir: true, skills: [], available: [] };
+    await settleInput();
+    useStore.setState({
+      tab: "projects", projects: [project], projectsLoaded: true, projectDetailPath: null,
+      selectedIndex: 0, loadProjects: vi.fn().mockResolvedValue(undefined), tools: createToolInstances(),
+    });
+    const { stdout, unmount } = render(<App />);
+    try {
+      // The hint is computed in the background (real git), so give it time.
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("demo") && f.includes("lock") && f.includes("in sync"), 15000);
     } finally {
       unmount();
       rmSync(repo, { recursive: true, force: true });

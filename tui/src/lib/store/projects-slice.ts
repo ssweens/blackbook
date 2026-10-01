@@ -32,6 +32,7 @@ import {
   type SkillLockFile,
 } from "../skill-profiles.js";
 import { expandPath } from "../config/path.js";
+import { computeLockHint } from "../lock-git.js";
 
 export type ProjectsSlice = Pick<
   Store,
@@ -41,6 +42,7 @@ export type ProjectsSlice = Pick<
   | "projectDetailPath"
   | "profiles"
   | "profileLocks"
+  | "lockSync"
   // actions
   | "loadProjects"
   | "addProject"
@@ -58,6 +60,7 @@ export type ProjectsSlice = Pick<
   | "saveLockAsProfile"
   | "setSkillProfiles"
   | "deleteProfile"
+  | "refreshLockSync"
   | "profilesEditing"
   | "setProfilesEditing"
 >;
@@ -80,9 +83,19 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
   projectDetailPath: null,
   profiles: {},
   profileLocks: {},
+  lockSync: {},
   profilesEditing: false,
 
   setProfilesEditing: (editing) => set({ profilesEditing: editing }),
+
+  refreshLockSync: async (filePaths) => {
+    const unique = [...new Set(filePaths)].filter(Boolean);
+    if (unique.length === 0) return;
+    const hints = await Promise.all(
+      unique.map(async (path) => [path, await computeLockHint(path)] as const),
+    );
+    set((s) => ({ lockSync: { ...s.lockSync, ...Object.fromEntries(hints) } }));
+  },
 
   setProjectDetailPath: (path) => set({ projectDetailPath: path }),
 

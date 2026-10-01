@@ -16,7 +16,8 @@ import { useStore } from "../lib/store.js";
 import { getConfigRepoPath, getConsultationSettings } from "../lib/config.js";
 import { indexSourceSkillTree, type SourceSkillNamespace } from "../lib/projects.js";
 import { computeWindow, matchesQuery, windowLabel } from "../lib/list-window.js";
-import { globalLockEntries } from "../lib/skill-profiles.js";
+import { globalLockEntries, profileLockPath } from "../lib/skill-profiles.js";
+import { lockSyncText } from "../lib/lock-sync-text.js";
 /**
  * Profiles tab — named skill bundles (config `profiles:`) that can be applied
  * to any workspace. List view for browsing, builder sub-view for creating and
@@ -119,6 +120,8 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenLockDetail
   const deleteProfile = useStore((s) => s.deleteProfile);
   const tools = useStore((s) => s.tools);
   const toolDetection = useStore((s) => s.toolDetection);
+  const lockSync = useStore((s) => s.lockSync);
+  const refreshLockSync = useStore((s) => s.refreshLockSync);
 
   const [mode, setMode] = useState<Mode>(() => {
     if (stashedEditMode) {
@@ -141,6 +144,19 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenLockDetail
   }, [consultation, mode.kind, setProfilesEditing]);
 
   const names = useMemo(() => Object.keys(profiles).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })), [profiles]);
+
+  // Compute each profile lock's sync (source repo) in the background. Only
+  // profiles with a real lock file (not legacy config.yaml ones) are checked.
+  const lockRepo = useMemo(() => getConfigRepoPath(), []);
+  const profileLockPaths = useMemo(
+    () => (lockRepo ? names.filter((n) => n in profileLocks).map((n) => profileLockPath(lockRepo, n)) : []),
+    [lockRepo, names, profileLocks],
+  );
+  const profileLockPathsKey = profileLockPaths.join("\n");
+  useEffect(() => {
+    if (profileLockPaths.length > 0) void refreshLockSync(profileLockPaths);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileLockPathsKey, refreshLockSync]);
 
   // Source repo + shared store skills grouped into namespaces + top-level.
   // Recomputed when entering the builder (cheap directory scan).
@@ -590,12 +606,15 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenLockDetail
           const isSel = listStart + i === listCursor;
           const skills = profiles[n];
           const count = `${String(skills.length).padStart(countWidth)} ${skills.length === 1 ? "skill " : "skills"}`;
-          const detail = n in profileLocks ? profileSources(profileLocks[n]) : "legacy (config.yaml) — save to convert";
+          const hasLock = n in profileLocks;
+          const detail = hasLock ? profileSources(profileLocks[n]) : "legacy (config.yaml) — save to convert";
+          const lockHint = hasLock && lockRepo ? lockSyncText(lockSync[profileLockPath(lockRepo, n)]) : null;
           return (
             <Text key={n} wrap="truncate-end">
               <Text color={isSel ? "cyan" : "gray"}>{isSel ? "❯ " : "  "}</Text>
               <Text bold={isSel} color={isSel ? "white" : "gray"}>{n.padEnd(nameWidth)}</Text>
               <Text color={isSel ? "white" : "gray"}>{"  "}{count}</Text>
+              {lockHint ? <Text>{"  "}<Text color={lockHint.color}>{lockHint.text}</Text></Text> : null}
               <Text color="gray">{"  "}{detail}</Text>
             </Text>
           );
