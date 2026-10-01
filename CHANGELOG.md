@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- 2026-10-01 — Skill-lock files are committed to git automatically. Saving a profile commits `profiles/<name>.skills-lock.json` to the source repo and pushes it; changing a project's skills commits that project's `skills-lock.json` in its own repo, commit-only. Each commit stages only the lock file (never `-A`), and a failed push is surfaced while the local commit stands.
 - 2026-09-30 — A project's drill-in groups its skills under a collapsible header per source-repo namespace, matching the profile builder. `Enter` on a namespace header expands or collapses it; skills without a namespace stay flat; a search expands every group. Collapse state is per session.
 - 2026-09-30 — A skill's detail view is reachable from the definition views. `Enter` on a skill in a project's drill-in or in the profile builder opens the same detail (contents, origin, browse files, add to profiles) available on the Installed tab. In the profile builder, saving moved from `Enter` to `S`, and `Enter` on a namespace header expands or collapses it. The in-progress profile draft is preserved while the detail is open.
 - 2026-09-30 — The Installed tab groups plugins under a collapsible header per marketplace. `Enter` on a header collapses or expands it, so a large catalog like claude-plugins-official folds to one line. A search expands every group so matches stay visible.

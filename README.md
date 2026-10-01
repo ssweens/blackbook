@@ -179,7 +179,7 @@ Upstream copies each skill into `<project>/.agents/skills/<name>`. Blackbook's c
 
 <project>/.agents/skills/blast-radius  -> ~/.local/share/blackbook/skills/github.com/ssweens/playbook/blast-radius
 <project>/.claude/skills/blast-radius  -> (same)
-<project>/skills-lock.json                (upstream format, commit this)
+<project>/skills-lock.json                (upstream format, auto-committed to the project repo)
 ```
 
 - **Only linked skills are active.** A project sees only the skills in its own `skills-lock.json`. Global installs (`-g`) also live in the store: `~/.agents/skills/<name>` and `~/.claude/skills/<name>` are links to it, so the store can hold skills that are active in some projects but not globally.
@@ -225,6 +225,7 @@ A profile is a reusable piece of a `skills-lock.json`, stored in your source rep
 - **Apply one with `P`** from a project, or from the Global workspace. Blackbook runs one `skills add` per source for your enabled agents, so Claude gets links too, and uses `-g` for Global.
 - **Save a project's lock as a profile with `S`** from the Projects tab, or from inside a project. Blackbook asks for a name and never overwrites an existing profile. A `local` entry inside your source repo is saved as the repo's GitHub source, and any other local path gets a warning because it only exists on this machine.
 - **A project's `skills-lock.json` is the source of truth.** The Projects tab shows its skill count and each profile's coverage, as in `profile Music: 46/48 · 2 new — P to apply`. It also shows skills removed from a profile since you applied it here. Applying again adds the new skills and removes the dropped ones. Nothing changes a project on its own.
+- **Lock files are committed for you.** Saving a profile commits `profiles/<name>.skills-lock.json` to the source repo and pushes it, so other machines and teammates get it. Changing a project's skills (push, apply, remove, toggle) commits that project's `skills-lock.json` in the project's own repo, without pushing. Each commit touches only the lock file, never your other changes. A push failure is reported; the commit still lands locally.
 - **Coverage is computed** from the project's lock and the profile. The only extra state is a machine-local record of each apply, kept in `~/.cache/blackbook/profile-applications.json`, which is what makes the "removed" count possible.
 
 Older profiles in `config.yaml` (lists of names) still show as "legacy". Saving one in the Profiles tab converts it to a file.

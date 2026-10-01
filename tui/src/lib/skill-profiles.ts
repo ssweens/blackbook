@@ -55,6 +55,11 @@ export function profilesDir(sourceRepo: string): string {
   return join(sourceRepo, PROFILES_SUBDIR);
 }
 
+/** Absolute path to a profile's lock file in the source repo. */
+export function profileLockPath(sourceRepo: string, name: string): string {
+  return profilePath(sourceRepo, name);
+}
+
 function profilePath(sourceRepo: string, name: string): string {
   return join(profilesDir(sourceRepo), `${name}${PROFILE_SUFFIX}`);
 }

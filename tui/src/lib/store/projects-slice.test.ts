@@ -47,6 +47,11 @@ const applyToWorkspaceMock = vi.fn();
 const markAppliedMock = vi.fn();
 const buildProfileLockCalls: unknown[] = [];
 let lockAsProfileResult: { lock: { version: number; skills: Record<string, { source: string; sourceType: string }> }; localOnly: string[] } = { lock: { version: 1, skills: {} }, localOnly: [] };
+const commitLockFilesMock = vi.fn().mockResolvedValue({ committed: true, pushed: true });
+vi.mock("../lock-commit.js", () => ({
+  commitLockFiles: (...a: unknown[]) => commitLockFilesMock(...a),
+  findGitRoot: () => "/src",
+}));
 vi.mock("../skill-profiles.js", () => ({
   listProfileLocks: () => ({ ...profileFiles }),
   writeProfileLock: (_repo: string, name: string, lock: never) => {
@@ -66,6 +71,7 @@ vi.mock("../skill-profiles.js", () => ({
   applyProfileToWorkspace: (...a: unknown[]) => applyToWorkspaceMock(...a),
   workspaceCoverage: () => [],
   workspaceLock: () => ({ version: 1, skills: {} }),
+  profileLockPath: (_repo: string, name: string) => `/src/profiles/${name}.skills-lock.json`,
   lockAsProfile: () => lockAsProfileResult,
   markProfileApplied: (...a: unknown[]) => markAppliedMock(...a),
 }));
@@ -101,6 +107,7 @@ beforeEach(() => {
   applyToWorkspaceMock.mockReset();
   markAppliedMock.mockReset();
   buildProfileLockCalls.length = 0;
+  commitLockFilesMock.mockClear();
   lockAsProfileResult = { lock: { version: 1, skills: {} }, localOnly: [] };
   pullSkillMock.mockReset();
   commitMock.mockReset();
@@ -270,6 +277,14 @@ describe("projects-slice", () => {
     expect(get().notify).toHaveBeenLastCalledWith(expect.stringContaining("+1 added"), "success");
   });
 
+  it("pushProjectSkill commits the workspace skills-lock.json without pushing", async () => {
+    pushSkillMock.mockResolvedValue({ ok: true });
+    getProjectsMock.mockReturnValue([]);
+    const { get } = makeStore();
+    expect(await get().pushProjectSkill("/ws", "a", "/src/skills/a")).toBe(true);
+    expect(commitLockFilesMock).toHaveBeenCalledWith(["/ws/skills-lock.json"], expect.any(String), { push: false });
+  });
+
   it("applyProfile in copy mode still copies source-repo skills into a project", async () => {
     profileFiles = { web: { version: 1, skills: { a: { source: "x/y", sourceType: "github" }, missing: { source: "x/y", sourceType: "github" } } } };
     indexSourceSkillsMock.mockReturnValue(new Map([["a", "/src/skills/a"]]));
@@ -298,6 +313,8 @@ describe("projects-slice", () => {
     expect(await get().saveProfile("web", ["a", "b"])).toBe(true);
     expect(Object.keys(profileFiles.web.skills)).toEqual(["a", "b"]);
     expect(saveConfigMock).toHaveBeenCalledWith(expect.objectContaining({ profiles: {} }), "/cfg");
+    // Auto-committed to the source repo and pushed.
+    expect(commitLockFilesMock).toHaveBeenCalledWith(["/src/profiles/web.skills-lock.json"], expect.stringContaining("save web"), { push: true });
   });
 
   it("saveProfile resolves sources from every profile, with the edited profile's own entries winning", async () => {
