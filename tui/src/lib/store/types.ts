@@ -111,6 +111,8 @@ export interface Actions {
   setDiscoverSubView: (subView: DiscoverSubView) => void;
   /** Collapse or expand a plugin marketplace group in the Installed tab. */
   togglePluginMarketplace: (name: string) => void;
+  /** Collapse or expand a skill-namespace group in a project drill-in. */
+  toggleProjectNamespace: (name: string) => void;
   toggleSyncSelection: (key: string) => void;
   setSyncArmed: (armed: boolean) => void;
   setPluginDriftMap: (map: Record<string, PluginDrift>) => void;

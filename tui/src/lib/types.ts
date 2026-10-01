@@ -288,6 +288,8 @@ export interface AppState {
   discoverSubView: DiscoverSubView;
   /** Plugin marketplaces collapsed in the Installed tab's plugin section (session-only). */
   collapsedPluginMarketplaces: Set<string>;
+  /** Skill-namespace groups collapsed in a project drill-in (session-only). */
+  collapsedProjectNamespaces: Set<string>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

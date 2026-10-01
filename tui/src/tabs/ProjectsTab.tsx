@@ -2,7 +2,7 @@ import type { ProfileCoverage } from "../lib/skill-profiles.js";
 import React from "react";
 import { Box, Text } from "ink";
 import { useStore } from "../lib/store.js";
-import { buildProjectSkillRows, type ProjectSkillStatus } from "../lib/projects.js";
+import { buildProjectRows, type ProjectSkillStatus } from "../lib/projects.js";
 import { computeWindow, windowLabel } from "../lib/list-window.js";
 import { SearchBox } from "../components/SearchBox.js";
 
@@ -45,6 +45,7 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
   const projects = useStore((s) => s.projects);
   const projectsLoaded = useStore((s) => s.projectsLoaded);
   const projectDetailPath = useStore((s) => s.projectDetailPath);
+  const collapsedProjectNamespaces = useStore((s) => s.collapsedProjectNamespaces);
   const search = useStore((s) => s.search);
   const setSearch = useStore((s) => s.setSearch);
 
@@ -73,7 +74,8 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
       );
     }
     const allCount = project.skills.length + project.available.length;
-    const rows = buildProjectSkillRows(project, search);
+    const rows = buildProjectRows(project, search, collapsedProjectNamespaces, { expandAll: search.trim().length > 0 });
+    const skillRowCount = rows.filter((r) => r.kind !== "namespace").length;
     const coverage = coverageLines(project.profileCoverage);
     // Header, lock line, coverage lines, search box (2), footer.
     const maxRows = Math.max(1, contentHeight - 5 - coverage.length);
@@ -110,10 +112,22 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
           visible.map((row, i) => {
             const isSel = startIndex + i === selectedIndex;
             const marker = isSel ? "❯ " : "  ";
+            if (row.kind === "namespace") {
+              return (
+                <Text key={`ns:${row.name}`} wrap="truncate-end">
+                  <Text color={isSel ? "cyan" : "gray"}>{marker}</Text>
+                  <Text color="blue">{row.collapsed ? "▸ " : "▾ "}</Text>
+                  <Text bold color={isSel ? "white" : "gray"}>{row.name}</Text>
+                  <Text color="gray">{"  "}{row.count} skill{row.count === 1 ? "" : "s"}</Text>
+                </Text>
+              );
+            }
+            const indent = row.depth === 1 ? "  " : "";
             if (row.kind === "available") {
               return (
                 <Text key={`a:${row.available.name}`} wrap="truncate-end">
                   <Text color={isSel ? "cyan" : "gray"}>{marker}</Text>
+                  <Text>{indent}</Text>
                   <Text color="blue">+ </Text>
                   <Text color={isSel ? "white" : "gray"}>{row.available.name}</Text>
                   <Text color="gray">{"  "}available — p to add</Text>
@@ -124,6 +138,7 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
             return (
               <Text key={`s:${row.skill.name}`} wrap="truncate-end">
                 <Text color={isSel ? "cyan" : "gray"}>{marker}</Text>
+                <Text>{indent}</Text>
                 <Text color={m.color}>{m.glyph} </Text>
                 <Text color={row.skill.enabled ? "white" : "gray"}>
                   {row.skill.name}
@@ -135,7 +150,7 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
           })
         )}
         <Text color="gray" wrap="truncate-end">
-          {position ? `${position} · ` : ""}{search && rows.length !== allCount ? `${rows.length} of ${allCount} match · ` : ""}Enter details · / search · ↑↓ scroll · Esc back
+          {position ? `${position} · ` : ""}{search && skillRowCount !== allCount ? `${skillRowCount} of ${allCount} match · ` : ""}Enter details/expand · / search · ↑↓ scroll · Esc back
         </Text>
       </Box>
     );

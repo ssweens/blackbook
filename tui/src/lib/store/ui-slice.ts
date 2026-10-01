@@ -25,6 +25,7 @@ export type UiSlice = Pick<
   | "currentSection"
   | "discoverSubView"
   | "collapsedPluginMarketplaces"
+  | "collapsedProjectNamespaces"
   // actions
   | "setTab"
   | "setSortBy"
@@ -38,6 +39,7 @@ export type UiSlice = Pick<
   | "setCurrentSection"
   | "setDiscoverSubView"
   | "togglePluginMarketplace"
+  | "toggleProjectNamespace"
   | "toggleSyncSelection"
   | "setSyncArmed"
   | "setPluginDriftMap"
@@ -73,6 +75,8 @@ export const createUiSlice: SliceCreator<UiSlice> = (set, get) => ({
   discoverSubView: null as DiscoverSubView,
   // Collapsed plugin-marketplace groups on the Installed tab (session-only).
   collapsedPluginMarketplaces: new Set<string>(),
+  // Collapsed skill-namespace groups in a project drill-in (session-only).
+  collapsedProjectNamespaces: new Set<string>(),
 
   setTab: (tab) =>
     set((state) =>
@@ -201,6 +205,13 @@ export const createUiSlice: SliceCreator<UiSlice> = (set, get) => ({
       if (next.has(name)) next.delete(name);
       else next.add(name);
       return { collapsedPluginMarketplaces: next };
+    }),
+  toggleProjectNamespace: (name) =>
+    set((state) => {
+      const next = new Set(state.collapsedProjectNamespaces);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return { collapsedProjectNamespaces: next };
     }),
   toggleSyncSelection: (key: string) =>
     set((state) => {

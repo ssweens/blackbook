@@ -514,6 +514,7 @@ const defaultStoreState = () => ({
   currentSection: "plugins" as const,
   discoverSubView: null,
   collapsedPluginMarketplaces: new Set<string>(),
+  collapsedProjectNamespaces: new Set<string>(),
   managedItems: [],
   projects: [] as never,
   projectsLoaded: false,
@@ -1887,6 +1888,43 @@ describe("App E2E — Skill detail from Projects and Profiles", () => {
     instanceName: "OpenCode",
     sourcePath: "/repo/skills/qc-review",
   };
+
+  it("groups a project's skills under collapsible namespace headers; Enter toggles, p acts on a skill", async () => {
+    const pushProjectSkill = vi.fn().mockResolvedValue(true);
+    const project: ProjectInfo = {
+      path: "/tmp/pj", name: "PJ", exists: true, hasAgentsDir: true,
+      skills: [{ name: "mixing-fundamentals", diskPath: "/d/m", enabled: true, status: "in-sync", sourcePath: "/repo/skills/ssmp/mixing-fundamentals" }],
+      available: [
+        { name: "vocal-mixing", sourcePath: "/repo/skills/ssmp/vocal-mixing" },
+        { name: "deslop", sourcePath: "/repo/skills/deslop" },
+      ],
+    };
+    await settleInput();
+    useStore.setState({
+      tab: "projects", projects: [project], projectsLoaded: true, projectDetailPath: "/tmp/pj",
+      selectedIndex: 0, loadProjects: vi.fn().mockResolvedValue(undefined), pushProjectSkill, tools: createToolInstances(),
+    });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      // Namespace header with count; its skills visible; top-level deslop flat.
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("ssmp") && f.includes("2 skills") && f.includes("mixing-fundamentals") && f.includes("deslop"));
+      // Enter on the ssmp header collapses it.
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (f) => !f.includes("mixing-fundamentals") && f.includes("deslop"));
+      // Enter expands again.
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("mixing-fundamentals"));
+      // Move to the available skill under ssmp and push it.
+      sendKey(stdin, KEYS.down); // mixing-fundamentals
+      sendKey(stdin, KEYS.down); // vocal-mixing (available)
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("❯") && f.includes("vocal-mixing"));
+      sendKey(stdin, "p");
+      await waitForFrame(stdout.lastFrame, () => pushProjectSkill.mock.calls.length === 1);
+      expect(pushProjectSkill).toHaveBeenCalledWith("/tmp/pj", "vocal-mixing", "/repo/skills/ssmp/vocal-mixing");
+    } finally {
+      unmount();
+    }
+  });
 
   it("opens a skill's detail with Enter from a project's drill-in view", async () => {
     const project: ProjectInfo = {

@@ -77,7 +77,7 @@ import { useToolActions } from "./lib/use-tool-actions.js";
 import { useNamespaceTree } from "./lib/use-namespace-tree.js";
 import { buildDetailCallbacks } from "./lib/detail-callbacks.js";
 import { getSyncItemKey, sortAndFilterPiPackages } from "./lib/derived.js";
-import { buildProjectSkillRows, collectUnmanagedSkills } from "./lib/projects.js";
+import { buildProjectSkillRows, buildProjectRows, collectUnmanagedSkills } from "./lib/projects.js";
 import {
   buildConsultationPrompt,
   buildInstalledPluginConsultationSnapshot,
@@ -200,6 +200,8 @@ export function App() {
   const skillsShResults = useStore((s) => s.skillsShResults);
   const installedPlugins = useStore((s) => s.installedPlugins);
   const standaloneSkills = useStore((s) => s.standaloneSkills);
+  const collapsedProjectNamespaces = useStore((s) => s.collapsedProjectNamespaces);
+  const toggleProjectNamespace = useStore((s) => s.toggleProjectNamespace);
 
   // ── Data: Files ──
   const files = useStore((s) => s.files);
@@ -925,12 +927,12 @@ export function App() {
     if (tab === "projects") {
       if (projectDetailPath) {
         const p = projects.find((pr) => pr.path === projectDetailPath);
-        return Math.max(0, (p ? buildProjectSkillRows(p, search).length : 0) - 1);
+        return Math.max(0, (p ? buildProjectRows(p, search, collapsedProjectNamespaces, { expandAll: search.trim().length > 0 }).length : 0) - 1);
       }
       return Math.max(0, projects.length - 1);
     }
     return Math.max(0, libraryCount - 1);
-  }, [discoverSubView, tab, marketplaceBrowsePlugins, filteredPlugins, filteredPiPackages, marketplaceRows, managedTools, syncPreview, projects, projectDetailPath, libraryCount, search]);
+  }, [discoverSubView, tab, marketplaceBrowsePlugins, filteredPlugins, filteredPiPackages, marketplaceRows, managedTools, syncPreview, projects, projectDetailPath, libraryCount, search, collapsedProjectNamespaces]);
 
   useEffect(() => {
     if (selectedIndex > maxIndex) {
@@ -1654,8 +1656,10 @@ export function App() {
         return;
       }
       const detailProject = projects.find((p) => p.path === projectDetailPath);
-      const row = detailProject ? buildProjectSkillRows(detailProject, search)[selectedIndex] : null;
-      if (row) openSkillDetailByName(row.kind === "present" ? row.skill.name : row.available.name);
+      const row = detailProject ? buildProjectRows(detailProject, search, collapsedProjectNamespaces, { expandAll: search.trim().length > 0 })[selectedIndex] : null;
+      if (!row) return;
+      if (row.kind === "namespace") toggleProjectNamespace(row.name);
+      else openSkillDetailByName(row.kind === "present" ? row.skill.name : row.available.name);
       return;
     }
 
@@ -2122,8 +2126,9 @@ export function App() {
       const detailProject = projectDetailPath ? projects.find((p) => p.path === projectDetailPath) : null;
       if (detailProject) {
         // Drilled into a project — per-skill provisioning on the highlighted row.
-        const row = buildProjectSkillRows(detailProject, search)[selectedIndex];
+        const row = buildProjectRows(detailProject, search, collapsedProjectNamespaces, { expandAll: search.trim().length > 0 })[selectedIndex];
         if (!row) return;
+        if (row.kind === "namespace") return;
         if (input === "p") {
           // Push source → project (add an available skill, or reset a present one).
           if (row.kind === "available") {

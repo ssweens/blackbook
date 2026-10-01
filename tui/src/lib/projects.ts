@@ -319,6 +319,77 @@ export function buildProjectSkillRows(project: ProjectInfo, query = ""): Project
   ].filter((row) => matchesQuery(row.kind === "present" ? row.skill.name : row.available.name, query));
 }
 
+/** Namespace a source-repo skill lives under (`skills/<ns>/<skill>`), or null when top-level. */
+export function skillNamespaceFromSourcePath(sourcePath?: string): string | null {
+  if (!sourcePath) return null;
+  const parts = sourcePath.split("/").filter(Boolean);
+  const i = parts.lastIndexOf("skills");
+  if (i === -1) return null;
+  const after = parts.slice(i + 1);
+  return after.length >= 2 ? after[0] : null;
+}
+
+/**
+ * A row in the grouped drill-in skill list: a collapsible namespace header, or
+ * a skill (present or available-to-add) under it. Skills with no source-repo
+ * namespace are listed at the top level (depth 0, no header).
+ */
+export type ProjectGroupedRow =
+  | { kind: "namespace"; name: string; count: number; collapsed: boolean }
+  | { kind: "present"; skill: ProjectSkill; depth: 0 | 1 }
+  | { kind: "available"; available: AvailableSkill; depth: 0 | 1 };
+
+/**
+ * Group a project's skills under collapsible namespace headers, matching the
+ * Profiles builder's treatment. Present and available skills share a namespace
+ * group, sorted by name. A collapsed namespace contributes only its header
+ * unless `expandAll` is set (used while searching so matches stay visible).
+ */
+export function buildProjectRows(
+  project: ProjectInfo,
+  query: string,
+  collapsed: ReadonlySet<string>,
+  opts: { expandAll?: boolean } = {},
+): ProjectGroupedRow[] {
+  type Entry = { name: string; namespace: string | null; row: { kind: "present"; skill: ProjectSkill } | { kind: "available"; available: AvailableSkill } };
+  const entries: Entry[] = [];
+  for (const skill of project.skills) {
+    if (!matchesQuery(skill.name, query)) continue;
+    entries.push({ name: skill.name, namespace: skillNamespaceFromSourcePath(skill.sourcePath), row: { kind: "present", skill } });
+  }
+  for (const available of project.available) {
+    if (!matchesQuery(available.name, query)) continue;
+    entries.push({ name: available.name, namespace: skillNamespaceFromSourcePath(available.sourcePath), row: { kind: "available", available } });
+  }
+
+  const byNamespace = new Map<string, Entry[]>();
+  const topLevel: Entry[] = [];
+  for (const entry of entries) {
+    if (entry.namespace === null) topLevel.push(entry);
+    else {
+      const group = byNamespace.get(entry.namespace);
+      if (group) group.push(entry);
+      else byNamespace.set(entry.namespace, [entry]);
+    }
+  }
+
+  const rows: ProjectGroupedRow[] = [];
+  for (const namespace of [...byNamespace.keys()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))) {
+    const group = byNamespace.get(namespace)!.sort((a, b) => a.name.localeCompare(b.name));
+    const isCollapsed = !opts.expandAll && collapsed.has(namespace);
+    rows.push({ kind: "namespace", name: namespace, count: group.length, collapsed: isCollapsed });
+    if (!isCollapsed) {
+      for (const entry of group) {
+        rows.push(entry.row.kind === "present" ? { kind: "present", skill: entry.row.skill, depth: 1 } : { kind: "available", available: entry.row.available, depth: 1 });
+      }
+    }
+  }
+  for (const entry of topLevel.sort((a, b) => a.name.localeCompare(b.name))) {
+    rows.push(entry.row.kind === "present" ? { kind: "present", skill: entry.row.skill, depth: 0 } : { kind: "available", available: entry.row.available, depth: 0 });
+  }
+  return rows;
+}
+
 function isDirectory(path: string): boolean {
   try {
     return statSync(path).isDirectory();
