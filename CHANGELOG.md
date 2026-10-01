@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 2026-08-12 — Completed advisory consultations can continue with optional follow-up questions (`c`). Each turn carries only the four newest redacted exchanges as conversational context, rebuilds the current project/profile/plugin/skill snapshot, and revalidates proposals before they can be selected or accepted.
 
 ### Changed
+- 2026-10-01 — Saving a profile or changing a project's skills no longer auto-commits or pushes. Lock files are written to disk, and you commit, push, and pull them through the `g` git detail (or plain git). This replaces the brief auto-commit behavior with the explicit diff/pull/push interface.
 - 2026-09-29 — The Sync tab's Pi packages follow each machine's Pi settings (`~/.pi/agent/settings.json`), not the source repo's `pi_packages`. A package shows only when Pi's settings list it and it has an update or is missing on disk. Syncing updates it or reinstalls it, and a missing local path is reported instead. `pi_packages` is now a catalog for Discover and Installed, so packages you chose not to install on a machine no longer show as "In git · Not installed".
 
 ### Fixed

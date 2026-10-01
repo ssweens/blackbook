@@ -14,7 +14,6 @@ import {
   addSourceSkillsToProject,
 } from "../project-actions.js";
 import { commitAndPushSourceRepo } from "../install.js";
-import { commitLockFiles } from "../lock-commit.js";
 import { loadConfig as loadYamlConfig } from "../config/loader.js";
 import { saveConfig as saveYamlConfig } from "../config/writer.js";
 import { getConfigRepoPath, getProjectSkillMode, getToolInstances } from "../config.js";
@@ -30,7 +29,6 @@ import {
   writeProfileLock,
   lockAsProfile,
   markProfileApplied,
-  profileLockPath,
   type SkillLockFile,
 } from "../skill-profiles.js";
 import { expandPath } from "../config/path.js";
@@ -63,34 +61,6 @@ export type ProjectsSlice = Pick<
   | "profilesEditing"
   | "setProfilesEditing"
 >;
-
-/**
- * Auto-commit a profile lock to the source repo and push it (profiles live in
- * a shared repo, so other machines and teammates should get them). Best-effort;
- * a push failure is surfaced via `notify` but never blocks the save.
- */
-async function commitProfiles(sourceRepo: string, names: string[], verb: string, notify: Store["notify"]): Promise<void> {
-  if (names.length === 0) return;
-  const result = await commitLockFiles(
-    names.map((n) => profileLockPath(sourceRepo, n)),
-    `chore(profiles): ${verb} ${names.join(", ")}`,
-    { push: true },
-  );
-  if (result.committed && !result.pushed && result.pushError) {
-    notify(`Committed ${names.join(", ")} locally; push failed: ${result.pushError.split("\n")[0]}`, "warning");
-  }
-}
-
-/** Auto-commit a workspace's skills-lock.json in its own repo (commit only, no push). */
-async function commitWorkspaceLock(workspacePath: string): Promise<void> {
-  await commitLockFiles([join(workspacePath, "skills-lock.json")], "chore(skills): update skills-lock.json", { push: false });
-}
-
-/** The workspace directory a project skill dir belongs to (`<ws>/.agents/skills/<name>`). */
-function workspaceDirForSkill(skillDir: string): string | null {
-  const i = skillDir.indexOf("/.agents/");
-  return i >= 0 ? skillDir.slice(0, i) : null;
-}
 
 function backupRetention(): number | undefined {
   return loadYamlConfig().config.settings.backup_retention;
@@ -231,7 +201,6 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
       notify(`Push failed: ${result.error}`, "error");
       return false;
     }
-    await commitWorkspaceLock(projectPath);
     await get().loadProjects({ silent: true });
     if (result.warnings?.length) notify(result.warnings[0], "warning");
     else notify(mode === "link" ? `Installed ${name} (skills-lock.json, linked from the central store)` : `Pushed ${name} into workspace`, "success");
@@ -262,7 +231,6 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
       notify(`Toggle failed: ${result.error}`, "error");
       return false;
     }
-    await commitWorkspaceLock(projectPath);
     await get().loadProjects({ silent: true });
     notify(`${currentlyEnabled ? "Disabled" : "Enabled"} ${name}`, "success");
     return true;
@@ -275,8 +243,6 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
       notify(`Delete failed: ${result.error}`, "error");
       return false;
     }
-    const workspace = workspaceDirForSkill(skillDir);
-    if (workspace) await commitWorkspaceLock(workspace);
     await get().loadProjects({ silent: true });
     notify(`Removed ${name} from workspace`, "success");
     return true;
@@ -347,7 +313,6 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
     }
 
     const result = await applyProfileToWorkspace(workspacePath, name, lock, getToolInstances());
-    if (!isGlobalWorkspace(workspacePath)) await commitWorkspaceLock(workspacePath);
     await get().loadProjects({ silent: true });
     if (result.errors.length > 0) {
       notify(`Applied "${name}": +${result.added.length} −${result.removed.length}; failed — ${result.errors[0]}`, "error");
@@ -385,7 +350,6 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
       notify(`Failed to save profile: ${err instanceof Error ? err.message : String(err)}`, "error");
       return false;
     }
-    await commitProfiles(sourceRepo, [trimmed], "save", notify);
     await get().loadProjects({ silent: true });
     const count = Object.keys(lock.skills).length;
     notify(
@@ -426,7 +390,6 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
       notify(`Failed to save profile: ${err instanceof Error ? err.message : String(err)}`, "error");
       return false;
     }
-    await commitProfiles(sourceRepo, [trimmed], "save", notify);
     await get().loadProjects({ silent: true });
     notify(
       localOnly.length > 0
@@ -472,7 +435,6 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
         failed.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-    await commitProfiles(sourceRepo, [...addTo, ...removeFrom], "update", notify);
     await get().loadProjects({ silent: true });
     const parts = [
       addTo.length ? `added to ${addTo.join(", ")}` : "",
@@ -495,7 +457,6 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
       notify(`Profile "${name}" not found`, "warning");
       return false;
     }
-    if (removedFile && sourceRepo) await commitProfiles(sourceRepo, [name], "delete", notify);
     await get().loadProjects({ silent: true });
     notify(`Deleted profile "${name}"`, "success");
     return true;
