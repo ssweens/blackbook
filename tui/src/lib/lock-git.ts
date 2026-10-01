@@ -122,6 +122,41 @@ export async function lockGitCommit(filePath: string, message: string): Promise<
   return result.committed ? { ok: true } : { ok: false, error: "nothing to commit" };
 }
 
+/**
+ * "Install from source repo" — the same move as a skill's sync, one level up:
+ * make the on-disk lock match the source repo. Discards local edits (restores
+ * the committed copy) and fast-forwards any newer commits from the repo. This
+ * is the repo→disk direction.
+ */
+export async function lockInstallFromRepo(filePath: string): Promise<LockGitActionResult> {
+  const status = await lockGitStatus(filePath);
+  if (!status.repoRoot) return { ok: false, error: "not a source repo" };
+  const rel = relative(status.repoRoot, filePath);
+  try {
+    // Untracked: nothing in the repo to restore from.
+    if (status.fileState === "untracked") return { ok: false, error: "not yet in the source repo" };
+    if (status.fileState === "modified") await git(status.repoRoot, ["checkout", "--", rel]);
+    if (status.behind > 0) await git(status.repoRoot, ["pull", "--ff-only"], 30000);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message.split("\n")[0] : String(e) };
+  }
+}
+
+/**
+ * "Update source repo from disk" — the same move as a skill's pullback: push
+ * the local lock up into the source repo. Commits the local edits (if any) and
+ * pushes. This is the disk→repo direction.
+ */
+export async function lockUpdateSourceRepo(filePath: string, message: string): Promise<LockGitActionResult> {
+  const status = await lockGitStatus(filePath);
+  if (status.fileState !== "clean") {
+    const committed = await lockGitCommit(filePath, message);
+    if (!committed.ok) return committed;
+  }
+  return lockGitPush(filePath);
+}
+
 
 /**
  * A DiffTarget for a lock file so it renders through the same DiffDetail the
@@ -134,7 +169,7 @@ export async function buildLockDiffTarget(filePath: string, title: string): Prom
   const repoRoot = findGitRoot(filePath.replace(/\/[^/]*$/, "") || "/");
   if (!repoRoot) return null;
   const rel = relative(repoRoot, filePath);
-  const instance = { toolId: "git", instanceId: "working", instanceName: "working tree", configDir: repoRoot };
+  const instance = { toolId: "source", instanceId: "local", instanceName: "local", configDir: repoRoot };
 
   // Materialize the committed/upstream side to a temp file to diff against.
   let ref: string | null = null;

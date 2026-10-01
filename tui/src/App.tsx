@@ -335,7 +335,7 @@ export function App() {
   const openSkillFiles = (skill: StandaloneSkill) => setSkillFileBrowser(skill);
   // Skill → profile membership picker, opened from skill detail.
   const [skillProfilesTarget, setSkillProfilesTarget] = useState<StandaloneSkill | null>(null);
-  // Git detail (diff/pull/push) for a skill-lock file, opened from Projects/Profiles.
+  // Source-repo detail (diff + install/update) for a skill-lock file, opened from Projects/Profiles.
   const [lockDetail, setLockDetail] = useState<{ filePath: string; label: string; displayPath: string } | null>(null);
   const openLockDetailForProfile = (name: string) => {
     const sourceRepo = getConfigRepoPath();
@@ -343,7 +343,7 @@ export function App() {
     setLockDetail({ filePath: profileLockPath(sourceRepo, name), label: `${name} profile`, displayPath: `${basename(sourceRepo)}/profiles/${name}.skills-lock.json` });
   };
   const openLockDetailForProject = (projectPath: string, name: string, synthetic?: boolean) => {
-    if (synthetic) { notify("The Global workspace lock (~/.agents/.skill-lock.json) isn't in a git repo", "warning"); return; }
+    if (synthetic) { notify("The Global workspace lock (~/.agents/.skill-lock.json) isn't in a source repo", "warning"); return; }
     setLockDetail({ filePath: join(projectPath, "skills-lock.json"), label: `${name} project`, displayPath: `${name}/skills-lock.json` });
   };
   const openSkillProfiles = (skill: StandaloneSkill) => {
@@ -2131,7 +2131,7 @@ export function App() {
         }
         return;
       }
-      // Git detail (diff/pull/push) for the selected project's skills-lock.json.
+      // Source-repo detail (diff + install/update) for the selected project's skills-lock.json.
       if (input === "g") {
         const target = projectDetailPath ? projects.find((p) => p.path === projectDetailPath) : projects[selectedIndex];
         if (target) openLockDetailForProject(target.path, target.name, target.synthetic);

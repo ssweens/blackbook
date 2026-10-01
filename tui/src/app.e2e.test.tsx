@@ -1874,13 +1874,13 @@ describe("App E2E — Scrolling and search on Projects and Profiles", () => {
   });
 });
 
-describe("App E2E — Lock file git detail", () => {
+describe("App E2E — Lock file source-repo detail", () => {
   beforeEach(() => {
     setupMocks();
     useStore.setState(defaultStoreState());
   });
 
-  it("opens the git detail for a project's skills-lock.json with g, showing status and diff", { timeout: 30000 }, async () => {
+  it("opens the source-repo detail for a project's skills-lock.json with g, showing skill-style status and diff", { timeout: 30000 }, async () => {
     const repo = mkdtempSync(join(tmpdir(), "blackbook-lockdetail-"));
     execSync("git init -q", { cwd: repo });
     execSync("git config user.email t@e && git config user.name T", { cwd: repo });
@@ -1895,7 +1895,7 @@ describe("App E2E — Lock file git detail", () => {
     vi.mocked(buildFileDiffTarget).mockReturnValue({
       kind: "file",
       title: "demo project lock",
-      instance: { toolId: "git", instanceId: "working", instanceName: "working tree", configDir: repo },
+      instance: { toolId: "source", instanceId: "local", instanceName: "local", configDir: repo },
       files: [{ id: "skills-lock.json", displayPath: "skills-lock.json", sourcePath: committed, targetPath: join(repo, "skills-lock.json"), status: "modified", linesAdded: 1, linesRemoved: 1, sourceMtime: null, targetMtime: null }],
     });
     const project: ProjectInfo = { path: repo, name: "demo", exists: true, hasAgentsDir: true, skills: [], available: [] };
@@ -1906,21 +1906,22 @@ describe("App E2E — Lock file git detail", () => {
     });
     const { stdin, stdout, unmount } = render(<App />);
     try {
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("demo") && f.includes("g git"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("demo") && f.includes("g source repo"));
       await settleInput();
       await settleInput();
       sendKey(stdin, "g");
       // Detail opens synchronously; its status + diff are spawned git processes,
-      // so allow generous time under vitest. Status reads in plain language, and
-      // the diff renders through the shared DiffDetail (source repo vs working).
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("demo project lock") && f.includes("View diff"), 15000);
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Local changes not saved"), 15000);
-      sendKey(stdin, KEYS.enter); // View diff → DiffDetail
+      // so allow generous time under vitest. It renders through the same
+      // ItemDetail the skill views use: a "name: Drifted +N -N (Enter view diff)"
+      // status row, then the skill-vocabulary sync actions.
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("demo project lock") && f.includes("Drifted"), 15000);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Install from source repo") && f.includes("Update source repo from disk"), 15000);
+      sendKey(stdin, KEYS.enter); // diff status row → DiffDetail
       await waitForFrame(stdout.lastFrame, (f) => f.includes("blast-radius") && f.includes("source repo") && f.includes("↑/↓ scroll"), 15000);
       sendKey(stdin, KEYS.escape); // close diff → back to the action list
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("View diff") && !f.includes("↑/↓ scroll"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Update source repo from disk") && !f.includes("↑/↓ scroll"));
       sendKey(stdin, KEYS.escape); // close detail → back to project list
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("g git") && !f.includes("demo project lock"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("g source repo") && !f.includes("demo project lock"));
     } finally {
       unmount();
       rmSync(repo, { recursive: true, force: true });

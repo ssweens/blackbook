@@ -603,7 +603,7 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenLockDetail
       )}
       <Box marginTop={1}>
         <Text color="gray" wrap="truncate-end">
-          {listPosition ? `${listPosition} · ` : ""}n new · Enter/e edit · g git · d delete{names.length > 0 ? " · apply from a workspace with P" : ""}
+          {listPosition ? `${listPosition} · ` : ""}n new · Enter/e edit · g source repo · d delete{names.length > 0 ? " · apply from a workspace with P" : ""}
         </Text>
       </Box>
     </Box>

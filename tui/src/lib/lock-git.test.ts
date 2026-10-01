@@ -3,7 +3,8 @@ import { execFileSync } from "child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { lockGitStatus, lockGitDiff, lockGitCommit, lockGitPush } from "./lock-git.js";
+import { readFileSync } from "fs";
+import { lockGitStatus, lockGitDiff, lockGitCommit, lockGitPush, lockInstallFromRepo, lockUpdateSourceRepo } from "./lock-git.js";
 
 let repo: string;
 let lock: string;
@@ -60,5 +61,31 @@ describe("lockGitCommit / lockGitPush", () => {
     const pushed = await lockGitPush(lock);
     expect(pushed.ok).toBe(false);
     expect(pushed.error).toBeTruthy();
+  });
+});
+
+describe("lockInstallFromRepo (repo → disk)", () => {
+  it("discards local edits, restoring the committed copy", async () => {
+    writeFileSync(lock, '{"version":1,"skills":{"local":1}}\n');
+    expect((await lockGitStatus(lock)).fileState).toBe("modified");
+    expect(await lockInstallFromRepo(lock)).toEqual({ ok: true });
+    expect((await lockGitStatus(lock)).fileState).toBe("clean");
+    expect(readFileSync(lock, "utf-8")).toBe('{"version":1,"skills":{}}\n');
+  });
+
+  it("refuses when the lock isn't in the repo yet", async () => {
+    const untracked = join(repo, "other.json");
+    writeFileSync(untracked, "{}\n");
+    const r = await lockInstallFromRepo(untracked);
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe("lockUpdateSourceRepo (disk → repo)", () => {
+  it("commits local edits, then push fails cleanly with no remote", async () => {
+    writeFileSync(lock, '{"version":1,"skills":{"y":1}}\n');
+    const r = await lockUpdateSourceRepo(lock, "update");
+    expect(r.ok).toBe(false); // no remote to push to
+    expect((await lockGitStatus(lock)).fileState).toBe("clean"); // but it committed
   });
 });
