@@ -1929,6 +1929,30 @@ describe("App E2E — Lock file source-repo detail", () => {
     }
   });
 
+  it("shows 'no lock file' (not 'in sync') for a project with no skills-lock.json", { timeout: 30000 }, async () => {
+    const repo = mkdtempSync(join(tmpdir(), "blackbook-nolock-"));
+    execSync("git init -q", { cwd: repo });
+    execSync("git config user.email t@e && git config user.name T", { cwd: repo });
+    writeFileSync(join(repo, "README.md"), "x\n");
+    execSync("git add -A && git commit -qm init", { cwd: repo });
+    // No skills-lock.json committed or on disk.
+    const project: ProjectInfo = { path: repo, name: "bare", exists: true, hasAgentsDir: false, skills: [], available: [] };
+    await settleInput();
+    useStore.setState({
+      tab: "projects", projects: [project], projectsLoaded: true, projectDetailPath: null,
+      selectedIndex: 0, loadProjects: vi.fn().mockResolvedValue(undefined), tools: createToolInstances(),
+    });
+    const { stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("bare") && f.includes("no lock file"), 15000);
+      // It must NOT read as in sync for a missing lock.
+      if (stdout.lastFrame()?.includes("in sync")) throw new Error("missing lock wrongly shown as in sync");
+    } finally {
+      unmount();
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("shows a lock sync hint on the project list row", { timeout: 30000 }, async () => {
     const repo = mkdtempSync(join(tmpdir(), "blackbook-lockhint-"));
     execSync("git init -q", { cwd: repo });

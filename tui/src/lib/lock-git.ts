@@ -123,19 +123,20 @@ export interface LockSyncHint {
 }
 
 /**
- * Whether a hint is worth showing in a list. "No lock file" and "not in a
- * source repo" are nothing to sync, so they're hidden rather than shown as a
- * state.
+ * Whether a computed hint should be shown. Only the not-yet-computed state
+ * (undefined) is suppressed — every real state, including "no lock file" and
+ * "not in a source repo", is shown so a missing lock is never silently
+ * mistaken for "in sync".
  */
 export function lockHintWorthShowing(hint: LockSyncHint | undefined): boolean {
-  return !!hint && hint.state !== "no-lock" && hint.state !== "no-repo";
+  return !!hint;
 }
 
 /** Map a lock's git status (+ diff counts) to a sync hint — the single source for both the detail and the list. */
 export function summarizeLockSync(s: LockGitStatus | null, added = 0, removed = 0): LockSyncHint {
   if (!s) return { state: "no-repo", label: "Checking…", color: "gray", added, removed };
   if (!s.exists) return { state: "no-lock", label: "No lock file", color: "gray", added, removed };
-  if (!s.isRepo) return { state: "no-repo", label: "No source repo", color: "gray", added, removed };
+  if (!s.isRepo) return { state: "no-repo", label: "Not in a source repo", color: "gray", added, removed };
   if (s.fileState === "untracked") return { state: "untracked", label: "Not in source repo", color: "yellow", added, removed };
   if (s.fileState === "modified") return { state: "drifted", label: "Drifted", color: "yellow", added, removed };
   if (s.behind > 0 && s.ahead > 0) return { state: "diverged", label: "Diverged from source repo", color: "red", added, removed };
