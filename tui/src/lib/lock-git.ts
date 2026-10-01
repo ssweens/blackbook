@@ -1,6 +1,11 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { mkdtempSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { basename, join, relative } from "path";
 import { commitLockFiles, findGitRoot } from "./lock-commit.js";
+import { buildFileDiffTarget } from "./diff.js";
+import type { DiffTarget } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -115,4 +120,39 @@ export async function lockGitPush(filePath: string): Promise<LockGitActionResult
 export async function lockGitCommit(filePath: string, message: string): Promise<LockGitActionResult> {
   const result = await commitLockFiles([filePath], message, { push: false });
   return result.committed ? { ok: true } : { ok: false, error: "nothing to commit" };
+}
+
+
+/**
+ * A DiffTarget for a lock file so it renders through the same DiffDetail the
+ * skill views use: source = the committed/upstream version (base, shown as "-"),
+ * target = the working tree (head, local edits shown as "+"). Returns null when
+ * the file isn't in a git repo. When there is no committed/upstream version yet,
+ * the whole working file shows as added.
+ */
+export async function buildLockDiffTarget(filePath: string, title: string): Promise<DiffTarget | null> {
+  const repoRoot = findGitRoot(filePath.replace(/\/[^/]*$/, "") || "/");
+  if (!repoRoot) return null;
+  const rel = relative(repoRoot, filePath);
+  const instance = { toolId: "git", instanceId: "working", instanceName: "working tree", configDir: repoRoot };
+
+  // Materialize the committed/upstream side to a temp file to diff against.
+  let ref: string | null = null;
+  try { await execFileAsync("git", ["-C", repoRoot, "rev-parse", "--verify", "@{u}"], { timeout: 10000 }); ref = "@{u}"; }
+  catch { try { await execFileAsync("git", ["-C", repoRoot, "rev-parse", "--verify", "HEAD"], { timeout: 10000 }); ref = "HEAD"; } catch { ref = null; } }
+
+  const dir = mkdtempSync(join(tmpdir(), "bb-lockdiff-"));
+  const sourcePath = join(dir, basename(filePath));
+  if (ref) {
+    try {
+      const { stdout } = await execFileAsync("git", ["-C", repoRoot, "show", `${ref}:${rel}`], { timeout: 10000, maxBuffer: 10 * 1024 * 1024 });
+      writeFileSync(sourcePath, stdout);
+    } catch {
+      // File not present at that ref (new, untracked): leave no source so it diffs as all-added.
+      return buildFileDiffTarget(title, basename(filePath), join(dir, "__absent__"), filePath, instance);
+    }
+  } else {
+    return buildFileDiffTarget(title, basename(filePath), join(dir, "__absent__"), filePath, instance);
+  }
+  return buildFileDiffTarget(title, basename(filePath), sourcePath, filePath, instance);
 }

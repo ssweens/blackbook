@@ -1887,6 +1887,17 @@ describe("App E2E — Lock file git detail", () => {
     writeFileSync(join(repo, "skills-lock.json"), '{"version":1,"skills":{}}\n');
     execSync("git add -A && git commit -qm init", { cwd: repo });
     writeFileSync(join(repo, "skills-lock.json"), '{"version":1,"skills":{"blast-radius":1}}\n');
+    // The suite mocks ./lib/diff.js, so buildLockDiffTarget's call to
+    // buildFileDiffTarget is stubbed. Point it at the real committed-vs-working
+    // files so DiffDetail renders the actual diff (computeFileDetail is real).
+    const committed = join(repo, ".committed.json");
+    writeFileSync(committed, '{"version":1,"skills":{}}\n');
+    vi.mocked(buildFileDiffTarget).mockReturnValue({
+      kind: "file",
+      title: "demo project lock",
+      instance: { toolId: "git", instanceId: "working", instanceName: "working tree", configDir: repo },
+      files: [{ id: "skills-lock.json", displayPath: "skills-lock.json", sourcePath: committed, targetPath: join(repo, "skills-lock.json"), status: "modified", linesAdded: 1, linesRemoved: 1, sourceMtime: null, targetMtime: null }],
+    });
     const project: ProjectInfo = { path: repo, name: "demo", exists: true, hasAgentsDir: true, skills: [], available: [] };
     await settleInput();
     useStore.setState({
@@ -1899,16 +1910,17 @@ describe("App E2E — Lock file git detail", () => {
       await settleInput();
       await settleInput();
       sendKey(stdin, "g");
-      // The overlay opens synchronously; its git status + diff are spawned
-      // processes, so allow generous time for them under vitest.
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Lock") && f.includes("demo project"), 15000);
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("uncommitted changes"), 15000);
-      sendKey(stdin, KEYS.enter); // View diff
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("blast-radius") && f.includes("close diff"), 15000);
-      sendKey(stdin, KEYS.escape); // close diff
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("View diff") && !f.includes("close diff"));
+      // Detail opens synchronously; its status + diff are spawned git processes,
+      // so allow generous time under vitest. Status reads in plain language, and
+      // the diff renders through the shared DiffDetail (source repo vs working).
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("demo project lock") && f.includes("View diff"), 15000);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Local changes not saved"), 15000);
+      sendKey(stdin, KEYS.enter); // View diff → DiffDetail
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("blast-radius") && f.includes("source repo") && f.includes("↑/↓ scroll"), 15000);
+      sendKey(stdin, KEYS.escape); // close diff → back to the action list
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("View diff") && !f.includes("↑/↓ scroll"));
       sendKey(stdin, KEYS.escape); // close detail → back to project list
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("g git") && !f.includes("demo project"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("g git") && !f.includes("demo project lock"));
     } finally {
       unmount();
       rmSync(repo, { recursive: true, force: true });
