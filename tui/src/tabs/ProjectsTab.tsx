@@ -135,7 +135,7 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
           })
         )}
         <Text color="gray" wrap="truncate-end">
-          {position ? `${position} · ` : ""}{search && rows.length !== allCount ? `${rows.length} of ${allCount} match · ` : ""}/ search · ↑↓ scroll · Esc back
+          {position ? `${position} · ` : ""}{search && rows.length !== allCount ? `${rows.length} of ${allCount} match · ` : ""}Enter details · / search · ↑↓ scroll · Esc back
         </Text>
       </Box>
     );

@@ -117,9 +117,10 @@ interface TabContentProps {
   onSearchFocus: () => void;
   onSearchBlur: () => void;
   onSettingsTextInputActiveChange: (active: boolean) => void;
+  onOpenSkillDetail: (name: string) => void;
 }
 
-function TabContent({ tab, searchFocused, onSearchFocus, onSearchBlur, onSettingsTextInputActiveChange }: TabContentProps) {
+function TabContent({ tab, searchFocused, onSearchFocus, onSearchBlur, onSettingsTextInputActiveChange, onOpenSkillDetail }: TabContentProps) {
   const contentHeight = useContentHeight();
   switch (tab) {
     case "discover":
@@ -156,7 +157,7 @@ function TabContent({ tab, searchFocused, onSearchFocus, onSearchBlur, onSetting
         />
       );
     case "profiles":
-      return <ProfilesTab contentHeight={contentHeight} />;
+      return <ProfilesTab contentHeight={contentHeight} onOpenSkillDetail={onOpenSkillDetail} />;
     case "settings":
       return <SettingsTab onTextInputActiveChange={onSettingsTextInputActiveChange} />;
   }
@@ -1626,8 +1627,22 @@ export function App() {
     }
   };
 
+  // Open the full skill detail for a skill name, resolved against the loaded
+  // standalone skills (which include source-repo-only skills). Used from the
+  // Projects drill-in and the Profiles builder so a skill's detail is reachable
+  // from the definition views, not just the Installed tab.
+  const openSkillDetailByName = (name: string): void => {
+    const skill = standaloneSkills.find((s) => s.name === name);
+    if (!skill) {
+      notify(`No detail available for ${name}`, "warning");
+      return;
+    }
+    setDetail({ kind: "skill", data: skill });
+    setActionIndex(0);
+  };
+
   const handleEnterOnList = () => {
-    // Projects tab: Enter drills into the selected project's skill list.
+    // Projects tab: Enter drills into a project, or opens the selected skill's detail.
     if (tab === "projects") {
       if (!projectDetailPath) {
         const target = projects[selectedIndex];
@@ -1636,7 +1651,11 @@ export function App() {
           setSearch("");
           setSelectedIndex(0);
         }
+        return;
       }
+      const detailProject = projects.find((p) => p.path === projectDetailPath);
+      const row = detailProject ? buildProjectSkillRows(detailProject, search)[selectedIndex] : null;
+      if (row) openSkillDetailByName(row.kind === "present" ? row.skill.name : row.available.name);
       return;
     }
 
@@ -2780,6 +2799,7 @@ export function App() {
             onSearchFocus={() => setSearchFocused(true)}
             onSearchBlur={() => setSearchFocused(false)}
             onSettingsTextInputActiveChange={setSettingsTextInputActive}
+            onOpenSkillDetail={openSkillDetailByName}
           />
         );
     }

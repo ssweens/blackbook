@@ -126,6 +126,7 @@ Blackbook opens on the **Sync** tab by default.
 
 - **Discover/Installed**: `s` cycle sort (name/installed), `r` reverse sort, `R` refresh tab data (`d` opens diff for selected managed file in Installed)
 - **Installed plugins** are grouped under a collapsible header per marketplace. `Enter` on a header collapses or expands that marketplace; a search expands every group so matches stay visible.
+- **Projects and Profiles**: `Enter` opens the highlighted skill's detail view (contents, origin, browse files, add to profiles). In a project's drill-in, `p`/`u`/`e`/`d` still push, pull, toggle and remove. In the profile builder, saving moved off `Enter` to `S` so `Enter` can open the skill, and `Enter` on a marketplace or namespace header expands or collapses it.
 - **Marketplaces**: `u` update marketplace, `r` remove marketplace, `R` refresh all marketplaces/packages
 - **Tools**: `Enter` open detail, `i` install, `u` update, `d` uninstall, `Space` toggle enabled, `e` edit config dir, `R` refresh detection
 - **Projects**: `Enter` open a project, `/` search its skills, `P` apply a profile, `S` save its lock as a profile, `a` add, `d` remove. Long lists scroll and show their position.

@@ -29,9 +29,12 @@ import { globalLockEntries } from "../lib/skill-profiles.js";
  * equivalent to selecting each of its children — applyProfile needs no change.
  */
 
-type Mode =
-  | { kind: "list" }
-  | {
+// The detail overlay replaces this tab while open, unmounting it. Stash the
+// in-progress edit draft at module scope so it is restored on remount instead
+// of resetting to the profile list.
+let stashedEditMode: EditMode | null = null;
+
+type EditMode = {
       kind: "edit";
       original: string | null;
       name: string;
@@ -44,7 +47,11 @@ type Mode =
       searching: boolean;
       /** Show only the selected skills, flat. */
       selectedOnly: boolean;
-    }
+    };
+
+type Mode =
+  | { kind: "list" }
+  | EditMode
   | { kind: "confirmDelete"; name: string };
 
 /** A flattened, navigable row in the builder tree. */
@@ -67,6 +74,8 @@ function profileSources(lock: { skills: Record<string, { source: string }> }): s
 
 export interface ProfilesTabProps {
   contentHeight: number;
+  /** Open the full skill detail overlay for a skill name (App owns the overlay). */
+  onOpenSkillDetail: (name: string) => void;
 }
 
 /**
@@ -101,7 +110,7 @@ export function buildRows(
   return rows;
 }
 
-export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
+export function ProfilesTab({ contentHeight, onOpenSkillDetail }: ProfilesTabProps) {
   const profiles = useStore((s) => s.profiles);
   const profileLocks = useStore((s) => s.profileLocks);
   const saveProfile = useStore((s) => s.saveProfile);
@@ -109,7 +118,14 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
   const tools = useStore((s) => s.tools);
   const toolDetection = useStore((s) => s.toolDetection);
 
-  const [mode, setMode] = useState<Mode>({ kind: "list" });
+  const [mode, setMode] = useState<Mode>(() => {
+    if (stashedEditMode) {
+      const restored = stashedEditMode;
+      stashedEditMode = null;
+      return restored;
+    }
+    return { kind: "list" };
+  });
   const [listIndex, setListIndex] = useState(0);
   const [consultation, setConsultation] = useState<ProfileConsultation | null>(null);
   const consultationAbortRef = useRef<AbortController | null>(null);
@@ -403,7 +419,8 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
       setMode({ ...mode, selected });
     } else if (input === "r") {
       setMode({ ...mode, naming: true });
-    } else if (key.return) {
+    } else if (input === "S") {
+      // Save moved off Enter so Enter can open the highlighted skill's detail.
       // Keep the source repo's skill order stable in config (sorted).
       void saveProfile(mode.name, [...mode.selected].sort(), mode.original).then((ok) => {
         if (ok && mode.original && mode.original !== mode.name.trim()) {
@@ -412,6 +429,19 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
         }
       });
       setMode({ kind: "list" });
+    } else if (key.return) {
+      if (row?.kind === "namespace") {
+        // Enter on a namespace header expands/collapses it.
+        const expanded = new Set(mode.expanded);
+        if (expanded.has(row.name)) expanded.delete(row.name);
+        else expanded.add(row.name);
+        setMode({ ...mode, expanded });
+      } else if (row?.kind === "skill") {
+        // Enter on a skill opens its detail. Stash the draft so returning from
+        // the detail overlay restores the in-progress profile.
+        stashedEditMode = mode;
+        onOpenSkillDetail(row.name);
+      }
     }
   });
 
@@ -533,7 +563,7 @@ export function ProfilesTab({ contentHeight }: ProfilesTabProps) {
           })
         )}
         <Text color="gray" wrap="truncate-end">
-          {position ? `${position} · ` : ""}Space toggle · Enter save · Esc {filtered ? "clear filter" : "cancel"} · / search · v {mode.selectedOnly ? "all" : "selected"} · →/← expand · r rename · c consult
+          {position ? `${position} · ` : ""}Space toggle · Enter details · S save · Esc {filtered ? "clear filter" : "cancel"} · / search · v {mode.selectedOnly ? "all" : "selected"} · →/← expand · r rename · c consult
         </Text>
       </Box>
     );

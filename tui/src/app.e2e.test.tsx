@@ -515,6 +515,12 @@ const defaultStoreState = () => ({
   discoverSubView: null,
   collapsedPluginMarketplaces: new Set<string>(),
   managedItems: [],
+  projects: [] as never,
+  projectsLoaded: false,
+  projectDetailPath: null,
+  profiles: {},
+  profileLocks: {},
+  standaloneSkills: [] as never,
 });
 
 function setupMocks() {
@@ -1844,7 +1850,7 @@ describe("App E2E — Scrolling and search on Projects and Profiles", () => {
       expect(new Set(lines.map((l) => l.search(/ skills?\b/))).size).toBe(1);
 
       sendKey(stdin, KEYS.enter); // edit Coding
-      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Enter save") && frame.includes("anthropics/skills"));
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("S save") && frame.includes("anthropics/skills"));
       sendKey(stdin, "/");
       await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Search all skills"));
       act(() => {
@@ -1857,9 +1863,91 @@ describe("App E2E — Scrolling and search on Projects and Profiles", () => {
       await waitForFrame(stdout.lastFrame, (frame) => frame.includes("2 of"));
       sendKey(stdin, "v");
       await waitForFrame(stdout.lastFrame, (frame) => frame.includes("showing selected only"));
-      sendKey(stdin, KEYS.enter);
+      sendKey(stdin, "S");
       await waitForFrame(stdout.lastFrame, () => saveProfile.mock.calls.length === 1);
       expect(saveProfile).toHaveBeenCalledWith("Coding", ["deslop", "docx"], "Coding");
+    } finally {
+      unmount();
+    }
+  });
+});
+
+describe("App E2E — Skill detail from Projects and Profiles", () => {
+  beforeEach(() => {
+    setupMocks();
+    useStore.setState(defaultStoreState());
+  });
+
+  const resolvableSkill = {
+    name: "qc-review",
+    installations: [{ toolId: "opencode", instanceId: "default", instanceName: "OpenCode", diskPath: "/d/qc-review" }],
+    diskPath: "/d/qc-review",
+    toolId: "opencode",
+    instanceId: "default",
+    instanceName: "OpenCode",
+    sourcePath: "/repo/skills/qc-review",
+  };
+
+  it("opens a skill's detail with Enter from a project's drill-in view", async () => {
+    const project: ProjectInfo = {
+      path: "/tmp/proj", name: "Proj", exists: true, hasAgentsDir: true,
+      skills: [{ name: "qc-review", diskPath: "/d/qc-review", enabled: true, status: "in-sync", sourcePath: "/repo/skills/qc-review" }],
+      available: [],
+    };
+    // Drain any loadProjects still in flight from a previous test so it can't
+    // overwrite the projects we set below, then neutralize further reloads.
+    await settleInput();
+    useStore.setState({
+      tab: "projects",
+      projects: [project],
+      projectsLoaded: true,
+      projectDetailPath: "/tmp/proj",
+      selectedIndex: 0,
+      standaloneSkills: [resolvableSkill] as never,
+      loadProjects: vi.fn().mockResolvedValue(undefined),
+      tools: createToolInstances(),
+    });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("qc-review") && f.includes("Enter details"));
+      sendKey(stdin, KEYS.enter);
+      // Skill detail overlay: the file browser action is unique to it.
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("qc-review") && f.includes("Browse skill files"));
+      // Esc returns to the project drill-in list.
+      sendKey(stdin, KEYS.escape);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Enter details") && !f.includes("Browse skill files"));
+    } finally {
+      unmount();
+    }
+  });
+
+  it("opens a skill's detail with Enter in the profile builder and keeps the draft; S saves", async () => {
+    const saveProfile = vi.fn().mockResolvedValue(true);
+    useStore.setState({
+      tab: "profiles",
+      profiles: { web: ["qc-review"] },
+      profileLocks: { web: { version: 1, skills: { "qc-review": { source: "o/r", sourceType: "github" } } } } as never,
+      standaloneSkills: [resolvableSkill] as never,
+      tools: createToolInstances(),
+      saveProfile,
+    });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("web"));
+      sendKey(stdin, KEYS.enter); // edit "web" → builder
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Enter details") && f.includes("S save"));
+      // The one group is the lock source "o/r"; expand it, then open the skill.
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("o/r"));
+      sendKey(stdin, KEYS.enter); // Enter on the namespace header expands it
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("qc-review"));
+      sendKey(stdin, KEYS.down);  // move to the skill row
+      sendKey(stdin, KEYS.enter); // open its detail
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Browse skill files"));
+      sendKey(stdin, KEYS.escape); // back to the builder, draft intact
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Enter details") && f.includes("S save") && !f.includes("Browse skill files"));
+      sendKey(stdin, "S");         // save
+      await waitForFrame(stdout.lastFrame, () => saveProfile.mock.calls.length === 1);
+      expect(saveProfile).toHaveBeenCalledWith("web", ["qc-review"], "web");
     } finally {
       unmount();
     }
@@ -2031,7 +2119,7 @@ describe("App E2E — Advisory Consultation", () => {
     try {
       await waitForFrame(stdout.lastFrame, (frame) => frame.includes("web"));
       sendKey(stdin, KEYS.enter);
-      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Enter save"));
+      await waitForFrame(stdout.lastFrame, (frame) => frame.includes("S save"));
       sendKey(stdin, "c");
       await waitForFrame(stdout.lastFrame, (frame) => frame.includes("What would you like the advisor to review?"));
       act(() => {
@@ -2059,7 +2147,7 @@ describe("App E2E — Advisory Consultation", () => {
       sendKey(stdin, KEYS.space);
       sendKey(stdin, KEYS.enter);
       await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Space toggle"));
-      sendKey(stdin, KEYS.enter);
+      sendKey(stdin, "S");
       await waitForFrame(stdout.lastFrame, () => saveProfile.mock.calls.length === 1);
       expect(saveProfile).toHaveBeenCalledWith("web", [], "web");
     } finally {

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- 2026-09-30 — A skill's detail view is reachable from the definition views. `Enter` on a skill in a project's drill-in or in the profile builder opens the same detail (contents, origin, browse files, add to profiles) available on the Installed tab. In the profile builder, saving moved from `Enter` to `S`, and `Enter` on a namespace header expands or collapses it. The in-progress profile draft is preserved while the detail is open.
 - 2026-09-30 — The Installed tab groups plugins under a collapsible header per marketplace. `Enter` on a header collapses or expands it, so a large catalog like claude-plugins-official folds to one line. A search expands every group so matches stay visible.
 - 2026-09-29 — Skill detail has an `Add to profiles…` action: a checklist of profiles with the skill's current memberships checked. Saving adds or removes the skill in each changed profile's `skills-lock.json` in one pass, taking its source from any profile that has it, then the global lock or source repo. A skill with no known source is refused with an error.
 - 2026-09-29 — Search and scrolling on Projects and Profiles. A project's skill list is searchable with `/` and scrolls past the screen height instead of stopping at "…and N more"; the project list scrolls too. The profile builder searches every skill as a flat list (`/`), can show only the selected skills (`v`), and pages with `PgUp`/`PgDn`. Long lists show their position, such as `11–30 of 52`.
