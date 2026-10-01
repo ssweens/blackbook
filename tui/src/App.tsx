@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo, useRef } from "react";
 import { join, dirname, basename } from "path";
+import { homedir } from "os";
 import { existsSync, lstatSync, rmSync, cpSync, copyFileSync, mkdirSync } from "fs";
 import { Box, Text, useInput, useApp } from "ink";
 import { useStore, withSpinner } from "./lib/store.js";
@@ -46,6 +47,7 @@ import { SaveProfileModal } from "./components/SaveProfileModal.js";
 import { SkillProfilesModal } from "./components/SkillProfilesModal.js";
 import { workspaceLock, profileLockPath } from "./lib/skill-profiles.js";
 import { LockDetail } from "./components/LockDetail.js";
+import { ProfileDetail } from "./components/ProfileDetail.js";
 import { getPluginToolStatus } from "./lib/plugin-status.js";
 import {
   syncPluginInstances,
@@ -119,10 +121,10 @@ interface TabContentProps {
   onSearchBlur: () => void;
   onSettingsTextInputActiveChange: (active: boolean) => void;
   onOpenSkillDetail: (name: string) => void;
-  onOpenLockDetail: (name: string) => void;
+  onOpenProfileDetail: (name: string) => void;
 }
 
-function TabContent({ tab, searchFocused, onSearchFocus, onSearchBlur, onSettingsTextInputActiveChange, onOpenSkillDetail, onOpenLockDetail }: TabContentProps) {
+function TabContent({ tab, searchFocused, onSearchFocus, onSearchBlur, onSettingsTextInputActiveChange, onOpenSkillDetail, onOpenProfileDetail }: TabContentProps) {
   const contentHeight = useContentHeight();
   switch (tab) {
     case "discover":
@@ -159,7 +161,7 @@ function TabContent({ tab, searchFocused, onSearchFocus, onSearchBlur, onSetting
         />
       );
     case "profiles":
-      return <ProfilesTab contentHeight={contentHeight} onOpenSkillDetail={onOpenSkillDetail} onOpenLockDetail={onOpenLockDetail} />;
+      return <ProfilesTab contentHeight={contentHeight} onOpenSkillDetail={onOpenSkillDetail} onOpenProfileDetail={onOpenProfileDetail} />;
     case "settings":
       return <SettingsTab onTextInputActiveChange={onSettingsTextInputActiveChange} />;
   }
@@ -318,7 +320,9 @@ export function App() {
   const adoptUnmanagedSkills = useStore((s) => s.adoptUnmanagedSkills);
   const unmanagedSkills = useMemo(() => collectUnmanagedSkills(projects), [projects]);
   const profiles = useStore((s) => s.profiles);
+  const profileLocks = useStore((s) => s.profileLocks);
   const applyProfile = useStore((s) => s.applyProfile);
+  const installLockToWorkspace = useStore((s) => s.installLockToWorkspace);
   const saveLockAsProfile = useStore((s) => s.saveLockAsProfile);
   const setSkillProfiles = useStore((s) => s.setSkillProfiles);
   const [profileTargetPath, setProfileTargetPath] = useState<string | null>(null);
@@ -337,10 +341,12 @@ export function App() {
   const [skillProfilesTarget, setSkillProfilesTarget] = useState<StandaloneSkill | null>(null);
   // Source-repo detail (diff + install/update) for a skill-lock file, opened from Projects/Profiles.
   const [lockDetail, setLockDetail] = useState<{ filePath: string; label: string; displayPath: string } | null>(null);
-  const openLockDetailForProfile = (name: string) => {
-    const sourceRepo = getConfigRepoPath();
-    if (!sourceRepo) { notify("No source repo configured — profiles live in <source repo>/profiles/", "error"); return; }
-    setLockDetail({ filePath: profileLockPath(sourceRepo, name), label: `${name} profile`, displayPath: `${basename(sourceRepo)}/profiles/${name}.skills-lock.json` });
+  // Profile detail: a skills-style view (install its skills, per-skill status), opened with `g` on the Profiles tab.
+  const [profileDetailName, setProfileDetailName] = useState<string | null>(null);
+  const openProfileDetail = (name: string) => {
+    const lock = useStore.getState().profileLocks[name];
+    if (!lock) { notify(`Profile "${name}" has no lock yet — edit and save it first`, "warning"); return; }
+    setProfileDetailName(name);
   };
   const openLockDetailForProject = (projectPath: string, name: string, synthetic?: boolean) => {
     if (synthetic) { notify("The Global workspace lock (~/.agents/.skill-lock.json) isn't in a source repo", "warning"); return; }
@@ -1521,7 +1527,7 @@ export function App() {
   type OverlayKind =
     | "consultation" | "sourceSetupWizard" | "diff" | "missingSummary" | "editToolModal"
     | "addMarketplace" | "addPiMarketplace" | "addProject" | "adoptSkills" | "applyProfile" | "saveLockProfile" | "toolActionModal"
-    | "toolDetail" | "skillFileBrowser" | "skillProfiles" | "lockDetail" | "itemDetail" | "marketplaceDetail";
+    | "toolDetail" | "skillFileBrowser" | "skillProfiles" | "lockDetail" | "profileDetail" | "itemDetail" | "marketplaceDetail";
   interface OverlayEntry {
     kind: OverlayKind;
     active: boolean;
@@ -1552,6 +1558,8 @@ export function App() {
     { kind: "skillFileBrowser", active: !!skillFileBrowser, inputMode: "detail", escClose: () => {} },
     { kind: "skillProfiles", active: !!skillProfilesTarget, inputMode: "modal" },
     { kind: "lockDetail", active: !!lockDetail, inputMode: "detail", escClose: () => {} },
+    // ProfileDetail owns its own Esc (back out of the target picker first).
+    { kind: "profileDetail", active: !!profileDetailName, inputMode: "detail", escClose: () => {} },
     { kind: "itemDetail", active: !!activeDetail, inputMode: "detail", escClose: closeItemDetail },
     {
       kind: "marketplaceDetail",
@@ -2787,6 +2795,25 @@ export function App() {
           />
         );
       }
+      case "profileDetail": {
+        const name = profileDetailName!;
+        const lock = profileLocks[name];
+        const targets = [
+          { path: homedir(), label: "Global (~/.agents)" },
+          ...projects.filter((p) => !p.synthetic && p.exists).map((p) => ({ path: p.path, label: `${p.name}  ${p.path}` })),
+        ];
+        return (
+          <ProfileDetail
+            key={name}
+            name={name}
+            lockSkills={lock?.skills ?? {}}
+            targets={targets}
+            onInstall={(target) => installLockToWorkspace(target, lock?.skills ?? {})}
+            onOpenSkillDetail={(skillName) => { setProfileDetailName(null); openSkillDetailByName(skillName); }}
+            onClose={() => setProfileDetailName(null)}
+          />
+        );
+      }
       case "skillProfiles": {
         const skill = skillProfilesTarget!;
         return (
@@ -2840,7 +2867,7 @@ export function App() {
             onSearchBlur={() => setSearchFocused(false)}
             onSettingsTextInputActiveChange={setSettingsTextInputActive}
             onOpenSkillDetail={openSkillDetailByName}
-            onOpenLockDetail={openLockDetailForProfile}
+            onOpenProfileDetail={openProfileDetail}
           />
         );
     }

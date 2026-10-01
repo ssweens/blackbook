@@ -341,6 +341,47 @@ export async function applyProfileToWorkspace(
 }
 
 /**
+ * Install exactly `skillNames` from `lockSkills` into a workspace — the
+ * reconcile primitive behind "Install N skills". Unlike applyProfileToWorkspace
+ * (which only adds skills missing from the workspace LOCK), the caller passes
+ * the on-DISK gap, so a skill that is in the lock yet absent from the agent
+ * skills directory is reinstalled. Project workspaces install for the enabled
+ * agents; the Global workspace installs with `-g`.
+ */
+export async function installLockSkills(
+  workspace: string,
+  lockSkills: Record<string, LockEntry>,
+  skillNames: string[],
+  instances: ToolInstance[],
+): Promise<ApplyResult> {
+  const result: ApplyResult = { added: [], removed: [], errors: [] };
+  const global = isGlobalWorkspace(workspace);
+  const bySource = new Map<string, string[]>();
+  for (const name of skillNames) {
+    const entry = lockSkills[name];
+    if (!entry) { result.errors.push(`${name}: not in lock`); continue; }
+    const src = addSourceFor(entry);
+    bySource.set(src, [...(bySource.get(src) ?? []), name]);
+  }
+  for (const [source, skills] of bySource) {
+    const base = ["add", source, "-y", ...skills.flatMap((s) => ["--skill", s])];
+    if (global) {
+      let ok = true;
+      for (const g of callGroups(instances)) {
+        const r = runSkillsCliSync([...base, "-g", ...g.agents.flatMap((a) => ["-a", a])], g.env);
+        if (!r.ok) { ok = false; result.errors.push(`${source}: ${r.error}`); }
+      }
+      if (ok) result.added.push(...skills);
+    } else {
+      const r = await runSkillsCli([...base, ...enabledSkillAgents().flatMap((a) => ["-a", a])], { cwd: workspace });
+      if (r.code === 0) result.added.push(...skills);
+      else result.errors.push(`${source}: ${summarizeCliFailure(r)}`);
+    }
+  }
+  return result;
+}
+
+/**
  * A workspace's current lock (project or global) as a profile. A `local`
  * entry inside the source repo becomes that repo's remote entry, so the profile
  * works on any machine. Other `local` entries are kept but listed in

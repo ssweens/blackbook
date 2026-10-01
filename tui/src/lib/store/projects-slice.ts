@@ -29,10 +29,12 @@ import {
   writeProfileLock,
   lockAsProfile,
   markProfileApplied,
+  installLockSkills,
   type SkillLockFile,
 } from "../skill-profiles.js";
 import { expandPath } from "../config/path.js";
-import { compareLockToInstall } from "../lock-install-sync.js";
+import { homedir } from "os";
+import { compareLockToInstall, lockInstallGap } from "../lock-install-sync.js";
 
 export type ProjectsSlice = Pick<
   Store,
@@ -61,6 +63,7 @@ export type ProjectsSlice = Pick<
   | "setSkillProfiles"
   | "deleteProfile"
   | "refreshLockSync"
+  | "installLockToWorkspace"
   | "profilesEditing"
   | "setProfilesEditing"
 >;
@@ -96,6 +99,28 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
     const sourceIndex = sourceRepo ? indexSourceSkills(sourceRepo) : new Map<string, string>();
     const entries = targets.map((t) => [t.key, compareLockToInstall(t.skills, t.installedDir, sourceIndex)] as const);
     set((s) => ({ lockSync: { ...s.lockSync, ...Object.fromEntries(entries) } }));
+  },
+
+  installLockToWorkspace: async (targetWorkspace, lockSkills) => {
+    const { notify } = get();
+    const names = Object.keys(lockSkills);
+    if (names.length === 0) { notify("Nothing to install — empty lock", "warning"); return false; }
+    const sourceRepo = getConfigRepoPath();
+    const sourceIndex = sourceRepo ? indexSourceSkills(sourceRepo) : new Map<string, string>();
+    const installedDir = isGlobalWorkspace(targetWorkspace)
+      ? join(homedir(), ".agents", "skills")
+      : join(targetWorkspace, ".agents/skills");
+    const gap = lockInstallGap(lockSkills, installedDir, sourceIndex);
+    const toInstall = [...gap.missing, ...gap.drifted];
+    if (toInstall.length === 0) { notify("Already installed here", "success"); return true; }
+    const result = await installLockSkills(targetWorkspace, lockSkills, toInstall, getToolInstances());
+    await get().loadProjects({ silent: true });
+    if (result.errors.length > 0) {
+      notify(`Installed ${result.added.length}/${toInstall.length}; failed — ${result.errors[0]}`, result.added.length > 0 ? "warning" : "error");
+      return result.added.length > 0;
+    }
+    notify(`Installed ${result.added.length} skill${result.added.length === 1 ? "" : "s"}`, "success");
+    return true;
   },
 
   setProjectDetailPath: (path) => set({ projectDetailPath: path }),

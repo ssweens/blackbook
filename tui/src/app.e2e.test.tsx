@@ -62,7 +62,7 @@
 import React, { act } from "react";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render } from "ink-testing-library";
@@ -1852,7 +1852,7 @@ describe("App E2E — Scrolling and search on Projects and Profiles", () => {
       expect(lines.map((l) => l.trim().replace(/^❯ /, "").split(/\s+/)[0])).toEqual(["Coding", "Docs", "global"]);
       expect(new Set(lines.map((l) => l.search(/ skills?\b/))).size).toBe(1);
 
-      sendKey(stdin, KEYS.enter); // edit Coding
+      sendKey(stdin, "e"); // edit Coding (Enter now opens the profile detail)
       await waitForFrame(stdout.lastFrame, (frame) => frame.includes("S save") && frame.includes("anthropics/skills"));
       sendKey(stdin, "/");
       await waitForFrame(stdout.lastFrame, (frame) => frame.includes("Search all skills"));
@@ -2108,7 +2108,7 @@ describe("App E2E — Skill detail from Projects and Profiles", () => {
     const { stdin, stdout, unmount } = render(<App />);
     try {
       await waitForFrame(stdout.lastFrame, (f) => f.includes("web"));
-      sendKey(stdin, KEYS.enter); // edit "web" → builder
+      sendKey(stdin, "e"); // edit "web" → builder (Enter now opens the profile detail)
       await waitForFrame(stdout.lastFrame, (f) => f.includes("Enter details") && f.includes("S save"));
       // The one group is the lock source "o/r"; expand it, then open the skill.
       await waitForFrame(stdout.lastFrame, (f) => f.includes("o/r"));
@@ -2122,6 +2122,36 @@ describe("App E2E — Skill detail from Projects and Profiles", () => {
       sendKey(stdin, "S");         // save
       await waitForFrame(stdout.lastFrame, () => saveProfile.mock.calls.length === 1);
       expect(saveProfile).toHaveBeenCalledWith("web", ["qc-review"], "web");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("Enter on a profile opens its skills detail; Install asks a target and installs", async () => {
+    const installLockToWorkspace = vi.fn().mockResolvedValue(true);
+    const gh = (source: string) => ({ source, sourceType: "github" });
+    useStore.setState({
+      tab: "profiles",
+      profiles: { Docs: ["docx", "pdf"] },
+      profileLocks: { Docs: { version: 1, skills: { docx: gh("anthropics/skills"), pdf: gh("anthropics/skills") } } } as never,
+      projects: [], projectsLoaded: true,
+      tools: createToolInstances(),
+      installLockToWorkspace,
+    });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Docs"));
+      sendKey(stdin, KEYS.enter); // Enter opens the profile detail
+      // Skills-style detail: lists the profile's skills and an Install action.
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("docx") && f.includes("pdf") && f.includes("Install skills"));
+      sendKey(stdin, KEYS.down);  // status row -> "Install skills…"
+      sendKey(stdin, KEYS.enter); // open the target picker
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Install the profile's skills where?") && f.includes("Global"));
+      sendKey(stdin, KEYS.enter); // pick Global
+      await waitForFrame(stdout.lastFrame, () => installLockToWorkspace.mock.calls.length === 1);
+      const [target, skills] = installLockToWorkspace.mock.calls[0];
+      expect(target).toBe(homedir());
+      expect(Object.keys(skills).sort()).toEqual(["docx", "pdf"]);
     } finally {
       unmount();
     }
@@ -2292,7 +2322,7 @@ describe("App E2E — Advisory Consultation", () => {
     const { stdin, stdout, unmount } = render(<App />);
     try {
       await waitForFrame(stdout.lastFrame, (frame) => frame.includes("web"));
-      sendKey(stdin, KEYS.enter);
+      sendKey(stdin, "e"); // edit → builder (Enter now opens the profile detail)
       await waitForFrame(stdout.lastFrame, (frame) => frame.includes("S save"));
       sendKey(stdin, "c");
       await waitForFrame(stdout.lastFrame, (frame) => frame.includes("What would you like the advisor to review?"));

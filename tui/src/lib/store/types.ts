@@ -99,6 +99,8 @@ export interface Actions {
   deleteProfile: (name: string) => Promise<boolean>;
   /** Compute install-sync hints (agent skills dir vs lock) for the given targets in the background and merge them into `lockSync`. */
   refreshLockSync: (targets: import("../lock-install-sync.js").LockSyncTarget[]) => Promise<void>;
+  /** Install a lock's skills that are missing/drifted on disk into a target workspace (global = $HOME). The reconcile behind "Install N skills". */
+  installLockToWorkspace: (targetWorkspace: string, lockSkills: Record<string, import("../skill-profiles.js").LockEntry>) => Promise<boolean>;
   /** True while the Profiles tab builder/confirm owns input (suppresses global keys). */
   profilesEditing: boolean;
   setProfilesEditing: (editing: boolean) => void;

@@ -77,8 +77,8 @@ export interface ProfilesTabProps {
   contentHeight: number;
   /** Open the full skill detail overlay for a skill name (App owns the overlay). */
   onOpenSkillDetail: (name: string) => void;
-  /** Open the source-repo detail (diff/pull/push) for a profile's lock file. */
-  onOpenLockDetail: (name: string) => void;
+  /** Open the profile detail (its skills + install) — Enter on a profile row. */
+  onOpenProfileDetail: (name: string) => void;
 }
 
 /**
@@ -113,7 +113,7 @@ export function buildRows(
   return rows;
 }
 
-export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenLockDetail }: ProfilesTabProps) {
+export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenProfileDetail }: ProfilesTabProps) {
   const profiles = useStore((s) => s.profiles);
   const profileLocks = useStore((s) => s.profileLocks);
   const saveProfile = useStore((s) => s.saveProfile);
@@ -358,8 +358,9 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenLockDetail
       if (key.upArrow) setListIndex((i) => Math.max(0, i - 1));
       else if (key.downArrow) setListIndex((i) => Math.min(Math.max(0, names.length - 1), i + 1));
       else if (input === "n") openBuilder(null);
-      else if (names.length > 0 && (key.return || input === "e")) openBuilder(names[Math.min(listIndex, names.length - 1)]);
-      else if (names.length > 0 && input === "g") onOpenLockDetail(names[Math.min(listIndex, names.length - 1)]);
+      // Enter opens the profile detail (its skills + install), matching Enter on every other tab.
+      else if (names.length > 0 && key.return) onOpenProfileDetail(names[Math.min(listIndex, names.length - 1)]);
+      else if (names.length > 0 && input === "e") openBuilder(names[Math.min(listIndex, names.length - 1)]);
       else if (names.length > 0 && (input === "d" || key.delete)) {
         setMode({ kind: "confirmDelete", name: names[Math.min(listIndex, names.length - 1)] });
       }
@@ -629,7 +630,7 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenLockDetail
       )}
       <Box marginTop={1}>
         <Text color="gray" wrap="truncate-end">
-          {listPosition ? `${listPosition} · ` : ""}n new · Enter/e edit · g source repo · d delete{names.length > 0 ? " · apply from a workspace with P" : ""}
+          {listPosition ? `${listPosition} · ` : ""}Enter details · e edit · n new · d delete{names.length > 0 ? " · P apply from a workspace" : ""}
         </Text>
       </Box>
     </Box>

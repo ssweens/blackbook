@@ -39,6 +39,42 @@ export function agentSkillsDir(): string {
   return join(homedir(), ".agents", "skills");
 }
 
+/** The actual skill names behind an install-sync comparison. */
+export interface LockInstallGap {
+  /** All skills the lock lists. */
+  all: string[];
+  /** Listed but not present on disk in the agent skills directory. */
+  missing: string[];
+  /** Present but their content differs from the source (only where a source path is known). */
+  drifted: string[];
+}
+
+/**
+ * The missing/drifted skill NAMES for a lock vs an agent skills directory.
+ * `missing` = not on disk; `drifted` = on disk but content differs from the
+ * source. This is the set an install must (re)install to reconcile the agent
+ * skills directory to the lock.
+ */
+export function lockInstallGap(
+  skills: Record<string, LockEntry>,
+  installedDir: string,
+  sourceIndex: Map<string, string>,
+): LockInstallGap {
+  const all = Object.keys(skills);
+  const missing: string[] = [];
+  const drifted: string[] = [];
+  for (const name of all) {
+    const installed = join(installedDir, name);
+    if (!existsSync(installed)) { missing.push(name); continue; }
+    const src = sourceIndex.get(name);
+    if (src) {
+      try { if (hashDirectory(installed) !== hashDirectory(src)) drifted.push(name); }
+      catch { drifted.push(name); }
+    }
+  }
+  return { all, missing, drifted };
+}
+
 /**
  * Compare a lock's skills to what's installed in an agent skills directory.
  * `missing` counts skills the lock lists that aren't on disk; `drifted` counts
@@ -51,31 +87,20 @@ export function compareLockToInstall(
   installedDir: string,
   sourceIndex: Map<string, string>,
 ): LockInstallHint {
-  const names = Object.keys(skills);
-  if (names.length === 0) {
+  const gap = lockInstallGap(skills, installedDir, sourceIndex);
+  if (gap.all.length === 0) {
     return { state: "empty", label: "Empty", color: "gray", total: 0, missing: 0, drifted: 0 };
   }
-  let missing = 0;
-  let drifted = 0;
-  for (const name of names) {
-    const installed = join(installedDir, name);
-    if (!existsSync(installed)) { missing++; continue; }
-    const src = sourceIndex.get(name);
-    if (src) {
-      try { if (hashDirectory(installed) !== hashDirectory(src)) drifted++; }
-      catch { drifted++; }
-    }
-  }
-  if (missing === 0 && drifted === 0) {
-    return { state: "in-sync", label: "In sync", color: "green", total: names.length, missing, drifted };
+  if (gap.missing.length === 0 && gap.drifted.length === 0) {
+    return { state: "in-sync", label: "In sync", color: "green", total: gap.all.length, missing: 0, drifted: 0 };
   }
   return {
     state: "out-of-sync",
     label: "Out of sync",
-    color: missing > 0 ? "red" : "yellow",
-    total: names.length,
-    missing,
-    drifted,
+    color: gap.missing.length > 0 ? "red" : "yellow",
+    total: gap.all.length,
+    missing: gap.missing.length,
+    drifted: gap.drifted.length,
   };
 }
 
