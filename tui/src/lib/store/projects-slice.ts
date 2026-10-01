@@ -33,8 +33,7 @@ import {
   type SkillLockFile,
 } from "../skill-profiles.js";
 import { expandPath } from "../config/path.js";
-import { homedir } from "os";
-import { compareLockToInstall, lockInstallGap } from "../lock-install-sync.js";
+import { compareLockToInstall, planInstall, agentSkillsDir } from "../lock-install-sync.js";
 
 export type ProjectsSlice = Pick<
   Store,
@@ -107,11 +106,9 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
     if (names.length === 0) { notify("Nothing to install — empty lock", "warning"); return false; }
     const sourceRepo = getConfigRepoPath();
     const sourceIndex = sourceRepo ? indexSourceSkills(sourceRepo) : new Map<string, string>();
-    const installedDir = isGlobalWorkspace(targetWorkspace)
-      ? join(homedir(), ".agents", "skills")
-      : join(targetWorkspace, ".agents/skills");
-    const gap = lockInstallGap(lockSkills, installedDir, sourceIndex);
-    const toInstall = [...gap.missing, ...gap.drifted];
+    const installedDir = isGlobalWorkspace(targetWorkspace) ? agentSkillsDir() : join(targetWorkspace, ".agents", "skills");
+    // Same plan as `P` apply — one function decides what gets installed.
+    const toInstall = planInstall(lockSkills, installedDir, sourceIndex);
     if (toInstall.length === 0) { notify("Already installed here", "success"); return true; }
     const result = await installLockSkills(targetWorkspace, lockSkills, toInstall, getToolInstances());
     await get().loadProjects({ silent: true });

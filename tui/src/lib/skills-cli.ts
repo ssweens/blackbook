@@ -97,6 +97,28 @@ export function enabledSkillAgents(): string[] {
   return [...agents];
 }
 
+/**
+ * The skills CLI's "universal" agent, whose skillsDir is `.agents/skills` —
+ * the one canonical location every `.agents`-aware tool reads, and the dir
+ * every Projects-tab reader (scan, drill-in status, sync hint, install plan)
+ * treats as "installed".
+ */
+export const UNIVERSAL_SKILLS_AGENT = "codex";
+
+/**
+ * Agents to pass on a PROJECT-scope install: the enabled tools' agents plus,
+ * always, the universal `.agents/skills` agent. The CLI only auto-includes
+ * universal when given no `-a` at all; with explicit agents it honors them
+ * as-is, so a Claude-only config would install into `.claude/skills` and never
+ * populate `<project>/.agents/skills` — leaving the skill "missing" to every
+ * reader that checks the canonical dir. Including it unconditionally makes
+ * install write exactly where install-sync looks.
+ */
+export function projectSkillAgents(): string[] {
+  const agents = enabledSkillAgents();
+  return agents.includes(UNIVERSAL_SKILLS_AGENT) ? agents : [...agents, UNIVERSAL_SKILLS_AGENT];
+}
+
 /** Last meaningful line of CLI output, stripped of ANSI/box drawing, for notifications. */
 export function summarizeCliFailure(result: SkillsCliResult): string {
   const text = `${result.stderr}\n${result.stdout}`

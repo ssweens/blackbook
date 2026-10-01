@@ -76,6 +76,22 @@ export function lockInstallGap(
 }
 
 /**
+ * THE install plan: the skills an install/apply must (re)install to make the
+ * agent skills directory match the lock — everything missing on disk plus
+ * everything drifted. Pure and synchronous. Both `P` apply (Projects) and
+ * `Enter → Install` (Profiles) use this one function, so they can never
+ * disagree about what gets installed.
+ */
+export function planInstall(
+  skills: Record<string, LockEntry>,
+  installedDir: string,
+  sourceIndex: Map<string, string>,
+): string[] {
+  const gap = lockInstallGap(skills, installedDir, sourceIndex);
+  return [...gap.missing, ...gap.drifted];
+}
+
+/**
  * Compare a lock's skills to what's installed in an agent skills directory.
  * `missing` counts skills the lock lists that aren't on disk; `drifted` counts
  * installed skills whose content no longer matches the source (only where a

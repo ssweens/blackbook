@@ -25,8 +25,10 @@ import type { ToolInstance } from "./types.js";
 import { atomicWriteFileSync } from "./fs-utils.js";
 import { getCacheDir } from "./config/path.js";
 import { indexSourceSkills } from "./projects.js";
+import { getConfigRepoPath } from "./config.js";
+import { agentSkillsDir, planInstall } from "./lock-install-sync.js";
 import { skillsSourceForRepo } from "./project-actions.js";
-import { enabledSkillAgents, runSkillsCli, summarizeCliFailure } from "./skills-cli.js";
+import { projectSkillAgents, runSkillsCli, summarizeCliFailure } from "./skills-cli.js";
 import { callGroups, runSkillsCliSync } from "./plugin-skills-cli.js";
 
 export const PROFILE_SUFFIX = ".skills-lock.json";
@@ -293,12 +295,21 @@ export async function applyProfileToWorkspace(
   profile: SkillLockFile,
   instances: ToolInstance[],
 ): Promise<ApplyResult> {
+  // `coverage` still decides what to REMOVE (skills dropped from the profile
+  // since it was applied here). What to INSTALL comes from the on-disk plan —
+  // the same planInstall every install path uses — so a skill that is in the
+  // workspace lock but absent (or drifted) on disk is reinstalled, where the
+  // old lock-diff reported "already up to date" and did nothing.
   const coverage = profileCoverage(name, profile, workspaceLock(workspace), profileSnapshot(workspace, name));
   const result: ApplyResult = { added: [], removed: [], errors: [] };
   const global = isGlobalWorkspace(workspace);
+  const sourceRepo = getConfigRepoPath();
+  const sourceIndex = sourceRepo ? indexSourceSkills(sourceRepo) : new Map<string, string>();
+  const installedDir = global ? agentSkillsDir() : join(workspace, ".agents", "skills");
+  const toInstall = planInstall(profile.skills, installedDir, sourceIndex);
 
   const bySource = new Map<string, string[]>();
-  for (const skill of coverage.missing) {
+  for (const skill of toInstall) {
     const src = addSourceFor(profile.skills[skill]);
     bySource.set(src, [...(bySource.get(src) ?? []), skill]);
   }
@@ -316,7 +327,7 @@ export async function applyProfileToWorkspace(
       }
       if (ok) result.added.push(...skills);
     } else {
-      const r = await runSkillsCli([...base, ...enabledSkillAgents().flatMap((a) => ["-a", a])], { cwd: workspace });
+      const r = await runSkillsCli([...base, ...projectSkillAgents().flatMap((a) => ["-a", a])], { cwd: workspace });
       if (r.code === 0) result.added.push(...skills);
       else result.errors.push(`${source}: ${summarizeCliFailure(r)}`);
     }
@@ -373,7 +384,7 @@ export async function installLockSkills(
       }
       if (ok) result.added.push(...skills);
     } else {
-      const r = await runSkillsCli([...base, ...enabledSkillAgents().flatMap((a) => ["-a", a])], { cwd: workspace });
+      const r = await runSkillsCli([...base, ...projectSkillAgents().flatMap((a) => ["-a", a])], { cwd: workspace });
       if (r.code === 0) result.added.push(...skills);
       else result.errors.push(`${source}: ${summarizeCliFailure(r)}`);
     }

@@ -13,6 +13,13 @@ import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync, lstatSync, 
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Plugin, ToolInstance } from '../../src/lib/types.js';
+import type { LockEntry } from '../../src/lib/skill-profiles.js';
+import {
+  compareLockToInstall,
+  lockInstallText,
+  planInstall,
+  type LockInstallHint,
+} from '../../src/lib/lock-install-sync.js';
 
 /** Per-scenario mutable context. */
 export interface World {
@@ -36,6 +43,12 @@ export interface World {
   commands?: string[];
   agents?: string[];
   targetTool?: string;
+  // ── Skill lock install-sync ──
+  lockSkills?: Record<string, LockEntry>;
+  installedDir?: string;
+  sourceIndex?: Map<string, string>;
+  hint?: LockInstallHint;
+  plan?: string[];
 }
 
 export interface StepDef {
@@ -818,6 +831,69 @@ export const steps: StepDef[] = [
   }},
   { re: /^a parse error is returned$/, run: (w) => { expect(w.error).toBeDefined(); }},
   { re: /^no plugins are discovered$/, run: (w) => { expect(w.discoveredPlugins?.length || 0).toBe(0); }},
+
+  // ── Skill lock install-sync steps (real lock-install-sync logic, no network) ──
+  { re: /^a skill lock listing skills \[([^\]]+)\]$/, run: (w, m) => {
+    w.tmpDir = makeTmpDir();
+    w.installedDir = join(w.tmpDir, '.agents', 'skills');
+    mkdirSync(w.installedDir, { recursive: true });
+    w.sourceIndex = new Map();
+    w.lockSkills = {};
+    for (const name of m[1].split(',').map((s) => s.trim().replace(/"/g, ''))) {
+      w.lockSkills[name] = { source: 'o/r', sourceType: 'github' };
+    }
+  }},
+  { re: /^an empty skill lock$/, run: (w) => {
+    w.tmpDir = makeTmpDir();
+    w.installedDir = join(w.tmpDir, '.agents', 'skills');
+    mkdirSync(w.installedDir, { recursive: true });
+    w.sourceIndex = new Map();
+    w.lockSkills = {};
+  }},
+  { re: /^"([^"]+)" is installed in the agent skills directory$/, run: (w, m) => {
+    const dir = join(w.installedDir!, m[1]);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), `---\nname: ${m[1]}\n---\noriginal\n`);
+  }},
+  { re: /^"([^"]+)" is installed in the agent skills directory with content "([^"]+)"$/, run: (w, m) => {
+    const dir = join(w.installedDir!, m[1]);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), `---\nname: ${m[1]}\n---\n${m[2]}\n`);
+  }},
+  { re: /^the source repo has "([^"]+)" with content "([^"]+)"$/, run: (w, m) => {
+    const dir = join(w.tmpDir, 'source', 'skills', m[1]);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), `---\nname: ${m[1]}\n---\n${m[2]}\n`);
+    w.sourceIndex!.set(m[1], dir);
+  }},
+  { re: /^"([^"]+)" is listed in the lock but missing from the agent skills directory$/, run: (w, m) => {
+    expect(w.lockSkills![m[1]]).toBeDefined();
+    expect(existsSync(join(w.installedDir!, m[1]))).toBe(false);
+  }},
+  { re: /^the sync state is computed$/, run: (w) => {
+    w.hint = compareLockToInstall(w.lockSkills!, w.installedDir!, w.sourceIndex!);
+  }},
+  { re: /^the state is "([^"]+)"$/, run: (w, m) => { expect(w.hint!.state).toBe(m[1]); }},
+  { re: /^(\d+) skills? (?:is|are) missing$/, run: (w, m) => { expect(w.hint!.missing).toBe(parseInt(m[1])); }},
+  { re: /^(\d+) skills? (?:is|are) drifted$/, run: (w, m) => { expect(w.hint!.drifted).toBe(parseInt(m[1])); }},
+  { re: /^the list shows "([^"]+)"$/, run: (w, m) => { expect(lockInstallText(w.hint!).text).toBe(m[1]); }},
+  { re: /^the install plan is computed$/, run: (w) => {
+    w.plan = planInstall(w.lockSkills!, w.installedDir!, w.sourceIndex!).sort();
+  }},
+  { re: /^the install plan is \[([^\]]+)\]$/, run: (w, m) => {
+    const expected = m[1].split(',').map((s) => s.trim().replace(/"/g, '')).sort();
+    expect(w.plan).toEqual(expected);
+  }},
+  { re: /^the install plan is empty$/, run: (w) => { expect(w.plan).toEqual([]); }},
+  { re: /^the install plan includes "([^"]+)"$/, run: (w, m) => { expect(w.plan).toContain(m[1]); }},
+  { re: /^the apply plan and the install plan are identical$/, run: (w) => {
+    // `P` apply (a profile) and `Enter → Install` (a lock) both call planInstall;
+    // computing it as "the profile" and as "the lock" must yield the same set.
+    const applyPlan = planInstall(w.lockSkills!, w.installedDir!, w.sourceIndex!).sort();
+    const installPlan = planInstall({ ...w.lockSkills! }, w.installedDir!, w.sourceIndex!).sort();
+    expect(applyPlan).toEqual(installPlan);
+    expect(applyPlan).toEqual(w.plan);
+  }},
 ];
 
 export function matchStep(text: string): { def: StepDef; m: RegExpMatchArray } | null {

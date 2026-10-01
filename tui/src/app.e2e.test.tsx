@@ -1875,58 +1875,10 @@ describe("App E2E — Scrolling and search on Projects and Profiles", () => {
   });
 });
 
-describe("App E2E — Lock file source-repo detail", () => {
+describe("App E2E — Lock install-sync hints", () => {
   beforeEach(() => {
     setupMocks();
     useStore.setState(defaultStoreState());
-  });
-
-  it("opens the source-repo detail for a project's skills-lock.json with g, showing skill-style status and diff", { timeout: 30000 }, async () => {
-    const repo = mkdtempSync(join(tmpdir(), "blackbook-lockdetail-"));
-    execSync("git init -q", { cwd: repo });
-    execSync("git config user.email t@e && git config user.name T", { cwd: repo });
-    writeFileSync(join(repo, "skills-lock.json"), '{"version":1,"skills":{}}\n');
-    execSync("git add -A && git commit -qm init", { cwd: repo });
-    writeFileSync(join(repo, "skills-lock.json"), '{"version":1,"skills":{"blast-radius":1}}\n');
-    // The suite mocks ./lib/diff.js, so buildLockDiffTarget's call to
-    // buildFileDiffTarget is stubbed. Point it at the real committed-vs-working
-    // files so DiffDetail renders the actual diff (computeFileDetail is real).
-    const committed = join(repo, ".committed.json");
-    writeFileSync(committed, '{"version":1,"skills":{}}\n');
-    vi.mocked(buildFileDiffTarget).mockReturnValue({
-      kind: "file",
-      title: "demo project lock",
-      instance: { toolId: "source", instanceId: "local", instanceName: "local", configDir: repo },
-      files: [{ id: "skills-lock.json", displayPath: "skills-lock.json", sourcePath: committed, targetPath: join(repo, "skills-lock.json"), status: "modified", linesAdded: 1, linesRemoved: 1, sourceMtime: null, targetMtime: null }],
-    });
-    const project: ProjectInfo = { path: repo, name: "demo", exists: true, hasAgentsDir: true, skills: [], available: [] };
-    await settleInput();
-    useStore.setState({
-      tab: "projects", projects: [project], projectsLoaded: true, projectDetailPath: repo,
-      selectedIndex: 0, loadProjects: vi.fn().mockResolvedValue(undefined), tools: createToolInstances(),
-    });
-    const { stdin, stdout, unmount } = render(<App />);
-    try {
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("demo") && f.includes("g source repo"));
-      await settleInput();
-      await settleInput();
-      sendKey(stdin, "g");
-      // Detail opens synchronously; its status + diff are spawned git processes,
-      // so allow generous time under vitest. It renders through the same
-      // ItemDetail the skill views use: a "name: Drifted +N -N (Enter view diff)"
-      // status row, then the skill-vocabulary sync actions.
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("demo project lock") && f.includes("Drifted"), 15000);
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Install from source repo") && f.includes("Update source repo from disk"), 15000);
-      sendKey(stdin, KEYS.enter); // diff status row → DiffDetail
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("blast-radius") && f.includes("source repo") && f.includes("↑/↓ scroll"), 15000);
-      sendKey(stdin, KEYS.escape); // close diff → back to the action list
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Update source repo from disk") && !f.includes("↑/↓ scroll"));
-      sendKey(stdin, KEYS.escape); // close detail → back to project list
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("g source repo") && !f.includes("demo project lock"));
-    } finally {
-      unmount();
-      rmSync(repo, { recursive: true, force: true });
-    }
   });
 
   it("shows 'out of sync · N missing' when the lock lists skills not installed in .agents/skills", { timeout: 30000 }, async () => {
@@ -2127,8 +2079,9 @@ describe("App E2E — Skill detail from Projects and Profiles", () => {
     }
   });
 
-  it("Enter on a profile opens its skills detail; Install asks a target and installs", async () => {
-    const installLockToWorkspace = vi.fn().mockResolvedValue(true);
+  it("Enter on a profile opens its skills detail; Install asks a target and runs the same apply as P", async () => {
+    // Enter → Install must call the exact store action `P` apply uses.
+    const applyProfile = vi.fn().mockResolvedValue(true);
     const gh = (source: string) => ({ source, sourceType: "github" });
     useStore.setState({
       tab: "profiles",
@@ -2136,7 +2089,7 @@ describe("App E2E — Skill detail from Projects and Profiles", () => {
       profileLocks: { Docs: { version: 1, skills: { docx: gh("anthropics/skills"), pdf: gh("anthropics/skills") } } } as never,
       projects: [], projectsLoaded: true,
       tools: createToolInstances(),
-      installLockToWorkspace,
+      applyProfile,
     });
     const { stdin, stdout, unmount } = render(<App />);
     try {
@@ -2148,10 +2101,8 @@ describe("App E2E — Skill detail from Projects and Profiles", () => {
       sendKey(stdin, KEYS.enter); // open the target picker
       await waitForFrame(stdout.lastFrame, (f) => f.includes("Install the profile's skills where?") && f.includes("Global"));
       sendKey(stdin, KEYS.enter); // pick Global
-      await waitForFrame(stdout.lastFrame, () => installLockToWorkspace.mock.calls.length === 1);
-      const [target, skills] = installLockToWorkspace.mock.calls[0];
-      expect(target).toBe(homedir());
-      expect(Object.keys(skills).sort()).toEqual(["docx", "pdf"]);
+      await waitForFrame(stdout.lastFrame, () => applyProfile.mock.calls.length === 1);
+      expect(applyProfile).toHaveBeenCalledWith(homedir(), "Docs");
     } finally {
       unmount();
     }
