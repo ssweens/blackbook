@@ -286,6 +286,8 @@ export interface AppState {
   // Section navigation
   currentSection: DiscoverSection;
   discoverSubView: DiscoverSubView;
+  /** Plugin marketplaces collapsed in the Installed tab's plugin section (session-only). */
+  collapsedPluginMarketplaces: Set<string>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

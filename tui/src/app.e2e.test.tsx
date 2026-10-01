@@ -513,6 +513,8 @@ const defaultStoreState = () => ({
   pluginDriftMap: {},
   currentSection: "plugins" as const,
   discoverSubView: null,
+  collapsedPluginMarketplaces: new Set<string>(),
+  managedItems: [],
 });
 
 function setupMocks() {
@@ -668,6 +670,46 @@ describe("App E2E — Installed Tab", () => {
       await waitForFrame(stdout.lastFrame, (f) => f.includes("test-plugin"));
       expect(stdout.lastFrame()).toContain("Plugins");
       expect(stdout.lastFrame()).toContain("test-plugin");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("groups plugins under collapsible marketplace headers; Enter collapses a header and opens a plugin", async () => {
+    vi.mocked(getPluginToolStatusDirect).mockReturnValue(toolStatusBothInstalled);
+    useStore.setState({
+      tab: "installed",
+      installedPlugins: [
+        createPlugin({ name: "alpha-one", marketplace: "alpha" }),
+        createPlugin({ name: "alpha-two", marketplace: "alpha" }),
+        createPlugin({ name: "beta-one", marketplace: "beta" }),
+      ],
+      installedPluginsLoaded: true,
+      filesLoaded: true,
+      piPackagesLoaded: true,
+      selectedIndex: 0,
+    });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      // Headers for both marketplaces, with counts; all plugins visible (expanded).
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("alpha") && f.includes("2 plugins") && f.includes("beta") && f.includes("1 plugin"));
+      let frame = stdout.lastFrame()!;
+      expect(frame).toContain("alpha-one");
+      expect(frame).toContain("alpha-two");
+      expect(frame).toContain("beta-one");
+
+      // selectedIndex 0 is the first header (alpha). Enter collapses it.
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (f) => !f.includes("alpha-one") && !f.includes("alpha-two"));
+      frame = stdout.lastFrame()!;
+      expect(frame).toContain("alpha");       // header remains
+      expect(frame).toContain("beta-one");    // other group untouched
+
+      // Rows are now [alpha hdr, beta hdr, beta-one]. Move to the plugin and open it.
+      sendKey(stdin, KEYS.down);
+      sendKey(stdin, KEYS.down);
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("beta-one") && f.includes("@ beta"));
     } finally {
       unmount();
     }

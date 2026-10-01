@@ -10,6 +10,8 @@ import { FilePreview } from "../components/FilePreview.js";
 import { filesToManagedItems, pluginsToManagedItems, piPackagesToManagedItems } from "../lib/managed-item.js";
 import { getToolInstances } from "../lib/config.js";
 import { groupSkillsByNamespace } from "../lib/install.js";
+import { buildPluginRows } from "../lib/plugin-groups.js";
+import type { ManagedItem } from "../lib/managed-item.js";
 import type { FileStatus } from "../lib/types.js";
 import { existsSync } from "fs";
 
@@ -113,8 +115,19 @@ export function InstalledTab({ contentHeight, searchFocused, onSearchFocus, onSe
   const filesLoaded = useStore((s) => s.filesLoaded);
   const installedPlugins = useStore((s) => s.installedPlugins);
   const installedPluginsLoaded = useStore((s) => s.installedPluginsLoaded);
+  const managedItems = useStore((s) => s.managedItems);
+  // Group the same plugin set App.tsx drives selection from: the composed
+  // managedItems when present, else the raw installed list. Keeping both on one
+  // source guarantees the grouped rows and the selection math agree.
+  const effectiveInstalledPlugins = useMemo(() => {
+    const fromManaged = managedItems
+      .filter((item): item is ManagedItem & { _plugin: import("../lib/types.js").Plugin } => item.kind === "plugin" && !!item._plugin)
+      .map((item) => item._plugin);
+    return fromManaged.length > 0 ? fromManaged : installedPlugins;
+  }, [managedItems, installedPlugins]);
   const piPackages = useStore((s) => s.piPackages);
   const piPackagesLoaded = useStore((s) => s.piPackagesLoaded);
+  const collapsedPluginMarketplaces = useStore((s) => s.collapsedPluginMarketplaces);
   const filteredFiles = useMemo(() => {
     const q = search.trim().toLowerCase();
     const filtered = q.length === 0 ? files : files.filter((file) => {
@@ -242,7 +255,7 @@ export function InstalledTab({ contentHeight, searchFocused, onSearchFocus, onSe
 
   const filteredPlugins = useMemo(() => {
     const lowerSearch = search.toLowerCase();
-    const base = installedPlugins;
+    const base = effectiveInstalledPlugins;
     const filtered = search
       ? base.filter(
           (p) =>
@@ -262,7 +275,7 @@ export function InstalledTab({ contentHeight, searchFocused, onSearchFocus, onSe
       if (cmp !== 0) return sortDir === "asc" ? cmp : -cmp;
       return a.name.localeCompare(b.name);
     });
-  }, [installedPlugins, search, sortBy, sortDir]);
+  }, [effectiveInstalledPlugins, search, sortBy, sortDir]);
 
   const filteredPiPackages = useMemo(() => {
     const lowerSearch = search.toLowerCase();
@@ -317,10 +330,38 @@ export function InstalledTab({ contentHeight, searchFocused, onSearchFocus, onSe
   }, [filteredPlugins, pluginDriftMap]);
   const managedPiPackages = useMemo(() => piPackagesToManagedItems(filteredPiPackages), [filteredPiPackages]);
 
+  // Plugins grouped under collapsible marketplace headers. A header is a
+  // `plugin-group` ManagedItem; plugin rows reuse the drift-styled items above.
+  // A search expands every group so matches stay visible.
+  const pluginRowItems = useMemo(() => {
+    const byName = new Map(managedPlugins.map((item, i) => [filteredPlugins[i]!.name, item]));
+    const rows = buildPluginRows(filteredPlugins, collapsedPluginMarketplaces, { expandAll: search.trim().length > 0 });
+    const items: ManagedItem[] = [];
+    for (const row of rows) {
+      if (row.kind === "marketplace") {
+        items.push({
+          name: row.marketplace,
+          kind: "plugin-group",
+          marketplace: row.marketplace,
+          description: "",
+          installed: false,
+          incomplete: false,
+          scope: "user",
+          instances: [],
+          _group: { count: row.count, collapsed: row.collapsed },
+        });
+      } else {
+        const item = byName.get(row.plugin.name);
+        if (item) items.push(item);
+      }
+    }
+    return items;
+  }, [managedPlugins, filteredPlugins, collapsedPluginMarketplaces, search]);
+
   const fileCount   = managedFiles.length;
   const namespaceCount = filteredNamespaces.length;
   const skillCount  = filteredSkills.length;
-  const pluginCount = managedPlugins.length;
+  const pluginCount = pluginRowItems.length;
   const piPkgCount  = managedPiPackages.length;
 
   const selectedLibraryItem = useMemo(() => {
@@ -337,20 +378,20 @@ export function InstalledTab({ contentHeight, searchFocused, onSearchFocus, onSe
       return skill ? { kind: "skill" as const, skill: skill._skill! } : null;
     }
     if (selectedIndex < fileCount + namespaceCount + skillCount + pluginCount) {
-      const plugin = filteredPlugins[selectedIndex - fileCount - namespaceCount - skillCount];
-      return plugin ? { kind: "plugin" as const, plugin } : null;
+      const item = pluginRowItems[selectedIndex - fileCount - namespaceCount - skillCount];
+      return item && item.kind === "plugin" && item._plugin ? { kind: "plugin" as const, plugin: item._plugin } : null;
     }
     const piPkg = filteredPiPackages[selectedIndex - fileCount - namespaceCount - skillCount - pluginCount];
     return piPkg ? { kind: "piPackage" as const, piPackage: piPkg } : null;
-  }, [selectedIndex, fileCount, namespaceCount, skillCount, pluginCount, filteredFiles, filteredNamespaces, filteredSkills, filteredPlugins, filteredPiPackages]);
+  }, [selectedIndex, fileCount, namespaceCount, skillCount, pluginCount, filteredFiles, filteredNamespaces, filteredSkills, pluginRowItems, filteredPiPackages]);
 
   const sections: SectionDef[] = useMemo(() => [
     { key: "files", items: managedFiles, shown: managedFiles.length > 0 || !filesLoaded, desired: 5, label: "Files", columns: FILE_COLUMNS },
     { key: "namespaces", items: filteredNamespaces, shown: filteredNamespaces.length > 0, desired: 3, label: "Skill Namespaces", columns: FILE_COLUMNS },
     { key: "skills", items: filteredSkills, shown: filteredSkills.length > 0, desired: 4, label: "Skills", columns: FILE_COLUMNS },
-    { key: "plugins", items: managedPlugins, shown: managedPlugins.length > 0 || !installedPluginsLoaded, desired: 4, label: "Plugins", columns: PLUGIN_COLUMNS },
+    { key: "plugins", items: pluginRowItems, shown: pluginRowItems.length > 0 || !installedPluginsLoaded, desired: 6, label: "Plugins", columns: PLUGIN_COLUMNS },
     { key: "piPackages", items: managedPiPackages, shown: managedPiPackages.length > 0 || !piPackagesLoaded, desired: 3, label: "Pi Packages", columns: PLUGIN_COLUMNS },
-  ], [managedFiles, filesLoaded, filteredNamespaces, filteredSkills, managedPlugins, installedPluginsLoaded, managedPiPackages, piPackagesLoaded]);
+  ], [managedFiles, filesLoaded, filteredNamespaces, filteredSkills, pluginRowItems, installedPluginsLoaded, managedPiPackages, piPackagesLoaded]);
 
   const { heights, previewFits } = useMemo(
     () => distributeHeights(contentHeight, sections),
@@ -439,18 +480,18 @@ export function InstalledTab({ contentHeight, searchFocused, onSearchFocus, onSe
         </Box>
       )}
 
-      {(managedPlugins.length > 0 || !installedPluginsLoaded) && (
+      {(pluginRowItems.length > 0 || !installedPluginsLoaded) && (
         <Box flexDirection="column" marginTop={1} flexShrink={0}>
           <Box>
             <Text color="gray">  Plugins </Text>
             <Text color="gray" dimColor>
-              {managedPlugins.length > 0
-                ? getRange(pluginSelectedIndex < 0 ? 0 : pluginSelectedIndex, managedPlugins.length, pluginMaxHeight)
+              {pluginRowItems.length > 0
+                ? getRange(pluginSelectedIndex < 0 ? 0 : pluginSelectedIndex, pluginRowItems.length, pluginMaxHeight)
                 : loading ? "(loading...)" : "(not loaded)"}
             </Text>
           </Box>
-          {managedPlugins.length > 0 ? (
-            <ItemList items={managedPlugins} selectedIndex={pluginSelectedIndex} maxHeight={pluginMaxHeight} columns={PLUGIN_COLUMNS} />
+          {pluginRowItems.length > 0 ? (
+            <ItemList items={pluginRowItems} selectedIndex={pluginSelectedIndex} maxHeight={pluginMaxHeight} columns={PLUGIN_COLUMNS} />
           ) : (
             <Box marginLeft={2}><Text color={loading ? "cyan" : "gray"}>{loading ? "⠋ Loading plugins..." : "Press R to load plugins."}</Text></Box>
           )}

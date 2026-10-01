@@ -223,6 +223,21 @@ export function ItemList({
       {visible.map((item, visibleIdx) => {
         const actualIndex = startIndex + visibleIdx;
         const isSelected = hasSelection && actualIndex === selectedIndex;
+
+        // Collapsible marketplace header (Installed tab plugin grouping).
+        if (item.kind === "plugin-group") {
+          const collapsed = item._group?.collapsed ?? false;
+          const count = item._group?.count ?? 0;
+          return (
+            <Box key={`plugin-group:${item.marketplace}`}>
+              <Text color={isSelected ? "cyan" : "white"}>{isSelected ? "❯ " : "  "}</Text>
+              <Text color="blue">{collapsed ? "▸ " : "▾ "}</Text>
+              <Text bold color={isSelected ? "white" : "gray"}>{item.marketplace}</Text>
+              <Text color="gray">{"  "}{count} plugin{count === 1 ? "" : "s"}</Text>
+            </Box>
+          );
+        }
+
         const flags = computeItemFlags(item);
         // `marketplace` is a broad bucket label (e.g. "local" for every
         // locally-sourced Pi package), not a unique origin — two distinct

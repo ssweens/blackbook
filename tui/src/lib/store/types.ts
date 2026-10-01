@@ -109,6 +109,8 @@ export interface Actions {
   setSortDir: (dir: AppState["sortDir"]) => void;
   setCurrentSection: (section: DiscoverSection) => void;
   setDiscoverSubView: (subView: DiscoverSubView) => void;
+  /** Collapse or expand a plugin marketplace group in the Installed tab. */
+  togglePluginMarketplace: (name: string) => void;
   toggleSyncSelection: (key: string) => void;
   setSyncArmed: (armed: boolean) => void;
   setPluginDriftMap: (map: Record<string, PluginDrift>) => void;

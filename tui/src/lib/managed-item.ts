@@ -29,7 +29,7 @@ import { countPluginToManagedItem } from "./perf.js";
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The kind of managed entity. */
-export type ItemKind = "plugin" | "file" | "config" | "asset" | "pi-package" | "namespace";
+export type ItemKind = "plugin" | "file" | "config" | "asset" | "pi-package" | "namespace" | "plugin-group";
 
 /** Per-tool-instance installation / drift status for one managed item. */
 export interface ItemInstanceStatus {
@@ -108,6 +108,8 @@ export interface ManagedItem {
   _piPackage?: PiPackage;
   _skill?: import("./install.js").StandaloneSkill;
   _namespace?: import("./install.js").NamespaceGroup;
+  /** Collapsible marketplace header (kind === "plugin-group"): plugin count and collapsed state. */
+  _group?: { count: number; collapsed: boolean };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

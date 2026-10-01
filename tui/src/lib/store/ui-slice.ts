@@ -24,6 +24,7 @@ export type UiSlice = Pick<
   | "pluginDriftMap"
   | "currentSection"
   | "discoverSubView"
+  | "collapsedPluginMarketplaces"
   // actions
   | "setTab"
   | "setSortBy"
@@ -36,6 +37,7 @@ export type UiSlice = Pick<
   | "setDetailPiPackage"
   | "setCurrentSection"
   | "setDiscoverSubView"
+  | "togglePluginMarketplace"
   | "toggleSyncSelection"
   | "setSyncArmed"
   | "setPluginDriftMap"
@@ -69,6 +71,8 @@ export const createUiSlice: SliceCreator<UiSlice> = (set, get) => ({
   // Section navigation
   currentSection: "plugins" as DiscoverSection,
   discoverSubView: null as DiscoverSubView,
+  // Collapsed plugin-marketplace groups on the Installed tab (session-only).
+  collapsedPluginMarketplaces: new Set<string>(),
 
   setTab: (tab) =>
     set((state) =>
@@ -191,6 +195,13 @@ export const createUiSlice: SliceCreator<UiSlice> = (set, get) => ({
   },
   setCurrentSection: (section) => set({ currentSection: section }),
   setDiscoverSubView: (subView) => set({ discoverSubView: subView }),
+  togglePluginMarketplace: (name) =>
+    set((state) => {
+      const next = new Set(state.collapsedPluginMarketplaces);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return { collapsedPluginMarketplaces: next };
+    }),
   toggleSyncSelection: (key: string) =>
     set((state) => {
       const has = state.syncSelection.includes(key);

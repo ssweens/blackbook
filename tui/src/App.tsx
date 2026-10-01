@@ -64,6 +64,7 @@ import { ItemList, FILE_COLUMNS, PLUGIN_COLUMNS } from "./components/ItemList.js
 import { ItemDetail, PluginMetadata, FileMetadata, PiPackageMetadata, SkillMetadata, NamespaceMetadata, type ItemAction } from "./components/ItemDetail.js";
 import { NamespaceDetail } from "./components/NamespaceDetail.js";
 import { pluginToManagedItem, fileToManagedItem, piPackageToManagedItem } from "./lib/managed-item.js";
+import { buildPluginRows } from "./lib/plugin-groups.js";
 import type { ManagedItem } from "./lib/managed-item.js";
 import { getMarketplaceDetailActions, type MarketplaceDetailContext } from "./lib/marketplace-detail.js";
 import { buildMarketplaceRows, type MarketplaceRow } from "./lib/marketplace-row.js";
@@ -184,6 +185,8 @@ export function App() {
   // ── Search / Selection ──
   const search = useStore((s) => s.search);
   const setSearch = useStore((s) => s.setSearch);
+  const collapsedPluginMarketplaces = useStore((s) => s.collapsedPluginMarketplaces);
+  const togglePluginMarketplace = useStore((s) => s.togglePluginMarketplace);
   const selectedIndex = useStore((s) => s.selectedIndex);
   const setSelectedIndex = useStore((s) => s.setSelectedIndex);
 
@@ -808,13 +811,24 @@ export function App() {
   const pluginCount = filteredPlugins.length;
   const piPkgCount = filteredPiPackages.length;
 
+  // Installed tab: plugins render grouped under collapsible marketplace headers,
+  // so the plugin section's selectable rows are headers + visible plugins, not
+  // just the plugins. A search expands every group so matches stay visible.
+  const installedPluginRows = useMemo(
+    () => (tab === "installed"
+      ? buildPluginRows(filteredPlugins, collapsedPluginMarketplaces, { expandAll: search.trim().length > 0 })
+      : []),
+    [tab, filteredPlugins, collapsedPluginMarketplaces, search],
+  );
+  const pluginRowCount = tab === "installed" ? installedPluginRows.length : pluginCount;
+
   // In Discover tab: Plugins and PiPackages are summary cards (1 item each if they have content)
   // In Installed tab: sections are inline lists
   const pluginSectionCount = tab === "discover" ? (pluginCount > 0 ? 1 : 0) : pluginCount;
   const piPkgSectionCount = tab === "discover" ? (piPkgCount > 0 ? 1 : 0) : piPkgCount;
 
   const libraryCount = tab === "installed"
-    ? fileCount + namespaceCount + skillCount + pluginCount + piPkgCount
+    ? fileCount + namespaceCount + skillCount + pluginRowCount + piPkgCount
     : pluginSectionCount + piPkgSectionCount;
 
   // Section boundaries for Tab/Shift+Tab navigation
@@ -855,9 +869,9 @@ export function App() {
         result.push({ id: "skills", start: offset, end: offset + skillCount - 1 });
         offset += skillCount;
       }
-      if (pluginCount > 0) {
-        result.push({ id: "plugins", start: offset, end: offset + pluginCount - 1 });
-        offset += pluginCount;
+      if (pluginRowCount > 0) {
+        result.push({ id: "plugins", start: offset, end: offset + pluginRowCount - 1 });
+        offset += pluginRowCount;
       }
       if (piPkgCount > 0) {
         result.push({ id: "piPackages", start: offset, end: offset + piPkgCount - 1 });
@@ -874,7 +888,7 @@ export function App() {
     }
 
     return result;
-  }, [tab, syncPreview, fileCount, namespaceCount, skillCount, pluginCount, piPkgCount, pluginSectionCount, piPkgSectionCount]);
+  }, [tab, syncPreview, fileCount, namespaceCount, skillCount, pluginRowCount, pluginCount, piPkgCount, pluginSectionCount, piPkgSectionCount]);
 
   const currentSectionInfo = useMemo(() => {
     return sections.find((s) => selectedIndex >= s.start && selectedIndex <= s.end);
@@ -930,6 +944,7 @@ export function App() {
       | { kind: "file"; file: FileStatus }
       | { kind: "skill"; skill: import("./lib/install.js").StandaloneSkill }
       | { kind: "namespace"; namespace: import("./lib/install.js").NamespaceGroup }
+      | { kind: "pluginMarketplace"; marketplace: string; collapsed: boolean }
       | { kind: "pluginSummary" }
       | { kind: "piPackageSummary" }
       | null => {
@@ -963,13 +978,16 @@ export function App() {
         return skill ? { kind: "skill", skill } : null;
       }
 
-      if (selectedIndex < fileCount + namespaceCount + skillCount + pluginCount) {
-        const plugin = filteredPlugins[selectedIndex - fileCount - namespaceCount - skillCount];
-        return plugin ? { kind: "plugin", plugin } : null;
+      if (selectedIndex < fileCount + namespaceCount + skillCount + pluginRowCount) {
+        const row = installedPluginRows[selectedIndex - fileCount - namespaceCount - skillCount];
+        if (!row) return null;
+        return row.kind === "marketplace"
+          ? { kind: "pluginMarketplace", marketplace: row.marketplace, collapsed: row.collapsed }
+          : { kind: "plugin", plugin: row.plugin };
       }
 
       const piPkg =
-        filteredPiPackages[selectedIndex - fileCount - namespaceCount - skillCount - pluginCount];
+        filteredPiPackages[selectedIndex - fileCount - namespaceCount - skillCount - pluginRowCount];
       return piPkg ? { kind: "piPackage", piPackage: piPkg } : null;
     },
     [
@@ -982,6 +1000,8 @@ export function App() {
       namespaceCount,
       skillCount,
       pluginCount,
+      pluginRowCount,
+      installedPluginRows,
       piPkgCount,
       pluginSectionCount,
       piPkgSectionCount,
@@ -1668,7 +1688,9 @@ export function App() {
 
     // Installed / Discover tabs — open item detail via the unified setter.
     // Only one detail can be open at a time; setDetail replaces any prior state.
-    if (selectedLibraryItem?.kind === "plugin") {
+    if (selectedLibraryItem?.kind === "pluginMarketplace") {
+      togglePluginMarketplace(selectedLibraryItem.marketplace);
+    } else if (selectedLibraryItem?.kind === "plugin") {
       openPluginDetail(selectedLibraryItem.plugin);
     } else if (selectedLibraryItem?.kind === "piPackage") {
       void setDetailPiPackage(selectedLibraryItem.piPackage);
