@@ -18,6 +18,7 @@ import { indexSourceSkillTree, type SourceSkillNamespace } from "../lib/projects
 import { computeWindow, matchesQuery, windowLabel } from "../lib/list-window.js";
 import { globalLockEntries, profileLockPath } from "../lib/skill-profiles.js";
 import { lockSyncText } from "../lib/lock-sync-text.js";
+import { lockHintWorthShowing } from "../lib/lock-git.js";
 /**
  * Profiles tab — named skill bundles (config `profiles:`) that can be applied
  * to any workspace. List view for browsing, builder sub-view for creating and
@@ -608,7 +609,8 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenLockDetail
           const count = `${String(skills.length).padStart(countWidth)} ${skills.length === 1 ? "skill " : "skills"}`;
           const hasLock = n in profileLocks;
           const detail = hasLock ? profileSources(profileLocks[n]) : "legacy (config.yaml) — save to convert";
-          const lockHint = hasLock && lockRepo ? lockSyncText(lockSync[profileLockPath(lockRepo, n)]) : null;
+          const rawLockHint = hasLock && lockRepo ? lockSync[profileLockPath(lockRepo, n)] : undefined;
+          const lockHint = lockHintWorthShowing(rawLockHint) ? lockSyncText(rawLockHint) : null;
           return (
             <Text key={n} wrap="truncate-end">
               <Text color={isSel ? "cyan" : "gray"}>{isSel ? "❯ " : "  "}</Text>

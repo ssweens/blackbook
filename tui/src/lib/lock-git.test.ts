@@ -38,6 +38,46 @@ describe("lockGitStatus", () => {
       rmSync(out, { recursive: true, force: true });
     }
   });
+
+  it("reports exists:false for a lock file that isn't there", async () => {
+    const s = await lockGitStatus(join(repo, "nope.skills-lock.json"));
+    expect(s.exists).toBe(false);
+  });
+
+  it("does not mark the lock as ahead when only OTHER files are unpushed", async () => {
+    const remote = mkdtempSync(join(tmpdir(), "bb-remote-"));
+    try {
+      execFileSync("git", ["init", "--bare", "-q"], { cwd: remote, env: E });
+      git(repo, "remote", "add", "origin", remote);
+      git(repo, "push", "-q", "-u", "origin", "HEAD");
+      // Commit an unrelated file; the lock itself is untouched and in sync.
+      writeFileSync(join(repo, "other.txt"), "x\n");
+      git(repo, "add", "other.txt");
+      git(repo, "commit", "-qm", "unrelated");
+      const s = await lockGitStatus(lock);
+      expect(s.hasUpstream).toBe(true);
+      expect(s.ahead).toBe(0); // repo is ahead, but this lock is not
+      expect(s.behind).toBe(0);
+    } finally {
+      rmSync(remote, { recursive: true, force: true });
+    }
+  });
+
+  it("marks the lock as ahead when the lock itself has an unpushed commit", async () => {
+    const remote = mkdtempSync(join(tmpdir(), "bb-remote-"));
+    try {
+      execFileSync("git", ["init", "--bare", "-q"], { cwd: remote, env: E });
+      git(repo, "remote", "add", "origin", remote);
+      git(repo, "push", "-q", "-u", "origin", "HEAD");
+      writeFileSync(lock, '{"version":1,"skills":{"z":1}}\n');
+      git(repo, "add", "skills-lock.json");
+      git(repo, "commit", "-qm", "update lock");
+      const s = await lockGitStatus(lock);
+      expect(s.ahead).toBe(1);
+    } finally {
+      rmSync(remote, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("lockGitDiff", () => {

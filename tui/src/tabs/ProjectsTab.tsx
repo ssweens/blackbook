@@ -6,6 +6,7 @@ import { useStore } from "../lib/store.js";
 import { buildProjectRows, type ProjectSkillStatus } from "../lib/projects.js";
 import { computeWindow, windowLabel } from "../lib/list-window.js";
 import { lockSyncText } from "../lib/lock-sync-text.js";
+import { lockHintWorthShowing } from "../lib/lock-git.js";
 import { SearchBox } from "../components/SearchBox.js";
 
 const STATUS_META: Record<ProjectSkillStatus, { glyph: string; color: string; label: string }> = {
@@ -105,7 +106,9 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
           {project.lockEntries ? `${project.lockEntries} skill${project.lockEntries === 1 ? "" : "s"}` : "none yet"}
           {(() => {
             if (project.synthetic || !project.exists) return null;
-            const h = lockSyncText(lockSync[join(project.path, "skills-lock.json")]);
+            const raw = lockSync[join(project.path, "skills-lock.json")];
+            if (!lockHintWorthShowing(raw)) return null;
+            const h = lockSyncText(raw);
             return <Text> · <Text color={h.color}>{h.text}</Text> <Text color="gray">(g)</Text></Text>;
           })()}
         </Text>
@@ -191,7 +194,8 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
           .filter((c) => c.present.length > 0 || c.applied)
           .map((c) => `${c.profile} ${c.present.length}/${c.total}`)
           .join(", ");
-        const lockHint = p.synthetic || !p.exists ? null : lockSyncText(lockSync[join(p.path, "skills-lock.json")]);
+        const rawLockHint = p.synthetic || !p.exists ? undefined : lockSync[join(p.path, "skills-lock.json")];
+        const lockHint = lockHintWorthShowing(rawLockHint) ? lockSyncText(rawLockHint) : null;
         return (
           <Text key={p.path} wrap="truncate-end">
             <Text color={isSel ? "cyan" : p.synthetic ? "magenta" : "white"}>

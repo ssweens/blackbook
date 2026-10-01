@@ -1,6 +1,6 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { mkdtempSync, writeFileSync } from "fs";
+import { mkdtempSync, writeFileSync, existsSync } from "fs";
 import { tmpdir } from "os";
 import { basename, join, relative } from "path";
 import { commitLockFiles, findGitRoot } from "./lock-commit.js";
@@ -14,12 +14,18 @@ export interface LockGitStatus {
   isRepo: boolean;
   repoRoot: string | null;
   branch: string | null;
+  /** The lock file exists on disk. */
+  exists: boolean;
   /** Working-tree state of the lock file itself. */
   fileState: "clean" | "modified" | "untracked";
   hasUpstream: boolean;
-  /** Local commits not on the upstream (need a push). */
+  /**
+   * Commits on HEAD not on the upstream that touch THIS lock file (a push would
+   * send them). File-scoped on purpose: other unpushed commits in the same repo
+   * must not make an untouched lock read "not pushed".
+   */
   ahead: number;
-  /** Upstream commits not local (a pull would bring them). */
+  /** Commits on the upstream not on HEAD that touch THIS lock file (a pull would bring them). */
   behind: number;
 }
 
@@ -28,9 +34,10 @@ async function git(repoRoot: string, args: string[], timeout = 10000): Promise<s
   return stdout;
 }
 
-/** Git status of a single lock file and its repo (branch, file state, ahead/behind). */
+/** Git status of a single lock file and its repo (branch, file state, file-scoped ahead/behind). */
 export async function lockGitStatus(filePath: string): Promise<LockGitStatus> {
-  const empty: LockGitStatus = { isRepo: false, repoRoot: null, branch: null, fileState: "clean", hasUpstream: false, ahead: 0, behind: 0 };
+  const exists = existsSync(filePath);
+  const empty: LockGitStatus = { isRepo: false, repoRoot: null, branch: null, exists, fileState: "clean", hasUpstream: false, ahead: 0, behind: 0 };
   const repoRoot = findGitRoot(filePath.replace(/\/[^/]*$/, "") || "/");
   if (!repoRoot) return empty;
 
@@ -40,6 +47,8 @@ export async function lockGitStatus(filePath: string): Promise<LockGitStatus> {
   } catch {
     return { ...empty, isRepo: true, repoRoot };
   }
+
+  const rel = relative(repoRoot, filePath);
 
   let fileState: LockGitStatus["fileState"] = "clean";
   try {
@@ -51,14 +60,21 @@ export async function lockGitStatus(filePath: string): Promise<LockGitStatus> {
   let ahead = 0;
   let behind = 0;
   try {
-    const counts = (await git(repoRoot, ["rev-list", "--left-right", "--count", "@{u}...HEAD"])).trim();
-    const [b, a] = counts.split(/\s+/).map((n) => parseInt(n, 10));
+    // Confirm an upstream exists, then count ONLY commits touching this file in
+    // each direction — a repo-wide count would flag an untouched lock as "not
+    // pushed" whenever anything else in the repo is unpushed.
+    await git(repoRoot, ["rev-parse", "--verify", "@{u}"]);
     hasUpstream = true;
-    behind = Number.isFinite(b) ? b : 0;
-    ahead = Number.isFinite(a) ? a : 0;
+    const count = async (range: string): Promise<number> => {
+      const out = (await git(repoRoot, ["rev-list", "--count", range, "--", rel])).trim();
+      const n = parseInt(out, 10);
+      return Number.isFinite(n) ? n : 0;
+    };
+    ahead = await count("@{u}..HEAD");
+    behind = await count("HEAD..@{u}");
   } catch { /* no upstream */ }
 
-  return { isRepo: true, repoRoot, branch, fileState, hasUpstream, ahead, behind };
+  return { isRepo: true, repoRoot, branch, exists, fileState, hasUpstream, ahead, behind };
 }
 
 /**
@@ -99,16 +115,26 @@ export interface LockGitActionResult {
  * appends the counts.
  */
 export interface LockSyncHint {
-  state: "in-sync" | "drifted" | "untracked" | "ahead" | "behind" | "diverged" | "no-repo";
+  state: "in-sync" | "drifted" | "untracked" | "ahead" | "behind" | "diverged" | "no-repo" | "no-lock";
   label: string;
   color: "green" | "yellow" | "gray" | "red" | "magenta";
   added: number;
   removed: number;
 }
 
+/**
+ * Whether a hint is worth showing in a list. "No lock file" and "not in a
+ * source repo" are nothing to sync, so they're hidden rather than shown as a
+ * state.
+ */
+export function lockHintWorthShowing(hint: LockSyncHint | undefined): boolean {
+  return !!hint && hint.state !== "no-lock" && hint.state !== "no-repo";
+}
+
 /** Map a lock's git status (+ diff counts) to a sync hint — the single source for both the detail and the list. */
 export function summarizeLockSync(s: LockGitStatus | null, added = 0, removed = 0): LockSyncHint {
   if (!s) return { state: "no-repo", label: "Checking…", color: "gray", added, removed };
+  if (!s.exists) return { state: "no-lock", label: "No lock file", color: "gray", added, removed };
   if (!s.isRepo) return { state: "no-repo", label: "No source repo", color: "gray", added, removed };
   if (s.fileState === "untracked") return { state: "untracked", label: "Not in source repo", color: "yellow", added, removed };
   if (s.fileState === "modified") return { state: "drifted", label: "Drifted", color: "yellow", added, removed };
