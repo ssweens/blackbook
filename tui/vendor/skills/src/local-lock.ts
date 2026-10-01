@@ -57,6 +57,12 @@ export interface LocalSkillLockFile {
   version: number;
   /** Map of skill name to its lock entry (sorted alphabetically) */
   skills: Record<string, LocalSkillLockEntry>;
+  /**
+   * BLACKBOOK PATCH: names of the Blackbook profiles assigned to this
+   * workspace. Lives in the lock so the mapping travels with the repo. Carried
+   * through reads and writes untouched; the CLI never interprets it.
+   */
+  profiles?: string[];
 }
 
 /**
@@ -117,7 +123,15 @@ export async function writeLocalLock(lock: LocalSkillLockFile, cwd?: string): Pr
         : entry;
   }
 
-  const sorted: LocalSkillLockFile = { version: lock.version, skills: sortedSkills };
+  // BLACKBOOK PATCH: preserve the `profiles` meta (sorted, like skills) so a
+  // `skills add/remove` rewrite never drops the workspace's profile assignment.
+  const sorted: LocalSkillLockFile = {
+    version: lock.version,
+    skills: sortedSkills,
+    ...(Array.isArray(lock.profiles) && lock.profiles.length > 0
+      ? { profiles: [...new Set(lock.profiles)].sort() }
+      : {}),
+  };
   const content = JSON.stringify(sorted, null, 2) + '\n';
   await writeFile(lockPath, content, 'utf-8');
 }

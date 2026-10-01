@@ -2079,9 +2079,7 @@ describe("App E2E — Skill detail from Projects and Profiles", () => {
     }
   });
 
-  it("Enter on a profile opens its skills detail; Install asks a target and runs the same apply as P", async () => {
-    // Enter → Install must call the exact store action `P` apply uses.
-    const applyProfile = vi.fn().mockResolvedValue(true);
+  const docsState = (applyProfile: (workspace: string, name: string) => Promise<boolean>, extra: Record<string, unknown> = {}) => {
     const gh = (source: string) => ({ source, sourceType: "github" });
     useStore.setState({
       tab: "profiles",
@@ -2090,19 +2088,97 @@ describe("App E2E — Skill detail from Projects and Profiles", () => {
       projects: [], projectsLoaded: true,
       tools: createToolInstances(),
       applyProfile,
+      ...extra,
     });
+  };
+
+  it("Enter on a profile opens its skills detail with explicit apply targets; Apply to Global runs the same apply as P, with a spinner", async () => {
+    // Resolve slowly enough that the in-progress spinner notification is observable.
+    const applyProfile = vi.fn(() => new Promise<boolean>((r) => setTimeout(() => r(true), 150)));
+    docsState(applyProfile);
     const { stdin, stdout, unmount } = render(<App />);
     try {
       await waitForFrame(stdout.lastFrame, (f) => f.includes("Docs"));
       sendKey(stdin, KEYS.enter); // Enter opens the profile detail
-      // Skills-style detail: lists the profile's skills and an Install action.
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("docx") && f.includes("pdf") && f.includes("Install skills"));
-      sendKey(stdin, KEYS.down);  // status row -> "Install skills…"
-      sendKey(stdin, KEYS.enter); // open the target picker
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Install the profile's skills where?") && f.includes("Global"));
-      sendKey(stdin, KEYS.enter); // pick Global
+      await waitForFrame(stdout.lastFrame, (f) =>
+        f.includes("docx") && f.includes("pdf") && f.includes("Apply to Global (~/.agents)") && f.includes("Apply to a project…") && f.includes("Used by:"));
+      sendKey(stdin, KEYS.down);  // status row -> "Apply to Global"
+      sendKey(stdin, KEYS.enter);
+      // Activity feedback: the app's spinner notification, not a blocking screen.
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Applying Docs to Global"));
       await waitForFrame(stdout.lastFrame, () => applyProfile.mock.calls.length === 1);
       expect(applyProfile).toHaveBeenCalledWith(homedir(), "Docs");
+      // The detail stays usable the whole time.
+      expect(stdout.lastFrame()).toContain("Apply to a project…");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("G on the Profiles list applies to Global directly; P opens the workspace picker", async () => {
+    const applyProfile = vi.fn<(workspace: string, name: string) => Promise<boolean>>().mockResolvedValue(true);
+    const unassignProfile = vi.fn<(workspace: string, name: string) => Promise<boolean>>().mockResolvedValue(true);
+    const proj: ProjectInfo = {
+      path: "/w/api", name: "api", exists: true, hasAgentsDir: true, skills: [], available: [],
+      profileCoverage: [{ profile: "Docs", total: 2, present: ["docx", "pdf"], missing: [], removed: [], applied: true, assigned: true, installMissing: [], drifted: [], toApply: [], upToDate: true }],
+    };
+    docsState(applyProfile, { projects: [proj], unassignProfile });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Docs") && f.includes("P apply to a project") && f.includes("G apply to Global"));
+      sendKey(stdin, "G");
+      await waitForFrame(stdout.lastFrame, () => applyProfile.mock.calls.length === 1);
+      expect(applyProfile).toHaveBeenCalledWith(homedir(), "Docs");
+
+      sendKey(stdin, "P");
+      // Mirror of the Projects tab's picker; shows which workspaces already use the profile.
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Apply profile Docs to…") && f.includes("Global (~/.agents)") && f.includes("api") && f.includes("✓ assigned") && f.includes("d unassign"));
+      sendKey(stdin, KEYS.down); // → api
+      sendKey(stdin, "d");       // unassign from api
+      await waitForFrame(stdout.lastFrame, () => unassignProfile.mock.calls.length === 1);
+      expect(unassignProfile).toHaveBeenCalledWith("/w/api", "Docs");
+      sendKey(stdin, KEYS.enter); // apply to api
+      await waitForFrame(stdout.lastFrame, () => applyProfile.mock.calls.length === 2);
+      expect(applyProfile).toHaveBeenLastCalledWith("/w/api", "Docs");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("Projects shows assigned profiles' up-to-date state on the row and in the drill-in; the P picker marks assigned and d unassigns", async () => {
+    const applyProfile = vi.fn<(workspace: string, name: string) => Promise<boolean>>().mockResolvedValue(true);
+    const unassignProfile = vi.fn<(workspace: string, name: string) => Promise<boolean>>().mockResolvedValue(true);
+    const cov = (profile: string, upToDate: boolean, toApply: string[] = [], drifted: string[] = []) => ({
+      profile, total: 2, present: ["a"], missing: toApply, removed: [], applied: true, assigned: true, installMissing: [], drifted, toApply, upToDate,
+    });
+    const proj: ProjectInfo = {
+      path: "/w/api", name: "api", exists: true, hasAgentsDir: true, skills: [], available: [],
+      profileCoverage: [cov("Coding", true), cov("UI", false, ["x", "y", "z"], ["q"])],
+    };
+    await settleInput();
+    useStore.setState({
+      tab: "projects", projects: [proj], projectsLoaded: true, projectDetailPath: null, selectedIndex: 0,
+      profiles: { Coding: ["a"], UI: ["a"], Docs: ["a"] },
+      loadProjects: vi.fn().mockResolvedValue(undefined), tools: createToolInstances(), applyProfile, unassignProfile,
+    });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      // List row: assigned profiles with state.
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("api") && f.includes("Coding ✓") && f.includes("UI 3 to apply, 1 drifted"));
+      sendKey(stdin, KEYS.enter); // drill in
+      await waitForFrame(stdout.lastFrame, (f) =>
+        f.includes("profile Coding: 1/2 · up to date") && f.includes("profile UI: 1/2 · 3 to apply, 1 drifted — P to apply"));
+      sendKey(stdin, "P");
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Apply profile to api") && f.includes("✓ assigned") && f.includes("d unassign"));
+      // Coding (assigned) is first alphabetically; d unassigns it.
+      sendKey(stdin, "d");
+      await waitForFrame(stdout.lastFrame, () => unassignProfile.mock.calls.length === 1);
+      expect(unassignProfile).toHaveBeenCalledWith("/w/api", "Coding");
+      sendKey(stdin, KEYS.down); sendKey(stdin, KEYS.down); // → UI
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Applying UI to api") || applyProfile.mock.calls.length === 1);
+      await waitForFrame(stdout.lastFrame, () => applyProfile.mock.calls.length === 1);
+      expect(applyProfile).toHaveBeenCalledWith("/w/api", "UI");
     } finally {
       unmount();
     }

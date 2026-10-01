@@ -5,13 +5,14 @@ import type { ManagedItem } from "../lib/managed-item.js";
 import type { LockEntry } from "../lib/skill-profiles.js";
 import { agentSkillsDir, compareLockToInstall, lockInstallGap } from "../lib/lock-install-sync.js";
 import { lockGitStatus, lockUpdateSourceRepo, type LockGitStatus } from "../lib/lock-git.js";
+import { useStore, withSpinner } from "../lib/store.js";
 
-/** A place a profile's skills can be installed. */
-export interface InstallTargetOption {
-  /** Workspace path ($HOME for Global). */
-  path: string;
-  /** Display label. */
-  label: string;
+/** A workspace that has this profile assigned, with its up-to-date state. */
+export interface ProfileUsedBy {
+  workspace: string;
+  upToDate: boolean;
+  /** e.g. "up to date" or "3 to apply, 1 drifted". */
+  summary: string;
 }
 
 export interface ProfileDetailProps {
@@ -23,10 +24,12 @@ export interface ProfileDetailProps {
   lockPath: string;
   /** Source-repo skill index (name -> dir), used to detect drift exactly like the list hint does. */
   sourceIndex: Map<string, string>;
-  /** Targets to offer when installing (Global first, then registered projects). */
-  targets: InstallTargetOption[];
-  /** Install the profile into the chosen workspace — the SAME action `P` apply runs. */
-  onInstall: (targetWorkspace: string) => Promise<boolean> | boolean;
+  /** Workspaces whose lock names this profile, with their status. */
+  usedBy: ProfileUsedBy[];
+  /** Apply (assign + install) to Global — runs the same spinner-wrapped store action `P` uses. */
+  onApplyGlobal: () => Promise<unknown> | void;
+  /** Open the workspace picker to apply to a project. */
+  onApplyToProject: () => void;
   /** Open a single skill's detail (same detail the Installed tab shows). */
   onOpenSkillDetail: (skillName: string) => void;
   onClose: () => void;
@@ -34,22 +37,20 @@ export interface ProfileDetailProps {
 
 /**
  * Detail for a profile, built to match the skill/namespace detail: the same
- * ItemDetail, a status line and a navigable row per skill with its install
- * state, "Install skills…" which asks where and actually installs, and —
- * only when the lock file itself has unsaved changes — "Save lock to source
- * repo". Every sync judgment here uses the exact functions the Profiles list
- * hint uses (lockInstallGap / compareLockToInstall), so detail and list agree.
+ * ItemDetail, a status line, "Used by" metadata, explicit apply targets as
+ * action rows, a navigable row per skill with its install state, and — only
+ * when the lock file itself has unsaved changes — "Save lock to source repo".
+ * Every sync judgment uses the exact functions the Profiles list hint uses
+ * (lockInstallGap / compareLockToInstall), so detail and list agree. Nothing
+ * here blocks: applies run through the app's spinner notification.
  */
-export function ProfileDetail({ name, lockSkills, lockPath, sourceIndex, targets, onInstall, onOpenSkillDetail, onClose }: ProfileDetailProps) {
-  const [mode, setMode] = useState<"list" | "pick">("list");
+export function ProfileDetail({ name, lockSkills, lockPath, sourceIndex, usedBy, onApplyGlobal, onApplyToProject, onOpenSkillDetail, onClose }: ProfileDetailProps) {
   const [index, setIndex] = useState(0);
-  const [pickIndex, setPickIndex] = useState(0);
-  const [busy, setBusy] = useState<string | null>(null);
-  // Bumped after install/save so disk-derived state recomputes.
+  // Bumped after an apply/save resolves so disk-derived state recomputes.
   const [refresh, setRefresh] = useState(0);
   const [git, setGit] = useState<LockGitStatus | null>(null);
 
-  useEffect(() => { void lockGitStatus(lockPath).then(setGit); }, [lockPath, refresh]);
+  useEffect(() => { if (lockPath) void lockGitStatus(lockPath).then(setGit); }, [lockPath, refresh]);
 
   // Display state is the global install (~/.agents/skills) — exactly what the
   // Profiles list hint reports — computed with the same functions.
@@ -64,8 +65,8 @@ export function ProfileDetail({ name, lockSkills, lockPath, sourceIndex, targets
   const statusLabel = hint.state === "empty"
     ? "Empty"
     : hint.state === "in-sync"
-      ? "In sync"
-      : `Out of sync · ${[hint.missing ? `${hint.missing} missing` : "", hint.drifted ? `${hint.drifted} drifted` : ""].filter(Boolean).join(", ")}`;
+      ? "In sync (Global)"
+      : `Out of sync (Global) · ${[hint.missing ? `${hint.missing} missing` : "", hint.drifted ? `${hint.drifted} drifted` : ""].filter(Boolean).join(", ")}`;
 
   const item: ManagedItem = {
     name,
@@ -83,7 +84,10 @@ export function ProfileDetail({ name, lockSkills, lockPath, sourceIndex, targets
 
   const actions: ItemAction[] = [];
   actions.push({ id: "status", label: name, type: "status", statusColor: hint.color, statusLabel });
-  if (skillNames.length > 0) actions.push({ id: "install", label: "Install skills…", type: "sync" });
+  if (skillNames.length > 0) {
+    actions.push({ id: "apply_global", label: "Apply to Global (~/.agents)", type: "sync" });
+    actions.push({ id: "apply_project", label: "Apply to a project…", type: "install" });
+  }
   for (const s of skillNames) {
     const state = missing.has(s) ? "missing" : drifted.has(s) ? "drifted" : "installed";
     actions.push({ id: `skill:${s}`, label: `${s}  (${state})`, type: "open_skill" });
@@ -94,54 +98,51 @@ export function ProfileDetail({ name, lockSkills, lockPath, sourceIndex, targets
   const sel = Math.min(index, actions.length - 1);
   const current = actions[sel];
 
-  const runBusy = (label: string, fn: () => Promise<unknown>) => {
-    setBusy(label);
-    void fn().finally(() => { setBusy(null); setMode("list"); setRefresh((n) => n + 1); });
-  };
-
   useInput((_input, key) => {
-    if (busy) return;
-    if (mode === "pick") {
-      if (key.escape) { setMode("list"); return; }
-      if (key.upArrow) { setPickIndex((i) => Math.max(0, i - 1)); return; }
-      if (key.downArrow) { setPickIndex((i) => Math.min(targets.length - 1, i + 1)); return; }
-      if (key.return) {
-        const target = targets[Math.min(pickIndex, targets.length - 1)];
-        if (!target) { setMode("list"); return; }
-        runBusy("Installing…", () => Promise.resolve(onInstall(target.path)));
-      }
-      return;
-    }
     if (key.escape) { onClose(); return; }
     if (key.upArrow) { setIndex((i) => Math.max(0, i - 1)); return; }
     if (key.downArrow) { setIndex((i) => Math.min(actions.length - 1, i + 1)); return; }
-    if (key.return) {
-      if (current.id === "install") { setPickIndex(0); setMode("pick"); }
-      else if (current.id === "savelock") runBusy("Saving lock to source repo…", () => lockUpdateSourceRepo(lockPath, `chore(skills): update ${name} profile skills-lock.json`));
-      else if (current.type === "open_skill") onOpenSkillDetail(current.id.replace(/^skill:/, ""));
-      else if (current.type === "back") onClose();
+    if (!key.return) return;
+    switch (current.id) {
+      case "apply_global":
+        void Promise.resolve(onApplyGlobal()).then(() => setRefresh((n) => n + 1));
+        break;
+      case "apply_project":
+        onApplyToProject();
+        break;
+      case "savelock": {
+        const { notify, clearNotification } = useStore.getState();
+        void withSpinner(`Saving ${name} lock to source repo...`, () =>
+          lockUpdateSourceRepo(lockPath, `chore(skills): update ${name} profile skills-lock.json`), notify, clearNotification,
+        ).then((r) => {
+          notify(r.ok ? `Saved ${name} lock to the source repo` : `Couldn't save ${name} lock: ${r.error ?? "failed"}`, r.ok ? "success" : "error");
+          setRefresh((n) => n + 1);
+        });
+        break;
+      }
+      case "back":
+        onClose();
+        break;
+      default:
+        if (current.type === "open_skill") onOpenSkillDetail(current.id.replace(/^skill:/, ""));
     }
   });
 
-  if (busy) return <Box flexDirection="column"><Text color="cyan">⠋ {busy}</Text></Box>;
+  const metadata = (
+    <Box marginBottom={1} flexDirection="column">
+      <Text color="gray">Used by:</Text>
+      {usedBy.length === 0 ? (
+        <Text color="gray">  no workspace yet — apply it to one below</Text>
+      ) : (
+        usedBy.map((u) => (
+          <Text key={u.workspace} wrap="truncate-end">
+            {"  "}<Text color="cyan">{u.workspace}</Text>
+            <Text color={u.upToDate ? "green" : "yellow"}>{"  "}{u.summary}</Text>
+          </Text>
+        ))
+      )}
+    </Box>
+  );
 
-  if (mode === "pick") {
-    return (
-      <Box flexDirection="column">
-        <Text bold color="cyan">{name}</Text>
-        <Box marginTop={1}><Text>Install the profile's skills where?</Text></Box>
-        <Box flexDirection="column" marginTop={1}>
-          {targets.map((t, i) => (
-            <Text key={t.path} wrap="truncate-end">
-              <Text color={i === pickIndex ? "cyan" : "gray"}>{i === pickIndex ? "❯ " : "  "}</Text>
-              <Text color={i === pickIndex ? "white" : "gray"}>{t.label}</Text>
-            </Text>
-          ))}
-        </Box>
-        <Box marginTop={1}><Text color="gray">↑/↓ to navigate · Enter to install · Esc to back</Text></Box>
-      </Box>
-    );
-  }
-
-  return <ItemDetail item={item} actions={actions} selectedAction={sel} />;
+  return <ItemDetail item={item} actions={actions} selectedAction={sel} metadata={metadata} />;
 }

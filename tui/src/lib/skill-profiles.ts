@@ -26,7 +26,7 @@ import { atomicWriteFileSync } from "./fs-utils.js";
 import { getCacheDir } from "./config/path.js";
 import { indexSourceSkills } from "./projects.js";
 import { getConfigRepoPath } from "./config.js";
-import { agentSkillsDir, planInstall } from "./lock-install-sync.js";
+import { agentSkillsDir, lockInstallGap, planInstall } from "./lock-install-sync.js";
 import { skillsSourceForRepo } from "./project-actions.js";
 import { projectSkillAgents, runSkillsCli, summarizeCliFailure } from "./skills-cli.js";
 import { callGroups, runSkillsCliSync } from "./plugin-skills-cli.js";
@@ -45,6 +45,13 @@ export interface LockEntry {
 export interface SkillLockFile {
   version: number;
   skills: Record<string, LockEntry>;
+  /**
+   * Blackbook meta, only meaningful on a WORKSPACE lock (a project's
+   * skills-lock.json or the global lock): the profiles assigned to that
+   * workspace. Stored in the lock itself so the mapping travels with the repo
+   * and an auto-detected workspace shows its profiles on any machine.
+   */
+  profiles?: string[];
 }
 
 const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/;
@@ -79,7 +86,7 @@ function portable(entry: Partial<LockEntry> & Record<string, unknown>): LockEntr
 function readLockFile(path: string, localBase?: string): SkillLockFile | null {
   if (!existsSync(path)) return null;
   try {
-    const raw = JSON.parse(readFileSync(path, "utf-8")) as { version?: unknown; skills?: Record<string, Record<string, unknown>> };
+    const raw = JSON.parse(readFileSync(path, "utf-8")) as { version?: unknown; skills?: Record<string, Record<string, unknown>>; profiles?: unknown };
     if (!raw || typeof raw !== "object" || !raw.skills || typeof raw.skills !== "object") return null;
     const skills: Record<string, LockEntry> = {};
     for (const [name, entry] of Object.entries(raw.skills)) {
@@ -88,7 +95,10 @@ function readLockFile(path: string, localBase?: string): SkillLockFile | null {
       if (p && localBase && p.sourceType === "local" && !isAbsolute(p.source)) p.source = resolve(localBase, p.source);
       if (p) skills[name] = p;
     }
-    return { version: typeof raw.version === "number" ? raw.version : 1, skills };
+    const profiles = Array.isArray(raw.profiles)
+      ? [...new Set(raw.profiles.filter((p): p is string => typeof p === "string" && p.trim().length > 0))]
+      : undefined;
+    return { version: typeof raw.version === "number" ? raw.version : 1, skills, ...(profiles && profiles.length > 0 ? { profiles } : {}) };
   } catch {
     return null;
   }
@@ -190,10 +200,59 @@ export function isGlobalWorkspace(path: string): boolean {
   return resolve(path) === resolve(homedir());
 }
 
+/** Path of the lock that defines a workspace: the project's skills-lock.json, or the global lock for $HOME. */
+export function workspaceLockPath(path: string): string {
+  return isGlobalWorkspace(path) ? globalLockPath() : join(path, "skills-lock.json");
+}
+
 /** The lock that defines a workspace: the project's skills-lock.json, or the global lock for $HOME. */
 export function workspaceLock(path: string): SkillLockFile {
-  const file = isGlobalWorkspace(path) ? globalLockPath() : join(path, "skills-lock.json");
-  return readLockFile(file, isGlobalWorkspace(path) ? undefined : path) ?? { version: 1, skills: {} };
+  return readLockFile(workspaceLockPath(path), isGlobalWorkspace(path) ? undefined : path) ?? { version: 1, skills: {} };
+}
+
+// ── Profile ↔ workspace mapping (stored IN the workspace lock) ───────────────
+
+/** Profiles assigned to a workspace, read from its lock's `profiles` meta. */
+export function workspaceProfiles(path: string): string[] {
+  return [...(workspaceLock(path).profiles ?? [])].sort();
+}
+
+/**
+ * Write the workspace lock's `profiles` meta, touching nothing else in the
+ * file (the CLI owns the rest — hashes, versions). Never fabricates a lock:
+ * if there is no lock file yet there is nothing installed to map a profile
+ * to, and creating one with the wrong `version` would make the CLI wipe it.
+ * Returns false when the lock file doesn't exist.
+ */
+export function setWorkspaceProfiles(path: string, names: string[]): boolean {
+  const file = workspaceLockPath(path);
+  if (!existsSync(file)) return false;
+  let raw: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf-8")) as unknown;
+    raw = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return false;
+  }
+  const clean = [...new Set(names.map((n) => n.trim()).filter(Boolean))].sort();
+  if (clean.length > 0) raw.profiles = clean;
+  else delete raw.profiles;
+  atomicWriteFileSync(file, JSON.stringify(raw, null, 2) + "\n");
+  return true;
+}
+
+/** Assign a profile to a workspace (idempotent). */
+export function assignProfileToWorkspace(path: string, name: string): boolean {
+  const current = workspaceProfiles(path);
+  if (current.includes(name)) return true;
+  return setWorkspaceProfiles(path, [...current, name]);
+}
+
+/** Remove a profile from a workspace's assignment (does not uninstall skills). */
+export function unassignProfileFromWorkspace(path: string, name: string): boolean {
+  const current = workspaceProfiles(path);
+  if (!current.includes(name)) return true;
+  return setWorkspaceProfiles(path, current.filter((n) => n !== name));
 }
 
 function sameSource(a: LockEntry, b: LockEntry): boolean {
@@ -202,7 +261,8 @@ function sameSource(a: LockEntry, b: LockEntry): boolean {
   return norm(a.source) === norm(b.source);
 }
 
-export interface ProfileCoverage {
+/** Lock-only coverage of a profile against a workspace (what profileCoverage computes). */
+export interface ProfileCoverageBase {
   profile: string;
   total: number;
   /** Profile skills the workspace already has from the same source. */
@@ -215,12 +275,26 @@ export interface ProfileCoverage {
   applied: boolean;
 }
 
+/** Full status of a profile against a workspace: lock coverage + disk truth + assignment. */
+export interface ProfileCoverage extends ProfileCoverageBase {
+  /** True when the workspace lock's `profiles` meta names this profile. */
+  assigned: boolean;
+  /** Profile skills in the workspace lock but not installed on disk in its agent skills dir. */
+  installMissing: string[];
+  /** Profile skills installed on disk whose content differs from the source. */
+  drifted: string[];
+  /** Everything an apply must act on: missing from the lock ∪ missing on disk. */
+  toApply: string[];
+  /** Nothing to apply, nothing drifted, nothing removed. */
+  upToDate: boolean;
+}
+
 export function profileCoverage(
   name: string,
   profile: SkillLockFile,
   lock: SkillLockFile,
   snapshot?: string[],
-): ProfileCoverage {
+): ProfileCoverageBase {
   const present: string[] = [];
   const missing: string[] = [];
   for (const [skill, entry] of Object.entries(profile.skills)) {
@@ -260,10 +334,87 @@ function recordSnapshot(workspace: string, profile: string, names: string[]): vo
   atomicWriteFileSync(snapshotsPath(), JSON.stringify(all, null, 2) + "\n");
 }
 
-/** Coverage of every profile for one workspace. */
+/** The agent skills directory a workspace installs into. */
+export function workspaceSkillsDir(path: string): string {
+  return isGlobalWorkspace(path) ? agentSkillsDir() : join(path, ".agents", "skills");
+}
+
+/**
+ * THE apply plan for a profile against a workspace: everything missing or
+ * drifted on disk (planInstall) plus everything the workspace LOCK lacks —
+ * a skill copied onto disk by hand still has to be recorded by `skills add`.
+ * Pure and synchronous; used by applyProfileToWorkspace and by the BDD suite.
+ */
+export function planApply(
+  profileSkills: Record<string, LockEntry>,
+  workspaceLockSkills: Record<string, LockEntry>,
+  installedDir: string,
+  sourceIndex: Map<string, string>,
+): string[] {
+  const set = new Set(planInstall(profileSkills, installedDir, sourceIndex));
+  for (const [skill, entry] of Object.entries(profileSkills)) {
+    const have = workspaceLockSkills[skill];
+    if (!have || !sameSource(have, entry)) set.add(skill);
+  }
+  return [...set].sort();
+}
+
+/**
+ * "Is this profile up to date with this workspace?" — one function for the
+ * Projects drill-in, the project list row and the profile detail. Up to date
+ * means every profile skill is in the workspace lock from the same source,
+ * installed on disk in the workspace's agent skills dir, not drifted from its
+ * source, and nothing dropped from the profile is lingering.
+ */
+export function profileWorkspaceStatus(
+  name: string,
+  profile: SkillLockFile,
+  workspace: string,
+  sourceIndex: Map<string, string>,
+  lock: SkillLockFile = workspaceLock(workspace),
+): ProfileCoverage {
+  const base = profileCoverage(name, profile, lock, profileSnapshot(workspace, name));
+  const gap = lockInstallGap(profile.skills, workspaceSkillsDir(workspace), sourceIndex);
+  const toApply = [...new Set([...base.missing, ...gap.missing])].sort();
+  return {
+    ...base,
+    assigned: (lock.profiles ?? []).includes(name),
+    installMissing: gap.missing,
+    drifted: gap.drifted,
+    toApply,
+    upToDate: toApply.length === 0 && gap.drifted.length === 0 && base.removed.length === 0,
+  };
+}
+
+/**
+ * Coverage of every profile for one workspace. Assigned profiles get the full
+ * disk-truth status (presence + drift); the rest get lock coverage only — no
+ * hashing for profiles the workspace doesn't track.
+ */
 export function workspaceCoverage(path: string, profiles: Record<string, SkillLockFile>): ProfileCoverage[] {
   const lock = workspaceLock(path);
-  return Object.entries(profiles).map(([name, profile]) => profileCoverage(name, profile, lock, profileSnapshot(path, name)));
+  const assigned = new Set(lock.profiles ?? []);
+  const sourceRepo = getConfigRepoPath();
+  const sourceIndex = sourceRepo ? indexSourceSkills(sourceRepo) : new Map<string, string>();
+  return Object.entries(profiles).map(([name, profile]) => {
+    if (assigned.has(name)) return profileWorkspaceStatus(name, profile, path, sourceIndex, lock);
+    const base = profileCoverage(name, profile, lock, profileSnapshot(path, name));
+    return { ...base, assigned: false, installMissing: [], drifted: [], toApply: [...base.missing], upToDate: false };
+  });
+}
+
+/**
+ * "N to apply, M drifted, K removed" — or "up to date". The one summary of a
+ * profile's state against a workspace, used by the Projects drill-in line,
+ * the project list row and the profile detail's "Used by".
+ */
+export function profileStatusSummary(c: ProfileCoverage): string {
+  if (c.upToDate) return "up to date";
+  return [
+    c.toApply.length ? `${c.toApply.length} to apply` : "",
+    c.drifted.length ? `${c.drifted.length} drifted` : "",
+    c.removed.length ? `${c.removed.length} removed` : "",
+  ].filter(Boolean).join(", ");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -300,13 +451,13 @@ export async function applyProfileToWorkspace(
   // the same planInstall every install path uses — so a skill that is in the
   // workspace lock but absent (or drifted) on disk is reinstalled, where the
   // old lock-diff reported "already up to date" and did nothing.
-  const coverage = profileCoverage(name, profile, workspaceLock(workspace), profileSnapshot(workspace, name));
+  const wsLock = workspaceLock(workspace);
+  const coverage = profileCoverage(name, profile, wsLock, profileSnapshot(workspace, name));
   const result: ApplyResult = { added: [], removed: [], errors: [] };
   const global = isGlobalWorkspace(workspace);
   const sourceRepo = getConfigRepoPath();
   const sourceIndex = sourceRepo ? indexSourceSkills(sourceRepo) : new Map<string, string>();
-  const installedDir = global ? agentSkillsDir() : join(workspace, ".agents", "skills");
-  const toInstall = planInstall(profile.skills, installedDir, sourceIndex);
+  const toInstall = planApply(profile.skills, wsLock.skills, workspaceSkillsDir(workspace), sourceIndex);
 
   const bySource = new Map<string, string[]>();
   for (const skill of toInstall) {
@@ -347,7 +498,12 @@ export async function applyProfileToWorkspace(
     if (!result.errors.some((e) => e.startsWith("remove:"))) result.removed.push(...coverage.removed);
   }
 
-  if (result.errors.length === 0) recordSnapshot(workspace, name, Object.keys(profile.skills));
+  if (result.errors.length === 0) {
+    recordSnapshot(workspace, name, Object.keys(profile.skills));
+    // Applying IS assigning: record the profile in the workspace lock's
+    // `profiles` meta so the mapping travels with the repo.
+    assignProfileToWorkspace(workspace, name);
+  }
   return result;
 }
 

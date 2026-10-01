@@ -47,6 +47,8 @@ import { SaveProfileModal } from "./components/SaveProfileModal.js";
 import { SkillProfilesModal } from "./components/SkillProfilesModal.js";
 import { workspaceLock, profileLockPath } from "./lib/skill-profiles.js";
 import { ProfileDetail } from "./components/ProfileDetail.js";
+import { WorkspacePickerModal } from "./components/WorkspacePickerModal.js";
+import { profileStatusSummary } from "./lib/skill-profiles.js";
 import { getPluginToolStatus } from "./lib/plugin-status.js";
 import {
   syncPluginInstances,
@@ -121,9 +123,11 @@ interface TabContentProps {
   onSettingsTextInputActiveChange: (active: boolean) => void;
   onOpenSkillDetail: (name: string) => void;
   onOpenProfileDetail: (name: string) => void;
+  onApplyProfileGlobal: (name: string) => void;
+  onApplyProfileToProject: (name: string) => void;
 }
 
-function TabContent({ tab, searchFocused, onSearchFocus, onSearchBlur, onSettingsTextInputActiveChange, onOpenSkillDetail, onOpenProfileDetail }: TabContentProps) {
+function TabContent({ tab, searchFocused, onSearchFocus, onSearchBlur, onSettingsTextInputActiveChange, onOpenSkillDetail, onOpenProfileDetail, onApplyProfileGlobal, onApplyProfileToProject }: TabContentProps) {
   const contentHeight = useContentHeight();
   switch (tab) {
     case "discover":
@@ -160,7 +164,7 @@ function TabContent({ tab, searchFocused, onSearchFocus, onSearchBlur, onSetting
         />
       );
     case "profiles":
-      return <ProfilesTab contentHeight={contentHeight} onOpenSkillDetail={onOpenSkillDetail} onOpenProfileDetail={onOpenProfileDetail} />;
+      return <ProfilesTab contentHeight={contentHeight} onOpenSkillDetail={onOpenSkillDetail} onOpenProfileDetail={onOpenProfileDetail} onApplyGlobal={onApplyProfileGlobal} onApplyToProject={onApplyProfileToProject} />;
     case "settings":
       return <SettingsTab onTextInputActiveChange={onSettingsTextInputActiveChange} />;
   }
@@ -321,6 +325,7 @@ export function App() {
   const profiles = useStore((s) => s.profiles);
   const profileLocks = useStore((s) => s.profileLocks);
   const applyProfile = useStore((s) => s.applyProfile);
+  const unassignProfile = useStore((s) => s.unassignProfile);
   const saveLockAsProfile = useStore((s) => s.saveLockAsProfile);
   const setSkillProfiles = useStore((s) => s.setSkillProfiles);
   const [profileTargetPath, setProfileTargetPath] = useState<string | null>(null);
@@ -339,6 +344,16 @@ export function App() {
   const [skillProfilesTarget, setSkillProfilesTarget] = useState<StandaloneSkill | null>(null);
   // Profile detail: a skills-style view (install its skills, per-skill status), opened with `g` on the Profiles tab.
   const [profileDetailName, setProfileDetailName] = useState<string | null>(null);
+  // Workspace picker: apply a given profile to a chosen workspace (mirror of the Projects tab's P).
+  const [workspacePickerFor, setWorkspacePickerFor] = useState<string | null>(null);
+  /**
+   * THE apply dispatch. Every way of applying a profile — Projects `P`,
+   * Profiles `P`/`G`, the profile detail's rows — goes through here, so they
+   * share one store action and one spinner notification (like every other
+   * install in the app). applyProfile reports success/failure itself.
+   */
+  const applyWithSpinner = (workspace: string, name: string, targetLabel: string) =>
+    withSpinner(`Applying ${name} to ${targetLabel}...`, () => applyProfile(workspace, name), notify, clearNotification);
   const openProfileDetail = (name: string) => {
     const lock = useStore.getState().profileLocks[name];
     if (!lock) { notify(`Profile "${name}" has no lock yet — edit and save it first`, "warning"); return; }
@@ -1519,7 +1534,7 @@ export function App() {
   type OverlayKind =
     | "consultation" | "sourceSetupWizard" | "diff" | "missingSummary" | "editToolModal"
     | "addMarketplace" | "addPiMarketplace" | "addProject" | "adoptSkills" | "applyProfile" | "saveLockProfile" | "toolActionModal"
-    | "toolDetail" | "skillFileBrowser" | "skillProfiles" | "profileDetail" | "itemDetail" | "marketplaceDetail";
+    | "toolDetail" | "skillFileBrowser" | "skillProfiles" | "workspacePicker" | "profileDetail" | "itemDetail" | "marketplaceDetail";
   interface OverlayEntry {
     kind: OverlayKind;
     active: boolean;
@@ -1549,7 +1564,8 @@ export function App() {
     // The file browser owns its own Esc behavior: back to its file list, then back to skill detail.
     { kind: "skillFileBrowser", active: !!skillFileBrowser, inputMode: "detail", escClose: () => {} },
     { kind: "skillProfiles", active: !!skillProfilesTarget, inputMode: "modal" },
-    // ProfileDetail owns its own Esc (back out of the target picker first).
+    { kind: "workspacePicker", active: !!workspacePickerFor, inputMode: "modal" },
+    // ProfileDetail owns its own Esc.
     { kind: "profileDetail", active: !!profileDetailName, inputMode: "detail", escClose: () => {} },
     { kind: "itemDetail", active: !!activeDetail, inputMode: "detail", escClose: closeItemDetail },
     {
@@ -2725,12 +2741,33 @@ export function App() {
         );
       case "applyProfile": {
         const target = projects.find((p) => p.path === profileTargetPath);
+        const assigned = new Set((target?.profileCoverage ?? []).filter((c) => c.assigned).map((c) => c.profile));
         return (
           <ProfilePickerModal
             profiles={profiles}
             workspaceName={target?.name ?? "workspace"}
-            onApply={(name) => { setModalVisible(null); if (profileTargetPath) void applyProfile(profileTargetPath, name); }}
+            assigned={assigned}
+            onApply={(name) => { setModalVisible(null); if (profileTargetPath) void applyWithSpinner(profileTargetPath, name, target?.name ?? "workspace"); }}
+            onUnassign={(name) => { if (profileTargetPath) void unassignProfile(profileTargetPath, name); }}
             onCancel={() => setModalVisible(null)}
+          />
+        );
+      }
+      case "workspacePicker": {
+        const name = workspacePickerFor!;
+        const isAssigned = (p: typeof projects[number]) => !!p.profileCoverage?.some((c) => c.profile === name && c.assigned);
+        const globalProject = projects.find((p) => p.synthetic);
+        const targets = [
+          { path: homedir(), label: "Global (~/.agents)", assigned: globalProject ? isAssigned(globalProject) : false },
+          ...projects.filter((p) => !p.synthetic && p.exists).map((p) => ({ path: p.path, label: `${p.name}  ${p.path}`, assigned: isAssigned(p) })),
+        ];
+        return (
+          <WorkspacePickerModal
+            profileName={name}
+            targets={targets}
+            onApply={(path) => { setWorkspacePickerFor(null); void applyWithSpinner(path, name, targets.find((t) => t.path === path)?.label.split("  ")[0] ?? "workspace"); }}
+            onUnassign={(path) => { void unassignProfile(path, name); }}
+            onCancel={() => setWorkspacePickerFor(null)}
           />
         );
       }
@@ -2776,6 +2813,12 @@ export function App() {
           { path: homedir(), label: "Global (~/.agents)" },
           ...projects.filter((p) => !p.synthetic && p.exists).map((p) => ({ path: p.path, label: `${p.name}  ${p.path}` })),
         ];
+        void targets;
+        // Workspaces whose lock names this profile, with the shared status summary.
+        const usedBy = projects
+          .map((p) => ({ p, c: p.profileCoverage?.find((c) => c.profile === name && c.assigned) }))
+          .filter((x): x is { p: typeof projects[number]; c: NonNullable<typeof x.c> } => !!x.c)
+          .map(({ p, c }) => ({ workspace: p.name, upToDate: c.upToDate, summary: profileStatusSummary(c) }));
         return (
           <ProfileDetail
             key={name}
@@ -2783,9 +2826,10 @@ export function App() {
             lockSkills={lock?.skills ?? {}}
             lockPath={sourceRepo ? profileLockPath(sourceRepo, name) : ""}
             sourceIndex={sourceRepo ? indexSourceSkills(sourceRepo) : new Map()}
-            targets={targets}
-            // The SAME store action `P` apply runs — one install path.
-            onInstall={(target) => applyProfile(target, name)}
+            usedBy={usedBy}
+            // Same spinner-wrapped store action as Projects `P` — one apply path.
+            onApplyGlobal={() => applyWithSpinner(homedir(), name, "Global")}
+            onApplyToProject={() => { setProfileDetailName(null); setWorkspacePickerFor(name); }}
             onOpenSkillDetail={(skillName) => { setProfileDetailName(null); openSkillDetailByName(skillName); }}
             onClose={() => setProfileDetailName(null)}
           />
@@ -2845,6 +2889,8 @@ export function App() {
             onSettingsTextInputActiveChange={setSettingsTextInputActive}
             onOpenSkillDetail={openSkillDetailByName}
             onOpenProfileDetail={openProfileDetail}
+            onApplyProfileGlobal={(name) => { void applyWithSpinner(homedir(), name, "Global"); }}
+            onApplyProfileToProject={(name) => setWorkspacePickerFor(name)}
           />
         );
     }

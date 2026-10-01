@@ -16,7 +16,7 @@ const HINTS: Record<Tab, string> = {
   tools: "Enter detail · i install · u update · d uninstall · e edit config · Space toggle · R refresh · q quit",
   sync: "y to sync missing/changed items (press twice) · Enter details · d diff/detail · R refresh · q quit",
   projects: "Enter open · P apply profile · S save lock as profile · c consult advisor · a add · A adopt · d remove · (in project) Enter skill detail · p push · u pull · e toggle · d delete · Esc back · R refresh · q quit",
-  profiles: "Enter details · e edit · n new · d delete · P apply from a workspace · (in builder) Space toggle · Enter skill detail · S save · c consult advisor · →/← expand namespace · Esc back · q quit",
+  profiles: "Enter details · P apply to a project… · G apply to Global · e edit · n new · d delete · (in builder) Space toggle · Enter skill detail · S save · c consult advisor · →/← expand namespace · Esc back · q quit",
   settings: "↑/↓ select · Enter edit · Esc cancel · R refresh · q quit",
 };
 

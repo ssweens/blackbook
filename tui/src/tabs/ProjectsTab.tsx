@@ -1,5 +1,5 @@
 import type { ProfileCoverage } from "../lib/skill-profiles.js";
-import { workspaceLock } from "../lib/skill-profiles.js";
+import { workspaceLock, profileStatusSummary } from "../lib/skill-profiles.js";
 import React, { useEffect, useMemo } from "react";
 import { join } from "path";
 import { Box, Text } from "ink";
@@ -16,23 +16,17 @@ const STATUS_META: Record<ProjectSkillStatus, { glyph: string; color: string; la
 };
 
 /**
- * One line per profile this workspace uses (or has been applied to): coverage,
- * plus what applying it again would change. Profiles it doesn't touch at all
- * are left out to keep the view short.
+ * One line per profile ASSIGNED to this workspace (named in its lock's
+ * `profiles` meta): is it up to date here, and if not, what P would do.
  */
 function coverageLines(coverage: ProfileCoverage[] | undefined): Array<{ key: string; text: string; stale: boolean }> {
   return (coverage ?? [])
-    .filter((c) => c.present.length > 0 || c.applied)
-    .map((c) => {
-      const delta = [c.missing.length ? `${c.missing.length} new` : "", c.removed.length ? `${c.removed.length} removed` : ""]
-        .filter(Boolean)
-        .join(", ");
-      return {
-        key: c.profile,
-        stale: delta.length > 0,
-        text: `profile ${c.profile}: ${c.present.length}/${c.total}${delta ? ` · ${delta} — P to apply` : " · up to date"}`,
-      };
-    });
+    .filter((c) => c.assigned)
+    .map((c) => ({
+      key: c.profile,
+      stale: !c.upToDate,
+      text: `profile ${c.profile}: ${c.present.length}/${c.total} · ${profileStatusSummary(c)}${c.upToDate ? "" : " — P to apply"}`,
+    }));
 }
 
 export interface ProjectsTabProps {
@@ -197,9 +191,10 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
           ? "missing dir"
           : `${p.skills.length} skill${p.skills.length === 1 ? "" : "s"}${drifted ? ` · ${drifted} drifted` : ""} · ${p.available.length} available`;
         const location = p.synthetic ? "~/.agents/skills (global)" : p.path;
+        // Assigned profiles with their state: "Coding ✓, UI 3 to apply".
         const profileTags = (p.profileCoverage ?? [])
-          .filter((c) => c.present.length > 0 || c.applied)
-          .map((c) => `${c.profile} ${c.present.length}/${c.total}`)
+          .filter((c) => c.assigned)
+          .map((c) => `${c.profile} ${c.upToDate ? "✓" : profileStatusSummary(c)}`)
           .join(", ");
         const lockHint = p.synthetic || !p.exists ? null : lockInstallText(lockSync[join(p.path, "skills-lock.json")]);
         return (

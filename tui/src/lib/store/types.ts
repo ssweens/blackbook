@@ -101,6 +101,8 @@ export interface Actions {
   refreshLockSync: (targets: import("../lock-install-sync.js").LockSyncTarget[]) => Promise<void>;
   /** Install a lock's skills that are missing/drifted on disk into a target workspace (global = $HOME). The reconcile behind "Install N skills". */
   installLockToWorkspace: (targetWorkspace: string, lockSkills: Record<string, import("../skill-profiles.js").LockEntry>) => Promise<boolean>;
+  /** Remove a profile from a workspace's `profiles` meta in its lock (skills stay installed). */
+  unassignProfile: (workspace: string, name: string) => Promise<boolean>;
   /** True while the Profiles tab builder/confirm owns input (suppresses global keys). */
   profilesEditing: boolean;
   setProfilesEditing: (editing: boolean) => void;

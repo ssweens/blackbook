@@ -30,6 +30,7 @@ import {
   lockAsProfile,
   markProfileApplied,
   installLockSkills,
+  unassignProfileFromWorkspace,
   type SkillLockFile,
 } from "../skill-profiles.js";
 import { expandPath } from "../config/path.js";
@@ -63,6 +64,7 @@ export type ProjectsSlice = Pick<
   | "deleteProfile"
   | "refreshLockSync"
   | "installLockToWorkspace"
+  | "unassignProfile"
   | "profilesEditing"
   | "setProfilesEditing"
 >;
@@ -118,6 +120,15 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
     }
     notify(`Installed ${result.added.length} skill${result.added.length === 1 ? "" : "s"}`, "success");
     return true;
+  },
+
+  unassignProfile: async (workspace, name) => {
+    const { notify } = get();
+    const ok = unassignProfileFromWorkspace(workspace, name);
+    await get().loadProjects({ silent: true });
+    if (ok) notify(`Unassigned "${name}" (its skills stay installed)`, "success");
+    else notify(`Couldn't update the workspace lock to unassign "${name}"`, "error");
+    return ok;
   },
 
   setProjectDetailPath: (path) => set({ projectDetailPath: path }),

@@ -6,13 +6,19 @@ import { tmpdir } from "os";
 import {
   addSourceFor,
   applyProfileToWorkspace,
+  assignProfileToWorkspace,
   buildProfileLock,
   deleteProfileLock,
   isGlobalWorkspace,
   listProfileLocks,
   lockAsProfile,
+  planApply,
   profileCoverage,
+  profileWorkspaceStatus,
+  setWorkspaceProfiles,
+  unassignProfileFromWorkspace,
   workspaceLock,
+  workspaceProfiles,
   writeProfileLock,
   type SkillLockFile,
 } from "./skill-profiles.js";
@@ -153,6 +159,8 @@ describe("applyProfileToWorkspace (real CLI, isolated HOME)", () => {
     expect(first.added.sort()).toEqual(["alpha", "beta"]);
     expect(Object.keys(workspaceLock(project).skills).sort()).toEqual(["alpha", "beta"]);
     expect(lstatSync(join(project, ".claude", "skills", "alpha")).isSymbolicLink()).toBe(true);
+    // Applying assigns: the profile is recorded in the workspace lock's `profiles` meta.
+    expect(workspaceLock(project).profiles).toEqual(["p"]);
 
     // Re-applying an unchanged profile is a no-op.
     expect(await applyProfileToWorkspace(project, "p", v1, [])).toEqual({ added: [], removed: [], errors: [] });
@@ -164,5 +172,69 @@ describe("applyProfileToWorkspace (real CLI, isolated HOME)", () => {
     expect(second).toMatchObject({ added: [], removed: ["beta"], errors: [] });
     expect(Object.keys(workspaceLock(project).skills)).toEqual(["alpha"]);
     expect(existsSync(join(project, ".claude", "skills", "beta"))).toBe(false);
+    // The CLI rewrote the lock on `skills remove` — the (patched) writer must
+    // have carried the `profiles` meta through, or the mapping would vanish.
+    expect(workspaceLock(project).profiles).toEqual(["p"]);
   }, 180_000);
+});
+
+describe("profile ↔ workspace mapping (lock meta)", () => {
+  const gh = (): { source: string; sourceType: string } => ({ source: "x/y", sourceType: "github" });
+
+  it("readLockFile carries a valid profiles meta and ignores junk", () => {
+    const project = join(root, "proj");
+    mkdirSync(project);
+    writeFileSync(join(project, "skills-lock.json"), JSON.stringify({ version: 1, skills: { a: gh() }, profiles: ["UI", "Coding", "UI", "", 3] }));
+    expect(workspaceLock(project).profiles).toEqual(["UI", "Coding"]);
+    expect(workspaceProfiles(project)).toEqual(["Coding", "UI"]);
+  });
+
+  it("setWorkspaceProfiles touches only the profiles key and never fabricates a lock", () => {
+    const project = join(root, "proj");
+    mkdirSync(project);
+    // No lock yet → refused, nothing written.
+    expect(setWorkspaceProfiles(project, ["Docs"])).toBe(false);
+    expect(existsSync(join(project, "skills-lock.json"))).toBe(false);
+    // A CLI-style lock with fields Blackbook doesn't model must survive untouched.
+    writeFileSync(join(project, "skills-lock.json"), JSON.stringify({ version: 1, skills: { a: { ...gh(), computedHash: "h" } }, extra: true }));
+    expect(assignProfileToWorkspace(project, "Docs")).toBe(true);
+    expect(assignProfileToWorkspace(project, "Docs")).toBe(true); // idempotent
+    const raw = JSON.parse(readFileSync(join(project, "skills-lock.json"), "utf-8"));
+    expect(raw).toMatchObject({ version: 1, extra: true, profiles: ["Docs"] });
+    expect(raw.skills.a.computedHash).toBe("h");
+    expect(unassignProfileFromWorkspace(project, "Docs")).toBe(true);
+    expect("profiles" in JSON.parse(readFileSync(join(project, "skills-lock.json"), "utf-8"))).toBe(false);
+  });
+
+  it("profileWorkspaceStatus is up to date only when in the lock, on disk, and matching", () => {
+    const project = join(root, "proj");
+    const installed = join(project, ".agents", "skills");
+    mkdirSync(installed, { recursive: true });
+    writeFileSync(join(project, "skills-lock.json"), JSON.stringify({ version: 1, skills: { alpha: gh(), beta: gh() }, profiles: ["p"] }));
+    const profile: SkillLockFile = { version: 1, skills: { alpha: gh(), beta: gh() } };
+    // Only alpha on disk → beta is "to apply" (in the lock, missing on disk).
+    writeSkill(join(installed, "alpha"), "alpha");
+    let s = profileWorkspaceStatus("p", profile, project, new Map());
+    expect(s).toMatchObject({ assigned: true, upToDate: false, toApply: ["beta"], installMissing: ["beta"], drifted: [] });
+    writeSkill(join(installed, "beta"), "beta");
+    s = profileWorkspaceStatus("p", profile, project, new Map());
+    expect(s.upToDate).toBe(true);
+    // Drift against a known source flips it back.
+    const src = join(root, "src-alpha");
+    writeSkill(src, "alpha");
+    writeFileSync(join(src, "SKILL.md"), "---\nname: alpha\n---\nchanged\n");
+    s = profileWorkspaceStatus("p", profile, project, new Map([["alpha", src]]));
+    expect(s).toMatchObject({ upToDate: false, drifted: ["alpha"] });
+  });
+
+  it("planApply adds a skill that is on disk but absent from the workspace lock", () => {
+    const project = join(root, "proj");
+    const installed = join(project, ".agents", "skills");
+    mkdirSync(installed, { recursive: true });
+    writeSkill(join(installed, "alpha"), "alpha"); // on disk, not in the lock
+    const plan = planApply({ alpha: gh() }, {}, installed, new Map());
+    expect(plan).toEqual(["alpha"]);
+    // Same source in the lock + on disk → nothing to apply.
+    expect(planApply({ alpha: gh() }, { alpha: gh() }, installed, new Map())).toEqual([]);
+  });
 });

@@ -3038,6 +3038,7 @@ describe("composed store shape", () => {
     "deleteProfile",
     "refreshLockSync",
     "installLockToWorkspace",
+    "unassignProfile",
     "setProfilesEditing",
   ] as const;
 

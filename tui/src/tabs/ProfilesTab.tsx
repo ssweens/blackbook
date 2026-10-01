@@ -77,8 +77,12 @@ export interface ProfilesTabProps {
   contentHeight: number;
   /** Open the full skill detail overlay for a skill name (App owns the overlay). */
   onOpenSkillDetail: (name: string) => void;
-  /** Open the profile detail (its skills + install) — Enter on a profile row. */
+  /** Open the profile detail (its skills + apply) — Enter on a profile row. */
   onOpenProfileDetail: (name: string) => void;
+  /** Apply (assign + install) the profile to Global — `G`. */
+  onApplyGlobal: (name: string) => void;
+  /** Open the workspace picker to apply the profile to a project — `P`. */
+  onApplyToProject: (name: string) => void;
 }
 
 /**
@@ -113,7 +117,7 @@ export function buildRows(
   return rows;
 }
 
-export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenProfileDetail }: ProfilesTabProps) {
+export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenProfileDetail, onApplyGlobal, onApplyToProject }: ProfilesTabProps) {
   const profiles = useStore((s) => s.profiles);
   const profileLocks = useStore((s) => s.profileLocks);
   const saveProfile = useStore((s) => s.saveProfile);
@@ -358,8 +362,11 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenProfileDet
       if (key.upArrow) setListIndex((i) => Math.max(0, i - 1));
       else if (key.downArrow) setListIndex((i) => Math.min(Math.max(0, names.length - 1), i + 1));
       else if (input === "n") openBuilder(null);
-      // Enter opens the profile detail (its skills + install), matching Enter on every other tab.
+      // Enter opens the profile detail (its skills + apply), matching Enter on every other tab.
       else if (names.length > 0 && key.return) onOpenProfileDetail(names[Math.min(listIndex, names.length - 1)]);
+      // P mirrors the Projects tab's apply key; G is the literal target (Global).
+      else if (names.length > 0 && input === "P") onApplyToProject(names[Math.min(listIndex, names.length - 1)]);
+      else if (names.length > 0 && input === "G") onApplyGlobal(names[Math.min(listIndex, names.length - 1)]);
       else if (names.length > 0 && input === "e") openBuilder(names[Math.min(listIndex, names.length - 1)]);
       else if (names.length > 0 && (input === "d" || key.delete)) {
         setMode({ kind: "confirmDelete", name: names[Math.min(listIndex, names.length - 1)] });
@@ -630,7 +637,7 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenProfileDet
       )}
       <Box marginTop={1}>
         <Text color="gray" wrap="truncate-end">
-          {listPosition ? `${listPosition} · ` : ""}Enter details · e edit · n new · d delete{names.length > 0 ? " · P apply from a workspace" : ""}
+          {listPosition ? `${listPosition} · ` : ""}Enter details{names.length > 0 ? " · P apply to a project… · G apply to Global" : ""} · e edit · n new · d delete
         </Text>
       </Box>
     </Box>

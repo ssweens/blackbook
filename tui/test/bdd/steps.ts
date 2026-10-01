@@ -13,7 +13,15 @@ import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync, lstatSync, 
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Plugin, ToolInstance } from '../../src/lib/types.js';
-import type { LockEntry } from '../../src/lib/skill-profiles.js';
+import {
+  planApply,
+  profileWorkspaceStatus,
+  setWorkspaceProfiles,
+  workspaceProfiles,
+  type LockEntry,
+  type ProfileCoverage,
+  type SkillLockFile,
+} from '../../src/lib/skill-profiles.js';
 import {
   compareLockToInstall,
   lockInstallText,
@@ -49,6 +57,12 @@ export interface World {
   sourceIndex?: Map<string, string>;
   hint?: LockInstallHint;
   plan?: string[];
+  // ── Profile ↔ workspace mapping ──
+  workspace?: string;
+  profiles?: Record<string, SkillLockFile>;
+  wsStatus?: ProfileCoverage;
+  applyPlan?: string[];
+  assignResult?: boolean;
 }
 
 export interface StepDef {
@@ -874,8 +888,16 @@ export const steps: StepDef[] = [
     w.hint = compareLockToInstall(w.lockSkills!, w.installedDir!, w.sourceIndex!);
   }},
   { re: /^the state is "([^"]+)"$/, run: (w, m) => { expect(w.hint!.state).toBe(m[1]); }},
-  { re: /^(\d+) skills? (?:is|are) missing$/, run: (w, m) => { expect(w.hint!.missing).toBe(parseInt(m[1])); }},
-  { re: /^(\d+) skills? (?:is|are) drifted$/, run: (w, m) => { expect(w.hint!.drifted).toBe(parseInt(m[1])); }},
+  // These counts read whichever result the scenario computed: the list hint
+  // (compareLockToInstall) or the per-workspace status (profileWorkspaceStatus).
+  { re: /^(\d+) skills? (?:is|are) missing$/, run: (w, m) => {
+    const missing = w.wsStatus ? w.wsStatus.installMissing.length : w.hint!.missing;
+    expect(missing).toBe(parseInt(m[1]));
+  }},
+  { re: /^(\d+) skills? (?:is|are) drifted$/, run: (w, m) => {
+    const drifted = w.wsStatus ? w.wsStatus.drifted.length : w.hint!.drifted;
+    expect(drifted).toBe(parseInt(m[1]));
+  }},
   { re: /^the list shows "([^"]+)"$/, run: (w, m) => { expect(lockInstallText(w.hint!).text).toBe(m[1]); }},
   { re: /^the install plan is computed$/, run: (w) => {
     w.plan = planInstall(w.lockSkills!, w.installedDir!, w.sourceIndex!).sort();
@@ -894,6 +916,91 @@ export const steps: StepDef[] = [
     expect(applyPlan).toEqual(installPlan);
     expect(applyPlan).toEqual(w.plan);
   }},
+
+  // ── Profile ↔ workspace mapping steps (real skill-profiles logic on a temp workspace, no CLI) ──
+  // A "workspace" is a temp project dir with a skills-lock.json and .agents/skills.
+  { re: /^a workspace whose lock lists skills \[([^\]]*)\]$/, run: (w, m) => {
+    w.tmpDir = makeTmpDir();
+    w.workspace = join(w.tmpDir, 'ws');
+    w.installedDir = join(w.workspace, '.agents', 'skills');
+    mkdirSync(w.installedDir, { recursive: true });
+    w.sourceIndex = new Map();
+    w.profiles = {};
+    const skills: Record<string, LockEntry> = {};
+    for (const name of m[1].split(',').map((s) => s.trim().replace(/"/g, '')).filter(Boolean)) {
+      skills[name] = { source: 'o/r', sourceType: 'github' };
+    }
+    writeFileSync(join(w.workspace, 'skills-lock.json'), JSON.stringify({ version: 1, skills }, null, 2) + '\n');
+  }},
+  { re: /^a workspace with no lock file$/, run: (w) => {
+    w.tmpDir = makeTmpDir();
+    w.workspace = join(w.tmpDir, 'ws');
+    w.installedDir = join(w.workspace, '.agents', 'skills');
+    mkdirSync(w.installedDir, { recursive: true });
+    w.sourceIndex = new Map();
+    w.profiles = {};
+  }},
+  { re: /^a workspace lock written on another machine with profiles \[([^\]]*)\] and skills \[([^\]]*)\]$/, run: (w, m) => {
+    w.tmpDir = makeTmpDir();
+    w.workspace = join(w.tmpDir, 'ws');
+    mkdirSync(w.workspace, { recursive: true });
+    const profiles = m[1].split(',').map((s) => s.trim().replace(/"/g, '')).filter(Boolean);
+    const skills: Record<string, LockEntry> = {};
+    for (const name of m[2].split(',').map((s) => s.trim().replace(/"/g, '')).filter(Boolean)) {
+      skills[name] = { source: 'o/r', sourceType: 'github' };
+    }
+    // Exactly what another machine's Blackbook (or the patched CLI) would have written.
+    writeFileSync(join(w.workspace, 'skills-lock.json'), JSON.stringify({ version: 1, skills, profiles }, null, 2) + '\n');
+  }},
+  { re: /^a profile "([^"]+)" listing skills \[([^\]]*)\]$/, run: (w, m) => {
+    const skills: Record<string, LockEntry> = {};
+    for (const name of m[2].split(',').map((s) => s.trim().replace(/"/g, '')).filter(Boolean)) {
+      skills[name] = { source: 'o/r', sourceType: 'github' };
+    }
+    w.profiles = { ...(w.profiles ?? {}), [m[1]]: { version: 1, skills } };
+  }},
+  { re: /^profile "([^"]+)" is assigned to the workspace$/, run: (w, m) => {
+    const current = workspaceProfiles(w.workspace!);
+    w.assignResult = setWorkspaceProfiles(w.workspace!, current.includes(m[1]) ? current : [...current, m[1]]);
+  }},
+  { re: /^profile "([^"]+)" is unassigned from the workspace$/, run: (w, m) => {
+    w.assignResult = setWorkspaceProfiles(w.workspace!, workspaceProfiles(w.workspace!).filter((n) => n !== m[1]));
+  }},
+  { re: /^the workspace lock's profiles are \[([^\]]*)\]$/, run: (w, m) => {
+    const expected = m[1].split(',').map((s) => s.trim().replace(/"/g, '')).filter(Boolean);
+    expect(workspaceProfiles(w.workspace!)).toEqual(expected);
+  }},
+  { re: /^the workspace's profiles are \[([^\]]*)\]$/, run: (w, m) => {
+    const expected = m[1].split(',').map((s) => s.trim().replace(/"/g, '')).filter(Boolean);
+    expect(workspaceProfiles(w.workspace!)).toEqual(expected);
+  }},
+  { re: /^the workspace lock has no profiles meta$/, run: (w) => {
+    const raw = JSON.parse(readFileSync(join(w.workspace!, 'skills-lock.json'), 'utf8')) as Record<string, unknown>;
+    expect('profiles' in raw).toBe(false);
+  }},
+  { re: /^the workspace lock still lists skills \[([^\]]*)\]$/, run: (w, m) => {
+    const expected = m[1].split(',').map((s) => s.trim().replace(/"/g, '')).filter(Boolean).sort();
+    const raw = JSON.parse(readFileSync(join(w.workspace!, 'skills-lock.json'), 'utf8')) as { skills: Record<string, unknown> };
+    expect(Object.keys(raw.skills).sort()).toEqual(expected);
+  }},
+  { re: /^the assignment is refused$/, run: (w) => { expect(w.assignResult).toBe(false); }},
+  { re: /^the workspace still has no lock file$/, run: (w) => {
+    expect(existsSync(join(w.workspace!, 'skills-lock.json'))).toBe(false);
+  }},
+  { re: /^the apply plan for "([^"]+)" against the workspace is computed$/, run: (w, m) => {
+    const profile = w.profiles![m[1]];
+    const raw = JSON.parse(readFileSync(join(w.workspace!, 'skills-lock.json'), 'utf8')) as { skills: Record<string, LockEntry> };
+    w.applyPlan = planApply(profile.skills, raw.skills, w.installedDir!, w.sourceIndex!);
+  }},
+  { re: /^the apply plan includes "([^"]+)"$/, run: (w, m) => { expect(w.applyPlan).toContain(m[1]); }},
+  { re: /^the status of "([^"]+)" against the workspace is computed$/, run: (w, m) => {
+    w.wsStatus = profileWorkspaceStatus(m[1], w.profiles![m[1]], w.workspace!, w.sourceIndex!);
+  }},
+  { re: /^the profile is assigned$/, run: (w) => { expect(w.wsStatus!.assigned).toBe(true); }},
+  { re: /^the profile is not assigned$/, run: (w) => { expect(w.wsStatus!.assigned).toBe(false); }},
+  { re: /^the profile is up to date$/, run: (w) => { expect(w.wsStatus!.upToDate).toBe(true); }},
+  { re: /^the profile is not up to date$/, run: (w) => { expect(w.wsStatus!.upToDate).toBe(false); }},
+  { re: /^(\d+) skills? (?:is|are) to apply$/, run: (w, m) => { expect(w.wsStatus!.toApply.length).toBe(parseInt(m[1])); }},
 ];
 
 export function matchStep(text: string): { def: StepDef; m: RegExpMatchArray } | null {
