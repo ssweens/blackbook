@@ -1489,7 +1489,7 @@ export function App() {
   const closeItemDetail = () => {
     const state = useStore.getState();
     if (!state.detail) return;
-    if (state.detail.kind === "skill" && state.detail.data.namespace) {
+    if (state.detail.kind === "skill" && state.detail.data.namespace && !state.detail.fromList) {
       const nsName = state.detail.data.namespace;
       const fresh = groupSkillsByNamespace(state.standaloneSkills).find(
         (n) => n.name === nsName,
@@ -1639,7 +1639,10 @@ export function App() {
       notify(`No detail available for ${name}`, "warning");
       return;
     }
-    setDetail({ kind: "skill", data: skill });
+    // fromList: opened from a flat definition view (Projects drill-in / Profiles
+    // builder), so Esc closes back to that list rather than opening the skill's
+    // namespace detail (the namespace breadcrumb only makes sense on Installed).
+    setDetail({ kind: "skill", data: skill, fromList: true });
     setActionIndex(0);
   };
 

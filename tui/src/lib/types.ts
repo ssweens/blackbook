@@ -130,7 +130,7 @@ export interface FileStatus {
 export type DetailArtifact =
   | { kind: "plugin"; data: Plugin; drift?: import("./plugin-drift.js").PluginDrift }
   | { kind: "file"; data: FileStatus }
-  | { kind: "skill"; data: import("./install.js").StandaloneSkill }
+  | { kind: "skill"; data: import("./install.js").StandaloneSkill; fromList?: boolean }
   | { kind: "namespace"; data: import("./install.js").NamespaceGroup }
   | { kind: "piPackage"; data: PiPackage };
 

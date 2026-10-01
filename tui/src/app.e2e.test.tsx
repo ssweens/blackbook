@@ -1959,6 +1959,39 @@ describe("App E2E — Skill detail from Projects and Profiles", () => {
     }
   });
 
+  it("Esc from a namespaced skill opened in a project drill-in returns to the list, not the namespace detail", async () => {
+    const project: ProjectInfo = {
+      path: "/tmp/pj", name: "PJ", exists: true, hasAgentsDir: true,
+      skills: [{ name: "mixing-fundamentals", diskPath: "/d/m", enabled: true, status: "in-sync", sourcePath: "/repo/skills/ssmp/mixing-fundamentals" }],
+      available: [],
+    };
+    const nsSkill = {
+      name: "mixing-fundamentals", namespace: "ssmp",
+      installations: [{ toolId: "opencode", instanceId: "default", instanceName: "OpenCode", diskPath: "/d/m" }],
+      diskPath: "/d/m", toolId: "opencode", instanceId: "default", instanceName: "OpenCode", sourcePath: "/repo/skills/ssmp/mixing-fundamentals",
+    };
+    await settleInput();
+    useStore.setState({
+      tab: "projects", projects: [project], projectsLoaded: true, projectDetailPath: "/tmp/pj", selectedIndex: 0,
+      standaloneSkills: [nsSkill] as never, loadProjects: vi.fn().mockResolvedValue(undefined), tools: createToolInstances(),
+    });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("ssmp") && f.includes("1 skill"));
+      sendKey(stdin, KEYS.down);  // into the skill under ssmp
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("❯") && f.includes("mixing-fundamentals"));
+      sendKey(stdin, KEYS.enter); // open skill detail
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Browse skill files"));
+      sendKey(stdin, KEYS.escape); // should return to the drill-in list
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Enter details/expand") && !f.includes("Browse skill files"));
+      const frame = stdout.lastFrame()!;
+      // Not the namespace detail ("Sync all ... missing skills").
+      expect(frame).not.toMatch(/Sync all .* skills/);
+    } finally {
+      unmount();
+    }
+  });
+
   it("opens a skill's detail with Enter in the profile builder and keeps the draft; S saves", async () => {
     const saveProfile = vi.fn().mockResolvedValue(true);
     useStore.setState({
