@@ -193,3 +193,16 @@ Feature: Skill lock install-sync
       And "docx" is installed in the agent skills directory
       When the status of "Docs" against the workspace is computed
       Then the profile is not assigned
+
+    @MAP-11
+    Scenario: A profile applied before the mapping existed still counts as assigned, and can be unassigned
+      Given a workspace whose lock lists skills ["docx"]
+      And a profile "Docs" listing skills ["docx"]
+      And "docx" is installed in the agent skills directory
+      And profile "Docs" was applied to the workspace before the mapping existed
+      When the status of "Docs" against the workspace is computed
+      Then the profile is assigned
+      And the profile is up to date
+      When profile "Docs" is unassigned from the workspace (clearing legacy state too)
+      And the status of "Docs" against the workspace is computed
+      Then the profile is not assigned

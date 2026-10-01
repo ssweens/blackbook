@@ -2183,6 +2183,33 @@ describe("App E2E — Skill detail from Projects and Profiles", () => {
       unmount();
     }
   });
+
+  it("Esc from a skill opened inside the profile detail returns to the profile detail, not the list", async () => {
+    useStore.setState({
+      tab: "profiles",
+      profiles: { web: ["qc-review"] },
+      profileLocks: { web: { version: 1, skills: { "qc-review": { source: "o/r", sourceType: "github" } } } } as never,
+      standaloneSkills: [resolvableSkill] as never,
+      projects: [], projectsLoaded: true,
+      tools: createToolInstances(),
+    });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("web"));
+      sendKey(stdin, KEYS.enter); // profile detail
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Apply to Global (~/.agents)") && f.includes("qc-review"));
+      // status, Apply to Global, Apply to a project…, then the skill row.
+      sendKey(stdin, KEYS.down); sendKey(stdin, KEYS.down); sendKey(stdin, KEYS.down);
+      sendKey(stdin, KEYS.enter); // open the skill's detail (renders above the profile detail)
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Browse skill files"));
+      sendKey(stdin, KEYS.escape); // back to the PROFILE DETAIL, like namespace → skill → Esc
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Apply to Global (~/.agents)") && !f.includes("Browse skill files"));
+      sendKey(stdin, KEYS.escape); // and only now back to the list
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("P apply to a project") && !f.includes("Apply to Global (~/.agents)"));
+    } finally {
+      unmount();
+    }
+  });
 });
 
 describe("App E2E — Save project lock as profile", () => {

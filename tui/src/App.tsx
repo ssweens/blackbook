@@ -1565,9 +1565,11 @@ export function App() {
     { kind: "skillFileBrowser", active: !!skillFileBrowser, inputMode: "detail", escClose: () => {} },
     { kind: "skillProfiles", active: !!skillProfilesTarget, inputMode: "modal" },
     { kind: "workspacePicker", active: !!workspacePickerFor, inputMode: "modal" },
+    // A skill detail opened FROM the profile detail renders above it, so Esc
+    // returns to the profile detail (like namespace → skill → Esc → namespace).
+    { kind: "itemDetail", active: !!activeDetail, inputMode: "detail", escClose: closeItemDetail },
     // ProfileDetail owns its own Esc.
     { kind: "profileDetail", active: !!profileDetailName, inputMode: "detail", escClose: () => {} },
-    { kind: "itemDetail", active: !!activeDetail, inputMode: "detail", escClose: closeItemDetail },
     {
       kind: "marketplaceDetail",
       active: !!activeMarketplaceDetail,
@@ -2830,7 +2832,8 @@ export function App() {
             // Same spinner-wrapped store action as Projects `P` — one apply path.
             onApplyGlobal={() => applyWithSpinner(homedir(), name, "Global")}
             onApplyToProject={() => { setProfileDetailName(null); setWorkspacePickerFor(name); }}
-            onOpenSkillDetail={(skillName) => { setProfileDetailName(null); openSkillDetailByName(skillName); }}
+            // Keep the profile detail mounted underneath; Esc from the skill comes back here.
+            onOpenSkillDetail={openSkillDetailByName}
             onClose={() => setProfileDetailName(null)}
           />
         );

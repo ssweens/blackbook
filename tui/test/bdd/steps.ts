@@ -9,19 +9,25 @@
  * as those are stripped by the Gherkin parser before matching.
  */
 import { expect } from 'vitest';
-import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync, lstatSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync, lstatSync, symlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Plugin, ToolInstance } from '../../src/lib/types.js';
 import {
+  markProfileApplied,
   planApply,
   profileWorkspaceStatus,
   setWorkspaceProfiles,
+  unassignProfileFromWorkspace,
   workspaceProfiles,
   type LockEntry,
   type ProfileCoverage,
   type SkillLockFile,
 } from '../../src/lib/skill-profiles.js';
+
+// Apply snapshots live in the Blackbook cache dir. Point it at a throwaway so
+// BDD scenarios never touch the real ~/.cache/blackbook/profile-applications.json.
+process.env.XDG_CACHE_HOME = mkdtempSync(join(tmpdir(), 'blackbook-bdd-cache-'));
 import {
   compareLockToInstall,
   lockInstallText,
@@ -1001,6 +1007,14 @@ export const steps: StepDef[] = [
   { re: /^the profile is up to date$/, run: (w) => { expect(w.wsStatus!.upToDate).toBe(true); }},
   { re: /^the profile is not up to date$/, run: (w) => { expect(w.wsStatus!.upToDate).toBe(false); }},
   { re: /^(\d+) skills? (?:is|are) to apply$/, run: (w, m) => { expect(w.wsStatus!.toApply.length).toBe(parseInt(m[1])); }},
+  // Legacy: applied before the mapping existed → only a machine-local snapshot, no lock meta.
+  { re: /^profile "([^"]+)" was applied to the workspace before the mapping existed$/, run: (w, m) => {
+    markProfileApplied(w.workspace!, m[1], Object.keys(w.profiles![m[1]].skills));
+    expect(workspaceProfiles(w.workspace!)).not.toContain(m[1]); // a legacy apply wrote no meta
+  }},
+  { re: /^profile "([^"]+)" is unassigned from the workspace \(clearing legacy state too\)$/, run: (w, m) => {
+    w.assignResult = unassignProfileFromWorkspace(w.workspace!, m[1]);
+  }},
 ];
 
 export function matchStep(text: string): { def: StepDef; m: RegExpMatchArray } | null {

@@ -12,6 +12,7 @@ import {
   isGlobalWorkspace,
   listProfileLocks,
   lockAsProfile,
+  markProfileApplied,
   planApply,
   profileCoverage,
   profileWorkspaceStatus,
@@ -236,5 +237,18 @@ describe("profile ↔ workspace mapping (lock meta)", () => {
     expect(plan).toEqual(["alpha"]);
     // Same source in the lock + on disk → nothing to apply.
     expect(planApply({ alpha: gh() }, { alpha: gh() }, installed, new Map())).toEqual([]);
+  });
+
+  it("a profile applied before the mapping existed counts as assigned; unassign clears the snapshot too", () => {
+    const project = join(root, "proj");
+    const installed = join(project, ".agents", "skills");
+    mkdirSync(installed, { recursive: true });
+    writeFileSync(join(project, "skills-lock.json"), JSON.stringify({ version: 1, skills: { alpha: gh() } })); // no `profiles` meta
+    writeSkill(join(installed, "alpha"), "alpha");
+    const profile: SkillLockFile = { version: 1, skills: { alpha: gh() } };
+    markProfileApplied(project, "legacy", ["alpha"]); // what an old apply left behind
+    expect(profileWorkspaceStatus("legacy", profile, project, new Map())).toMatchObject({ assigned: true, applied: true, upToDate: true });
+    expect(unassignProfileFromWorkspace(project, "legacy")).toBe(true);
+    expect(profileWorkspaceStatus("legacy", profile, project, new Map())).toMatchObject({ assigned: false, applied: false });
   });
 });

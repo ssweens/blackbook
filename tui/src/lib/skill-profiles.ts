@@ -248,8 +248,13 @@ export function assignProfileToWorkspace(path: string, name: string): boolean {
   return setWorkspaceProfiles(path, [...current, name]);
 }
 
-/** Remove a profile from a workspace's assignment (does not uninstall skills). */
+/**
+ * Remove a profile from a workspace's assignment (does not uninstall skills).
+ * Also forgets the machine-local apply snapshot, so a profile applied before
+ * the mapping existed (snapshot only, no lock meta) can be unassigned too.
+ */
 export function unassignProfileFromWorkspace(path: string, name: string): boolean {
+  clearSnapshot(path, name);
   const current = workspaceProfiles(path);
   if (!current.includes(name)) return true;
   return setWorkspaceProfiles(path, current.filter((n) => n !== name));
@@ -334,6 +339,17 @@ function recordSnapshot(workspace: string, profile: string, names: string[]): vo
   atomicWriteFileSync(snapshotsPath(), JSON.stringify(all, null, 2) + "\n");
 }
 
+/** Forget that a profile was applied to a workspace (used when unassigning). */
+function clearSnapshot(workspace: string, profile: string): void {
+  const all = readSnapshots();
+  const key = resolve(workspace);
+  if (!all[key] || !(profile in all[key])) return;
+  delete all[key][profile];
+  if (Object.keys(all[key]).length === 0) delete all[key];
+  mkdirSync(getCacheDir(), { recursive: true });
+  atomicWriteFileSync(snapshotsPath(), JSON.stringify(all, null, 2) + "\n");
+}
+
 /** The agent skills directory a workspace installs into. */
 export function workspaceSkillsDir(path: string): string {
   return isGlobalWorkspace(path) ? agentSkillsDir() : join(path, ".agents", "skills");
@@ -378,7 +394,9 @@ export function profileWorkspaceStatus(
   const toApply = [...new Set([...base.missing, ...gap.missing])].sort();
   return {
     ...base,
-    assigned: (lock.profiles ?? []).includes(name),
+    // Lock meta is the source of truth; a legacy apply snapshot (from before
+    // the mapping existed) also counts, and the next apply writes the meta.
+    assigned: (lock.profiles ?? []).includes(name) || base.applied,
     installMissing: gap.missing,
     drifted: gap.drifted,
     toApply,
@@ -397,7 +415,7 @@ export function workspaceCoverage(path: string, profiles: Record<string, SkillLo
   const sourceRepo = getConfigRepoPath();
   const sourceIndex = sourceRepo ? indexSourceSkills(sourceRepo) : new Map<string, string>();
   return Object.entries(profiles).map(([name, profile]) => {
-    if (assigned.has(name)) return profileWorkspaceStatus(name, profile, path, sourceIndex, lock);
+    if (assigned.has(name) || profileSnapshot(path, name) !== undefined) return profileWorkspaceStatus(name, profile, path, sourceIndex, lock);
     const base = profileCoverage(name, profile, lock, profileSnapshot(path, name));
     return { ...base, assigned: false, installMissing: [], drifted: [], toApply: [...base.missing], upToDate: false };
   });
