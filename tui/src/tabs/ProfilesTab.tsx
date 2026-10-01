@@ -76,6 +76,8 @@ export interface ProfilesTabProps {
   contentHeight: number;
   /** Open the full skill detail overlay for a skill name (App owns the overlay). */
   onOpenSkillDetail: (name: string) => void;
+  /** Open the git detail (diff/pull/push) for a profile's lock file. */
+  onOpenLockDetail: (name: string) => void;
 }
 
 /**
@@ -110,7 +112,7 @@ export function buildRows(
   return rows;
 }
 
-export function ProfilesTab({ contentHeight, onOpenSkillDetail }: ProfilesTabProps) {
+export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenLockDetail }: ProfilesTabProps) {
   const profiles = useStore((s) => s.profiles);
   const profileLocks = useStore((s) => s.profileLocks);
   const saveProfile = useStore((s) => s.saveProfile);
@@ -334,6 +336,7 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail }: ProfilesTabPro
       else if (key.downArrow) setListIndex((i) => Math.min(Math.max(0, names.length - 1), i + 1));
       else if (input === "n") openBuilder(null);
       else if (names.length > 0 && (key.return || input === "e")) openBuilder(names[Math.min(listIndex, names.length - 1)]);
+      else if (names.length > 0 && input === "g") onOpenLockDetail(names[Math.min(listIndex, names.length - 1)]);
       else if (names.length > 0 && (input === "d" || key.delete)) {
         setMode({ kind: "confirmDelete", name: names[Math.min(listIndex, names.length - 1)] });
       }
@@ -600,7 +603,7 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail }: ProfilesTabPro
       )}
       <Box marginTop={1}>
         <Text color="gray" wrap="truncate-end">
-          {listPosition ? `${listPosition} · ` : ""}n new · Enter/e edit (/ search, v selected only) · d delete{names.length > 0 ? " · apply from a workspace with P" : ""}
+          {listPosition ? `${listPosition} · ` : ""}n new · Enter/e edit · g git · d delete{names.length > 0 ? " · apply from a workspace with P" : ""}
         </Text>
       </Box>
     </Box>

@@ -150,7 +150,7 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
           })
         )}
         <Text color="gray" wrap="truncate-end">
-          {position ? `${position} · ` : ""}{search && skillRowCount !== allCount ? `${skillRowCount} of ${allCount} match · ` : ""}Enter details/expand · / search · ↑↓ scroll · Esc back
+          {position ? `${position} · ` : ""}{search && skillRowCount !== allCount ? `${skillRowCount} of ${allCount} match · ` : ""}Enter details/expand · g git · / search · ↑↓ scroll · Esc back
         </Text>
       </Box>
     );
@@ -190,7 +190,7 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
       })}
       <Box marginTop={1}>
         <Text color="gray" wrap="truncate-end">
-          {position ? `${position} · ` : ""}Enter to open a project · a add · d remove · P apply profile · S save lock as profile
+          {position ? `${position} · ` : ""}Enter to open a project · a add · d remove · P apply profile · S save lock as profile · g git
         </Text>
       </Box>
     </Box>

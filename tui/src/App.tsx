@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useRef } from "react";
-import { join, dirname } from "path";
+import { join, dirname, basename } from "path";
 import { existsSync, lstatSync, rmSync, cpSync, copyFileSync, mkdirSync } from "fs";
 import { Box, Text, useInput, useApp } from "ink";
 import { useStore, withSpinner } from "./lib/store.js";
@@ -44,7 +44,8 @@ import { AdoptModal } from "./components/AdoptModal.js";
 import { ProfilePickerModal } from "./components/ProfilePickerModal.js";
 import { SaveProfileModal } from "./components/SaveProfileModal.js";
 import { SkillProfilesModal } from "./components/SkillProfilesModal.js";
-import { workspaceLock } from "./lib/skill-profiles.js";
+import { workspaceLock, profileLockPath } from "./lib/skill-profiles.js";
+import { LockDetail } from "./components/LockDetail.js";
 import { getPluginToolStatus } from "./lib/plugin-status.js";
 import {
   syncPluginInstances,
@@ -58,7 +59,7 @@ import { agentsComponentDir } from "./lib/path-utils.js";
 import { pluginSkillStorePath } from "./lib/adapters/shared.js";
 import { computeItemDrift } from "./lib/item-drift.js";
 import { buildFileDiffTarget, buildSkillDiffTarget, computeFileDetail } from "./lib/diff.js";
-import { getConsultationSettings, getPackageManager, getPluginComponentConfig } from "./lib/config.js";
+import { getConsultationSettings, getPackageManager, getPluginComponentConfig, getConfigRepoPath } from "./lib/config.js";
 import { setupSourceRepository, shouldShowSourceSetupWizard, pullSourceRepo } from "./lib/source-setup.js";
 import { ItemList, FILE_COLUMNS, PLUGIN_COLUMNS } from "./components/ItemList.js";
 import { ItemDetail, PluginMetadata, FileMetadata, PiPackageMetadata, SkillMetadata, NamespaceMetadata, type ItemAction } from "./components/ItemDetail.js";
@@ -118,9 +119,10 @@ interface TabContentProps {
   onSearchBlur: () => void;
   onSettingsTextInputActiveChange: (active: boolean) => void;
   onOpenSkillDetail: (name: string) => void;
+  onOpenLockDetail: (name: string) => void;
 }
 
-function TabContent({ tab, searchFocused, onSearchFocus, onSearchBlur, onSettingsTextInputActiveChange, onOpenSkillDetail }: TabContentProps) {
+function TabContent({ tab, searchFocused, onSearchFocus, onSearchBlur, onSettingsTextInputActiveChange, onOpenSkillDetail, onOpenLockDetail }: TabContentProps) {
   const contentHeight = useContentHeight();
   switch (tab) {
     case "discover":
@@ -157,7 +159,7 @@ function TabContent({ tab, searchFocused, onSearchFocus, onSearchBlur, onSetting
         />
       );
     case "profiles":
-      return <ProfilesTab contentHeight={contentHeight} onOpenSkillDetail={onOpenSkillDetail} />;
+      return <ProfilesTab contentHeight={contentHeight} onOpenSkillDetail={onOpenSkillDetail} onOpenLockDetail={onOpenLockDetail} />;
     case "settings":
       return <SettingsTab onTextInputActiveChange={onSettingsTextInputActiveChange} />;
   }
@@ -333,6 +335,17 @@ export function App() {
   const openSkillFiles = (skill: StandaloneSkill) => setSkillFileBrowser(skill);
   // Skill → profile membership picker, opened from skill detail.
   const [skillProfilesTarget, setSkillProfilesTarget] = useState<StandaloneSkill | null>(null);
+  // Git detail (diff/pull/push) for a skill-lock file, opened from Projects/Profiles.
+  const [lockDetail, setLockDetail] = useState<{ filePath: string; label: string; displayPath: string } | null>(null);
+  const openLockDetailForProfile = (name: string) => {
+    const sourceRepo = getConfigRepoPath();
+    if (!sourceRepo) { notify("No source repo configured — profiles live in <source repo>/profiles/", "error"); return; }
+    setLockDetail({ filePath: profileLockPath(sourceRepo, name), label: `${name} profile`, displayPath: `${basename(sourceRepo)}/profiles/${name}.skills-lock.json` });
+  };
+  const openLockDetailForProject = (projectPath: string, name: string, synthetic?: boolean) => {
+    if (synthetic) { notify("The Global workspace lock (~/.agents/.skill-lock.json) isn't in a git repo", "warning"); return; }
+    setLockDetail({ filePath: join(projectPath, "skills-lock.json"), label: `${name} project`, displayPath: `${name}/skills-lock.json` });
+  };
   const openSkillProfiles = (skill: StandaloneSkill) => {
     // Profiles load with the Projects data; make sure they're there before showing membership.
     const state = useStore.getState();
@@ -1508,7 +1521,7 @@ export function App() {
   type OverlayKind =
     | "consultation" | "sourceSetupWizard" | "diff" | "missingSummary" | "editToolModal"
     | "addMarketplace" | "addPiMarketplace" | "addProject" | "adoptSkills" | "applyProfile" | "saveLockProfile" | "toolActionModal"
-    | "toolDetail" | "skillFileBrowser" | "skillProfiles" | "itemDetail" | "marketplaceDetail";
+    | "toolDetail" | "skillFileBrowser" | "skillProfiles" | "lockDetail" | "itemDetail" | "marketplaceDetail";
   interface OverlayEntry {
     kind: OverlayKind;
     active: boolean;
@@ -1538,6 +1551,7 @@ export function App() {
     // The file browser owns its own Esc behavior: back to its file list, then back to skill detail.
     { kind: "skillFileBrowser", active: !!skillFileBrowser, inputMode: "detail", escClose: () => {} },
     { kind: "skillProfiles", active: !!skillProfilesTarget, inputMode: "modal" },
+    { kind: "lockDetail", active: !!lockDetail, inputMode: "detail", escClose: () => {} },
     { kind: "itemDetail", active: !!activeDetail, inputMode: "detail", escClose: closeItemDetail },
     {
       kind: "marketplaceDetail",
@@ -2115,6 +2129,12 @@ export function App() {
           setProfileTargetPath(target.path);
           setModalVisible("applyProfile");
         }
+        return;
+      }
+      // Git detail (diff/pull/push) for the selected project's skills-lock.json.
+      if (input === "g") {
+        const target = projectDetailPath ? projects.find((p) => p.path === projectDetailPath) : projects[selectedIndex];
+        if (target) openLockDetailForProject(target.path, target.name, target.synthetic);
         return;
       }
       // Save the current workspace's skills lock as a new profile.
@@ -2755,6 +2775,18 @@ export function App() {
             pending={toolDetectionPending[detailTool!.toolId] === true}
           />
         );
+      case "lockDetail": {
+        const d = lockDetail!;
+        return (
+          <LockDetail
+            key={d.filePath}
+            filePath={d.filePath}
+            label={d.label}
+            displayPath={d.displayPath}
+            onClose={() => setLockDetail(null)}
+          />
+        );
+      }
       case "skillProfiles": {
         const skill = skillProfilesTarget!;
         return (
@@ -2808,6 +2840,7 @@ export function App() {
             onSearchBlur={() => setSearchFocused(false)}
             onSettingsTextInputActiveChange={setSettingsTextInputActive}
             onOpenSkillDetail={openSkillDetailByName}
+            onOpenLockDetail={openLockDetailForProfile}
           />
         );
     }

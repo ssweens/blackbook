@@ -17,6 +17,7 @@ import {
   type SourceRepoChange,
 } from "../lib/source-setup.js";
 import { getSourceRepoRemoteUrl } from "../lib/source-presentation.js";
+import { parseDiffLines } from "../lib/diff-lines.js";
 
 type SettingKey = keyof Settings;
 
@@ -260,20 +261,6 @@ function changeStatusChar(status: SourceRepoChange["status"]): { char: string; c
 // ─────────────────────────────────────────────────────────────────────────────
 // Diff processing — strip git headers, truncate long lines
 // ─────────────────────────────────────────────────────────────────────────────
-
-function parseDiffLines(raw: string, maxLineWidth: number): string[] {
-  return raw
-    .split("\n")
-    .filter((line) => {
-      // Strip git metadata headers
-      if (line.startsWith("diff --git")) return false;
-      if (line.startsWith("index ")) return false;
-      if (line.startsWith("--- ")) return false;
-      if (line.startsWith("+++ ")) return false;
-      return true;
-    })
-    .map((line) => (line.length > maxLineWidth ? line.slice(0, maxLineWidth - 1) + "…" : line));
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixed-height diff panel

@@ -61,6 +61,7 @@
  */
 import React, { act } from "react";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -1869,6 +1870,48 @@ describe("App E2E — Scrolling and search on Projects and Profiles", () => {
       expect(saveProfile).toHaveBeenCalledWith("Coding", ["deslop", "docx"], "Coding");
     } finally {
       unmount();
+    }
+  });
+});
+
+describe("App E2E — Lock file git detail", () => {
+  beforeEach(() => {
+    setupMocks();
+    useStore.setState(defaultStoreState());
+  });
+
+  it("opens the git detail for a project's skills-lock.json with g, showing status and diff", { timeout: 30000 }, async () => {
+    const repo = mkdtempSync(join(tmpdir(), "blackbook-lockdetail-"));
+    execSync("git init -q", { cwd: repo });
+    execSync("git config user.email t@e && git config user.name T", { cwd: repo });
+    writeFileSync(join(repo, "skills-lock.json"), '{"version":1,"skills":{}}\n');
+    execSync("git add -A && git commit -qm init", { cwd: repo });
+    writeFileSync(join(repo, "skills-lock.json"), '{"version":1,"skills":{"blast-radius":1}}\n');
+    const project: ProjectInfo = { path: repo, name: "demo", exists: true, hasAgentsDir: true, skills: [], available: [] };
+    await settleInput();
+    useStore.setState({
+      tab: "projects", projects: [project], projectsLoaded: true, projectDetailPath: repo,
+      selectedIndex: 0, loadProjects: vi.fn().mockResolvedValue(undefined), tools: createToolInstances(),
+    });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("demo") && f.includes("g git"));
+      await settleInput();
+      await settleInput();
+      sendKey(stdin, "g");
+      // The overlay opens synchronously; its git status + diff are spawned
+      // processes, so allow generous time for them under vitest.
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Lock") && f.includes("demo project"), 15000);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("uncommitted changes"), 15000);
+      sendKey(stdin, KEYS.enter); // View diff
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("blast-radius") && f.includes("close diff"), 15000);
+      sendKey(stdin, KEYS.escape); // close diff
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("View diff") && !f.includes("close diff"));
+      sendKey(stdin, KEYS.escape); // close detail → back to project list
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("g git") && !f.includes("demo project"));
+    } finally {
+      unmount();
+      rmSync(repo, { recursive: true, force: true });
     }
   });
 });
