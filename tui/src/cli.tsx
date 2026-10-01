@@ -3,8 +3,9 @@ import React from "react";
 import { render } from "ink";
 import { homedir } from "os";
 import { App } from "./App.js";
-import { initializeStore, useStore } from "./lib/store.js";
+import { initializeStore } from "./lib/store.js";
 import { isAgenticDir } from "./lib/projects.js";
+import { recordRecentWorkspace } from "./lib/recent-workspaces.js";
 import { patchExistsSync, mark, measure, logReport, setStartupTime } from "./lib/perf.js";
 import { logError } from "./lib/validation.js";
 import { reconcileStaleInstallArtifacts } from "./lib/install.js";
@@ -42,17 +43,20 @@ try {
 }
 
 // Workspace-aware startup: launched from an agentic project dir (has .agents/
-// .claude/AGENTS.md/CLAUDE.md), boot straight into that workspace's drill-in
-// view on the Projects tab. The home dir is excluded — it carries those
-// markers too but is already the synthetic Global workspace. Never allowed to
-// block or break startup.
+// .claude/AGENTS.md/CLAUDE.md), register the current directory as a recent
+// workspace so it shows up on the Projects tab. It does NOT switch tabs or
+// block the first paint — the app opens on the default tab and loads Sync,
+// projects and everything else in the background (App's boot effect). The home
+// dir is excluded — it carries those markers too but is already the synthetic
+// Global workspace. A plain `recordRecentWorkspace` is a cheap, synchronous
+// file write. Never allowed to block or break startup.
 try {
   const cwd = process.cwd();
   if (cwd !== homedir() && isAgenticDir(cwd)) {
-    await useStore.getState().openWorkspace(cwd);
+    recordRecentWorkspace(cwd);
   }
 } catch (error) {
-  logError("Failed to open cwd workspace", error);
+  logError("Failed to register cwd workspace", error);
 }
 
 render(<App />);
