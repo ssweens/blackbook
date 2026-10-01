@@ -278,8 +278,8 @@ export interface AppState {
   profiles: Record<string, string[]>;
   /** Skill-lock profiles: `<source repo>/profiles/<name>.skills-lock.json`. */
   profileLocks: Record<string, import("./skill-profiles.js").SkillLockFile>;
-  /** Lock-file sync hints keyed by absolute lock path, for Projects/Profiles list rows (computed in the background). */
-  lockSync: Record<string, import("./lock-git.js").LockSyncHint>;
+  /** Install-sync hints keyed by lock identity, for Projects/Profiles list rows: does the agent skills dir match the lock? (computed in the background). */
+  lockSync: Record<string, import("./lock-install-sync.js").LockInstallHint>;
   piMarketplaces: PiMarketplace[];
   managedItems: import("./managed-item.js").ManagedItem[];
   // Sort state

@@ -1,12 +1,12 @@
 import type { ProfileCoverage } from "../lib/skill-profiles.js";
-import React, { useEffect } from "react";
+import { workspaceLock } from "../lib/skill-profiles.js";
+import React, { useEffect, useMemo } from "react";
 import { join } from "path";
 import { Box, Text } from "ink";
 import { useStore } from "../lib/store.js";
-import { buildProjectRows, type ProjectSkillStatus } from "../lib/projects.js";
+import { buildProjectRows, PROJECT_SKILLS_SUBDIR, type ProjectSkillStatus } from "../lib/projects.js";
 import { computeWindow, windowLabel } from "../lib/list-window.js";
-import { lockSyncText } from "../lib/lock-sync-text.js";
-import { lockHintWorthShowing } from "../lib/lock-git.js";
+import { lockInstallText, type LockSyncTarget } from "../lib/lock-install-sync.js";
 import { SearchBox } from "../components/SearchBox.js";
 
 const STATUS_META: Record<ProjectSkillStatus, { glyph: string; color: string; label: string }> = {
@@ -54,14 +54,23 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
   const lockSync = useStore((s) => s.lockSync);
   const refreshLockSync = useStore((s) => s.refreshLockSync);
 
-  // Compute each registered project's lock sync (its own repo's skills-lock.json)
-  // in the background. Synthetic (global) workspaces aren't in a repo, so skip.
-  const lockPaths = projects.filter((p) => !p.synthetic && p.exists).map((p) => join(p.path, "skills-lock.json"));
-  const lockPathsKey = lockPaths.join("\n");
+  // Compute each project's install-sync in the background: does what's installed
+  // in the project's .agents/skills match its skills-lock.json?
+  const lockTargets = useMemo<LockSyncTarget[]>(
+    () => projects
+      .filter((p) => !p.synthetic && p.exists)
+      .map((p) => ({
+        key: join(p.path, "skills-lock.json"),
+        skills: workspaceLock(p.path).skills,
+        installedDir: join(p.path, PROJECT_SKILLS_SUBDIR),
+      })),
+    [projects],
+  );
+  const lockTargetsKey = lockTargets.map((t) => `${t.key}:${Object.keys(t.skills).length}`).join("\n");
   useEffect(() => {
-    if (lockPaths.length > 0) void refreshLockSync(lockPaths);
+    if (lockTargets.length > 0) void refreshLockSync(lockTargets);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lockPathsKey, refreshLockSync]);
+  }, [lockTargetsKey, refreshLockSync]);
 
   if (projects.length === 0) {
     return (
@@ -106,9 +115,7 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
           {project.lockEntries ? `${project.lockEntries} skill${project.lockEntries === 1 ? "" : "s"}` : "none yet"}
           {(() => {
             if (project.synthetic || !project.exists) return null;
-            const raw = lockSync[join(project.path, "skills-lock.json")];
-            if (!lockHintWorthShowing(raw)) return null;
-            const h = lockSyncText(raw);
+            const h = lockInstallText(lockSync[join(project.path, "skills-lock.json")]);
             return <Text> · <Text color={h.color}>{h.text}</Text> <Text color="gray">(g)</Text></Text>;
           })()}
         </Text>
@@ -194,8 +201,7 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
           .filter((c) => c.present.length > 0 || c.applied)
           .map((c) => `${c.profile} ${c.present.length}/${c.total}`)
           .join(", ");
-        const rawLockHint = p.synthetic || !p.exists ? undefined : lockSync[join(p.path, "skills-lock.json")];
-        const lockHint = lockHintWorthShowing(rawLockHint) ? lockSyncText(rawLockHint) : null;
+        const lockHint = p.synthetic || !p.exists ? null : lockInstallText(lockSync[join(p.path, "skills-lock.json")]);
         return (
           <Text key={p.path} wrap="truncate-end">
             <Text color={isSel ? "cyan" : p.synthetic ? "magenta" : "white"}>

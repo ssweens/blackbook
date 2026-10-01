@@ -1929,14 +1929,14 @@ describe("App E2E — Lock file source-repo detail", () => {
     }
   });
 
-  it("shows 'no lock file' (not 'in sync') for a project with no skills-lock.json", { timeout: 30000 }, async () => {
-    const repo = mkdtempSync(join(tmpdir(), "blackbook-nolock-"));
-    execSync("git init -q", { cwd: repo });
-    execSync("git config user.email t@e && git config user.name T", { cwd: repo });
-    writeFileSync(join(repo, "README.md"), "x\n");
-    execSync("git add -A && git commit -qm init", { cwd: repo });
-    // No skills-lock.json committed or on disk.
-    const project: ProjectInfo = { path: repo, name: "bare", exists: true, hasAgentsDir: false, skills: [], available: [] };
+  it("shows 'out of sync · N missing' when the lock lists skills not installed in .agents/skills", { timeout: 30000 }, async () => {
+    const repo = mkdtempSync(join(tmpdir(), "blackbook-outofsync-"));
+    // Lock lists two skills; the project's .agents/skills has neither installed.
+    writeFileSync(join(repo, "skills-lock.json"), JSON.stringify({ version: 1, skills: {
+      foo: { source: "o/r", sourceType: "github" },
+      bar: { source: "o/r", sourceType: "github" },
+    } }) + "\n");
+    const project: ProjectInfo = { path: repo, name: "proj", exists: true, hasAgentsDir: true, skills: [], available: [] };
     await settleInput();
     useStore.setState({
       tab: "projects", projects: [project], projectsLoaded: true, projectDetailPath: null,
@@ -1944,23 +1944,23 @@ describe("App E2E — Lock file source-repo detail", () => {
     });
     const { stdout, unmount } = render(<App />);
     try {
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("bare") && f.includes("no lock file"), 15000);
-      // It must NOT read as in sync for a missing lock.
-      if (stdout.lastFrame()?.includes("in sync")) throw new Error("missing lock wrongly shown as in sync");
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("proj") && f.includes("out of sync") && f.includes("2 missing"), 15000);
+      if (stdout.lastFrame()?.includes("in sync")) throw new Error("uninstalled lock skills wrongly shown as in sync");
     } finally {
       unmount();
       rmSync(repo, { recursive: true, force: true });
     }
   });
 
-  it("shows a lock sync hint on the project list row", { timeout: 30000 }, async () => {
-    const repo = mkdtempSync(join(tmpdir(), "blackbook-lockhint-"));
-    execSync("git init -q", { cwd: repo });
-    execSync("git config user.email t@e && git config user.name T", { cwd: repo });
-    writeFileSync(join(repo, "skills-lock.json"), '{"version":1,"skills":{}}\n');
-    execSync("git add -A && git commit -qm init", { cwd: repo });
-    // Clean, committed lock → "in sync" on the list row.
-    const project: ProjectInfo = { path: repo, name: "demo", exists: true, hasAgentsDir: true, skills: [], available: [] };
+  it("shows 'in sync' when every lock skill is installed in .agents/skills", { timeout: 30000 }, async () => {
+    const repo = mkdtempSync(join(tmpdir(), "blackbook-insync-"));
+    writeFileSync(join(repo, "skills-lock.json"), JSON.stringify({ version: 1, skills: {
+      foo: { source: "o/r", sourceType: "github" },
+    } }) + "\n");
+    // Install foo under the project's .agents/skills.
+    mkdirSync(join(repo, ".agents", "skills", "foo"), { recursive: true });
+    writeFileSync(join(repo, ".agents", "skills", "foo", "SKILL.md"), "---\nname: foo\n---\nx\n");
+    const project: ProjectInfo = { path: repo, name: "ok", exists: true, hasAgentsDir: true, skills: [], available: [] };
     await settleInput();
     useStore.setState({
       tab: "projects", projects: [project], projectsLoaded: true, projectDetailPath: null,
@@ -1968,8 +1968,7 @@ describe("App E2E — Lock file source-repo detail", () => {
     });
     const { stdout, unmount } = render(<App />);
     try {
-      // The hint is computed in the background (real git), so give it time.
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("demo") && f.includes("lock") && f.includes("in sync"), 15000);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("ok") && f.includes("lock") && f.includes("in sync"), 15000);
     } finally {
       unmount();
       rmSync(repo, { recursive: true, force: true });

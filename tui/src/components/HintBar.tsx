@@ -15,8 +15,8 @@ const HINTS: Record<Tab, string> = {
   marketplaces: "Enter select · u update · r remove · R refresh · q quit",
   tools: "Enter detail · i install · u update · d uninstall · e edit config · Space toggle · R refresh · q quit",
   sync: "y to sync missing/changed items (press twice) · Enter details · d diff/detail · R refresh · q quit",
-  projects: "Enter open · c consult advisor · a add · A adopt · P apply profile · S save lock as profile · g git (diff/pull/push) · d remove · (in project) Enter skill detail · p push · u pull · e toggle · d delete · Esc back · R refresh · q quit",
-  profiles: "n new · Enter/e edit · g git (diff/pull/push) · d delete · (in builder) Space toggle · Enter skill detail · S save · c consult advisor · →/← expand namespace · Esc back · q quit",
+  projects: "Enter open · c consult advisor · a add · A adopt · P apply profile · S save lock as profile · g source repo · d remove · (in project) Enter skill detail · p push · u pull · e toggle · d delete · Esc back · R refresh · q quit",
+  profiles: "n new · Enter/e edit · g source repo · d delete · (in builder) Space toggle · Enter skill detail · S save · c consult advisor · →/← expand namespace · Esc back · q quit",
   settings: "↑/↓ select · Enter edit · Esc cancel · R refresh · q quit",
 };
 

@@ -32,7 +32,7 @@ import {
   type SkillLockFile,
 } from "../skill-profiles.js";
 import { expandPath } from "../config/path.js";
-import { computeLockHint } from "../lock-git.js";
+import { compareLockToInstall } from "../lock-install-sync.js";
 
 export type ProjectsSlice = Pick<
   Store,
@@ -88,13 +88,14 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
 
   setProfilesEditing: (editing) => set({ profilesEditing: editing }),
 
-  refreshLockSync: async (filePaths) => {
-    const unique = [...new Set(filePaths)].filter(Boolean);
-    if (unique.length === 0) return;
-    const hints = await Promise.all(
-      unique.map(async (path) => [path, await computeLockHint(path)] as const),
-    );
-    set((s) => ({ lockSync: { ...s.lockSync, ...Object.fromEntries(hints) } }));
+  refreshLockSync: async (targets) => {
+    if (!targets || targets.length === 0) return;
+    // Yield so the list paints before the (disk-hashing) comparison runs.
+    await new Promise<void>((r) => setImmediate(r));
+    const sourceRepo = getConfigRepoPath();
+    const sourceIndex = sourceRepo ? indexSourceSkills(sourceRepo) : new Map<string, string>();
+    const entries = targets.map((t) => [t.key, compareLockToInstall(t.skills, t.installedDir, sourceIndex)] as const);
+    set((s) => ({ lockSync: { ...s.lockSync, ...Object.fromEntries(entries) } }));
   },
 
   setProjectDetailPath: (path) => set({ projectDetailPath: path }),

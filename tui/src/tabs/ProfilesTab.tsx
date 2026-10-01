@@ -17,8 +17,7 @@ import { getConfigRepoPath, getConsultationSettings } from "../lib/config.js";
 import { indexSourceSkillTree, type SourceSkillNamespace } from "../lib/projects.js";
 import { computeWindow, matchesQuery, windowLabel } from "../lib/list-window.js";
 import { globalLockEntries, profileLockPath } from "../lib/skill-profiles.js";
-import { lockSyncText } from "../lib/lock-sync-text.js";
-import { lockHintWorthShowing } from "../lib/lock-git.js";
+import { lockInstallText, agentSkillsDir, type LockSyncTarget } from "../lib/lock-install-sync.js";
 /**
  * Profiles tab — named skill bundles (config `profiles:`) that can be applied
  * to any workspace. List view for browsing, builder sub-view for creating and
@@ -78,7 +77,7 @@ export interface ProfilesTabProps {
   contentHeight: number;
   /** Open the full skill detail overlay for a skill name (App owns the overlay). */
   onOpenSkillDetail: (name: string) => void;
-  /** Open the git detail (diff/pull/push) for a profile's lock file. */
+  /** Open the source-repo detail (diff/pull/push) for a profile's lock file. */
   onOpenLockDetail: (name: string) => void;
 }
 
@@ -146,18 +145,25 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenLockDetail
 
   const names = useMemo(() => Object.keys(profiles).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })), [profiles]);
 
-  // Compute each profile lock's sync (source repo) in the background. Only
-  // profiles with a real lock file (not legacy config.yaml ones) are checked.
+  // Compute each profile's install-sync in the background: are the skills the
+  // profile lists actually installed in the agent skills directory? Only
+  // profiles with a real lock (not legacy config.yaml ones) are checked.
   const lockRepo = useMemo(() => getConfigRepoPath(), []);
-  const profileLockPaths = useMemo(
-    () => (lockRepo ? names.filter((n) => n in profileLocks).map((n) => profileLockPath(lockRepo, n)) : []),
+  const lockTargets = useMemo<LockSyncTarget[]>(
+    () => (lockRepo
+      ? names.filter((n) => n in profileLocks).map((n) => ({
+          key: profileLockPath(lockRepo, n),
+          skills: profileLocks[n].skills,
+          installedDir: agentSkillsDir(),
+        }))
+      : []),
     [lockRepo, names, profileLocks],
   );
-  const profileLockPathsKey = profileLockPaths.join("\n");
+  const lockTargetsKey = lockTargets.map((t) => `${t.key}:${Object.keys(t.skills).length}`).join("\n");
   useEffect(() => {
-    if (profileLockPaths.length > 0) void refreshLockSync(profileLockPaths);
+    if (lockTargets.length > 0) void refreshLockSync(lockTargets);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileLockPathsKey, refreshLockSync]);
+  }, [lockTargetsKey, refreshLockSync]);
 
   // Source repo + shared store skills grouped into namespaces + top-level.
   // Recomputed when entering the builder (cheap directory scan).
@@ -609,8 +615,7 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenLockDetail
           const count = `${String(skills.length).padStart(countWidth)} ${skills.length === 1 ? "skill " : "skills"}`;
           const hasLock = n in profileLocks;
           const detail = hasLock ? profileSources(profileLocks[n]) : "legacy (config.yaml) — save to convert";
-          const rawLockHint = hasLock && lockRepo ? lockSync[profileLockPath(lockRepo, n)] : undefined;
-          const lockHint = lockHintWorthShowing(rawLockHint) ? lockSyncText(rawLockHint) : null;
+          const lockHint = hasLock && lockRepo ? lockInstallText(lockSync[profileLockPath(lockRepo, n)]) : null;
           return (
             <Text key={n} wrap="truncate-end">
               <Text color={isSel ? "cyan" : "gray"}>{isSel ? "❯ " : "  "}</Text>

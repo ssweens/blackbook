@@ -122,17 +122,7 @@ export interface LockSyncHint {
   removed: number;
 }
 
-/**
- * Whether a computed hint should be shown. Only the not-yet-computed state
- * (undefined) is suppressed — every real state, including "no lock file" and
- * "not in a source repo", is shown so a missing lock is never silently
- * mistaken for "in sync".
- */
-export function lockHintWorthShowing(hint: LockSyncHint | undefined): boolean {
-  return !!hint;
-}
-
-/** Map a lock's git status (+ diff counts) to a sync hint — the single source for both the detail and the list. */
+/** Map a lock's git status (+ diff counts) to the detail's status line. */
 export function summarizeLockSync(s: LockGitStatus | null, added = 0, removed = 0): LockSyncHint {
   if (!s) return { state: "no-repo", label: "Checking…", color: "gray", added, removed };
   if (!s.exists) return { state: "no-lock", label: "No lock file", color: "gray", added, removed };
@@ -143,21 +133,6 @@ export function summarizeLockSync(s: LockGitStatus | null, added = 0, removed = 
   if (s.ahead > 0) return { state: "ahead", label: "Not pushed to source repo", color: "yellow", added, removed };
   if (s.behind > 0) return { state: "behind", label: "Behind source repo", color: "magenta", added, removed };
   return { state: "in-sync", label: "In sync", color: "green", added, removed };
-}
-
-/** Compute the sync hint for one lock file (status + diff counts). Best-effort; never throws. */
-export async function computeLockHint(filePath: string): Promise<LockSyncHint> {
-  try {
-    const [status, diff] = await Promise.all([
-      lockGitStatus(filePath),
-      buildLockDiffTarget(filePath, "lock"),
-    ]);
-    const added = diff?.files.reduce((n, f) => n + f.linesAdded, 0) ?? 0;
-    const removed = diff?.files.reduce((n, f) => n + f.linesRemoved, 0) ?? 0;
-    return summarizeLockSync(status, added, removed);
-  } catch {
-    return summarizeLockSync(null);
-  }
 }
 
 /** `git pull --ff-only` on the lock file's repo (bring teammate changes). */
