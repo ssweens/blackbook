@@ -163,8 +163,10 @@ describe("applyProfileToWorkspace (real CLI, isolated HOME)", () => {
     // Applying assigns: the profile is recorded in the workspace lock's `profiles` meta.
     expect(workspaceLock(project).profiles).toEqual(["p"]);
 
+    expect(first.notInstalled).toEqual([]);
+    expect(first.assigned).toBe(true);
     // Re-applying an unchanged profile is a no-op.
-    expect(await applyProfileToWorkspace(project, "p", v1, [])).toEqual({ added: [], removed: [], errors: [] });
+    expect(await applyProfileToWorkspace(project, "p", v1, [])).toMatchObject({ added: [], removed: [], errors: [], notInstalled: [], assigned: true });
 
     // Profile drops beta: applying again removes it from the project.
     const v2: SkillLockFile = { version: 1, skills: { alpha: v1.skills.alpha } };

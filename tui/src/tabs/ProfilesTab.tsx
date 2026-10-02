@@ -16,7 +16,7 @@ import { useStore } from "../lib/store.js";
 import { getConfigRepoPath, getConsultationSettings } from "../lib/config.js";
 import { indexSourceSkillTree, type SourceSkillNamespace } from "../lib/projects.js";
 import { computeWindow, matchesQuery, windowLabel } from "../lib/list-window.js";
-import { globalLockEntries, profileLockPath } from "../lib/skill-profiles.js";
+import { compareProfileNames, globalLockEntries, profileLockPath } from "../lib/skill-profiles.js";
 import { lockInstallText, agentSkillsDir, type LockSyncTarget } from "../lib/lock-install-sync.js";
 /**
  * Profiles tab — named skill bundles (config `profiles:`) that can be applied
@@ -125,6 +125,7 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenProfileDet
   const tools = useStore((s) => s.tools);
   const toolDetection = useStore((s) => s.toolDetection);
   const lockSync = useStore((s) => s.lockSync);
+  const lockSyncEpoch = useStore((s) => s.lockSyncEpoch);
   const refreshLockSync = useStore((s) => s.refreshLockSync);
 
   const [mode, setMode] = useState<Mode>(() => {
@@ -135,7 +136,10 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenProfileDet
     }
     return { kind: "list" };
   });
-  const [listIndex, setListIndex] = useState(0);
+  // The list cursor lives in the store like every other tab's, so it survives
+  // the detail/picker overlays (which unmount this tab) instead of resetting to 0.
+  const listIndex = useStore((s) => s.selectedIndex);
+  const setListIndex = useStore((s) => s.setSelectedIndex);
   const [consultation, setConsultation] = useState<ProfileConsultation | null>(null);
   const consultationAbortRef = useRef<AbortController | null>(null);
 
@@ -147,7 +151,7 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenProfileDet
     return () => setProfilesEditing(false);
   }, [consultation, mode.kind, setProfilesEditing]);
 
-  const names = useMemo(() => Object.keys(profiles).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })), [profiles]);
+  const names = useMemo(() => Object.keys(profiles).sort(compareProfileNames), [profiles]);
 
   // Compute each profile's install-sync in the background: are the skills the
   // profile lists actually installed in the agent skills directory? Only
@@ -166,8 +170,9 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenProfileDet
   const lockTargetsKey = lockTargets.map((t) => `${t.key}:${Object.keys(t.skills).length}`).join("\n");
   useEffect(() => {
     if (lockTargets.length > 0) void refreshLockSync(lockTargets);
+    // lockSyncEpoch: recompute after any reload (an apply changes disk, not the key).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lockTargetsKey, refreshLockSync]);
+  }, [lockTargetsKey, lockSyncEpoch, refreshLockSync]);
 
   // Source repo + shared store skills grouped into namespaces + top-level.
   // Recomputed when entering the builder (cheap directory scan).
@@ -359,8 +364,8 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenProfileDet
     if (consultation) return;
 
     if (mode.kind === "list") {
-      if (key.upArrow) setListIndex((i) => Math.max(0, i - 1));
-      else if (key.downArrow) setListIndex((i) => Math.min(Math.max(0, names.length - 1), i + 1));
+      if (key.upArrow) setListIndex(Math.max(0, listIndex - 1));
+      else if (key.downArrow) setListIndex(Math.min(Math.max(0, names.length - 1), listIndex + 1));
       else if (input === "n") openBuilder(null);
       // Enter opens the profile detail (its skills + apply), matching Enter on every other tab.
       else if (names.length > 0 && key.return) onOpenProfileDetail(names[Math.min(listIndex, names.length - 1)]);
@@ -596,8 +601,9 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenProfileDet
             );
           })
         )}
+        {/* Keys live in the hint bar; this line carries the dynamic bits only. */}
         <Text color="gray" wrap="truncate-end">
-          {position ? `${position} · ` : ""}Space toggle · Enter details · S save · Esc {filtered ? "clear filter" : "cancel"} · / search · v {mode.selectedOnly ? "all" : "selected"} · →/← expand · r rename · c consult
+          {[position, filtered ? "Esc clears the filter" : "", mode.selectedOnly ? "showing selected only (v for all)" : ""].filter(Boolean).join(" · ")}
         </Text>
       </Box>
     );
@@ -635,11 +641,11 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenProfileDet
           );
         })
       )}
-      <Box marginTop={1}>
-        <Text color="gray" wrap="truncate-end">
-          {listPosition ? `${listPosition} · ` : ""}Enter details{names.length > 0 ? " · P apply to a project… · G apply to Global" : ""} · e edit · n new · d delete
-        </Text>
-      </Box>
+      {listPosition && (
+        <Box marginTop={1}>
+          <Text color="gray">{listPosition}</Text>
+        </Box>
+      )}
     </Box>
   );
 }

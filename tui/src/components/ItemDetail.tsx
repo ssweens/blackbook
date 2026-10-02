@@ -13,7 +13,8 @@ import React from "react";
 import { Box, Text, useStdout } from "ink";
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { ManagedItem, ItemInstanceStatus } from "../lib/managed-item.js";
+import type { ManagedItem, ItemInstanceStatus, ProfileDetailData } from "../lib/managed-item.js";
+import { profileSources } from "../lib/skill-profiles.js";
 import type { DiffInstanceSummary, DiffInstanceRef } from "../lib/types.js";
 import { formatSourcePath } from "../lib/source-presentation.js";
 
@@ -43,6 +44,8 @@ export interface ItemAction {
     | "open_skill"
     | "browse_skill_files"
     | "edit_profiles"
+    /** Open the workspace picker to apply a profile somewhere (non-mutating; the picker applies). */
+    | "pick_workspace"
     | "back";
   instance?: DiffInstanceSummary | DiffInstanceRef;
   /** Shared-store plugin component represented by a consolidated status row. */
@@ -63,6 +66,17 @@ export interface ItemDetailProps {
   selectedAction: number;
   /** Optional extra metadata rendered between header and instance list. */
   metadata?: React.ReactNode;
+  /**
+   * Rows the metadata occupies, so the actions window shrinks to keep the
+   * whole detail (tab bar, notifications, header) on screen. Without it a tall
+   * metadata block pushes the top chrome off the terminal.
+   */
+  metadataRows?: number;
+  /**
+   * Replaces the default "Installed / Not Installed" status value for kinds
+   * where that vocabulary is wrong (e.g. a profile: "Out of sync · 1 missing").
+   */
+  statusLine?: React.ReactNode;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -97,7 +111,7 @@ function computeActionsWindow(
   return { start, end };
 }
 
-export function ItemDetail({ item, actions, selectedAction, metadata }: ItemDetailProps) {
+export function ItemDetail({ item, actions, selectedAction, metadata, metadataRows = 0, statusLine }: ItemDetailProps) {
   const hasDrift = item.instances.some(
     (i) => i.status === "changed",
   );
@@ -110,7 +124,7 @@ export function ItemDetail({ item, actions, selectedAction, metadata }: ItemDeta
   // tall-write bug). Each ActionRow is one line; "sync" / "uninstall" types add
   // a marginTop, so we budget conservatively by treating every row as 1 line
   // plus a small safety margin.
-  const windowSize = Math.max(4, rows - FIXED_CHROME_ROWS);
+  const windowSize = Math.max(4, rows - FIXED_CHROME_ROWS - metadataRows);
   const { start, end } = computeActionsWindow(actions.length, selectedAction, windowSize);
   const visible = actions.slice(start, end);
   const hiddenAbove = start;
@@ -136,9 +150,11 @@ export function ItemDetail({ item, actions, selectedAction, metadata }: ItemDeta
       {/* Status line */}
       <Box marginBottom={1}>
         <Text color="gray">Status: </Text>
-        <Text color={item.installed ? "green" : "yellow"}>
-          {item.installed ? "Installed" : "Not Installed"}
-        </Text>
+        {statusLine ?? (
+          <Text color={item.installed ? "green" : "yellow"}>
+            {item.installed ? "Installed" : "Not Installed"}
+          </Text>
+        )}
         {isIncomplete && <Text color="yellow"> (incomplete)</Text>}
         {showAggregateDrift && <Text color="yellow"> (drifted)</Text>}
         {item.hasUpdate && <Text color="blue"> (update available)</Text>}
@@ -149,7 +165,7 @@ export function ItemDetail({ item, actions, selectedAction, metadata }: ItemDeta
 
       {/* Instance list + actions (windowed to fit the terminal) */}
       <Box flexDirection="column" marginTop={1}>
-        {item.installed && <Text bold>{item.kind === "plugin" ? "Component status:" : "Instances:"}</Text>}
+        {item.installed && item.kind !== "profile" && <Text bold>{item.kind === "plugin" ? "Component status:" : "Instances:"}</Text>}
         {hiddenAbove > 0 && (
           <Text color="gray" dimColor>
             ↑ {hiddenAbove} more above
@@ -208,6 +224,19 @@ function ActionRow({ action, isSelected }: ActionRowProps) {
     );
   }
 
+  // A skill row inside a group detail (namespace / profile) that carries its
+  // own state: `name  not installed` with the state coloured, so a long list
+  // can be scanned without reading every label.
+  if (action.type === "open_skill" && action.statusLabel) {
+    return (
+      <Box>
+        <Text color={isSelected ? "cyan" : "gray"}>{isSelected ? "❯ " : "  "}</Text>
+        <Text color={isSelected ? "white" : "gray"}>{action.label}</Text>
+        <Text color={action.statusColor || "gray"}>{"  "}{action.statusLabel}</Text>
+      </Box>
+    );
+  }
+
   // Regular action rows
   const color = getActionColor(action.type);
   const hasTopMargin =
@@ -227,6 +256,7 @@ function getActionColor(type: ItemAction["type"]): string {
   switch (type) {
     case "browse_skill_files":
     case "edit_profiles":
+    case "pick_workspace":
       return "cyan";
     case "install":
     case "install_tool":
@@ -562,6 +592,53 @@ export function SkillMetadata({ item }: { item: ManagedItem }) {
           ))}
         </Box>
       )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Profile metadata
+// ---------------------------------------------------------------------------
+
+/** Rows ProfileMetadata renders, so ItemDetail can budget the actions window. */
+export function profileMetadataRows(p: ProfileDetailData): number {
+  // Skills line + Global line + "Used by:" header + one per workspace (or the
+  // "no workspace yet" line) + legacy note + the marginBottom gaps.
+  return 3 + Math.max(1, p.usedBy.length) + (p.legacy ? 1 : 0) + 3;
+}
+
+/** Profile metadata: skill count and sources, Global install state, where it's used. */
+export function ProfileMetadata({ item }: { item: ManagedItem }) {
+  const p = item._profile;
+  if (!p) return null;
+  const skillCount = Object.keys(p.lock.skills).length;
+  return (
+    <>
+      <Box marginBottom={1}>
+        <Text color="gray">Skills: </Text>
+        <Text>{skillCount}</Text>
+        {skillCount > 0 && <Text color="gray"> · {profileSources(p.lock)}</Text>}
+      </Box>
+
+      {p.legacy && (
+        <Box marginBottom={1}>
+          <Text color="yellow">legacy (config.yaml) — edit and save (e, S) to convert it to profiles/{p.name}.skills-lock.json</Text>
+        </Box>
+      )}
+
+      <Box marginBottom={1} flexDirection="column">
+        <Text color="gray">Used by:</Text>
+        {p.usedBy.length === 0 ? (
+          <Text color="gray">  no workspace yet — apply it below</Text>
+        ) : (
+          p.usedBy.map((u) => (
+            <Text key={u.workspace} wrap="truncate-end">
+              {"  "}<Text color="cyan">{u.workspace}</Text>
+              <Text color={u.upToDate ? "green" : "yellow"}>{"  "}{u.summary}</Text>
+            </Text>
+          ))
+        )}
+      </Box>
     </>
   );
 }

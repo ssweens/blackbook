@@ -29,7 +29,23 @@ import { countPluginToManagedItem } from "./perf.js";
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The kind of managed entity. */
-export type ItemKind = "plugin" | "file" | "config" | "asset" | "pi-package" | "namespace" | "plugin-group";
+export type ItemKind = "plugin" | "file" | "config" | "asset" | "pi-package" | "namespace" | "plugin-group" | "profile";
+
+/** Everything the profile detail needs, computed ONCE in App (never in render). */
+export interface ProfileDetailData {
+  name: string;
+  /** The profile's lock (its file, or a legacy config.yaml profile resolved on the fly). */
+  lock: import("./skill-profiles.js").SkillLockFile;
+  /** True for a config.yaml profile that has no lock file yet. */
+  legacy: boolean;
+  /** Install state of the profile's skills in the Global agent skills dir (~/.agents/skills). */
+  gap: import("./lock-install-sync.js").LockInstallGap;
+  hint: import("./lock-install-sync.js").LockInstallHint;
+  /** Workspaces whose lock names this profile, with the shared status summary. */
+  usedBy: { workspace: string; upToDate: boolean; summary: string }[];
+  /** The profile's lock file has changes not yet saved to the source repo (uncommitted or unpushed). */
+  lockUnsaved: boolean;
+}
 
 /** Per-tool-instance installation / drift status for one managed item. */
 export interface ItemInstanceStatus {
@@ -110,6 +126,8 @@ export interface ManagedItem {
   _namespace?: import("./install.js").NamespaceGroup;
   /** Collapsible marketplace header (kind === "plugin-group"): plugin count and collapsed state. */
   _group?: { count: number; collapsed: boolean };
+  /** A profile (kind === "profile"). */
+  _profile?: ProfileDetailData;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

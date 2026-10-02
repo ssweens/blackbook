@@ -24,9 +24,10 @@ import { basename, isAbsolute, join, relative, resolve, sep } from "path";
 import type { ToolInstance } from "./types.js";
 import { atomicWriteFileSync } from "./fs-utils.js";
 import { getCacheDir } from "./config/path.js";
-import { indexSourceSkills } from "./projects.js";
+import { indexSourceSkills, getProjects, isGlobalWorkspace, workspaceSkillsDir } from "./projects.js";
 import { getConfigRepoPath } from "./config.js";
-import { agentSkillsDir, lockInstallGap, planInstall } from "./lock-install-sync.js";
+import { loadConfig as loadYamlConfig } from "./config/loader.js";
+import { lockInstallBreakdown, lockInstallGap, planInstall, sameGithubSource } from "./lock-install-sync.js";
 import { skillsSourceForRepo } from "./project-actions.js";
 import { projectSkillAgents, runSkillsCli, summarizeCliFailure } from "./skills-cli.js";
 import { callGroups, runSkillsCliSync } from "./plugin-skills-cli.js";
@@ -196,9 +197,8 @@ export function buildProfileLock(
 // Workspaces (project or global) and coverage
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function isGlobalWorkspace(path: string): boolean {
-  return resolve(path) === resolve(homedir());
-}
+// isGlobalWorkspace / workspaceSkillsDir live in projects.ts (one definition); re-exported for callers.
+export { isGlobalWorkspace, workspaceSkillsDir };
 
 /** Path of the lock that defines a workspace: the project's skills-lock.json, or the global lock for $HOME. */
 export function workspaceLockPath(path: string): string {
@@ -262,8 +262,70 @@ export function unassignProfileFromWorkspace(path: string, name: string): boolea
 
 function sameSource(a: LockEntry, b: LockEntry): boolean {
   if (a.sourceType === "local" || b.sourceType === "local") return resolve(a.source) === resolve(b.source);
-  const norm = (s: string) => s.toLowerCase().replace(/^github:/, "").replace(/^https:\/\/github\.com\//, "").replace(/\.git$/, "");
-  return norm(a.source) === norm(b.source);
+  return sameGithubSource(a.source, b.source);
+}
+
+/** Case-insensitive profile ordering — the ONE comparator every profile list and picker uses. */
+export function compareProfileNames(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { sensitivity: "base" });
+}
+
+/** "ssweens/playbook ×47, anthropics/skills ×1" — where a profile's skills come from. */
+export function profileSources(lock: { skills: Record<string, { source: string }> }): string {
+  const counts = new Map<string, number>();
+  for (const e of Object.values(lock.skills)) counts.set(e.source, (counts.get(e.source) ?? 0) + 1);
+  return [...counts].sort((a, b) => b[1] - a[1]).map(([src, n]) => `${src} ×${n}`).join(", ");
+}
+
+/**
+ * A legacy config.yaml profile (a list of skill names) resolved into a lock on
+ * the fly, or null when no such legacy profile exists. Saving it in the builder
+ * converts it to a real profiles/<name>.skills-lock.json.
+ */
+export function legacyProfileLock(name: string, sourceRepo: string | null): SkillLockFile | null {
+  const names = loadYamlConfig().config.profiles?.[name];
+  return names ? buildProfileLock(names, sourceRepo).lock : null;
+}
+
+/** Every workspace whose lock can carry a profile assignment: Global plus the registered projects. */
+export function knownWorkspaces(): string[] {
+  const paths = new Set<string>([homedir()]);
+  try { for (const p of getProjects()) if (!p.synthetic) paths.add(p.path); } catch { /* best effort */ }
+  return [...paths];
+}
+
+/** A profile was renamed: carry its assignment to the new name in every workspace lock that had it. */
+export function renameProfileAssignments(oldName: string, newName: string): number {
+  let changed = 0;
+  for (const ws of knownWorkspaces()) {
+    const current = workspaceProfiles(ws);
+    if (!current.includes(oldName)) continue;
+    if (setWorkspaceProfiles(ws, current.map((n) => (n === oldName ? newName : n)))) changed++;
+  }
+  return changed;
+}
+
+/** A profile was deleted: drop its assignment (and apply snapshot) from every workspace. */
+export function unassignProfileEverywhere(name: string): number {
+  let changed = 0;
+  for (const ws of knownWorkspaces()) {
+    const had = workspaceProfiles(ws).includes(name) || profileSnapshot(ws, name) !== undefined;
+    if (!had) continue;
+    if (unassignProfileFromWorkspace(ws, name)) changed++;
+  }
+  return changed;
+}
+
+/**
+ * The configured source repo as a skills-CLI GitHub source ("owner/repo"), or
+ * undefined when none is configured or it has no usable GitHub remote. Used to
+ * recognise lock entries that point at the source repo.
+ */
+export function configuredRepoSource(): string | undefined {
+  const repo = getConfigRepoPath();
+  if (!repo) return undefined;
+  const { source, warning } = skillsSourceForRepo(repo);
+  return warning || !/^[\w.-]+\/[\w.-]+$/.test(source) ? undefined : source;
 }
 
 /** Lock-only coverage of a profile against a workspace (what profileCoverage computes). */
@@ -288,6 +350,8 @@ export interface ProfileCoverage extends ProfileCoverageBase {
   installMissing: string[];
   /** Profile skills installed on disk whose content differs from the source. */
   drifted: string[];
+  /** Profile skills from the source repo that the repo no longer has — an apply can't install them; edit the profile. */
+  unresolvable: string[];
   /** Everything an apply must act on: missing from the lock ∪ missing on disk. */
   toApply: string[];
   /** Nothing to apply, nothing drifted, nothing removed. */
@@ -350,11 +414,6 @@ function clearSnapshot(workspace: string, profile: string): void {
   atomicWriteFileSync(snapshotsPath(), JSON.stringify(all, null, 2) + "\n");
 }
 
-/** The agent skills directory a workspace installs into. */
-export function workspaceSkillsDir(path: string): string {
-  return isGlobalWorkspace(path) ? agentSkillsDir() : join(path, ".agents", "skills");
-}
-
 /**
  * THE apply plan for a profile against a workspace: everything missing or
  * drifted on disk (planInstall) plus everything the workspace LOCK lacks —
@@ -366,11 +425,15 @@ export function planApply(
   workspaceLockSkills: Record<string, LockEntry>,
   installedDir: string,
   sourceIndex: Map<string, string>,
+  repoSource?: string,
 ): string[] {
-  const set = new Set(planInstall(profileSkills, installedDir, sourceIndex));
+  const gap = lockInstallGap(profileSkills, installedDir, sourceIndex, repoSource);
+  const unresolvable = new Set(gap.unresolvable);
+  const set = new Set([...gap.missing, ...gap.drifted]);
   for (const [skill, entry] of Object.entries(profileSkills)) {
     const have = workspaceLockSkills[skill];
-    if (!have || !sameSource(have, entry)) set.add(skill);
+    // Lock-missing too — but never a skill nothing can install.
+    if ((!have || !sameSource(have, entry)) && !unresolvable.has(skill)) set.add(skill);
   }
   return [...set].sort();
 }
@@ -388,10 +451,13 @@ export function profileWorkspaceStatus(
   workspace: string,
   sourceIndex: Map<string, string>,
   lock: SkillLockFile = workspaceLock(workspace),
+  repoSource: string | undefined = configuredRepoSource(),
 ): ProfileCoverage {
   const base = profileCoverage(name, profile, lock, profileSnapshot(workspace, name));
-  const gap = lockInstallGap(profile.skills, workspaceSkillsDir(workspace), sourceIndex);
-  const toApply = [...new Set([...base.missing, ...gap.missing])].sort();
+  const gap = lockInstallGap(profile.skills, workspaceSkillsDir(workspace), sourceIndex, repoSource);
+  // Nothing can apply an unresolvable skill, so it is reported, not planned.
+  const unresolvable = new Set(gap.unresolvable);
+  const toApply = [...new Set([...base.missing, ...gap.missing])].filter((s) => !unresolvable.has(s)).sort();
   return {
     ...base,
     // Lock meta is the source of truth; a legacy apply snapshot (from before
@@ -399,8 +465,9 @@ export function profileWorkspaceStatus(
     assigned: (lock.profiles ?? []).includes(name) || base.applied,
     installMissing: gap.missing,
     drifted: gap.drifted,
+    unresolvable: gap.unresolvable,
     toApply,
-    upToDate: toApply.length === 0 && gap.drifted.length === 0 && base.removed.length === 0,
+    upToDate: toApply.length === 0 && gap.drifted.length === 0 && gap.unresolvable.length === 0 && base.removed.length === 0,
   };
 }
 
@@ -414,10 +481,11 @@ export function workspaceCoverage(path: string, profiles: Record<string, SkillLo
   const assigned = new Set(lock.profiles ?? []);
   const sourceRepo = getConfigRepoPath();
   const sourceIndex = sourceRepo ? indexSourceSkills(sourceRepo) : new Map<string, string>();
+  const repoSource = configuredRepoSource();
   return Object.entries(profiles).map(([name, profile]) => {
-    if (assigned.has(name) || profileSnapshot(path, name) !== undefined) return profileWorkspaceStatus(name, profile, path, sourceIndex, lock);
+    if (assigned.has(name) || profileSnapshot(path, name) !== undefined) return profileWorkspaceStatus(name, profile, path, sourceIndex, lock, repoSource);
     const base = profileCoverage(name, profile, lock, profileSnapshot(path, name));
-    return { ...base, assigned: false, installMissing: [], drifted: [], toApply: [...base.missing], upToDate: false };
+    return { ...base, assigned: false, installMissing: [], drifted: [], unresolvable: [], toApply: [...base.missing], upToDate: false };
   });
 }
 
@@ -431,9 +499,13 @@ export function profileStatusSummary(c: ProfileCoverage): string {
   return [
     c.toApply.length ? `${c.toApply.length} to apply` : "",
     c.drifted.length ? `${c.drifted.length} drifted` : "",
+    c.unresolvable.length ? `${c.unresolvable.length} not in source repo` : "",
     c.removed.length ? `${c.removed.length} removed` : "",
   ].filter(Boolean).join(", ");
 }
+
+/** Shared breakdown wording for a lock hint ("N missing, M drifted, K not in source repo"). */
+export { lockInstallBreakdown };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Apply
@@ -446,9 +518,35 @@ export function addSourceFor(entry: LockEntry): string {
 }
 
 export interface ApplyResult {
+  /** Skills verified present on disk after the install calls. */
   added: string[];
   removed: string[];
+  /** Hard failures: a `skills add`/`remove` call that exited non-zero. */
   errors: string[];
+  /**
+   * Skills a call was asked to install that did NOT land on disk even though
+   * the call exited 0 — the CLI skips a `--skill` it can't find at the source
+   * and still reports success. Each carries the best reason we could extract
+   * ("not found at source", or the CLI's last line).
+   */
+  notInstalled: { skill: string; reason: string }[];
+  /** The profile was recorded in the workspace lock's `profiles` meta (false when the workspace has no lock file yet). */
+  assigned: boolean;
+}
+
+/**
+ * After a `skills add` call, check which requested skills actually exist in
+ * the target agent skills dir. The CLI exits 0 even when a `--skill` matches
+ * nothing at the source, so the exit code alone over-reports success.
+ */
+function verifyLanded(skills: string[], installedDir: string, output: string | undefined, result: ApplyResult): void {
+  const notFound = new Set<string>();
+  const m = output?.match(/No matching skills found for:\s*([^\n]+)/i);
+  if (m) for (const s of m[1].split(",").map((x) => x.trim()).filter(Boolean)) notFound.add(s);
+  for (const skill of skills) {
+    if (existsSync(join(installedDir, skill))) result.added.push(skill);
+    else result.notInstalled.push({ skill, reason: notFound.has(skill) ? "not found at source" : "did not install" });
+  }
 }
 
 /**
@@ -471,11 +569,17 @@ export async function applyProfileToWorkspace(
   // old lock-diff reported "already up to date" and did nothing.
   const wsLock = workspaceLock(workspace);
   const coverage = profileCoverage(name, profile, wsLock, profileSnapshot(workspace, name));
-  const result: ApplyResult = { added: [], removed: [], errors: [] };
+  const result: ApplyResult = { added: [], removed: [], errors: [], notInstalled: [], assigned: false };
   const global = isGlobalWorkspace(workspace);
   const sourceRepo = getConfigRepoPath();
   const sourceIndex = sourceRepo ? indexSourceSkills(sourceRepo) : new Map<string, string>();
-  const toInstall = planApply(profile.skills, wsLock.skills, workspaceSkillsDir(workspace), sourceIndex);
+  const installedDir = workspaceSkillsDir(workspace);
+  const repoSource = configuredRepoSource();
+  const toInstall = planApply(profile.skills, wsLock.skills, installedDir, sourceIndex, repoSource);
+  // Skills the source repo no longer has can't be installed by anyone: report them up front.
+  for (const skill of lockInstallGap(profile.skills, installedDir, sourceIndex, repoSource).unresolvable) {
+    result.notInstalled.push({ skill, reason: "not in source repo" });
+  }
 
   const bySource = new Map<string, string[]>();
   for (const skill of toInstall) {
@@ -485,19 +589,21 @@ export async function applyProfileToWorkspace(
 
   for (const [source, skills] of bySource) {
     const base = ["add", source, "-y", ...skills.flatMap((s) => ["--skill", s])];
+    let output: string | undefined;
     if (global) {
       let ok = true;
       for (const g of callGroups(instances)) {
         const r = runSkillsCliSync([...base, "-g", ...g.agents.flatMap((a) => ["-a", a])], g.env);
+        output = (output ?? "") + (r.output ?? "");
         if (!r.ok) {
           ok = false;
           result.errors.push(`${source}: ${r.error}`);
         }
       }
-      if (ok) result.added.push(...skills);
+      if (ok) verifyLanded(skills, installedDir, output, result);
     } else {
       const r = await runSkillsCli([...base, ...projectSkillAgents().flatMap((a) => ["-a", a])], { cwd: workspace });
-      if (r.code === 0) result.added.push(...skills);
+      if (r.code === 0) verifyLanded(skills, installedDir, `${r.stdout}\n${r.stderr}`, result);
       else result.errors.push(`${source}: ${summarizeCliFailure(r)}`);
     }
   }
@@ -516,12 +622,12 @@ export async function applyProfileToWorkspace(
     if (!result.errors.some((e) => e.startsWith("remove:"))) result.removed.push(...coverage.removed);
   }
 
-  if (result.errors.length === 0) {
-    recordSnapshot(workspace, name, Object.keys(profile.skills));
-    // Applying IS assigning: record the profile in the workspace lock's
-    // `profiles` meta so the mapping travels with the repo.
-    assignProfileToWorkspace(workspace, name);
-  }
+  // Applying IS assigning: the user explicitly applied this profile here, so
+  // record it in the workspace lock's `profiles` meta (and the apply snapshot)
+  // even when some skills failed — the status then shows exactly what's left.
+  // It can only fail when the workspace has no lock file yet (nothing landed).
+  recordSnapshot(workspace, name, Object.keys(profile.skills));
+  result.assigned = assignProfileToWorkspace(workspace, name);
   return result;
 }
 
@@ -539,8 +645,9 @@ export async function installLockSkills(
   skillNames: string[],
   instances: ToolInstance[],
 ): Promise<ApplyResult> {
-  const result: ApplyResult = { added: [], removed: [], errors: [] };
+  const result: ApplyResult = { added: [], removed: [], errors: [], notInstalled: [], assigned: false };
   const global = isGlobalWorkspace(workspace);
+  const installedDir = workspaceSkillsDir(workspace);
   const bySource = new Map<string, string[]>();
   for (const name of skillNames) {
     const entry = lockSkills[name];
@@ -550,16 +657,18 @@ export async function installLockSkills(
   }
   for (const [source, skills] of bySource) {
     const base = ["add", source, "-y", ...skills.flatMap((s) => ["--skill", s])];
+    let output: string | undefined;
     if (global) {
       let ok = true;
       for (const g of callGroups(instances)) {
         const r = runSkillsCliSync([...base, "-g", ...g.agents.flatMap((a) => ["-a", a])], g.env);
+        output = (output ?? "") + (r.output ?? "");
         if (!r.ok) { ok = false; result.errors.push(`${source}: ${r.error}`); }
       }
-      if (ok) result.added.push(...skills);
+      if (ok) verifyLanded(skills, installedDir, output, result);
     } else {
       const r = await runSkillsCli([...base, ...projectSkillAgents().flatMap((a) => ["-a", a])], { cwd: workspace });
-      if (r.code === 0) result.added.push(...skills);
+      if (r.code === 0) verifyLanded(skills, installedDir, `${r.stdout}\n${r.stderr}`, result);
       else result.errors.push(`${source}: ${summarizeCliFailure(r)}`);
     }
   }

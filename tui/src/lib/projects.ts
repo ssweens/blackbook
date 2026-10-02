@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, statSync } from "fs";
 import { matchesQuery } from "./list-window.js";
-import { join, basename } from "path";
+import { join, basename, resolve } from "path";
 import { homedir } from "os";
 import { loadConfig } from "./config/loader.js";
 import { expandPath } from "./config/path.js";
@@ -12,6 +12,20 @@ import { loadRecentWorkspaces } from "./recent-workspaces.js";
 // is the emerging cross-tool convention (multiple agents read `.agents/skills`),
 // so a project has ONE skills location rather than a per-tool matrix.
 export const PROJECT_SKILLS_SUBDIR = ".agents/skills";
+
+/** The Global workspace is $HOME: its skills live in ~/.agents/skills and its lock is the global lock. */
+export function isGlobalWorkspace(path: string): boolean {
+  return resolve(path) === resolve(homedir());
+}
+
+/**
+ * The ONE agent skills directory a workspace installs into and every reader
+ * (skill scan, drill-in status, sync hint, install plan) checks:
+ * `<project>/.agents/skills`, or `~/.agents/skills` for Global.
+ */
+export function workspaceSkillsDir(path: string): string {
+  return isGlobalWorkspace(path) ? join(homedir(), ".agents", "skills") : join(path, PROJECT_SKILLS_SUBDIR);
+}
 // Enable/disable is modeled as a parallel sibling dir (skills-manager convention),
 // so a disabled skill keeps its content but is not seen by agents.
 export const PROJECT_SKILLS_DISABLED_SUBDIR = ".agents/skills-disabled";

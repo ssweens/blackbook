@@ -2100,13 +2100,21 @@ describe("App E2E — Skill detail from Projects and Profiles", () => {
     try {
       await waitForFrame(stdout.lastFrame, (f) => f.includes("Docs"));
       sendKey(stdin, KEYS.enter); // Enter opens the profile detail
+      // Standard ItemDetail: real status line, metadata, apply rows first, then a
+      // coloured state per skill in the namespace-detail vocabulary.
       await waitForFrame(stdout.lastFrame, (f) =>
-        f.includes("docx") && f.includes("pdf") && f.includes("Apply to Global (~/.agents)") && f.includes("Apply to a project…") && f.includes("Used by:"));
-      sendKey(stdin, KEYS.down);  // status row -> "Apply to Global"
-      sendKey(stdin, KEYS.enter);
+        f.includes("Status: Out of sync (Global)") && f.includes("Used by:")
+        && f.includes("❯ Apply to Global (~/.agents)") && f.includes("Apply to a project…")
+        && f.includes("docx  not installed") && f.includes("pdf  not installed"));
+      expect(stdout.lastFrame()).not.toContain("Not Installed"); // the profile's own status, not ItemDetail's default
+      sendKey(stdin, KEYS.enter); // row 0 = Apply to Global
       // Activity feedback: the app's spinner notification, not a blocking screen.
       await waitForFrame(stdout.lastFrame, (f) => f.includes("Applying Docs to Global"));
+      // Single-flight: a second Enter while the apply runs is refused, not re-run.
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("An action is already in progress."));
       await waitForFrame(stdout.lastFrame, () => applyProfile.mock.calls.length === 1);
+      expect(applyProfile).toHaveBeenCalledTimes(1);
       expect(applyProfile).toHaveBeenCalledWith(homedir(), "Docs");
       // The detail stays usable the whole time.
       expect(stdout.lastFrame()).toContain("Apply to a project…");
@@ -2120,7 +2128,7 @@ describe("App E2E — Skill detail from Projects and Profiles", () => {
     const unassignProfile = vi.fn<(workspace: string, name: string) => Promise<boolean>>().mockResolvedValue(true);
     const proj: ProjectInfo = {
       path: "/w/api", name: "api", exists: true, hasAgentsDir: true, skills: [], available: [],
-      profileCoverage: [{ profile: "Docs", total: 2, present: ["docx", "pdf"], missing: [], removed: [], applied: true, assigned: true, installMissing: [], drifted: [], toApply: [], upToDate: true }],
+      profileCoverage: [{ profile: "Docs", total: 2, present: ["docx", "pdf"], missing: [], removed: [], applied: true, assigned: true, installMissing: [], drifted: [], unresolvable: [], toApply: [], upToDate: true }],
     };
     docsState(applyProfile, { projects: [proj], unassignProfile });
     const { stdin, stdout, unmount } = render(<App />);
@@ -2149,7 +2157,7 @@ describe("App E2E — Skill detail from Projects and Profiles", () => {
     const applyProfile = vi.fn<(workspace: string, name: string) => Promise<boolean>>().mockResolvedValue(true);
     const unassignProfile = vi.fn<(workspace: string, name: string) => Promise<boolean>>().mockResolvedValue(true);
     const cov = (profile: string, upToDate: boolean, toApply: string[] = [], drifted: string[] = []) => ({
-      profile, total: 2, present: ["a"], missing: toApply, removed: [], applied: true, assigned: true, installMissing: [], drifted, toApply, upToDate,
+      profile, total: 2, present: ["a"], missing: toApply, removed: [], applied: true, assigned: true, installMissing: [], drifted, unresolvable: [], toApply, upToDate,
     });
     const proj: ProjectInfo = {
       path: "/w/api", name: "api", exists: true, hasAgentsDir: true, skills: [], available: [],
@@ -2184,6 +2192,30 @@ describe("App E2E — Skill detail from Projects and Profiles", () => {
     }
   });
 
+  it("the Profiles list cursor survives a detail round-trip (store selectedIndex, like every other tab)", async () => {
+    const gh = (source: string) => ({ source, sourceType: "github" });
+    useStore.setState({
+      tab: "profiles",
+      profiles: { Alpha: ["a"], Beta: ["b"] },
+      profileLocks: { Alpha: { version: 1, skills: { a: gh("o/r") } }, Beta: { version: 1, skills: { b: gh("o/r") } } } as never,
+      projects: [], projectsLoaded: true, selectedIndex: 0,
+      tools: createToolInstances(),
+    });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("❯ Alpha") && f.includes("Beta"));
+      sendKey(stdin, KEYS.down);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("❯ Beta"));
+      sendKey(stdin, KEYS.enter); // Beta's detail
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Apply to Global (~/.agents)") && f.includes("b  not installed"));
+      sendKey(stdin, KEYS.escape);
+      // Back on the list with the cursor still on Beta, not reset to the top.
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("❯ Beta") && !f.includes("Apply to Global (~/.agents)"));
+    } finally {
+      unmount();
+    }
+  });
+
   it("Esc from a skill opened inside the profile detail returns to the profile detail, not the list", async () => {
     useStore.setState({
       tab: "profiles",
@@ -2197,13 +2229,23 @@ describe("App E2E — Skill detail from Projects and Profiles", () => {
     try {
       await waitForFrame(stdout.lastFrame, (f) => f.includes("web"));
       sendKey(stdin, KEYS.enter); // profile detail
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Apply to Global (~/.agents)") && f.includes("qc-review"));
-      // status, Apply to Global, Apply to a project…, then the skill row.
-      sendKey(stdin, KEYS.down); sendKey(stdin, KEYS.down); sendKey(stdin, KEYS.down);
-      sendKey(stdin, KEYS.enter); // open the skill's detail (renders above the profile detail)
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("❯ Apply to Global (~/.agents)") && f.includes("qc-review  not installed"));
+      // Rows: Apply to Global, Apply to a project…, qc-review, Back.
+      sendKey(stdin, KEYS.down); sendKey(stdin, KEYS.down);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("❯ qc-review"));
+      sendKey(stdin, KEYS.enter); // open the skill's detail
       await waitForFrame(stdout.lastFrame, (f) => f.includes("Browse skill files"));
+      // The skill detail reached from Profiles must take input (it used to be dead to everything but Esc).
+      sendKey(stdin, KEYS.down);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("❯ Browse skill files"));
       sendKey(stdin, KEYS.escape); // back to the PROFILE DETAIL, like namespace → skill → Esc
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Apply to Global (~/.agents)") && !f.includes("Browse skill files"));
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("❯ Apply to Global (~/.agents)") && !f.includes("Browse skill files"));
+      // Apply to a project… opens the picker ABOVE the detail; Esc returns to the detail.
+      sendKey(stdin, KEYS.down);
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Apply profile web to…") && f.includes("Global (~/.agents)"));
+      sendKey(stdin, KEYS.escape);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Apply to Global (~/.agents)") && !f.includes("Apply profile web to…"));
       sendKey(stdin, KEYS.escape); // and only now back to the list
       await waitForFrame(stdout.lastFrame, (f) => f.includes("P apply to a project") && !f.includes("Apply to Global (~/.agents)"));
     } finally {
@@ -2580,7 +2622,8 @@ describe("App E2E — Discover Tab", () => {
       );
       expect(useStore.getState().detailPlugin?.name).toBe(name);
       expect(useStore.getState().detail?.kind).toBe("plugin");
-      expect((useStore.getState().detail?.data as Plugin).name).toBe(name);
+      const opened = useStore.getState().detail;
+      expect(opened?.kind === "plugin" ? (opened.data as Plugin).name : undefined).toBe(name);
       return frame;
     };
 
@@ -2696,7 +2739,8 @@ describe("App E2E — Discover Tab", () => {
         f.includes(name) && f.includes(`Unique pi detail for ${name}`),
       );
       expect(useStore.getState().detail?.kind).toBe("piPackage");
-      expect((useStore.getState().detail?.data as PiPackage).source).toBe(pkgByName.get(name)!.source);
+      const opened = useStore.getState().detail;
+      expect(opened?.kind === "piPackage" ? (opened.data as PiPackage).source : undefined).toBe(pkgByName.get(name)!.source);
       sendKey(stdin, KEYS.escape);
     };
 

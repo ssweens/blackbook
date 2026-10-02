@@ -7,6 +7,10 @@ interface HintBarProps {
   hasDetail: boolean;
   toolsHint?: string;
   consultationAvailable?: boolean;
+  /** Replaces the generic detail hint for overlays whose actions differ (e.g. the profile detail has no pullback). */
+  detailHint?: string;
+  /** Replaces the tab's list hint while a sub-mode is active (Projects drill-in, Profiles builder). */
+  modeHint?: string;
 }
 
 const HINTS: Record<Tab, string> = {
@@ -15,8 +19,9 @@ const HINTS: Record<Tab, string> = {
   marketplaces: "Enter select · u update · r remove · R refresh · q quit",
   tools: "Enter detail · i install · u update · d uninstall · e edit config · Space toggle · R refresh · q quit",
   sync: "y to sync missing/changed items (press twice) · Enter details · d diff/detail · R refresh · q quit",
-  projects: "Enter open · P apply profile · S save lock as profile · c consult advisor · a add · A adopt · d remove · (in project) Enter skill detail · p push · u pull · e toggle · d delete · Esc back · R refresh · q quit",
-  profiles: "Enter details · P apply to a project… · G apply to Global · e edit · n new · d delete · (in builder) Space toggle · Enter skill detail · S save · c consult advisor · →/← expand namespace · Esc back · q quit",
+  // The tab footers carry the per-mode keys (drill-in / builder); this bar holds the list-level ones.
+  projects: "Enter open · P apply profile · S save lock as profile · c consult advisor · a add · A adopt · d remove · R refresh · q quit",
+  profiles: "Enter details · P apply to a project… · G apply to Global · e edit · n new · d delete · R refresh · q quit",
   settings: "↑/↓ select · Enter edit · Esc cancel · R refresh · q quit",
 };
 
@@ -25,6 +30,8 @@ export const HintBar = React.memo(function HintBar({
   hasDetail,
   toolsHint,
   consultationAvailable = false,
+  detailHint,
+  modeHint,
 }: HintBarProps) {
   // toolsHint already fully accounts for every tools-tab state, INCLUDING Tool
   // Detail being open (it has its own detailTool branch) — so it must be
@@ -37,8 +44,8 @@ export const HintBar = React.memo(function HintBar({
     tab === "tools" && toolsHint
       ? toolsHint
       : hasDetail
-        ? `↑/↓ to navigate · Enter to select${consultationAvailable ? " · c consult advisor" : ""} · p pullback (if available) · Esc to back`
-        : HINTS[tab];
+        ? (detailHint ?? `↑/↓ to navigate · Enter to select${consultationAvailable ? " · c consult advisor" : ""} · p pullback (if available) · Esc to back`)
+        : (modeHint ?? HINTS[tab]);
 
   return (
     // height caps the text row to exactly 1 line regardless of terminal width

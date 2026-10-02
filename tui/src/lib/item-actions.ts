@@ -516,7 +516,43 @@ export function getNamespaceActions(ns: import("../lib/install.js").NamespaceGro
  * Build actions for any ManagedItem — routes to the kind-specific builder.
  * Pass drift for plugin items to get per-instance diff status.
  */
+/**
+ * Actions for a profile: the two apply targets, a row per skill with its
+ * install state in the Global agent skills dir (the Profiles list's "in
+ * sync"), "Save lock to source repo" only when the lock file has unsaved
+ * changes, then back. Same vocabulary as the namespace rows
+ * (`in sync` / `drifted` / `not installed`), plus `not in source repo` for a
+ * skill the source repo no longer has.
+ */
+export function getProfileActions(p: import("./managed-item.js").ProfileDetailData): ItemAction[] {
+  const actions: ItemAction[] = [];
+  const names = Object.keys(p.lock.skills).sort();
+  if (names.length > 0) {
+    actions.push({ id: "apply_global", label: "Apply to Global (~/.agents)", type: "sync" });
+    actions.push({ id: "apply_project", label: "Apply to a project…", type: "pick_workspace" });
+  }
+  const missing = new Set(p.gap.missing);
+  const drifted = new Set(p.gap.drifted);
+  const unresolvable = new Set(p.gap.unresolvable);
+  for (const s of names) {
+    const [statusLabel, statusColor]: [string, ItemAction["statusColor"]] = unresolvable.has(s)
+      ? ["not in source repo", "red"]
+      : missing.has(s)
+        ? ["not installed", "gray"]
+        : drifted.has(s)
+          ? ["drifted", "yellow"]
+          : ["in sync", "green"];
+    actions.push({ id: `skill:${s}`, label: s, type: "open_skill", statusLabel, statusColor });
+  }
+  if (p.lockUnsaved) actions.push({ id: "save_lock", label: "Save lock to source repo", type: "pullback" });
+  actions.push({ id: "back", label: "Back to list", type: "back" });
+  return actions;
+}
+
 export function buildItemActions(item: ManagedItem, drift?: PluginDrift): ItemAction[] {
+  if (item._profile) {
+    return getProfileActions(item._profile);
+  }
   if (item._plugin) {
     const toolStatuses = getPluginToolStatus(item._plugin);
     const isIncomplete = item._plugin.installed && item._plugin.incomplete;

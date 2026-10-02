@@ -46,9 +46,8 @@ import { ProfilePickerModal } from "./components/ProfilePickerModal.js";
 import { SaveProfileModal } from "./components/SaveProfileModal.js";
 import { SkillProfilesModal } from "./components/SkillProfilesModal.js";
 import { workspaceLock, profileLockPath } from "./lib/skill-profiles.js";
-import { ProfileDetail } from "./components/ProfileDetail.js";
 import { WorkspacePickerModal } from "./components/WorkspacePickerModal.js";
-import { profileStatusSummary } from "./lib/skill-profiles.js";
+import { profileStatusSummary, legacyProfileLock, configuredRepoSource } from "./lib/skill-profiles.js";
 import { getPluginToolStatus } from "./lib/plugin-status.js";
 import {
   syncPluginInstances,
@@ -65,7 +64,9 @@ import { buildFileDiffTarget, buildSkillDiffTarget, computeFileDetail } from "./
 import { getConsultationSettings, getPackageManager, getPluginComponentConfig, getConfigRepoPath } from "./lib/config.js";
 import { setupSourceRepository, shouldShowSourceSetupWizard, pullSourceRepo } from "./lib/source-setup.js";
 import { ItemList, FILE_COLUMNS, PLUGIN_COLUMNS } from "./components/ItemList.js";
-import { ItemDetail, PluginMetadata, FileMetadata, PiPackageMetadata, SkillMetadata, NamespaceMetadata, type ItemAction } from "./components/ItemDetail.js";
+import { ItemDetail, PluginMetadata, FileMetadata, PiPackageMetadata, SkillMetadata, NamespaceMetadata, ProfileMetadata, profileMetadataRows, type ItemAction } from "./components/ItemDetail.js";
+import { lockInstallGap, compareLockToInstall, agentSkillsDir, lockInstallBreakdown } from "./lib/lock-install-sync.js";
+import { lockGitStatus, lockUpdateSourceRepo } from "./lib/lock-git.js";
 import { NamespaceDetail } from "./components/NamespaceDetail.js";
 import { pluginToManagedItem, fileToManagedItem, piPackageToManagedItem } from "./lib/managed-item.js";
 import { buildPluginRows } from "./lib/plugin-groups.js";
@@ -324,6 +325,8 @@ export function App() {
   const unmanagedSkills = useMemo(() => collectUnmanagedSkills(projects), [projects]);
   const profiles = useStore((s) => s.profiles);
   const profileLocks = useStore((s) => s.profileLocks);
+  const lockSyncEpoch = useStore((s) => s.lockSyncEpoch);
+  const profilesEditing = useStore((s) => s.profilesEditing);
   const applyProfile = useStore((s) => s.applyProfile);
   const unassignProfile = useStore((s) => s.unassignProfile);
   const saveLockAsProfile = useStore((s) => s.saveLockAsProfile);
@@ -342,23 +345,56 @@ export function App() {
   const openSkillFiles = (skill: StandaloneSkill) => setSkillFileBrowser(skill);
   // Skill → profile membership picker, opened from skill detail.
   const [skillProfilesTarget, setSkillProfilesTarget] = useState<StandaloneSkill | null>(null);
-  // Profile detail: a skills-style view (install its skills, per-skill status), opened with `g` on the Profiles tab.
-  const [profileDetailName, setProfileDetailName] = useState<string | null>(null);
   // Workspace picker: apply a given profile to a chosen workspace (mirror of the Projects tab's P).
   const [workspacePickerFor, setWorkspacePickerFor] = useState<string | null>(null);
   /**
    * THE apply dispatch. Every way of applying a profile — Projects `P`,
    * Profiles `P`/`G`, the profile detail's rows — goes through here, so they
-   * share one store action and one spinner notification (like every other
-   * install in the app). applyProfile reports success/failure itself.
+   * share one store action, one spinner notification and one single-flight
+   * guard (like every other install in the app). applyProfile reports
+   * success/failure itself.
    */
-  const applyWithSpinner = (workspace: string, name: string, targetLabel: string) =>
-    withSpinner(`Applying ${name} to ${targetLabel}...`, () => applyProfile(workspace, name), notify, clearNotification);
-  const openProfileDetail = (name: string) => {
-    const lock = useStore.getState().profileLocks[name];
-    if (!lock) { notify(`Profile "${name}" has no lock yet — edit and save it first`, "warning"); return; }
-    setProfileDetailName(name);
+  const applyInFlight = useRef(new Set<string>());
+  const applyWithSpinner = async (workspace: string, name: string, targetLabel: string): Promise<boolean> => {
+    const key = `${workspace}:${name}`;
+    if (applyInFlight.current.has(key)) {
+      notify("An action is already in progress.", "warning");
+      return false;
+    }
+    applyInFlight.current.add(key);
+    try {
+      return await withSpinner(`Applying ${name} to ${targetLabel}...`, () => applyProfile(workspace, name), notify, clearNotification);
+    } finally {
+      applyInFlight.current.delete(key);
+    }
   };
+  // Profile detail (Profiles tab Enter): the standard ItemDetail pipeline — a
+  // `profile` DetailArtifact, actions from buildItemActions, dispatch through
+  // handleItemAction — so it inherits the cursor, single-flight guard, sticky
+  // notification dismissal and hint bar every other detail has. Legacy
+  // (config.yaml) profiles open too, resolved on the fly.
+  const openProfileDetail = (name: string) => {
+    const state = useStore.getState();
+    if (!state.profileLocks[name] && !legacyProfileLock(name, getConfigRepoPath())) {
+      notify(`No detail available for profile "${name}"`, "warning");
+      return;
+    }
+    setDetail({ kind: "profile", name });
+    setActionIndex(0);
+  };
+  // Does the open profile's lock file have changes not yet saved to the source
+  // repo? Async (git), so it lives in state and feeds the "Save lock" row.
+  const [profileLockUnsaved, setProfileLockUnsaved] = useState(false);
+  useEffect(() => {
+    if (detail?.kind !== "profile") { setProfileLockUnsaved(false); return; }
+    const repo = getConfigRepoPath();
+    if (!repo) return;
+    let cancelled = false;
+    void lockGitStatus(profileLockPath(repo, detail.name)).then((s) => {
+      if (!cancelled) setProfileLockUnsaved(s.isRepo && (s.fileState !== "clean" || s.ahead > 0));
+    });
+    return () => { cancelled = true; };
+  }, [detail, lockSyncEpoch]);
   const openSkillProfiles = (skill: StandaloneSkill) => {
     // Profiles load with the Projects data; make sure they're there before showing membership.
     const state = useStore.getState();
@@ -957,8 +993,13 @@ export function App() {
       }
       return Math.max(0, projects.length - 1);
     }
+    if (tab === "profiles") {
+      // The Profiles list cursor lives in the store like every other tab's;
+      // without its own bound the clamp below would snap it to the library's.
+      return Math.max(0, Object.keys(profiles).length - 1);
+    }
     return Math.max(0, libraryCount - 1);
-  }, [discoverSubView, tab, marketplaceBrowsePlugins, filteredPlugins, filteredPiPackages, marketplaceRows, managedTools, syncPreview, projects, projectDetailPath, libraryCount, search, collapsedProjectNamespaces]);
+  }, [discoverSubView, tab, marketplaceBrowsePlugins, filteredPlugins, filteredPiPackages, marketplaceRows, managedTools, syncPreview, projects, projectDetailPath, libraryCount, search, collapsedProjectNamespaces, profiles]);
 
   useEffect(() => {
     if (selectedIndex > maxIndex) {
@@ -1091,6 +1132,31 @@ export function App() {
     return piPackageToManagedItem(detailPiPackage);
   }, [detailPiPackage]);
 
+  // The profile detail's data, computed ONCE per change (never in render — it
+  // hashes every installed skill). Re-derives after every reload (lockSyncEpoch).
+  const detailProfileItem = useMemo((): ManagedItem | null => {
+    if (detail?.kind !== "profile") return null;
+    const name = detail.name;
+    const sourceRepo = getConfigRepoPath();
+    const lock = profileLocks[name] ?? legacyProfileLock(name, sourceRepo);
+    if (!lock) return null;
+    const sourceIndex = sourceRepo ? indexSourceSkills(sourceRepo) : new Map<string, string>();
+    const repoSource = configuredRepoSource();
+    const gap = lockInstallGap(lock.skills, agentSkillsDir(), sourceIndex, repoSource);
+    const hint = compareLockToInstall(lock.skills, agentSkillsDir(), sourceIndex, repoSource);
+    const usedBy = projects.flatMap((p) => {
+      const c = p.profileCoverage?.find((c) => c.profile === name && c.assigned);
+      return c ? [{ workspace: p.name, upToDate: c.upToDate, summary: profileStatusSummary(c) }] : [];
+    });
+    const data: import("./lib/managed-item.js").ProfileDetailData = {
+      name, lock, legacy: !(name in profileLocks), gap, hint, usedBy, lockUnsaved: profileLockUnsaved,
+    };
+    return {
+      name, kind: "profile", marketplace: "local", description: "",
+      installed: hint.state === "in-sync", incomplete: false, scope: "user", instances: [], _profile: data,
+    };
+  }, [detail, profileLocks, projects, lockSyncEpoch, profileLockUnsaved]);
+
   const detailNamespaceItem = useMemo((): ManagedItem | null => {
     if (!detailNamespace) return null;
     const ns = detailNamespace;
@@ -1125,9 +1191,27 @@ export function App() {
    * Returns the ManagedItem (for rendering), the action list (kind-specific via buildItemActions),
    * and the metadata node (per-kind small component).
    */
-  const activeDetail = useMemo((): { item: ManagedItem; actions: ItemAction[]; metadata: React.ReactNode } | null => {
+  const activeDetail = useMemo((): { item: ManagedItem; actions: ItemAction[]; metadata: React.ReactNode; metadataRows?: number; statusLine?: React.ReactNode } | null => {
     if (!detail) return null;
     switch (detail.kind) {
+      case "profile": {
+        if (!detailProfileItem?._profile) return null;
+        const p = detailProfileItem._profile;
+        // The real status for a profile — ItemDetail's default "Installed /
+        // Not Installed" is the wrong vocabulary here.
+        const statusText = p.hint.state === "empty"
+          ? "Empty"
+          : p.hint.state === "in-sync"
+            ? "In sync (Global)"
+            : `Out of sync (Global) · ${lockInstallBreakdown(p.hint)}`;
+        return {
+          item: detailProfileItem,
+          actions: buildItemActions(detailProfileItem),
+          metadata: <ProfileMetadata item={detailProfileItem} />,
+          metadataRows: profileMetadataRows(p),
+          statusLine: <Text color={p.hint.color}>{statusText}</Text>,
+        };
+      }
       case "file": {
         if (!detailFileItem) return null;
         return { item: detailFileItem, actions: buildItemActions(detailFileItem), metadata: <FileMetadata item={detailFileItem} /> };
@@ -1150,7 +1234,7 @@ export function App() {
         return { item: detailNamespaceItem, actions: buildItemActions(detailNamespaceItem), metadata: <NamespaceMetadata item={detailNamespaceItem} /> };
       }
     }
-  }, [detail, detailFileItem, detailSkillItem, detailPluginItem, detailPiPkgItem, detailNamespaceItem, pluginDriftMap]);
+  }, [detail, detailFileItem, detailSkillItem, detailPluginItem, detailPiPkgItem, detailNamespaceItem, detailProfileItem, pluginDriftMap]);
 
   const buildDiffExcerpts = (file: DiffFileSummary): Array<{ kind: "installed-only" | "source-only"; text: string }> => {
     if (file.status === "binary") return [];
@@ -1515,6 +1599,13 @@ export function App() {
   const closeItemDetail = () => {
     const state = useStore.getState();
     if (!state.detail) return;
+    // A skill opened from a profile's detail returns to that profile detail
+    // (like namespace → skill → Esc → namespace).
+    if (state.detail.kind === "skill" && state.detail.fromProfile) {
+      setDetail({ kind: "profile", name: state.detail.fromProfile });
+      setActionIndex(0);
+      return;
+    }
     if (state.detail.kind === "skill" && state.detail.data.namespace && !state.detail.fromList) {
       const nsName = state.detail.data.namespace;
       const fresh = groupSkillsByNamespace(state.standaloneSkills).find(
@@ -1534,7 +1625,7 @@ export function App() {
   type OverlayKind =
     | "consultation" | "sourceSetupWizard" | "diff" | "missingSummary" | "editToolModal"
     | "addMarketplace" | "addPiMarketplace" | "addProject" | "adoptSkills" | "applyProfile" | "saveLockProfile" | "toolActionModal"
-    | "toolDetail" | "skillFileBrowser" | "skillProfiles" | "workspacePicker" | "profileDetail" | "itemDetail" | "marketplaceDetail";
+    | "toolDetail" | "skillFileBrowser" | "skillProfiles" | "workspacePicker" | "itemDetail" | "marketplaceDetail";
   interface OverlayEntry {
     kind: OverlayKind;
     active: boolean;
@@ -1565,11 +1656,7 @@ export function App() {
     { kind: "skillFileBrowser", active: !!skillFileBrowser, inputMode: "detail", escClose: () => {} },
     { kind: "skillProfiles", active: !!skillProfilesTarget, inputMode: "modal" },
     { kind: "workspacePicker", active: !!workspacePickerFor, inputMode: "modal" },
-    // A skill detail opened FROM the profile detail renders above it, so Esc
-    // returns to the profile detail (like namespace → skill → Esc → namespace).
     { kind: "itemDetail", active: !!activeDetail, inputMode: "detail", escClose: closeItemDetail },
-    // ProfileDetail owns its own Esc.
-    { kind: "profileDetail", active: !!profileDetailName, inputMode: "detail", escClose: () => {} },
     {
       kind: "marketplaceDetail",
       active: !!activeMarketplaceDetail,
@@ -1664,7 +1751,7 @@ export function App() {
   // standalone skills (which include source-repo-only skills). Used from the
   // Projects drill-in and the Profiles builder so a skill's detail is reachable
   // from the definition views, not just the Installed tab.
-  const openSkillDetailByName = (name: string): void => {
+  const openSkillDetailByName = (name: string, fromProfile?: string): void => {
     const skill = standaloneSkills.find((s) => s.name === name);
     if (!skill) {
       notify(`No detail available for ${name}`, "warning");
@@ -1673,7 +1760,8 @@ export function App() {
     // fromList: opened from a flat definition view (Projects drill-in / Profiles
     // builder), so Esc closes back to that list rather than opening the skill's
     // namespace detail (the namespace breadcrumb only makes sense on Installed).
-    setDetail({ kind: "skill", data: skill, fromList: true });
+    // fromProfile: opened from a profile detail, so Esc returns to that detail.
+    setDetail({ kind: "skill", data: skill, fromList: true, ...(fromProfile ? { fromProfile } : {}) });
     setActionIndex(0);
   };
 
@@ -2102,8 +2190,11 @@ export function App() {
     }
 
     // Settings/Profiles tabs: the tab component handles its own input
-    // (up/down/enter/esc, builder keys). Digits/q/R above still work.
-    if (tab === "settings" || tab === "profiles") {
+    // (up/down/enter/esc, builder keys). Digits/q/R above still work. When a
+    // detail overlay is open the tab is unmounted and the detail handlers
+    // below must run — otherwise a skill detail reached from Profiles is dead
+    // to every key but Esc.
+    if ((tab === "settings" || tab === "profiles") && !isOverlayOpen) {
       return;
     }
 
@@ -2474,7 +2565,7 @@ export function App() {
     setActionIndex(0);
     if (mutatesDetail) detailMutationInFlight.current = true;
     try {
-      await handleItemAction(item, action, buildDetailCallbacks({
+      await handleItemAction(item, action, { ...buildDetailCallbacks({
         detail,
         setDetail,
         setDetailPluginDrift,
@@ -2503,7 +2594,24 @@ export function App() {
         deletePiPackageEverywhere: doDeletePiPkg,
         refreshDetailPiPackage,
         buildPluginDiffTarget: buildPluginDiffTargetCb,
-      }));
+      }),
+        // ── Profile detail ──
+        applyProfileToGlobal: async (name) => { await applyWithSpinner(homedir(), name, "Global"); },
+        openWorkspacePicker: (name) => setWorkspacePickerFor(name),
+        openSkillDetailByName: (skillName, fromProfile) => openSkillDetailByName(skillName, fromProfile),
+        saveProfileLock: async (name) => {
+          const repo = getConfigRepoPath();
+          if (!repo) return;
+          const r = await withSpinner(
+            `Saving ${name} lock to source repo...`,
+            () => lockUpdateSourceRepo(profileLockPath(repo, name), `chore(skills): update ${name} profile skills-lock.json`),
+            notify, clearNotification,
+          );
+          notify(r.ok ? `Saved ${name} lock to the source repo` : `Failed to save ${name} lock: ${r.error ?? "unknown error"}`, r.ok ? "success" : "error");
+          // Re-check the lock's git state so the "Save lock" row disappears.
+          useStore.setState((s) => ({ lockSyncEpoch: s.lockSyncEpoch + 1 }));
+        },
+      });
     } catch (error) {
       useStore.getState().notify(
         `Action failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -2759,15 +2867,21 @@ export function App() {
         const name = workspacePickerFor!;
         const isAssigned = (p: typeof projects[number]) => !!p.profileCoverage?.some((c) => c.profile === name && c.assigned);
         const globalProject = projects.find((p) => p.synthetic);
+        // `short` is the spinner/notification label; `label` is the row text.
         const targets = [
-          { path: homedir(), label: "Global (~/.agents)", assigned: globalProject ? isAssigned(globalProject) : false },
-          ...projects.filter((p) => !p.synthetic && p.exists).map((p) => ({ path: p.path, label: `${p.name}  ${p.path}`, assigned: isAssigned(p) })),
+          { path: homedir(), short: "Global", label: "Global (~/.agents)", assigned: globalProject ? isAssigned(globalProject) : false },
+          ...projects.filter((p) => !p.synthetic && p.exists).map((p) => ({
+            path: p.path,
+            short: p.name,
+            label: `${p.name}  ${p.path}${p.transient ? " · recent" : ""}`,
+            assigned: isAssigned(p),
+          })),
         ];
         return (
           <WorkspacePickerModal
             profileName={name}
             targets={targets}
-            onApply={(path) => { setWorkspacePickerFor(null); void applyWithSpinner(path, name, targets.find((t) => t.path === path)?.label.split("  ")[0] ?? "workspace"); }}
+            onApply={(path) => { setWorkspacePickerFor(null); void applyWithSpinner(path, name, targets.find((t) => t.path === path)?.short ?? "workspace"); }}
             onUnassign={(path) => { void unassignProfile(path, name); }}
             onCancel={() => setWorkspacePickerFor(null)}
           />
@@ -2807,37 +2921,6 @@ export function App() {
             pending={toolDetectionPending[detailTool!.toolId] === true}
           />
         );
-      case "profileDetail": {
-        const name = profileDetailName!;
-        const lock = profileLocks[name];
-        const sourceRepo = getConfigRepoPath();
-        const targets = [
-          { path: homedir(), label: "Global (~/.agents)" },
-          ...projects.filter((p) => !p.synthetic && p.exists).map((p) => ({ path: p.path, label: `${p.name}  ${p.path}` })),
-        ];
-        void targets;
-        // Workspaces whose lock names this profile, with the shared status summary.
-        const usedBy = projects
-          .map((p) => ({ p, c: p.profileCoverage?.find((c) => c.profile === name && c.assigned) }))
-          .filter((x): x is { p: typeof projects[number]; c: NonNullable<typeof x.c> } => !!x.c)
-          .map(({ p, c }) => ({ workspace: p.name, upToDate: c.upToDate, summary: profileStatusSummary(c) }));
-        return (
-          <ProfileDetail
-            key={name}
-            name={name}
-            lockSkills={lock?.skills ?? {}}
-            lockPath={sourceRepo ? profileLockPath(sourceRepo, name) : ""}
-            sourceIndex={sourceRepo ? indexSourceSkills(sourceRepo) : new Map()}
-            usedBy={usedBy}
-            // Same spinner-wrapped store action as Projects `P` — one apply path.
-            onApplyGlobal={() => applyWithSpinner(homedir(), name, "Global")}
-            onApplyToProject={() => { setProfileDetailName(null); setWorkspacePickerFor(name); }}
-            // Keep the profile detail mounted underneath; Esc from the skill comes back here.
-            onOpenSkillDetail={openSkillDetailByName}
-            onClose={() => setProfileDetailName(null)}
-          />
-        );
-      }
       case "skillProfiles": {
         const skill = skillProfilesTarget!;
         return (
@@ -2873,6 +2956,8 @@ export function App() {
             selectedAction={actionIndex}
             actions={activeDetail!.actions}
             metadata={activeDetail!.metadata}
+            metadataRows={activeDetail!.metadataRows}
+            statusLine={activeDetail!.statusLine}
           />
         );
       case "marketplaceDetail":
@@ -2920,6 +3005,16 @@ export function App() {
         hasDetail={isOverlayOpen}
         toolsHint={toolsHint}
         consultationAvailable={!skillFileBrowser && tab === "installed" && (detailPlugin?.installed === true || (detailSkill?.installations.length ?? 0) > 0)}
+        // The profile detail has no pullback shortcut; the generic detail hint would advertise one.
+        detailHint={activeOverlay?.kind === "itemDetail" && detail?.kind === "profile" ? "↑/↓ to navigate · Enter to select · Esc to back" : undefined}
+        // Sub-modes carry their own keys here (one hint line, like every other tab) instead of an in-tab footer.
+        modeHint={
+          tab === "projects" && projectDetailPath
+            ? "Enter details/expand · P apply profile · p push · u pull · e toggle · d delete · / search · Esc back · R refresh · q quit"
+            : tab === "profiles" && profilesEditing
+              ? "Space toggle · Enter details · S save · r rename · v selected only · →/← expand · / search · c consult advisor · Esc back"
+              : undefined
+        }
       />
       <StatusBar />
     </Box>

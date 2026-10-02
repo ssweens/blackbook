@@ -130,9 +130,18 @@ export interface FileStatus {
 export type DetailArtifact =
   | { kind: "plugin"; data: Plugin; drift?: import("./plugin-drift.js").PluginDrift }
   | { kind: "file"; data: FileStatus }
-  | { kind: "skill"; data: import("./install.js").StandaloneSkill; fromList?: boolean }
+  | {
+      kind: "skill";
+      data: import("./install.js").StandaloneSkill;
+      /** Opened from a flat definition view (Projects drill-in / Profiles builder): Esc returns to that list. */
+      fromList?: boolean;
+      /** Opened from a profile's detail: Esc returns to that profile detail (like namespace → skill → Esc). */
+      fromProfile?: string;
+    }
   | { kind: "namespace"; data: import("./install.js").NamespaceGroup }
-  | { kind: "piPackage"; data: PiPackage };
+  | { kind: "piPackage"; data: PiPackage }
+  /** A profile's detail (Profiles tab Enter) — rendered through the same ItemDetail pipeline as every other kind. */
+  | { kind: "profile"; name: string };
 
 export type SyncPreviewItem =
   | {
@@ -280,6 +289,8 @@ export interface AppState {
   profileLocks: Record<string, import("./skill-profiles.js").SkillLockFile>;
   /** Install-sync hints keyed by lock identity, for Projects/Profiles list rows: does the agent skills dir match the lock? (computed in the background). */
   lockSync: Record<string, import("./lock-install-sync.js").LockInstallHint>;
+  /** Bumped on every loadProjects (installs, applies, unassigns, refreshes) so install-sync hints recompute. */
+  lockSyncEpoch: number;
   piMarketplaces: PiMarketplace[];
   managedItems: import("./managed-item.js").ManagedItem[];
   // Sort state

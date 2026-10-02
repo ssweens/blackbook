@@ -9,13 +9,15 @@
  * as those are stripped by the Gherkin parser before matching.
  */
 import { expect } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync, lstatSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync, lstatSync, symlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Plugin, ToolInstance } from '../../src/lib/types.js';
 import {
+  assignProfileToWorkspace,
   markProfileApplied,
   planApply,
+  profileStatusSummary,
   profileWorkspaceStatus,
   setWorkspaceProfiles,
   unassignProfileFromWorkspace,
@@ -24,10 +26,8 @@ import {
   type ProfileCoverage,
   type SkillLockFile,
 } from '../../src/lib/skill-profiles.js';
-
-// Apply snapshots live in the Blackbook cache dir. Point it at a throwaway so
-// BDD scenarios never touch the real ~/.cache/blackbook/profile-applications.json.
-process.env.XDG_CACHE_HOME = mkdtempSync(join(tmpdir(), 'blackbook-bdd-cache-'));
+// (Apply snapshots live in the cache dir; src/test-setup-home.ts already points every
+// vitest worker's HOME/XDG dirs at a throwaway, so nothing here touches the real cache.)
 import {
   compareLockToInstall,
   lockInstallText,
@@ -63,6 +63,8 @@ export interface World {
   sourceIndex?: Map<string, string>;
   hint?: LockInstallHint;
   plan?: string[];
+  /** The configured source repo as a skills-CLI source ("owner/repo"), when a scenario sets one. */
+  repoSource?: string;
   // ── Profile ↔ workspace mapping ──
   workspace?: string;
   profiles?: Record<string, SkillLockFile>;
@@ -863,6 +865,17 @@ export const steps: StepDef[] = [
       w.lockSkills[name] = { source: 'o/r', sourceType: 'github' };
     }
   }},
+  { re: /^a skill lock from the source repo "([^"]+)" listing skills \[([^\]]+)\]$/, run: (w, m) => {
+    w.tmpDir = makeTmpDir();
+    w.installedDir = join(w.tmpDir, '.agents', 'skills');
+    mkdirSync(w.installedDir, { recursive: true });
+    w.sourceIndex = new Map();
+    w.repoSource = m[1];
+    w.lockSkills = {};
+    for (const name of m[2].split(',').map((s) => s.trim().replace(/"/g, ''))) {
+      w.lockSkills[name] = { source: m[1], sourceType: 'github', skillPath: `skills/${name}/SKILL.md` };
+    }
+  }},
   { re: /^an empty skill lock$/, run: (w) => {
     w.tmpDir = makeTmpDir();
     w.installedDir = join(w.tmpDir, '.agents', 'skills');
@@ -891,8 +904,15 @@ export const steps: StepDef[] = [
     expect(existsSync(join(w.installedDir!, m[1]))).toBe(false);
   }},
   { re: /^the sync state is computed$/, run: (w) => {
-    w.hint = compareLockToInstall(w.lockSkills!, w.installedDir!, w.sourceIndex!);
+    // A profile declared in the scenario stands in for a third-party source alongside the lock.
+    const skills = { ...w.lockSkills!, ...Object.assign({}, ...Object.values(w.profiles ?? {}).map((p) => p.skills)) };
+    w.hint = compareLockToInstall(skills, w.installedDir!, w.sourceIndex!, w.repoSource);
   }},
+  { re: /^(\d+) skills? (?:is|are) not in the source repo$/, run: (w, m) => {
+    const n = w.wsStatus ? w.wsStatus.unresolvable.length : w.hint!.unresolvable;
+    expect(n).toBe(parseInt(m[1]));
+  }},
+  { re: /^the status summary is "([^"]+)"$/, run: (w, m) => { expect(profileStatusSummary(w.wsStatus!)).toBe(m[1]); }},
   { re: /^the state is "([^"]+)"$/, run: (w, m) => { expect(w.hint!.state).toBe(m[1]); }},
   // These counts read whichever result the scenario computed: the list hint
   // (compareLockToInstall) or the per-workspace status (profileWorkspaceStatus).
@@ -906,7 +926,7 @@ export const steps: StepDef[] = [
   }},
   { re: /^the list shows "([^"]+)"$/, run: (w, m) => { expect(lockInstallText(w.hint!).text).toBe(m[1]); }},
   { re: /^the install plan is computed$/, run: (w) => {
-    w.plan = planInstall(w.lockSkills!, w.installedDir!, w.sourceIndex!).sort();
+    w.plan = planInstall(w.lockSkills!, w.installedDir!, w.sourceIndex!, w.repoSource).sort();
   }},
   { re: /^the install plan is \[([^\]]+)\]$/, run: (w, m) => {
     const expected = m[1].split(',').map((s) => s.trim().replace(/"/g, '')).sort();
@@ -914,12 +934,10 @@ export const steps: StepDef[] = [
   }},
   { re: /^the install plan is empty$/, run: (w) => { expect(w.plan).toEqual([]); }},
   { re: /^the install plan includes "([^"]+)"$/, run: (w, m) => { expect(w.plan).toContain(m[1]); }},
-  { re: /^the apply plan and the install plan are identical$/, run: (w) => {
-    // `P` apply (a profile) and `Enter → Install` (a lock) both call planInstall;
-    // computing it as "the profile" and as "the lock" must yield the same set.
-    const applyPlan = planInstall(w.lockSkills!, w.installedDir!, w.sourceIndex!).sort();
-    const installPlan = planInstall({ ...w.lockSkills! }, w.installedDir!, w.sourceIndex!).sort();
-    expect(applyPlan).toEqual(installPlan);
+  { re: /^the apply plan against a workspace lock with the same skills equals the install plan$/, run: (w) => {
+    // planApply = planInstall ∪ lock-missing. With every skill already in the
+    // workspace lock, nothing is lock-missing, so the two plans must coincide.
+    const applyPlan = planApply(w.lockSkills!, w.lockSkills!, w.installedDir!, w.sourceIndex!, w.repoSource).sort();
     expect(applyPlan).toEqual(w.plan);
   }},
 
@@ -935,6 +953,20 @@ export const steps: StepDef[] = [
     const skills: Record<string, LockEntry> = {};
     for (const name of m[1].split(',').map((s) => s.trim().replace(/"/g, '')).filter(Boolean)) {
       skills[name] = { source: 'o/r', sourceType: 'github' };
+    }
+    writeFileSync(join(w.workspace, 'skills-lock.json'), JSON.stringify({ version: 1, skills }, null, 2) + '\n');
+  }},
+  { re: /^a workspace whose lock lists skills \[([^\]]*)\] from the source repo "([^"]+)"$/, run: (w, m) => {
+    w.tmpDir = makeTmpDir();
+    w.workspace = join(w.tmpDir, 'ws');
+    w.installedDir = join(w.workspace, '.agents', 'skills');
+    mkdirSync(w.installedDir, { recursive: true });
+    w.sourceIndex = new Map();
+    w.repoSource = m[2];
+    w.profiles = {};
+    const skills: Record<string, LockEntry> = {};
+    for (const name of m[1].split(',').map((s) => s.trim().replace(/"/g, '')).filter(Boolean)) {
+      skills[name] = { source: m[2], sourceType: 'github', skillPath: `skills/${name}/SKILL.md` };
     }
     writeFileSync(join(w.workspace, 'skills-lock.json'), JSON.stringify({ version: 1, skills }, null, 2) + '\n');
   }},
@@ -965,12 +997,29 @@ export const steps: StepDef[] = [
     }
     w.profiles = { ...(w.profiles ?? {}), [m[1]]: { version: 1, skills } };
   }},
+  { re: /^a profile "([^"]+)" from the source repo "([^"]+)" listing skills \[([^\]]*)\]$/, run: (w, m) => {
+    w.repoSource = m[2];
+    const skills: Record<string, LockEntry> = {};
+    for (const name of m[3].split(',').map((s) => s.trim().replace(/"/g, '')).filter(Boolean)) {
+      skills[name] = { source: m[2], sourceType: 'github', skillPath: `skills/${name}/SKILL.md` };
+    }
+    w.profiles = { ...(w.profiles ?? {}), [m[1]]: { version: 1, skills } };
+  }},
+  // These call the REAL assign/unassign the app uses (not a re-implementation).
   { re: /^profile "([^"]+)" is assigned to the workspace$/, run: (w, m) => {
-    const current = workspaceProfiles(w.workspace!);
-    w.assignResult = setWorkspaceProfiles(w.workspace!, current.includes(m[1]) ? current : [...current, m[1]]);
+    w.assignResult = assignProfileToWorkspace(w.workspace!, m[1]);
   }},
   { re: /^profile "([^"]+)" is unassigned from the workspace$/, run: (w, m) => {
-    w.assignResult = setWorkspaceProfiles(w.workspace!, workspaceProfiles(w.workspace!).filter((n) => n !== m[1]));
+    w.assignResult = unassignProfileFromWorkspace(w.workspace!, m[1]);
+  }},
+  { re: /^the workspace lock is read$/, run: () => { /* reading happens in the Then step */ }},
+  { re: /^profile "([^"]+)" is renamed to "([^"]+)" everywhere$/, run: (w, m) => {
+    // The app renames across every known workspace; here the only workspace is the scenario's.
+    const current = workspaceProfiles(w.workspace!);
+    setWorkspaceProfiles(w.workspace!, current.map((n) => (n === m[1] ? m[2] : n)));
+  }},
+  { re: /^profile "([^"]+)" is unassigned everywhere$/, run: (w, m) => {
+    w.assignResult = unassignProfileFromWorkspace(w.workspace!, m[1]);
   }},
   { re: /^the workspace lock's profiles are \[([^\]]*)\]$/, run: (w, m) => {
     const expected = m[1].split(',').map((s) => s.trim().replace(/"/g, '')).filter(Boolean);
@@ -996,11 +1045,11 @@ export const steps: StepDef[] = [
   { re: /^the apply plan for "([^"]+)" against the workspace is computed$/, run: (w, m) => {
     const profile = w.profiles![m[1]];
     const raw = JSON.parse(readFileSync(join(w.workspace!, 'skills-lock.json'), 'utf8')) as { skills: Record<string, LockEntry> };
-    w.applyPlan = planApply(profile.skills, raw.skills, w.installedDir!, w.sourceIndex!);
+    w.applyPlan = planApply(profile.skills, raw.skills, w.installedDir!, w.sourceIndex!, w.repoSource);
   }},
   { re: /^the apply plan includes "([^"]+)"$/, run: (w, m) => { expect(w.applyPlan).toContain(m[1]); }},
   { re: /^the status of "([^"]+)" against the workspace is computed$/, run: (w, m) => {
-    w.wsStatus = profileWorkspaceStatus(m[1], w.profiles![m[1]], w.workspace!, w.sourceIndex!);
+    w.wsStatus = profileWorkspaceStatus(m[1], w.profiles![m[1]], w.workspace!, w.sourceIndex!, undefined, w.repoSource);
   }},
   { re: /^the profile is assigned$/, run: (w) => { expect(w.wsStatus!.assigned).toBe(true); }},
   { re: /^the profile is not assigned$/, run: (w) => { expect(w.wsStatus!.assigned).toBe(false); }},
@@ -1011,9 +1060,6 @@ export const steps: StepDef[] = [
   { re: /^profile "([^"]+)" was applied to the workspace before the mapping existed$/, run: (w, m) => {
     markProfileApplied(w.workspace!, m[1], Object.keys(w.profiles![m[1]].skills));
     expect(workspaceProfiles(w.workspace!)).not.toContain(m[1]); // a legacy apply wrote no meta
-  }},
-  { re: /^profile "([^"]+)" is unassigned from the workspace \(clearing legacy state too\)$/, run: (w, m) => {
-    w.assignResult = unassignProfileFromWorkspace(w.workspace!, m[1]);
   }},
 ];
 

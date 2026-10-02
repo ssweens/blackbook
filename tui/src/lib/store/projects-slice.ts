@@ -31,10 +31,16 @@ import {
   markProfileApplied,
   installLockSkills,
   unassignProfileFromWorkspace,
+  configuredRepoSource,
+  legacyProfileLock,
+  assignProfileToWorkspace,
+  renameProfileAssignments,
+  unassignProfileEverywhere,
   type SkillLockFile,
 } from "../skill-profiles.js";
 import { expandPath } from "../config/path.js";
-import { compareLockToInstall, planInstall, agentSkillsDir } from "../lock-install-sync.js";
+import { compareLockToInstall } from "../lock-install-sync.js";
+import { basename } from "path";
 
 export type ProjectsSlice = Pick<
   Store,
@@ -45,6 +51,7 @@ export type ProjectsSlice = Pick<
   | "profiles"
   | "profileLocks"
   | "lockSync"
+  | "lockSyncEpoch"
   // actions
   | "loadProjects"
   | "addProject"
@@ -63,7 +70,6 @@ export type ProjectsSlice = Pick<
   | "setSkillProfiles"
   | "deleteProfile"
   | "refreshLockSync"
-  | "installLockToWorkspace"
   | "unassignProfile"
   | "profilesEditing"
   | "setProfilesEditing"
@@ -88,6 +94,7 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
   profiles: {},
   profileLocks: {},
   lockSync: {},
+  lockSyncEpoch: 0,
   profilesEditing: false,
 
   setProfilesEditing: (editing) => set({ profilesEditing: editing }),
@@ -98,36 +105,17 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
     await new Promise<void>((r) => setImmediate(r));
     const sourceRepo = getConfigRepoPath();
     const sourceIndex = sourceRepo ? indexSourceSkills(sourceRepo) : new Map<string, string>();
-    const entries = targets.map((t) => [t.key, compareLockToInstall(t.skills, t.installedDir, sourceIndex)] as const);
+    const repoSource = configuredRepoSource();
+    const entries = targets.map((t) => [t.key, compareLockToInstall(t.skills, t.installedDir, sourceIndex, repoSource)] as const);
     set((s) => ({ lockSync: { ...s.lockSync, ...Object.fromEntries(entries) } }));
-  },
-
-  installLockToWorkspace: async (targetWorkspace, lockSkills) => {
-    const { notify } = get();
-    const names = Object.keys(lockSkills);
-    if (names.length === 0) { notify("Nothing to install — empty lock", "warning"); return false; }
-    const sourceRepo = getConfigRepoPath();
-    const sourceIndex = sourceRepo ? indexSourceSkills(sourceRepo) : new Map<string, string>();
-    const installedDir = isGlobalWorkspace(targetWorkspace) ? agentSkillsDir() : join(targetWorkspace, ".agents", "skills");
-    // Same plan as `P` apply — one function decides what gets installed.
-    const toInstall = planInstall(lockSkills, installedDir, sourceIndex);
-    if (toInstall.length === 0) { notify("Already installed here", "success"); return true; }
-    const result = await installLockSkills(targetWorkspace, lockSkills, toInstall, getToolInstances());
-    await get().loadProjects({ silent: true });
-    if (result.errors.length > 0) {
-      notify(`Installed ${result.added.length}/${toInstall.length}; failed — ${result.errors[0]}`, result.added.length > 0 ? "warning" : "error");
-      return result.added.length > 0;
-    }
-    notify(`Installed ${result.added.length} skill${result.added.length === 1 ? "" : "s"}`, "success");
-    return true;
   },
 
   unassignProfile: async (workspace, name) => {
     const { notify } = get();
     const ok = unassignProfileFromWorkspace(workspace, name);
     await get().loadProjects({ silent: true });
-    if (ok) notify(`Unassigned "${name}" (its skills stay installed)`, "success");
-    else notify(`Couldn't update the workspace lock to unassign "${name}"`, "error");
+    if (ok) notify(`Unassigned "${name}" from ${isGlobalWorkspace(workspace) ? "Global" : basename(workspace)} (its skills stay installed)`, "info");
+    else notify(`Failed to unassign "${name}": the workspace has no skills-lock.json yet`, "error");
     return ok;
   },
 
@@ -145,7 +133,9 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
       profileCoverage: safeCoverage(p.path, coverageLocks),
       lockEntries: safeLockCount(p.path),
     }));
-    set({ projects, profiles, profileLocks, projectsLoaded: true });
+    // Every reload may follow an install/apply/unassign: tell the tabs to
+    // recompute their install-sync hints (they key their effects on this).
+    set((s) => ({ projects, profiles, profileLocks, projectsLoaded: true, lockSyncEpoch: s.lockSyncEpoch + 1 }));
   },
 
   addProject: async (path) => {
@@ -354,6 +344,8 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
         const result = await pushSkillToProject(workspacePath, dir, skillName, backupRetention(), { mode: "copy" });
         if (result.ok) applied += 1;
       }
+      // Applying IS assigning in copy mode too.
+      if (applied > 0) assignProfileToWorkspace(workspacePath, name);
       await get().loadProjects({ silent: true });
       notify(`Applied profile "${name}" (${applied} copied)`, applied > 0 ? "success" : "warning");
       return applied > 0;
@@ -361,16 +353,28 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
 
     const result = await applyProfileToWorkspace(workspacePath, name, lock, getToolInstances());
     await get().loadProjects({ silent: true });
-    if (result.errors.length > 0) {
-      notify(`Applied "${name}": +${result.added.length} −${result.removed.length}; failed — ${result.errors[0]}`, "error");
-      return result.added.length + result.removed.length > 0;
+    const where = isGlobalWorkspace(workspacePath) ? "Global" : basename(workspacePath);
+    // House style: counts only when > 0, ASCII +/-, every problem named.
+    const parts: string[] = [];
+    if (result.added.length > 0) parts.push(`+${result.added.length} added`);
+    if (result.removed.length > 0) parts.push(`-${result.removed.length} removed`);
+    if (result.notInstalled.length > 0) {
+      const shown = result.notInstalled.slice(0, 3).map((n) => `${n.skill} (${n.reason})`).join(", ");
+      parts.push(`${result.notInstalled.length} not installed: ${shown}${result.notInstalled.length > 3 ? ", …" : ""}`);
     }
-    if (result.added.length === 0 && result.removed.length === 0) {
-      notify(`"${name}" is already up to date here`, "success");
+    if (!result.assigned) parts.push("not assigned — the workspace has no skills-lock.json yet");
+    if (result.errors.length > 0) {
+      parts.push(`${result.errors.length} failed: ${result.errors.join("; ")}`);
+      notify(`Failed to apply "${name}" to ${where}: ${parts.join(" · ")}`, "error");
+      return false;
+    }
+    const problems = result.notInstalled.length > 0 || !result.assigned;
+    if (result.added.length === 0 && result.removed.length === 0 && !problems) {
+      notify(`"${name}" is already up to date on ${where}`, "success");
       return true;
     }
-    notify(`Applied "${name}": +${result.added.length} added, −${result.removed.length} removed`, "success");
-    return true;
+    notify(`Applied "${name}" to ${where}: ${parts.join(" · ")}`, problems ? "warning" : "success");
+    return !problems;
   },
 
   saveProfile: async (name, skills, previousName) => {
@@ -393,6 +397,9 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
     try {
       writeProfileLock(sourceRepo, trimmed, lock);
       dropLegacyProfile(trimmed);
+      // Renamed: carry its workspace assignments to the new name before the
+      // builder deletes the old profile (which would otherwise unassign them).
+      if (previousName && previousName !== trimmed) renameProfileAssignments(previousName, trimmed);
     } catch (err) {
       notify(`Failed to save profile: ${err instanceof Error ? err.message : String(err)}`, "error");
       return false;
@@ -504,8 +511,10 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
       notify(`Profile "${name}" not found`, "warning");
       return false;
     }
+    // No workspace should keep a dangling assignment to a profile that no longer exists.
+    const unassigned = unassignProfileEverywhere(name);
     await get().loadProjects({ silent: true });
-    notify(`Deleted profile "${name}"`, "success");
+    notify(`Deleted profile "${name}"${unassigned > 0 ? ` and unassigned it from ${unassigned} workspace${unassigned === 1 ? "" : "s"}` : ""}`, "success");
     return true;
   },
 });
@@ -515,10 +524,6 @@ export const createProjectsSlice: SliceCreator<ProjectsSlice> = (set, get) => ({
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Legacy config `profiles:` (skill names) as a lock, resolved on demand. */
-function legacyProfileLock(name: string, sourceRepo: string | null): SkillLockFile | null {
-  const names = loadYamlConfig().config.profiles?.[name];
-  return names ? buildProfileLock(names, sourceRepo).lock : null;
-}
 
 /** Remove a legacy config profile; true when one existed. */
 function dropLegacyProfile(name: string): boolean {

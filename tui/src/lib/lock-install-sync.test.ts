@@ -70,6 +70,6 @@ describe("compareLockToInstall", () => {
   it("reports an empty lock distinctly", () => {
     const h = compareLockToInstall({}, installed, new Map());
     expect(h.state).toBe("empty");
-    expect(lockInstallText(h).text).toBe("empty lock");
+    expect(lockInstallText(h).text).toBe("empty");
   });
 });

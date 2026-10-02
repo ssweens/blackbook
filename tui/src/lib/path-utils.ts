@@ -54,7 +54,12 @@ export function isSharedSubdirPath(subdir: string | null | undefined): boolean {
  * here (the "derived view") rather than independent copies.
  */
 export function agentsSkillsDir(namespace: string | null | undefined, name: string): string {
-  return join(homedir(), ".agents", "skills", ...(namespace ? [namespace, name] : [name]));
+  return join(agentsSkillsRoot(), ...(namespace ? [namespace, name] : [name]));
+}
+
+/** The shared `~/.agents/skills` store itself — the Global workspace's skills directory. */
+export function agentsSkillsRoot(): string {
+  return join(homedir(), ".agents", "skills");
 }
 
 /**

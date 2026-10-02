@@ -80,6 +80,15 @@ export interface DispatchCallbacks {
   uninstallNamespaceFromInstance?: (ns: import("./install.js").NamespaceGroup, toolId: string, instanceId: string) => Promise<void>;
   pullbackNamespaceFromInstance?: (ns: import("./install.js").NamespaceGroup, toolId: string, instanceId: string) => Promise<void>;
   openSkillDetail?: (skill: import("./install.js").StandaloneSkill) => void;
+  // ── Profile detail ──
+  /** Apply (assign + install) the profile to Global — the same spinner-wrapped store action `P` uses. */
+  applyProfileToGlobal?: (name: string) => Promise<void>;
+  /** Open the workspace picker to apply the profile to a project. */
+  openWorkspacePicker?: (name: string) => void;
+  /** Open a skill's detail by name, remembering the profile it was opened from (Esc returns there). */
+  openSkillDetailByName?: (name: string, fromProfile: string) => void;
+  /** Commit + push the profile's lock file to the source repo. */
+  saveProfileLock?: (name: string) => Promise<void>;
   openSkillFiles?: (skill: import("./install.js").StandaloneSkill) => void;
   openSkillProfiles?: (skill: import("./install.js").StandaloneSkill) => void;
   openSkillDiff?: (skill: import("./install.js").StandaloneSkill, toolId: string, instanceId: string) => void;
@@ -127,6 +136,11 @@ export async function handleItemAction(
       return handleMissingAction(item, action, callbacks);
 
     case "sync":
+      if (item._profile) {
+        if (!callbacks.applyProfileToGlobal) return false;
+        await callbacks.applyProfileToGlobal(item._profile.name);
+        return true;
+      }
       if (item._namespace) {
         if (action.id === "sync_missing" && callbacks.syncNamespace) {
           await callbacks.syncNamespace(item._namespace);
@@ -145,7 +159,18 @@ export async function handleItemAction(
     case "install":
       return handleInstallAction(item, callbacks);
 
+    case "pick_workspace":
+      if (item._profile && callbacks.openWorkspacePicker) {
+        callbacks.openWorkspacePicker(item._profile.name);
+        return true;
+      }
+      return false;
+
     case "open_skill":
+      if (item._profile && callbacks.openSkillDetailByName) {
+        callbacks.openSkillDetailByName(action.id.replace(/^skill:/, ""), item._profile.name);
+        return true;
+      }
       if (item._namespace && callbacks.openSkillDetail) {
         const skill = item._namespace.skills.find((s) => s.name === action.id);
         if (skill) {
@@ -182,6 +207,11 @@ export async function handleItemAction(
       return handleUninstallToolAction(item, action, callbacks);
 
     case "pullback":
+      if (item._profile) {
+        if (!callbacks.saveProfileLock) return false;
+        await callbacks.saveProfileLock(item._profile.name);
+        return true;
+      }
       return handlePullbackAction(item, action, callbacks);
 
     case "track":

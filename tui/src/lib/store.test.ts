@@ -336,7 +336,7 @@ describe("Plugin version merge", () => {
       hasUpdate: false,
     });
     expect(state.detail?.kind).toBe("plugin");
-    expect(state.detail?.data).toMatchObject({ installedVersion: "3.8.2", hasUpdate: false });
+    expect(state.detail?.kind === "plugin" ? state.detail.data : undefined).toMatchObject({ installedVersion: "3.8.2", hasUpdate: false });
   });
 
   it("keeps loaded plugin rows visible during a non-silent refresh", async () => {
@@ -2957,6 +2957,7 @@ describe("composed store shape", () => {
     "profiles",
     "profileLocks",
     "lockSync",
+    "lockSyncEpoch",
     "profilesEditing",
   ] as const;
 
@@ -3037,7 +3038,6 @@ describe("composed store shape", () => {
     "setSkillProfiles",
     "deleteProfile",
     "refreshLockSync",
-    "installLockToWorkspace",
     "unassignProfile",
     "setProfilesEditing",
   ] as const;

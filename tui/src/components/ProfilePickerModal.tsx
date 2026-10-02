@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
+import { compareProfileNames } from "../lib/skill-profiles.js";
 
 interface ProfilePickerModalProps {
   profiles: Record<string, string[]>;
@@ -17,7 +18,8 @@ interface ProfilePickerModalProps {
  * assigns the profile to the workspace and installs its skills; `d` unassigns.
  */
 export function ProfilePickerModal({ profiles, workspaceName, assigned, onApply, onUnassign, onCancel }: ProfilePickerModalProps) {
-  const names = Object.keys(profiles).sort();
+  // Same order as the Profiles tab list.
+  const names = Object.keys(profiles).sort(compareProfileNames);
   const [index, setIndex] = useState(0);
   const sel = Math.min(index, Math.max(0, names.length - 1));
 

@@ -38,6 +38,8 @@ export function skillsCliEnabled(): boolean {
 export interface CliCallResult {
   ok: boolean;
   error?: string;
+  /** Combined stdout+stderr of a successful call, for callers that must verify what the CLI actually did (it exits 0 on skipped skills). */
+  output?: string;
 }
 
 export function runSkillsCliSync(args: string[], env: Record<string, string> = {}): CliCallResult {
@@ -48,7 +50,7 @@ export function runSkillsCliSync(args: string[], env: Record<string, string> = {
     timeout: 300_000,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  if (r.status === 0) return { ok: true };
+  if (r.status === 0) return { ok: true, output: `${r.stderr ?? ""}\n${r.stdout ?? ""}` };
   const text = `${r.stderr ?? ""}\n${r.stdout ?? ""}`
     // eslint-disable-next-line no-control-regex
     .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")

@@ -1,10 +1,9 @@
 import type { ProfileCoverage } from "../lib/skill-profiles.js";
-import { workspaceLock, profileStatusSummary } from "../lib/skill-profiles.js";
+import { workspaceLock, workspaceLockPath, workspaceSkillsDir, profileStatusSummary } from "../lib/skill-profiles.js";
 import React, { useEffect, useMemo } from "react";
-import { join } from "path";
 import { Box, Text } from "ink";
 import { useStore } from "../lib/store.js";
-import { buildProjectRows, PROJECT_SKILLS_SUBDIR, type ProjectSkillStatus } from "../lib/projects.js";
+import { buildProjectRows, type ProjectSkillStatus } from "../lib/projects.js";
 import { computeWindow, windowLabel } from "../lib/list-window.js";
 import { lockInstallText, type LockSyncTarget } from "../lib/lock-install-sync.js";
 import { SearchBox } from "../components/SearchBox.js";
@@ -46,25 +45,28 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
   const search = useStore((s) => s.search);
   const setSearch = useStore((s) => s.setSearch);
   const lockSync = useStore((s) => s.lockSync);
+  const lockSyncEpoch = useStore((s) => s.lockSyncEpoch);
   const refreshLockSync = useStore((s) => s.refreshLockSync);
 
-  // Compute each project's install-sync in the background: does what's installed
-  // in the project's .agents/skills match its skills-lock.json?
+  // Compute each workspace's install-sync in the background: does what's
+  // installed in its agent skills dir match its lock? Global included (its lock
+  // is ~/.agents/.skill-lock.json, its skills ~/.agents/skills).
   const lockTargets = useMemo<LockSyncTarget[]>(
     () => projects
-      .filter((p) => !p.synthetic && p.exists)
+      .filter((p) => p.exists)
       .map((p) => ({
-        key: join(p.path, "skills-lock.json"),
+        key: workspaceLockPath(p.path),
         skills: workspaceLock(p.path).skills,
-        installedDir: join(p.path, PROJECT_SKILLS_SUBDIR),
+        installedDir: workspaceSkillsDir(p.path),
       })),
     [projects],
   );
   const lockTargetsKey = lockTargets.map((t) => `${t.key}:${Object.keys(t.skills).length}`).join("\n");
   useEffect(() => {
     if (lockTargets.length > 0) void refreshLockSync(lockTargets);
+    // lockSyncEpoch: recompute after any reload (installs/applies change disk, not the key).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lockTargetsKey, refreshLockSync]);
+  }, [lockTargetsKey, lockSyncEpoch, refreshLockSync]);
 
   if (projects.length === 0) {
     return (
@@ -108,9 +110,9 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
           {project.synthetic ? "global lock (~/.agents/.skill-lock.json)" : "skills-lock.json"}:{" "}
           {project.lockEntries ? `${project.lockEntries} skill${project.lockEntries === 1 ? "" : "s"}` : "none yet"}
           {(() => {
-            if (project.synthetic || !project.exists) return null;
-            const h = lockInstallText(lockSync[join(project.path, "skills-lock.json")]);
-            return <Text> · <Text color={h.color}>{h.text}</Text> <Text color="gray">(g)</Text></Text>;
+            if (!project.exists) return null;
+            const h = lockInstallText(lockSync[workspaceLockPath(project.path)]);
+            return <Text> · <Text color={h.color}>{h.text}</Text></Text>;
           })()}
         </Text>
         {coverage.map((line) => (
@@ -171,9 +173,12 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
             );
           })
         )}
-        <Text color="gray" wrap="truncate-end">
-          {position ? `${position} · ` : ""}{search && skillRowCount !== allCount ? `${skillRowCount} of ${allCount} match · ` : ""}Enter details/expand · P apply profile · / search · ↑↓ scroll · Esc back
-        </Text>
+        {/* Keys live in the hint bar (one hint line, like every other tab); this line is position/match info only. */}
+        {(position || (search && skillRowCount !== allCount)) && (
+          <Text color="gray" wrap="truncate-end">
+            {[position, search && skillRowCount !== allCount ? `${skillRowCount} of ${allCount} match` : ""].filter(Boolean).join(" · ")}
+          </Text>
+        )}
       </Box>
     );
   }
@@ -196,7 +201,7 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
           .filter((c) => c.assigned)
           .map((c) => `${c.profile} ${c.upToDate ? "✓" : profileStatusSummary(c)}`)
           .join(", ");
-        const lockHint = p.synthetic || !p.exists ? null : lockInstallText(lockSync[join(p.path, "skills-lock.json")]);
+        const lockHint = !p.exists ? null : lockInstallText(lockSync[workspaceLockPath(p.path)]);
         return (
           <Text key={p.path} wrap="truncate-end">
             <Text color={isSel ? "cyan" : p.synthetic ? "magenta" : "white"}>
@@ -208,16 +213,16 @@ export function ProjectsTab({ contentHeight, searchFocused = false, onSearchFocu
               {location} · {summary}
               {profileTags ? ` · ${profileTags}` : ""}
               {p.transient ? " · recent" : ""}
-              {lockHint ? <Text> · lock <Text color={lockHint.color}>{lockHint.text}</Text></Text> : null}
+              {lockHint ? <Text> · lock: <Text color={lockHint.color}>{lockHint.text}</Text></Text> : null}
             </Text>
           </Text>
         );
       })}
-      <Box marginTop={1}>
-        <Text color="gray" wrap="truncate-end">
-          {position ? `${position} · ` : ""}Enter to open a project · P apply profile · S save lock as profile · a add · d remove
-        </Text>
-      </Box>
+      {position && (
+        <Box marginTop={1}>
+          <Text color="gray">{position}</Text>
+        </Box>
+      )}
     </Box>
   );
 }

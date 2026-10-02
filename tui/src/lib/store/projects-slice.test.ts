@@ -68,7 +68,22 @@ vi.mock("../skill-profiles.js", () => ({
   workspaceLock: () => ({ version: 1, skills: {} }),
   lockAsProfile: () => lockAsProfileResult,
   markProfileApplied: (...a: unknown[]) => markAppliedMock(...a),
+  // Mapping + helpers the slice now imports.
+  legacyProfileLock: (name: string) => {
+    const names = (loadConfigMock().config.profiles ?? {})[name] as string[] | undefined;
+    return names
+      ? { version: 1, skills: Object.fromEntries(names.map((n) => [n, { source: "ssweens/playbook", sourceType: "github" }])) }
+      : null;
+  },
+  assignProfileToWorkspace: (...a: unknown[]) => assignMock(...a),
+  unassignProfileFromWorkspace: () => true,
+  renameProfileAssignments: () => 0,
+  unassignProfileEverywhere: (...a: unknown[]) => unassignEverywhereMock(...a),
+  configuredRepoSource: () => undefined,
+  installLockSkills: vi.fn(),
 }));
+const assignMock = vi.fn((..._a: unknown[]) => true);
+const unassignEverywhereMock = vi.fn((..._a: unknown[]) => 0);
 vi.mock("../config/loader.js", () => ({ loadConfig: () => loadConfigMock() }));
 vi.mock("../config/writer.js", () => ({ saveConfig: (...a: unknown[]) => saveConfigMock(...a) }));
 vi.mock("../config/path.js", () => ({ expandPath: (p: string) => p }));
@@ -262,7 +277,7 @@ describe("projects-slice", () => {
     projectSkillMode = "link";
     profileFiles = { web: { version: 1, skills: { a: { source: "x/y", sourceType: "github" } } } };
     getProjectsMock.mockReturnValue([]);
-    applyToWorkspaceMock.mockResolvedValue({ added: ["a"], removed: [], errors: [] });
+    applyToWorkspaceMock.mockResolvedValue({ added: ["a"], removed: [], errors: [], notInstalled: [], assigned: true });
     const { get } = makeStore();
     await get().loadProjects();
     expect(await get().applyProfile("/ws", "web")).toBe(true);

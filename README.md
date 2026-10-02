@@ -25,7 +25,7 @@ Plugin manager for agentic coding tools built with React/Ink. Install skills, co
 - **Unified plugin management** — Install skills, commands, agents, hooks, MCP/LSP servers across tools
 - **Marketplace support** — Browse and install from official and community marketplaces
 - **Pi packages** — Built-in npm marketplace for Pi coding agent extensions, themes, and custom tools
-- **TUI interface** — Interactive terminal UI with tabs for Sync, Tools, Discover, Installed, Marketplaces, and Settings
+- **TUI interface** — Interactive terminal UI with tabs for Sync, Tools, Discover, Installed, Marketplaces, Projects, Profiles, and Settings
 - **Source repo git controls** — Settings tab shows upstream state (ahead/behind/diverged) and supports pull/commit flows
 - **Cross-tool sync** — Install plugins to multiple tools at once, detect incomplete installs
 - **Repo-prescribed installed rows** — Installed tab shows marketplace/source-repo plugins as `in git` even before local installation
@@ -116,8 +116,11 @@ Blackbook opens on the **Sync** tab by default.
 | Enter | Select / open details |
 | Space | Install/uninstall selected plugin |
 | / | Focus search (Discover, Installed, a project's skills, the profile builder) |
-| d | View diff for changed item (Sync tab) |
+| d | View diff for changed item (Sync tab); remove / delete / unassign where a list offers it |
 | p | Pull back config changes to source (Diff view) |
+| P | Apply a profile — to the highlighted workspace (Projects) or from the highlighted profile to a workspace you pick (Profiles) |
+| G | Apply the highlighted profile to Global (`~/.agents`) (Profiles) |
+| S | Save the highlighted workspace's lock as a profile (Projects); save the draft (profile builder) |
 | R | Refresh current tab data |
 | Esc | Back from details or exit search |
 | q | Quit |
@@ -126,14 +129,14 @@ Blackbook opens on the **Sync** tab by default.
 
 - **Discover/Installed**: `s` cycle sort (name/installed), `r` reverse sort, `R` refresh tab data (`d` opens diff for selected managed file in Installed)
 - **Installed plugins** are grouped under a collapsible header per marketplace. `Enter` on a header collapses or expands that marketplace; a search expands every group so matches stay visible.
-- **Projects and Profiles**: `Enter` opens the highlighted skill's detail view (contents, origin, browse files, add to profiles). In a project's drill-in, `p`/`u`/`e`/`d` still push, pull, toggle and remove. In the profile builder, saving moved off `Enter` to `S` so `Enter` can open the skill, and `Enter` on a marketplace or namespace header expands or collapses it.
+- **Projects and Profiles**: `Enter` opens a detail — a project's drill-in, a profile's detail, or (inside either) the highlighted skill's detail (contents, origin, browse files, add to profiles). In a project's drill-in, `p`/`u`/`e`/`d` push, pull, toggle and remove. In the profile builder, `S` saves so `Enter` can open the skill, and `Enter` on a marketplace or namespace header expands or collapses it. `Esc` always returns to where you came from (skill → profile detail → list).
 - A project's drill-in groups its skills under a collapsible header per source-repo namespace, like the profile builder. `Enter` on a namespace header expands or collapses it; skills with no namespace are listed flat. A search expands every group so matches stay visible.
-- **`g` opens a lock file's detail** — built like the skill detail: a plain status line (in sync / local changes / not pushed / behind) and navigable action rows. **View diff** opens the same `DiffDetail` the skill views use (source repo vs working tree, `+N -N`, scrollable). **Save to the repo** commits and pushes; **Pull from the repo** brings remote changes. On the Profiles list it acts on `profiles/<name>.skills-lock.json`; in a project drill-in on that project's `skills-lock.json`.
+- **A profile's detail** is the same detail view skills have: its status against Global (`In sync` / `Out of sync · 3 missing, 1 not in source repo`), where it's used, `Apply to Global (~/.agents)`, `Apply to a project…`, a row per skill with its state (`in sync` / `not installed` / `drifted` / `not in source repo` — a skill the source repo no longer has), and `Save lock to source repo` whenever the profile's lock file has changes not yet committed and pushed.
 - **Marketplaces**: `u` update marketplace, `r` remove marketplace, `R` refresh all marketplaces/packages
 - **Tools**: `Enter` open detail, `i` install, `u` update, `d` uninstall, `Space` toggle enabled, `e` edit config dir, `R` refresh detection
-- **Projects**: `Enter` open a project, `/` search its skills, `P` apply a profile, `S` save its lock as a profile, `a` add, `d` remove. Long lists scroll and show their position.
+- **Projects**: `Enter` open a project, `/` search its skills, `P` apply a profile (the picker marks profiles already assigned here with `✓ assigned`; `d` on one unassigns it without uninstalling anything), `S` save its lock as a profile, `a` add, `d` remove. Each row shows its lock's install state (`lock: in sync` / `lock: out of sync · 4 missing`) and its assigned profiles (`Coding ✓, UI 3 to apply`). Long lists scroll and show their position.
 - **Skill detail**: `Add to profiles…` opens a checklist of profiles with the skill's current ones checked. `Space` toggles and `Enter` adds it to or removes it from each changed profile, keeping its known source.
-- **Profiles**: `n` new, `Enter`/`e` edit, `d` delete. In the builder, `/` searches every skill as a flat list, `v` shows only the selected skills, `Space` toggles, `→`/`←` expand a group, `PgUp`/`PgDn` jump, and `Esc` clears a filter before leaving. Skills known only from a lock, such as `anthropics/skills`, are grouped under their source.
+- **Profiles**: `Enter` details, `P` apply to a project you pick (the picker lists Global and your projects, marks where the profile is already assigned, and `d` unassigns), `G` apply to Global, `e` edit, `n` new, `d` delete. Each row shows the profile's install state against Global (`in sync` / `out of sync · 4 missing`). In the builder, `/` searches every skill as a flat list, `v` shows only the selected skills, `Space` toggles, `→`/`←` expand a group, `PgUp`/`PgDn` jump, and `Esc` clears a filter before leaving. Skills known only from a lock, such as `anthropics/skills`, are grouped under their source.
 - **Sync**: `y` sync selected items (missing plus `source-changed` / `target-changed` / `both-changed` files/plugins and tool updates; press twice to confirm), `R` refresh sync inputs
 
 Blackbook hydrates the initial tab on startup. Refresh/load data on the current tab with `R`. A loading indicator is shown while refresh is in progress.
@@ -180,7 +183,7 @@ Upstream copies each skill into `<project>/.agents/skills/<name>`. Blackbook's c
 
 <project>/.agents/skills/blast-radius  -> ~/.local/share/blackbook/skills/github.com/ssweens/playbook/blast-radius
 <project>/.claude/skills/blast-radius  -> (same)
-<project>/skills-lock.json                (upstream format, commit via g or your own git)
+<project>/skills-lock.json                (upstream format plus a "profiles" meta; commit it with your own git)
 ```
 
 - **Only linked skills are active.** A project sees only the skills in its own `skills-lock.json`. Global installs (`-g`) also live in the store: `~/.agents/skills/<name>` and `~/.claude/skills/<name>` are links to it, so the store can hold skills that are active in some projects but not globally.
@@ -223,11 +226,13 @@ A profile is a reusable piece of a `skills-lock.json`, stored in your source rep
 
 - **It's the upstream lockfile format,** so it works without Blackbook. Copy the entries into a project's `skills-lock.json` and run `npx skills experimental_install`.
 - **Build profiles in the Profiles tab.** Each skill keeps its real source: a third-party skill's entry comes from your global lockfile, and a playbook skill's from the source repo's GitHub remote.
-- **Apply one with `P`** from a project, or from the Global workspace. Blackbook runs one `skills add` per source for your enabled agents, so Claude gets links too, and uses `-g` for Global.
+- **Apply one with `P`** from a project or the Global workspace, or from the Profiles tab with `P` (pick a workspace) or `G` (Global). Blackbook runs one `skills add` per source for your enabled agents plus the universal `.agents/skills` agent, so every reader sees the skill, and uses `-g` for Global. After each call it checks that every requested skill actually landed on disk — the CLI exits 0 even when it skips a skill it can't find — and reports anything that didn't (`1 not installed: thread-map (not found at source)`).
+- **Applying assigns.** The workspace's own lock records the profile in a top-level `"profiles": ["Coding"]` meta (the global lock for Global), so the mapping travels with the repo and an auto-detected workspace shows its profiles on any machine. The vendored CLI carries that key through `skills add` / `skills remove`. Unassign with `d` in either picker; renaming a profile carries its assignments, deleting one removes them everywhere.
+- **"Up to date with this workspace"** means every profile skill is in the workspace lock from the same source, installed on disk in its agent skills directory, not drifted from the source, and nothing dropped from the profile lingers. A project's drill-in shows `profile Music: 46/48 · 2 to apply — P to apply`; a skill the source repo no longer has shows as `not in source repo` — nothing can install it, so edit the profile.
 - **Save a project's lock as a profile with `S`** from the Projects tab, or from inside a project. Blackbook asks for a name and never overwrites an existing profile. A `local` entry inside your source repo is saved as the repo's GitHub source, and any other local path gets a warning because it only exists on this machine.
-- **A project's `skills-lock.json` is the source of truth.** The Projects tab shows its skill count and each profile's coverage, as in `profile Music: 46/48 · 2 new — P to apply`. It also shows skills removed from a profile since you applied it here. Applying again adds the new skills and removes the dropped ones. Nothing changes a project on its own.
-- **Lock files are written to disk, you commit them.** Saving a profile or changing a project's skills updates the lock file in its repo's working tree, without touching git. Press `g` to open its git detail and commit, push, or pull — the same diff/pull/push moves the skill views offer. Or use plain git. The Settings tab's source-repo control also commits and pushes the source repo (profiles included).
-- **Coverage is computed** from the project's lock and the profile. The only extra state is a machine-local record of each apply, kept in `~/.cache/blackbook/profile-applications.json`, which is what makes the "removed" count possible.
+- **A project's `skills-lock.json` is the source of truth.** Applying again adds the new skills, reinstalls any that went missing on disk, and removes the dropped ones. Nothing changes a project on its own.
+- **Lock files are written to disk, you commit them.** Saving a profile or changing a project's skills updates the lock file in its repo's working tree without touching git. A profile's detail offers `Save lock to source repo` whenever its lock has uncommitted or unpushed changes; otherwise use plain git. The Settings tab's source-repo control also commits and pushes the source repo (profiles included).
+- **Coverage is computed** from the workspace's lock, the profile, and what's on disk. A machine-local record of each apply in `~/.cache/blackbook/profile-applications.json` makes the "removed" count possible and keeps profiles applied before the `profiles` meta existed counted as assigned.
 
 Older profiles in `config.yaml` (lists of names) still show as "legacy". Saving one in the Profiles tab converts it to a file.
 

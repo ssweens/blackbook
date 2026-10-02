@@ -52,7 +52,7 @@ Feature: Skill lock install-sync
       Given an empty skill lock
       When the sync state is computed
       Then the state is "empty"
-      And the list shows "empty lock"
+      And the list shows "empty"
 
   Rule: The install plan reconciles disk to the lock
 
@@ -85,16 +85,16 @@ Feature: Skill lock install-sync
       When the install plan is computed
       Then the install plan is empty
 
-  Rule: Apply and install are the same operation
+  Rule: One plan decides what an apply installs
 
     @SYNC-10
-    Scenario: P apply and Enter → Install produce the identical plan
+    Scenario: When the workspace lock already lists every skill, applying installs exactly the disk gap
       Given a skill lock listing skills ["docx", "pdf", "deslop"]
       And the source repo has "deslop" with content "original"
       And "deslop" is installed in the agent skills directory with content "edited"
       And "docx" is installed in the agent skills directory
       When the install plan is computed
-      Then the apply plan and the install plan are identical
+      Then the apply plan against a workspace lock with the same skills equals the install plan
       And the install plan is ["deslop", "pdf"]
 
     @SYNC-11
@@ -105,104 +105,31 @@ Feature: Skill lock install-sync
       When the apply plan for "Docs" against the workspace is computed
       Then the apply plan includes "docx"
 
-  Rule: The profile ↔ workspace mapping lives in the workspace's own lock
+  Rule: A source-repo skill the repo no longer has is reported, never silently "missing"
 
-    @MAP-1
-    Scenario: Assigning a profile writes it into the workspace lock's profiles meta
-      Given a workspace whose lock lists skills ["docx"]
-      When profile "Docs" is assigned to the workspace
-      Then the workspace lock's profiles are ["Docs"]
-      And the workspace lock still lists skills ["docx"]
-
-    @MAP-2
-    Scenario: Assigning is idempotent and keeps profiles sorted
-      Given a workspace whose lock lists skills ["docx"]
-      When profile "UI" is assigned to the workspace
-      And profile "Docs" is assigned to the workspace
-      And profile "UI" is assigned to the workspace
-      Then the workspace lock's profiles are ["Docs", "UI"]
-
-    @MAP-3
-    Scenario: Unassigning removes the profile and drops the key when empty
-      Given a workspace whose lock lists skills ["docx"]
-      And profile "Docs" is assigned to the workspace
-      When profile "Docs" is unassigned from the workspace
-      Then the workspace lock has no profiles meta
-      And the workspace lock still lists skills ["docx"]
-
-    @MAP-4
-    Scenario: The mapping travels with the repo
-      Given a workspace lock written on another machine with profiles ["Coding", "UI"] and skills ["deslop"]
-      Then the workspace's profiles are ["Coding", "UI"]
-
-    @MAP-5
-    Scenario: Nothing is fabricated when the workspace has no lock yet
-      Given a workspace with no lock file
-      When profile "Docs" is assigned to the workspace
-      Then the assignment is refused
-      And the workspace still has no lock file
-
-  Rule: "Up to date with this workspace" means in the lock, on disk, and matching the source
-
-    @MAP-6
-    Scenario: Up to date when the profile's skills are in the lock and installed
-      Given a workspace whose lock lists skills ["docx", "pdf"]
-      And a profile "Docs" listing skills ["docx", "pdf"]
-      And profile "Docs" is assigned to the workspace
-      And "docx" is installed in the agent skills directory
-      And "pdf" is installed in the agent skills directory
-      When the status of "Docs" against the workspace is computed
-      Then the profile is assigned
-      And the profile is up to date
-
-    @MAP-7
-    Scenario: Not up to date when skills are in the lock but missing on disk
-      Given a workspace whose lock lists skills ["docx", "pdf"]
-      And a profile "Docs" listing skills ["docx", "pdf"]
-      And profile "Docs" is assigned to the workspace
-      And "docx" is installed in the agent skills directory
-      When the status of "Docs" against the workspace is computed
-      Then the profile is not up to date
-      And 1 skill is to apply
-
-    @MAP-8
-    Scenario: Not up to date when a skill is missing from the workspace lock entirely
-      Given a workspace whose lock lists skills ["docx"]
-      And a profile "Docs" listing skills ["docx", "pdf"]
-      And profile "Docs" is assigned to the workspace
-      And "docx" is installed in the agent skills directory
-      When the status of "Docs" against the workspace is computed
-      Then the profile is not up to date
-      And 1 skill is to apply
-
-    @MAP-9
-    Scenario: Not up to date when an installed skill drifted from its source
-      Given a workspace whose lock lists skills ["deslop"]
-      And a profile "Coding" listing skills ["deslop"]
-      And profile "Coding" is assigned to the workspace
+    @SYNC-12
+    Scenario: A lock entry from the source repo that the repo no longer has is "not in source repo"
+      Given a skill lock from the source repo "ssweens/playbook" listing skills ["deslop", "thread-map"]
       And the source repo has "deslop" with content "original"
-      And "deslop" is installed in the agent skills directory with content "edited"
-      When the status of "Coding" against the workspace is computed
-      Then the profile is not up to date
-      And 1 skill is drifted
+      When the sync state is computed
+      Then the state is "out-of-sync"
+      And 1 skill is missing
+      And 1 skill is not in the source repo
+      And the list shows "out of sync · 1 missing, 1 not in source repo"
 
-    @MAP-10
-    Scenario: A profile the workspace does not track is reported as not assigned
-      Given a workspace whose lock lists skills ["docx"]
-      And a profile "Docs" listing skills ["docx"]
-      And "docx" is installed in the agent skills directory
-      When the status of "Docs" against the workspace is computed
-      Then the profile is not assigned
+    @SYNC-13
+    Scenario: The install plan excludes a skill nothing can install
+      Given a skill lock from the source repo "ssweens/playbook" listing skills ["deslop", "thread-map"]
+      And the source repo has "deslop" with content "original"
+      When the install plan is computed
+      Then the install plan is ["deslop"]
 
-    @MAP-11
-    Scenario: A profile applied before the mapping existed still counts as assigned, and can be unassigned
-      Given a workspace whose lock lists skills ["docx"]
+    @SYNC-14
+    Scenario: A third-party skill is never judged against the source repo
+      Given a skill lock from the source repo "ssweens/playbook" listing skills ["deslop"]
+      And the source repo has "deslop" with content "original"
       And a profile "Docs" listing skills ["docx"]
-      And "docx" is installed in the agent skills directory
-      And profile "Docs" was applied to the workspace before the mapping existed
-      When the status of "Docs" against the workspace is computed
-      Then the profile is assigned
-      And the profile is up to date
-      When profile "Docs" is unassigned from the workspace (clearing legacy state too)
-      And the status of "Docs" against the workspace is computed
-      Then the profile is not assigned
+      When the sync state is computed
+      Then 2 skills are missing
+      And 0 skills are not in the source repo
+

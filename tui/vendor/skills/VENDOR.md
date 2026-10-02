@@ -39,6 +39,11 @@ project, and the global dirs, to it:
   projects may use it.
 - `remove` and `update` also detect skills that exist only as symlinks.
 - Telemetry and the skills.sh audit lookup are always off (`src/telemetry.ts`).
+- **Workspace profile meta.** Blackbook records the profiles assigned to a workspace as a
+  top-level `"profiles": [...]` array in that workspace's `skills-lock.json`. Upstream's
+  `writeLocalLock` rebuilds the file as `{ version, skills }`, which would drop it on every
+  `add`/`remove`; the vendored writer (`src/local-lock.ts`) carries the key through, sorted.
+  The CLI never interprets it, and plain `npx skills` drops it (re-apply from Blackbook).
 - **Dev shortcuts.** `SKILLS_DEV_SHORTCUTS` is a JSON map from a repo to a local checkout,
   for example `{"github.com/ssweens/playbook": "~/src/playbook"}`. Blackbook fills it from
   `settings.dev_shortcuts`. When a git source's store key matches a key exactly, skills are
@@ -47,8 +52,10 @@ project, and the global dirs, to it:
   still record the repo. A missing checkout falls back to the normal fetch.
 
 Files changed: `src/store.ts` (new), `src/installer.ts`, `src/add.ts`, `src/sync.ts`, `src/remove.ts`,
-`src/update.ts`, `src/telemetry.ts`.
-Every changed spot is marked `BLACKBOOK PATCH`.
+`src/update.ts`, `src/telemetry.ts`, `src/local-lock.ts`.
+Every changed spot is marked `BLACKBOOK PATCH`. (`blackbook-store.patch` predates the
+`src/local-lock.ts` hunk — regenerate it against upstream on the next upgrade so step 3 below
+re-applies the `profiles` carry-through too.)
 
 ## Upgrading
 
