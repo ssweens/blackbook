@@ -53,9 +53,9 @@ project, and the global dirs, to it:
 
 Files changed: `src/store.ts` (new), `src/installer.ts`, `src/add.ts`, `src/sync.ts`, `src/remove.ts`,
 `src/update.ts`, `src/telemetry.ts`, `src/local-lock.ts`.
-Every changed spot is marked `BLACKBOOK PATCH`. (`blackbook-store.patch` predates the
-`src/local-lock.ts` hunk — regenerate it against upstream on the next upgrade so step 3 below
-re-applies the `profiles` carry-through too.)
+Every changed spot is marked `BLACKBOOK PATCH`. `blackbook-store.patch` covers all of them,
+including the `src/local-lock.ts` `profiles` carry-through. Applied to the upstream commit
+above, it reproduces this directory's non-test sources exactly (verified 2026-10-01).
 
 ## Upgrading
 

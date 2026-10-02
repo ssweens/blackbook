@@ -119,6 +119,29 @@ describe("ConsultationPanel", () => {
     expect(lastFrame()).toContain("paging.");
   });
 
+  it("starts a new response at the top, after the previous one was scrolled", async () => {
+    const handlers = callbacks();
+    const response = (summary: string) => ({
+      summary,
+      analysis: { recommendedProposalId: null, whatChanged: "Nothing.", recency: "None.", assessment: "Safe." },
+      proposals: [],
+    });
+    const first = response(`First answer. ${"More detail. ".repeat(45)}End of first.`);
+    const { stdin, lastFrame, rerender } = render(
+      <ConsultationPanel state={{ phase: "result", prompt: "", response: first }} selectedProposalIds={[]} {...handlers} />,
+    );
+    const top = lastFrame();
+    act(() => stdin.write("\u001B[6~")); // PgDn
+    await vi.waitFor(() => expect(lastFrame()).toContain("↑ more response above"));
+
+    // A follow-up answer arrives: it must open at its top, not inherit the old scroll.
+    const second = response(`Second answer. ${"Other detail. ".repeat(45)}End of second.`);
+    rerender(<ConsultationPanel state={{ phase: "result", prompt: "", response: second }} selectedProposalIds={[]} {...handlers} />);
+    await vi.waitFor(() => expect(lastFrame()).toContain("Second answer."));
+    expect(lastFrame()).not.toContain("↑ more response above");
+    expect(top).toContain("First answer.");
+  });
+
   it("opens a follow-up input without closing the consultation", async () => {
     const handlers = callbacks();
     const { stdin, lastFrame } = render(

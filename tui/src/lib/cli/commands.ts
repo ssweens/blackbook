@@ -198,7 +198,7 @@ export async function runInstall(nameArg: string, options: CommandOptions): Prom
 
   const skill = state.standaloneSkills.find((s) => s.name === name);
   if (skill) {
-    const result = installSkillToAllMissing(skill);
+    const result = await installSkillToAllMissing(skill);
     const success = result.failed === 0;
     const summary: InstallResultSummary = {
       name: skill.name,
@@ -231,7 +231,7 @@ export async function runUninstall(nameArg: string, options: CommandOptions): Pr
 
   const skill = state.standaloneSkills.find((s) => s.name === name);
   if (skill) {
-    const removed = uninstallSkillAllInstances(skill);
+    const removed = await uninstallSkillAllInstances(skill);
     const success = removed > 0;
     const summary: InstallResultSummary = {
       name: skill.name,

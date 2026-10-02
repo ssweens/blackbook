@@ -727,7 +727,7 @@ export const createFilesSlice: SliceCreator<FilesSlice> = (set, get) => ({
           const key = `${inst.toolId}:${inst.instanceId}`;
           const isMissing = !installedKeys.has(key);
           if (!isMissing) continue;
-          if (installSkillToInstance(item.skill, inst.toolId, inst.instanceId)) any = true;
+          if (await installSkillToInstance(item.skill, inst.toolId, inst.instanceId)) any = true;
           else errors.push(`Failed to sync ${item.skill.name} to ${inst.name}`);
         }
         if (any) syncedItems += 1;

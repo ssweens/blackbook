@@ -485,7 +485,7 @@ export async function installPlugin(
   // Skills go through the skills CLI (central store, flat names, global lock);
   // the adapters below then treat them as CLI-managed and install the rest.
   result.errors.push(
-    ...installPluginSkillsViaCli(plugin, sourcePath, enabledInstances.filter((i) => !isConfigOnlyInstance(i)), marketplaceUrl),
+    ...(await installPluginSkillsViaCli(plugin, sourcePath, enabledInstances.filter((i) => !isConfigOnlyInstance(i)), marketplaceUrl)),
   );
 
   for (const instance of enabledInstances) {
@@ -526,7 +526,7 @@ export async function uninstallPluginFromInstance(
   // `claude plugin uninstall` CLI. count > 0 means "removed".
   // Skills: only a Claude instance's own links can be removed per instance
   // (universal agents share ~/.agents/skills).
-  for (const e of removePluginSkillsViaCli(plugin, getPluginSourcePath(plugin), [instance])) logError(e, new Error(e));
+  for (const e of await removePluginSkillsViaCli(plugin, getPluginSourcePath(plugin), [instance])) logError(e, new Error(e));
   const count = await getAdapterForTool(instance.toolId).removeComponents(plugin, instance);
   return count > 0;
 }
@@ -548,7 +548,7 @@ export async function uninstallPlugin(plugin: Plugin): Promise<boolean> {
   // never the native `claude plugin uninstall` CLI.
   // Remove the plugin's skills through the skills CLI while the cached plugin
   // copy (which names them) still exists.
-  for (const e of removePluginSkillsViaCli(
+  for (const e of await removePluginSkillsViaCli(
     plugin,
     getPluginSourcePath(plugin),
     enabledInstances.filter((i) => !isConfigOnlyInstance(i)),
@@ -752,7 +752,7 @@ export async function enablePlugin(
   }
 
   result.errors.push(
-    ...installPluginSkillsViaCli(plugin, sourcePath, enabledInstances.filter((i) => !isConfigOnlyInstance(i)), marketplaceUrl),
+    ...(await installPluginSkillsViaCli(plugin, sourcePath, enabledInstances.filter((i) => !isConfigOnlyInstance(i)), marketplaceUrl)),
   );
 
   // Enable (install) to all enabled instances via each adapter's component
@@ -884,7 +884,7 @@ export async function updatePlugin(
       }
 
       // Refresh the plugin's skills through the skills CLI first.
-      result.errors.push(...installPluginSkillsViaCli(plugin, sourcePath!, managedInstances, marketplaceUrl));
+      result.errors.push(...(await installPluginSkillsViaCli(plugin, sourcePath!, managedInstances, marketplaceUrl)));
 
       for (const instance of managedInstances) {
         try {
@@ -1721,18 +1721,18 @@ export function groupSkillsByNamespace(skills: StandaloneSkill[]): NamespaceGrou
 // ---------------------------------------------------------------------------
 
 /** Remove a single installation of a skill from one tool instance. */
-export function uninstallSkillFromInstance(
+export async function uninstallSkillFromInstance(
   skill: StandaloneSkill,
   toolId: string,
   instanceId: string,
-): boolean {
+): Promise<boolean> {
   const inst = skill.installations.find(
     (i) => i.toolId === toolId && i.instanceId === instanceId,
   );
   if (!inst) return false;
   if (isCliManagedPath(inst.diskPath)) {
     const instance = getToolInstances().find((i) => i.toolId === toolId && i.instanceId === instanceId) ?? null;
-    return instance ? removeSkillViaCli(basename(inst.diskPath), instance) : false;
+    return instance ? await removeSkillViaCli(basename(inst.diskPath), instance) : false;
   }
   try {
     removeSkillInstallPath(inst.diskPath);
@@ -1764,10 +1764,10 @@ function removeSkillInstallPath(diskPath: string): void {
 }
 
 /** Remove every installation of the skill. Returns the number successfully removed. */
-export function uninstallSkillAllInstances(skill: StandaloneSkill): number {
+export async function uninstallSkillAllInstances(skill: StandaloneSkill): Promise<number> {
   let removed = 0;
   const cliInstalls = skill.installations.filter((i) => isCliManagedPath(i.diskPath));
-  if (cliInstalls.length > 0 && removeSkillViaCli(basename(cliInstalls[0].diskPath), null, getToolInstances())) {
+  if (cliInstalls.length > 0 && (await removeSkillViaCli(basename(cliInstalls[0].diskPath), null, getToolInstances()))) {
     removed += cliInstalls.length;
   }
   for (const inst of skill.installations) {
@@ -2199,11 +2199,11 @@ function getStandaloneSkillTargetDir(
 }
 
 /** Copy the skill from its current first installation into a target tool instance. */
-export function installSkillToInstance(
+export async function installSkillToInstance(
   skill: StandaloneSkill,
   toolId: string,
   instanceId: string,
-): boolean {
+): Promise<boolean> {
   // Prefer source-repo path (canonical) over an existing disk install. Falls back to
   // an existing install when the skill isn't tracked in the source repo.
   const target = getToolInstances().find(
@@ -2214,7 +2214,7 @@ export function installSkillToInstance(
   // third-party skills work and a Claude-only gap still gets its link.
   const lockEntry = globalLockEntries()[skill.name];
   if (lockEntry) {
-    const viaLock = installSkillFromSourceViaCli(skill.name, addSourceFor(lockEntry), target);
+    const viaLock = await installSkillFromSourceViaCli(skill.name, addSourceFor(lockEntry), target);
     if (viaLock !== null) return viaLock;
   }
   const sourcePath = skill.sourcePath ?? skill.installations[0]?.diskPath;
@@ -2227,7 +2227,7 @@ export function installSkillToInstance(
   // lock). Falls back to Blackbook's copy below when the CLI can't serve it.
   const sourceRepo = skill.sourcePath ? getConfigRepoPath() : null;
   if (sourceRepo && skill.sourcePath) {
-    const viaCli = installStandaloneSkillViaCli(skill.sourcePath, sourceRepo, target);
+    const viaCli = await installStandaloneSkillViaCli(skill.sourcePath, sourceRepo, target);
     if (viaCli !== null) return viaCli;
   }
 
@@ -2296,7 +2296,7 @@ export function installSkillToInstance(
  * Install a skill to every enabled, skill-capable tool instance that doesn't
  * already have it. Returns counts of what happened.
  */
-export function installSkillToAllMissing(skill: StandaloneSkill): { installed: number; skipped: number; failed: number } {
+export async function installSkillToAllMissing(skill: StandaloneSkill): Promise<{ installed: number; skipped: number; failed: number }> {
   const installedKeys = new Set(
     skill.installations.map((i) => `${i.toolId}:${i.instanceId}`),
   );
@@ -2309,7 +2309,7 @@ export function installSkillToAllMissing(skill: StandaloneSkill): { installed: n
   );
   let installed = 0; let failed = 0;
   for (const t of targets) {
-    if (installSkillToInstance(skill, t.toolId, t.instanceId)) installed += 1;
+    if (await installSkillToInstance(skill, t.toolId, t.instanceId)) installed += 1;
     else failed += 1;
   }
   return { installed, skipped: installedKeys.size, failed };
@@ -2322,7 +2322,7 @@ export function installSkillToAllMissing(skill: StandaloneSkill): { installed: n
  *   - drifted installations (file present but content differs from source)
  * Skips installs that are already synced. Returns counts.
  */
-export function installSkillToAllNonSynced(skill: StandaloneSkill): { installed: number; resynced: number; skipped: number; failed: number } {
+export async function installSkillToAllNonSynced(skill: StandaloneSkill): Promise<{ installed: number; resynced: number; skipped: number; failed: number }> {
   const installedByKey = new Map(
     skill.installations.map((i) => [`${i.toolId}:${i.instanceId}`, i]),
   );
@@ -2335,13 +2335,13 @@ export function installSkillToAllNonSynced(skill: StandaloneSkill): { installed:
     const existing = installedByKey.get(key);
     if (!existing) {
       // Missing — install fresh from source.
-      if (installSkillToInstance(skill, t.toolId, t.instanceId)) installed += 1;
+      if (await installSkillToInstance(skill, t.toolId, t.instanceId)) installed += 1;
       else failed += 1;
       continue;
     }
     if (existing.drifted) {
       // Drifted — overwrite disk with source.
-      if (installSkillToInstance(skill, t.toolId, t.instanceId)) resynced += 1;
+      if (await installSkillToInstance(skill, t.toolId, t.instanceId)) resynced += 1;
       else failed += 1;
       continue;
     }
@@ -2423,10 +2423,10 @@ export function migrateLegacyStandaloneSkillLayout(): { moved: number; skipped: 
 // ── Namespace bulk operations ─────────────────────────────────────────────
 
 /** Sync all skills in a namespace that are missing from at least one enabled tool. */
-export function syncNamespaceToAllMissing(group: NamespaceGroup): { installed: number; failed: number } {
+export async function syncNamespaceToAllMissing(group: NamespaceGroup): Promise<{ installed: number; failed: number }> {
   let installed = 0; let failed = 0;
   for (const skill of group.skills) {
-    const result = installSkillToAllMissing(skill);
+    const result = await installSkillToAllMissing(skill);
     installed += result.installed;
     failed += result.failed;
   }
@@ -2434,11 +2434,11 @@ export function syncNamespaceToAllMissing(group: NamespaceGroup): { installed: n
 }
 
 /** Re-sync all drifted skills in a namespace across all tools. */
-export function resyncNamespaceDrifted(group: NamespaceGroup): { resynced: number; failed: number } {
+export async function resyncNamespaceDrifted(group: NamespaceGroup): Promise<{ resynced: number; failed: number }> {
   let resynced = 0; let failed = 0;
   for (const skill of group.skills) {
     if (!skill.drifted) continue;
-    const result = installSkillToAllNonSynced(skill);
+    const result = await installSkillToAllNonSynced(skill);
     resynced += result.resynced;
     failed += result.failed;
   }
@@ -2482,12 +2482,12 @@ export function deleteNamespaceSourceOnly(group: NamespaceGroup): { deleted: num
 }
 
 /** Uninstall every skill in a namespace from all tools (does NOT delete source). */
-export function uninstallNamespaceAll(group: NamespaceGroup): { uninstalled: number; errors: string[] } {
+export async function uninstallNamespaceAll(group: NamespaceGroup): Promise<{ uninstalled: number; errors: string[] }> {
   const errors: string[] = [];
   let uninstalled = 0;
   for (const skill of group.skills) {
     try {
-      uninstallSkillAllInstances(skill);
+      await uninstallSkillAllInstances(skill);
       uninstalled += 1;
     } catch (e) {
       errors.push(`${skill.name}: ${e instanceof Error ? e.message : String(e)}`);
@@ -2497,12 +2497,12 @@ export function uninstallNamespaceAll(group: NamespaceGroup): { uninstalled: num
 }
 
 /** Uninstall every skill in a namespace from a single tool instance. */
-export function uninstallNamespaceFromInstance(group: NamespaceGroup, toolId: string, instanceId: string): { uninstalled: number; errors: string[] } {
+export async function uninstallNamespaceFromInstance(group: NamespaceGroup, toolId: string, instanceId: string): Promise<{ uninstalled: number; errors: string[] }> {
   const errors: string[] = [];
   let uninstalled = 0;
   for (const skill of group.skills) {
     try {
-      uninstallSkillFromInstance(skill, toolId, instanceId);
+      await uninstallSkillFromInstance(skill, toolId, instanceId);
       uninstalled += 1;
     } catch (e) {
       errors.push(`${skill.name} from ${toolId}: ${e instanceof Error ? e.message : String(e)}`);
@@ -2667,7 +2667,7 @@ export async function syncPluginInstances(
 
   let stagedStandaloneRoot: string | null = null;
 
-  result.errors.push(...installPluginSkillsViaCli(plugin, sourcePath, missingInstances, marketplaceUrl));
+  result.errors.push(...(await installPluginSkillsViaCli(plugin, sourcePath, missingInstances, marketplaceUrl)));
 
   try {
     // Sync (install) to all missing instances via each adapter's component

@@ -61,7 +61,7 @@ export interface SkillsCliResult {
  */
 export function runSkillsCli(
   args: string[],
-  options: { cwd?: string; inherit?: boolean; env?: NodeJS.ProcessEnv } = {},
+  options: { cwd?: string; inherit?: boolean; env?: NodeJS.ProcessEnv; timeoutMs?: number } = {},
 ): Promise<SkillsCliResult> {
   return new Promise((resolvePromise) => {
     const child = spawn(process.execPath, [getSkillsCliEntry(), ...args], {
@@ -71,10 +71,23 @@ export function runSkillsCli(
     });
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    const settle = (r: SkillsCliResult) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolvePromise(r);
+    };
+    const timer = options.timeoutMs
+      ? setTimeout(() => {
+          child.kill("SIGTERM");
+          settle({ code: 1, stdout, stderr: `${stderr}\nError: skills CLI timed out after ${Math.round(options.timeoutMs! / 1000)}s` });
+        }, options.timeoutMs)
+      : null;
     child.stdout?.on("data", (d) => (stdout += String(d)));
     child.stderr?.on("data", (d) => (stderr += String(d)));
-    child.on("error", (error) => resolvePromise({ code: 1, stdout, stderr: stderr + error.message }));
-    child.on("close", (code) => resolvePromise({ code: code ?? 1, stdout, stderr }));
+    child.on("error", (error) => settle({ code: 1, stdout, stderr: stderr + error.message }));
+    child.on("close", (code) => settle({ code: code ?? 1, stdout, stderr }));
   });
 }
 

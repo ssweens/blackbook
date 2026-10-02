@@ -148,19 +148,19 @@ export function buildDetailCallbacks(deps: DetailCallbackDeps): DispatchCallback
     uninstallSkillAll: (skill) =>
       runMutation(
         `Uninstalling ${skill.name} from all tools...`,
-        async () => { uninstallSkillAllInstances(skill); },
+        async () => { await uninstallSkillAllInstances(skill); },
         { refresh: "plugins" },
       ),
     uninstallSkillFromInstance: (skill, toolId, instanceId) =>
       runMutation(
         `Uninstalling ${skill.name} from ${toolId}...`,
-        async () => { uninstallSkillFromInstance(skill, toolId, instanceId); },
+        async () => { await uninstallSkillFromInstance(skill, toolId, instanceId); },
         { refresh: "plugins" },
       ),
     installSkillToInstance: (skill, toolId, instanceId) =>
       runMutation(
         `Syncing ${skill.name} to ${toolId}...`,
-        async () => { installSkillToInstance(skill, toolId, instanceId); },
+        async () => { await installSkillToInstance(skill, toolId, instanceId); },
         { refresh: "plugins" },
       ),
     installSkillToAll: async (skill) => {
@@ -171,7 +171,7 @@ export function buildDetailCallbacks(deps: DetailCallbackDeps): DispatchCallback
       let result: { installed: number; resynced: number; skipped: number; failed: number } = { installed: 0, resynced: 0, skipped: 0, failed: 0 };
       await withSpinner(
         `Syncing ${skill.name} from source to all tools...`,
-        async () => { result = installSkillToAllNonSynced(skill); },
+        async () => { result = await installSkillToAllNonSynced(skill); },
         store.notify, store.clearNotification,
       );
       const parts: string[] = [];
@@ -264,13 +264,13 @@ export function buildDetailCallbacks(deps: DetailCallbackDeps): DispatchCallback
     syncNamespace: (ns) =>
       runMutation(
         `Syncing missing skills in ${ns.name}...`,
-        async () => { syncNamespaceToAllMissing(ns); },
+        async () => { await syncNamespaceToAllMissing(ns); },
         { refresh: "plugins" },
       ),
     resyncNamespace: (ns) =>
       runMutation(
         `Re-syncing drifted skills in ${ns.name}...`,
-        async () => { resyncNamespaceDrifted(ns); },
+        async () => { await resyncNamespaceDrifted(ns); },
         { refresh: "plugins" },
       ),
     deleteNamespaceEverywhere: async (ns) => {
@@ -319,7 +319,7 @@ export function buildDetailCallbacks(deps: DetailCallbackDeps): DispatchCallback
       runMutation(
         `Uninstalling all skills in ${ns.name}...`,
         async () => {
-          const result = uninstallNamespaceAll(ns);
+          const result = await uninstallNamespaceAll(ns);
           const parts: string[] = [`${result.uninstalled} uninstalled`];
           if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
           useStore.getState().notify(`Uninstalled ${ns.name}: ${parts.join(", ")}`, result.errors.length > 0 ? "warning" : "info");
@@ -330,7 +330,7 @@ export function buildDetailCallbacks(deps: DetailCallbackDeps): DispatchCallback
       runMutation(
         `Uninstalling ${ns.name} from ${toolId}...`,
         async () => {
-          const result = uninstallNamespaceFromInstance(ns, toolId, instanceId);
+          const result = await uninstallNamespaceFromInstance(ns, toolId, instanceId);
           const parts: string[] = [`${result.uninstalled} uninstalled`];
           if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
           useStore.getState().notify(`Uninstalled ${ns.name} from ${toolId}: ${parts.join(", ")}`, result.errors.length > 0 ? "warning" : "info");

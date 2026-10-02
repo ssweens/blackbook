@@ -18,14 +18,13 @@
  *
  * Disabled with BLACKBOOK_SKILLS_CLI=0 (the unit-test default).
  */
-import { spawnSync } from "child_process";
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative, resolve, sep } from "path";
 import type { Plugin, ToolInstance } from "./types.js";
 import { expandPath } from "./config/path.js";
 import { parseMarketplaces } from "./config.js";
 import { resolveLocalPath } from "./path-utils.js";
-import { getSkillsCliEntry, skillsCliEnv } from "./skills-cli.js";
+import { runSkillsCli, summarizeCliFailure } from "./skills-cli.js";
 import { skillsSourceForRepo } from "./project-actions.js";
 
 /** Tools whose skills live in the shared ~/.agents/skills (one CLI call covers all). */
@@ -42,23 +41,19 @@ export interface CliCallResult {
   output?: string;
 }
 
-export function runSkillsCliSync(args: string[], env: Record<string, string> = {}): CliCallResult {
-  const r = spawnSync(process.execPath, [getSkillsCliEntry(), ...args], {
-    cwd: process.env.HOME || process.cwd(),
-    encoding: "utf-8",
-    env: { ...process.env, ...skillsCliEnv(), ...env },
-    timeout: 300_000,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (r.status === 0) return { ok: true, output: `${r.stderr ?? ""}\n${r.stdout ?? ""}` };
-  const text = `${r.stderr ?? ""}\n${r.stdout ?? ""}`
-    // eslint-disable-next-line no-control-regex
-    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
-    .split("\n")
-    .map((l) => l.replace(/^[\s│◇◆●■└┌├─╮╯╭╰]+/, "").replace(/[\s│]+$/, "").trim())
-    .filter(Boolean);
-  const detail = text.reverse().find((l) => /error|fail|not found|invalid|✗/i.test(l)) ?? text[0];
-  return { ok: false, error: detail ?? (r.error ? r.error.message : `skills CLI exited ${r.status}`) };
+/** Longest a single Global-scope CLI call may run before it is killed and reported. */
+const GLOBAL_CLI_TIMEOUT_MS = 300_000;
+
+/**
+ * One Global-scope (`-g`) skills CLI call, from $HOME. ASYNC on purpose: a
+ * blocking spawn freezes Ink (spinner and every key) for the whole call, and
+ * a plugin or profile install makes one call per enabled tool group, each a
+ * network fetch — minutes of a dead UI. Every TUI path goes through this.
+ */
+export async function runSkillsCliGlobal(args: string[], env: Record<string, string> = {}): Promise<CliCallResult> {
+  const r = await runSkillsCli(args, { cwd: process.env.HOME || process.cwd(), env, timeoutMs: GLOBAL_CLI_TIMEOUT_MS });
+  if (r.code === 0) return { ok: true, output: `${r.stderr}\n${r.stdout}` };
+  return { ok: false, error: summarizeCliFailure(r) };
 }
 
 /** Frontmatter `name:` of a SKILL.md (falls back to the directory name). */
@@ -168,12 +163,12 @@ export function callGroups(instances: ToolInstance[]): Array<{ agents: string[];
 }
 
 /** Install (or refresh) a plugin's skills through the skills CLI for these instances. */
-export function installPluginSkillsViaCli(
+export async function installPluginSkillsViaCli(
   plugin: Plugin,
   sourcePath: string | null,
   instances: ToolInstance[],
   marketplaceUrl?: string,
-): string[] {
+): Promise<string[]> {
   if (!skillsCliEnabled()) return [];
   const names = pluginSkillNames(plugin, sourcePath);
   if (names.length === 0) return [];
@@ -182,19 +177,19 @@ export function installPluginSkillsViaCli(
   const errors: string[] = [];
   for (const g of callGroups(instances)) {
     const args = ["add", resolved.source, "-g", "-y", ...names.flatMap((n) => ["--skill", n]), ...g.agents.flatMap((a) => ["-a", a])];
-    const r = runSkillsCliSync(args, g.env);
+    const r = await runSkillsCliGlobal(args, g.env);
     if (!r.ok) errors.push(`${plugin.name} skills (${g.agents.join(",")}): ${r.error}`);
   }
   return errors;
 }
 
 /** Remove a plugin's skills through the skills CLI. `everywhere` also clears every universal agent link. */
-export function removePluginSkillsViaCli(
+export async function removePluginSkillsViaCli(
   plugin: Plugin,
   sourcePath: string | null,
   instances: ToolInstance[],
   options: { everywhere?: boolean } = {},
-): string[] {
+): Promise<string[]> {
   if (!skillsCliEnabled()) return [];
   const names = pluginSkillNames(plugin, sourcePath);
   if (names.length === 0) return [];
@@ -206,7 +201,7 @@ export function removePluginSkillsViaCli(
     // Omitting -a for the universal group targets every agent, so no other
     // universal agent keeps the canonical link alive.
     const agentArgs = g.agents.includes("codex") ? [] : g.agents.flatMap((a) => ["-a", a]);
-    const r = runSkillsCliSync(["remove", ...names, "-g", "-y", ...agentArgs], g.env);
+    const r = await runSkillsCliGlobal(["remove", ...names, "-g", "-y", ...agentArgs], g.env);
     if (!r.ok) errors.push(`${plugin.name} skills removal: ${r.error}`);
   }
   return errors;
@@ -227,7 +222,7 @@ function groupFor(instance: ToolInstance): { agents: string[]; env: Record<strin
  * when the CLI can't serve it (disabled, no git remote, unsupported tool) so
  * the caller falls back to Blackbook's own copy.
  */
-export function installStandaloneSkillViaCli(skillDir: string, sourceRepo: string, instance: ToolInstance): boolean | null {
+export async function installStandaloneSkillViaCli(skillDir: string, sourceRepo: string, instance: ToolInstance): Promise<boolean | null> {
   if (!skillsCliEnabled()) return null;
   const group = groupFor(instance);
   const repoRoot = findGitRoot(sourceRepo);
@@ -237,7 +232,7 @@ export function installStandaloneSkillViaCli(skillDir: string, sourceRepo: strin
   const rel = relative(repoRoot, resolve(skillDir)).split(sep).join("/");
   if (!rel || rel.startsWith("..")) return null;
   const args = ["add", `github:${source}/${rel}`, "-g", "-y", "--skill", skillName(skillDir), ...group.agents.flatMap((a) => ["-a", a])];
-  return runSkillsCliSync(args, group.env).ok;
+  return (await runSkillsCliGlobal(args, group.env)).ok;
 }
 
 /**
@@ -245,12 +240,12 @@ export function installStandaloneSkillViaCli(skillDir: string, sourceRepo: strin
  * (`skills add <source> --skill <name> -g`), e.g. a global-lock entry's source.
  * Returns null when the CLI can't serve this tool or is disabled.
  */
-export function installSkillFromSourceViaCli(name: string, source: string, instance: ToolInstance): boolean | null {
+export async function installSkillFromSourceViaCli(name: string, source: string, instance: ToolInstance): Promise<boolean | null> {
   if (!skillsCliEnabled()) return null;
   const group = groupFor(instance);
   if (!group) return null;
   const args = ["add", source, "-g", "-y", "--skill", name, ...group.agents.flatMap((a) => ["-a", a])];
-  return runSkillsCliSync(args, group.env).ok;
+  return (await runSkillsCliGlobal(args, group.env)).ok;
 }
 
 /**
@@ -258,14 +253,14 @@ export function installSkillFromSourceViaCli(name: string, source: string, insta
  * only a Claude instance's links can be removed on their own; universal agents
  * share ~/.agents/skills, so `instance === null` (everywhere) is required for them.
  */
-export function removeSkillViaCli(name: string, instance: ToolInstance | null, allInstances: ToolInstance[] = []): boolean {
+export async function removeSkillViaCli(name: string, instance: ToolInstance | null, allInstances: ToolInstance[] = []): Promise<boolean> {
   if (!skillsCliEnabled()) return false;
   const groups = instance ? [groupFor(instance)].filter((g): g is NonNullable<typeof g> => g !== null) : callGroups(allInstances);
   let ok = groups.length > 0;
   for (const g of groups) {
     if (g.agents.includes("codex") && instance) continue;
     const agentArgs = g.agents.includes("codex") ? [] : g.agents.flatMap((a) => ["-a", a]);
-    ok = runSkillsCliSync(["remove", name, "-g", "-y", ...agentArgs], g.env).ok && ok;
+    ok = (await runSkillsCliGlobal(["remove", name, "-g", "-y", ...agentArgs], g.env)).ok && ok;
   }
   return ok;
 }

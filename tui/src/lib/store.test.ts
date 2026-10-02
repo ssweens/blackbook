@@ -1667,7 +1667,7 @@ describe("Store syncTools with toolFilter", () => {
       createMockTool({ toolId: "claude-code", instanceId: "default", name: "Claude" }),
       createMockTool({ toolId: "opencode", instanceId: "default", name: "OpenCode" }),
     ]);
-    vi.mocked(installSkillToInstance).mockReturnValue(true);
+    vi.mocked(installSkillToInstance).mockResolvedValue(true);
 
     const skill = {
       name: "test-skill",

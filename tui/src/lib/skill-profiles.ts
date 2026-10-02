@@ -30,7 +30,7 @@ import { loadConfig as loadYamlConfig } from "./config/loader.js";
 import { lockInstallBreakdown, lockInstallGap, planInstall, sameGithubSource } from "./lock-install-sync.js";
 import { skillsSourceForRepo } from "./project-actions.js";
 import { projectSkillAgents, runSkillsCli, summarizeCliFailure } from "./skills-cli.js";
-import { callGroups, type CliCallResult } from "./plugin-skills-cli.js";
+import { callGroups, runSkillsCliGlobal } from "./plugin-skills-cli.js";
 
 export const PROFILE_SUFFIX = ".skills-lock.json";
 export const PROFILES_SUBDIR = "profiles";
@@ -556,19 +556,6 @@ function verifyLanded(skills: string[], installedDir: string, output: string | u
  * gets links too); the Global workspace installs with `-g` for the universal
  * agents and each Claude instance.
  */
-/**
- * One Global-scope CLI call (`-g`, per call group), run ASYNC like the project
- * path. The plugin installer's `runSkillsCliSync` blocks the event loop, which
- * freezes Ink for the whole call: with one call per enabled tool per source,
- * each fetching from GitHub, a Global apply froze the spinner (and every key)
- * for minutes. Same cwd/env/result shape as the sync runner.
- */
-async function runGlobalCli(args: string[], env: Record<string, string>): Promise<CliCallResult> {
-  const r = await runSkillsCli(args, { cwd: process.env.HOME || process.cwd(), env });
-  if (r.code === 0) return { ok: true, output: `${r.stderr}\n${r.stdout}` };
-  return { ok: false, error: summarizeCliFailure(r) };
-}
-
 export async function applyProfileToWorkspace(
   workspace: string,
   name: string,
@@ -606,7 +593,7 @@ export async function applyProfileToWorkspace(
     if (global) {
       let ok = true;
       for (const g of callGroups(instances)) {
-        const r = await runGlobalCli([...base, "-g", ...g.agents.flatMap((a) => ["-a", a])], g.env);
+        const r = await runSkillsCliGlobal([...base, "-g", ...g.agents.flatMap((a) => ["-a", a])], g.env);
         output = (output ?? "") + (r.output ?? "");
         if (!r.ok) {
           ok = false;
@@ -625,7 +612,7 @@ export async function applyProfileToWorkspace(
     if (global) {
       for (const g of callGroups(instances)) {
         const agentArgs = g.agents.includes("codex") ? [] : g.agents.flatMap((a) => ["-a", a]);
-        const r = await runGlobalCli(["remove", ...coverage.removed, "-g", "-y", ...agentArgs], g.env);
+        const r = await runSkillsCliGlobal(["remove", ...coverage.removed, "-g", "-y", ...agentArgs], g.env);
         if (!r.ok) result.errors.push(`remove: ${r.error}`);
       }
     } else {
@@ -674,7 +661,7 @@ export async function installLockSkills(
     if (global) {
       let ok = true;
       for (const g of callGroups(instances)) {
-        const r = await runGlobalCli([...base, "-g", ...g.agents.flatMap((a) => ["-a", a])], g.env);
+        const r = await runSkillsCliGlobal([...base, "-g", ...g.agents.flatMap((a) => ["-a", a])], g.env);
         output = (output ?? "") + (r.output ?? "");
         if (!r.ok) { ok = false; result.errors.push(`${source}: ${r.error}`); }
       }

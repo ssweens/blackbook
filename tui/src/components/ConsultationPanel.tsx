@@ -223,9 +223,21 @@ export function ConsultationPanel({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [followUpOpen, setFollowUpOpen] = useState(false);
   const [followUpPrompt, setFollowUpPrompt] = useState("");
-  const [resultScroll, setResultScroll] = useState(0);
   const previousSelectedProposalId = useRef<string | null>(null);
   const response = state.phase === "result" ? state.response : null;
+  // Scroll belongs to one response: a new response starts at the top. Derived
+  // during render, not reset in an effect — a passive effect runs after the
+  // next keypress's state updates are queued, so a key pressed right as the
+  // response paints (Space to select a proposal below the fold) had its
+  // scroll-into-view overwritten by the late reset back to 0.
+  const [scrollState, setScrollState] = useState<{ response: ConsultationResponse | null; value: number }>({ response: null, value: 0 });
+  const resultScroll = scrollState.response === response ? scrollState.value : 0;
+  const setResultScroll = (update: number | ((current: number) => number)) => {
+    setScrollState((previous) => {
+      const current = previous.response === response ? previous.value : 0;
+      return { response, value: typeof update === "function" ? update(current) : update };
+    });
+  };
   const proposals = response?.proposals ?? [];
   const selectedIds = useMemo(() => new Set(selectedProposalIds), [selectedProposalIds]);
   const terminalRows = stdout?.rows ?? 24;
@@ -259,10 +271,6 @@ export function ConsultationPanel({
 
   useEffect(() => {
     setSelectedIndex((current) => Math.min(current, Math.max(0, proposals.length - 1)));
-  }, [response]);
-
-  useEffect(() => {
-    setResultScroll(0);
   }, [response]);
 
   useEffect(() => {

@@ -108,7 +108,7 @@ export function useNamespaceTree({
           if (ts) {
             await withSpinner(
               `Syncing ${skill.name} to ${ts.name}...`,
-              async () => { installSkillToInstance(skill, ts.toolId, ts.instanceId); },
+              async () => { await installSkillToInstance(skill, ts.toolId, ts.instanceId); },
               store.notify, store.clearNotification,
             );
           }
@@ -119,7 +119,7 @@ export function useNamespaceTree({
           if (ts) {
             await withSpinner(
               `Uninstalling ${skill.name} from ${ts.name}...`,
-              async () => { uninstallSkillFromInstance(skill, ts.toolId, ts.instanceId); },
+              async () => { await uninstallSkillFromInstance(skill, ts.toolId, ts.instanceId); },
               store.notify, store.clearNotification,
             );
           }
@@ -128,7 +128,7 @@ export function useNamespaceTree({
         case "uninstall": {
           await withSpinner(
             `Uninstalling ${skill.name} from all tools...`,
-            async () => { uninstallSkillAllInstances(skill); },
+            async () => { await uninstallSkillAllInstances(skill); },
             store.notify, store.clearNotification,
           );
           break;
@@ -179,13 +179,13 @@ export function useNamespaceTree({
         if (action.id === "sync_missing") {
           await withSpinner(
             `Syncing missing skills in ${ns.name}...`,
-            async () => { syncNamespaceToAllMissing(ns); },
+            async () => { await syncNamespaceToAllMissing(ns); },
             store.notify, store.clearNotification,
           );
         } else {
           await withSpinner(
             `Re-syncing drifted skills in ${ns.name}...`,
-            async () => { resyncNamespaceDrifted(ns); },
+            async () => { await resyncNamespaceDrifted(ns); },
             store.notify, store.clearNotification,
           );
         }
@@ -207,7 +207,7 @@ export function useNamespaceTree({
                   (i) => i.toolId === ts.toolId && i.instanceId === ts.instanceId
                 );
                 if (!isInstalled) {
-                  installSkillToInstance(skill, ts.toolId, ts.instanceId);
+                  await installSkillToInstance(skill, ts.toolId, ts.instanceId);
                 }
               }
               // Re-sync drifted
@@ -216,7 +216,7 @@ export function useNamespaceTree({
                   (i) => i.toolId === ts.toolId && i.instanceId === ts.instanceId && i.drifted
                 );
                 if (inst) {
-                  installSkillToInstance(skill, ts.toolId, ts.instanceId);
+                  await installSkillToInstance(skill, ts.toolId, ts.instanceId);
                 }
               }
             },
@@ -273,7 +273,7 @@ export function useNamespaceTree({
         if (inst) {
           await withSpinner(
             `Uninstalling ${ns.name} from ${inst.instanceName}...`,
-            async () => { uninstallNamespaceFromInstance(ns, inst.toolId, inst.instanceId); },
+            async () => { await uninstallNamespaceFromInstance(ns, inst.toolId, inst.instanceId); },
             store.notify, store.clearNotification,
           );
         }
@@ -283,7 +283,7 @@ export function useNamespaceTree({
         await withSpinner(
           `Uninstalling all skills in ${ns.name}...`,
           async () => {
-            const result = uninstallNamespaceAll(ns);
+            const result = await uninstallNamespaceAll(ns);
             const parts: string[] = [`${result.uninstalled} uninstalled`];
             if (result.errors.length > 0) parts.push(`${result.errors.length} errors`);
             store.notify(`Uninstalled ${ns.name}: ${parts.join(", ")}`, result.errors.length > 0 ? "warning" : "info");

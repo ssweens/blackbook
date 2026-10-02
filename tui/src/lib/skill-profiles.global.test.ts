@@ -4,17 +4,13 @@ import { join } from "path";
 import { tmpdir } from "os";
 import type { ToolInstance } from "./types.js";
 
-// The Global (-g) path must go through the ASYNC runner, like the project path.
-// The sync runner blocks the event loop, which froze the TUI (spinner and keys)
-// for the whole apply — one CLI call per enabled tool per source, each fetching
-// from GitHub.
+// The Global (-g) path must go through the ASYNC runner (runSkillsCliGlobal →
+// runSkillsCli), like the project path. A blocking spawn froze the TUI (spinner
+// and keys) for the whole apply — one CLI call per enabled tool per source, each
+// fetching from GitHub. There is no sync runner any more; this pins the shape.
 vi.mock("./skills-cli.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./skills-cli.js")>();
   return { ...actual, runSkillsCli: vi.fn() };
-});
-vi.mock("./plugin-skills-cli.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./plugin-skills-cli.js")>();
-  return { ...actual, runSkillsCliSync: vi.fn(() => { throw new Error("sync runner must not be used for Global applies"); }) };
 });
 
 import { runSkillsCli } from "./skills-cli.js";

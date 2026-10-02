@@ -99,7 +99,7 @@ describe("skills CLI round trip (isolated HOME)", () => {
     };
   }
 
-  it("installs a plugin's skills into the store for universal agents and every Claude instance, then removes them", () => {
+  it("installs a plugin's skills into the store for universal agents and every Claude instance, then removes them", async () => {
     const { home, claudeLearning, instances } = isolate();
     const repo = join(root, "market");
     writeSkill(join(repo, "plugins", "demo", "skills", "alpha"), "alpha");
@@ -108,7 +108,7 @@ describe("skills CLI round trip (isolated HOME)", () => {
     marketplacesMock = [{ name: "mkt", url: repo }];
     const src = join(repo, "plugins", "demo");
 
-    expect(installPluginSkillsViaCli(plugin(), src, instances)).toEqual([]);
+    expect(await installPluginSkillsViaCli(plugin(), src, instances)).toEqual([]);
     const store = join(root, "data", "blackbook", "skills");
     for (const link of [join(home, ".agents/skills/alpha"), join(home, ".claude/skills/alpha"), join(claudeLearning, "skills/alpha")]) {
       expect(lstatSync(link).isSymbolicLink(), link).toBe(true);
@@ -119,48 +119,48 @@ describe("skills CLI round trip (isolated HOME)", () => {
     // Local-path source: the store namespace is local/<abs path>, one shared copy.
     expect(readlinkSync(join(home, ".agents/skills/alpha"))).toBe(join(store, "local", ...src.split("/").filter(Boolean), "alpha"));
 
-    expect(removePluginSkillsViaCli(plugin(), src, instances, { everywhere: true })).toEqual([]);
+    expect(await removePluginSkillsViaCli(plugin(), src, instances, { everywhere: true })).toEqual([]);
     for (const link of [join(home, ".agents/skills/alpha"), join(home, ".claude/skills/alpha"), join(claudeLearning, "skills/alpha")]) {
       expect(existsSync(link) || (() => { try { lstatSync(link); return true; } catch { return false; } })(), link).toBe(false);
     }
   }, 120_000);
 
-  it("standalone: falls back (null) without a GitHub remote; removal per Claude instance leaves others", () => {
+  it("standalone: falls back (null) without a GitHub remote; removal per Claude instance leaves others", async () => {
     const { home, claudeLearning, instances } = isolate();
     const repo = join(root, "playbook");
     writeSkill(join(repo, "skills", "beta"), "beta");
     execFileSync("git", ["init", "-q"], { cwd: repo });
-    expect(installStandaloneSkillViaCli(join(repo, "skills", "beta"), repo, instances[0])).toBeNull();
+    expect(await installStandaloneSkillViaCli(join(repo, "skills", "beta"), repo, instances[0])).toBeNull();
 
     // Install via a local plugin source to get CLI-managed links, then remove from one Claude instance only.
     marketplacesMock = [{ name: "mkt", url: repo }];
     writeSkill(join(repo, "plugins", "demo", "skills", "gamma"), "gamma");
-    installPluginSkillsViaCli(plugin(), join(repo, "plugins", "demo"), instances);
-    expect(removeSkillViaCli("gamma", instances[2])).toBe(true);
+    await installPluginSkillsViaCli(plugin(), join(repo, "plugins", "demo"), instances);
+    expect(await removeSkillViaCli("gamma", instances[2])).toBe(true);
     expect(existsSync(join(claudeLearning, "skills/gamma"))).toBe(false);
     expect(lstatSync(join(home, ".claude/skills/gamma")).isSymbolicLink()).toBe(true);
     expect(lstatSync(join(home, ".agents/skills/gamma")).isSymbolicLink()).toBe(true);
   }, 120_000);
 
-  it("installs one skill from an explicit source for a single instance (a lock entry's source)", () => {
+  it("installs one skill from an explicit source for a single instance (a lock entry's source)", async () => {
     const { home, instances } = isolate();
     const repo = join(root, "third-party");
     writeSkill(join(repo, "skills", "delta"), "delta");
     writeSkill(join(repo, "skills", "other"), "other");
     // Claude only: the universal ~/.agents link is left alone.
-    expect(installSkillFromSourceViaCli("delta", repo, instances[1])).toBe(true);
+    expect(await installSkillFromSourceViaCli("delta", repo, instances[1])).toBe(true);
     expect(lstatSync(join(home, ".claude/skills/delta")).isSymbolicLink()).toBe(true);
     expect(existsSync(join(home, ".claude/skills/other"))).toBe(false);
     // Unsupported tools return null so the caller can fall back.
-    expect(installSkillFromSourceViaCli("delta", repo, { toolId: "cursor" } as ToolInstance)).toBeNull();
+    expect(await installSkillFromSourceViaCli("delta", repo, { toolId: "cursor" } as ToolInstance)).toBeNull();
   }, 120_000);
 
-  it("is a no-op when disabled", () => {
+  it("is a no-op when disabled", async () => {
     isolate();
     process.env.BLACKBOOK_SKILLS_CLI = "0";
-    expect(installPluginSkillsViaCli(plugin(), null, [])).toEqual([]);
-    expect(installStandaloneSkillViaCli(root, root, { toolId: "claude-code" } as ToolInstance)).toBeNull();
-    expect(removeSkillViaCli("x", null, [])).toBe(false);
-    expect(installSkillFromSourceViaCli("x", root, { toolId: "claude-code" } as ToolInstance)).toBeNull();
+    expect(await installPluginSkillsViaCli(plugin(), null, [])).toEqual([]);
+    expect(await installStandaloneSkillViaCli(root, root, { toolId: "claude-code" } as ToolInstance)).toBeNull();
+    expect(await removeSkillViaCli("x", null, [])).toBe(false);
+    expect(await installSkillFromSourceViaCli("x", root, { toolId: "claude-code" } as ToolInstance)).toBeNull();
   });
 });

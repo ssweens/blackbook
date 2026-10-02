@@ -1449,7 +1449,7 @@ describe("standalone skill scanning compatibility", () => {
     expect(found?.installations.find((installation) => installation.toolId === "pi")?.drifted).toBe(true);
   });
 
-  it("installs standalone skills to namespaced paths on non-flat tools", () => {
+  it("installs standalone skills to namespaced paths on non-flat tools", async () => {
     const skillName = "midi-drum-production";
     const sourceRepo = configureSourceRepoWithSsmpSkill(skillName);
     const sourceSkillDir = join(sourceRepo, "skills", "ssmp", skillName);
@@ -1466,7 +1466,7 @@ describe("standalone skill scanning compatibility", () => {
       sourcePath: sourceSkillDir,
     } as any;
 
-    const ok = installSkillToInstance(skill, "pi", piInstance.instanceId);
+    const ok = await installSkillToInstance(skill, "pi", piInstance.instanceId);
     expect(ok).toBe(true);
 
     const namespacedPath = resolveInstanceSubdirPath(piInstance.configDir, piInstance.skillsSubdir!, "ssmp", skillName, "SKILL.md");
@@ -1476,7 +1476,7 @@ describe("standalone skill scanning compatibility", () => {
     expect(existsSync(flatPath)).toBe(false);
   });
 
-  it("symlinks instead of copying when skill_sync_mode is 'symlink'", () => {
+  it("symlinks instead of copying when skill_sync_mode is 'symlink'", async () => {
     const skillName = "symlink-mode-skill";
     const sourceRepo = configureSourceRepoWithSsmpSkill(skillName);
     const sourceSkillDir = join(sourceRepo, "skills", "ssmp", skillName);
@@ -1495,7 +1495,7 @@ describe("standalone skill scanning compatibility", () => {
       sourcePath: sourceSkillDir,
     } as any;
 
-    const ok = installSkillToInstance(skill, "pi", piInstance.instanceId);
+    const ok = await installSkillToInstance(skill, "pi", piInstance.instanceId);
     expect(ok).toBe(true);
 
     const targetDir = resolveInstanceSubdirPath(piInstance.configDir, piInstance.skillsSubdir!, "ssmp", skillName);
@@ -1528,7 +1528,7 @@ describe("standalone skill scanning compatibility", () => {
     expect(existsSync(flatSkillDir)).toBe(false);
   });
 
-  it("backs up an existing (drifted) install before overwriting it", () => {
+  it("backs up an existing (drifted) install before overwriting it", async () => {
     const skillName = "arrangement-production-architecture";
     const sourceRepo = configureSourceRepoWithSsmpSkill(skillName);
     const sourceSkillDir = join(sourceRepo, "skills", "ssmp", skillName);
@@ -1545,7 +1545,7 @@ describe("standalone skill scanning compatibility", () => {
     mkdirSync(targetDir, { recursive: true });
     writeFileSync(join(targetDir, "SKILL.md"), "# user-edited local version\n");
 
-    expect(installSkillToInstance(skill, "pi", piInstance.instanceId)).toBe(true);
+    expect(await installSkillToInstance(skill, "pi", piInstance.instanceId)).toBe(true);
 
     // Target overwritten with the source copy…
     expect(readFileSync(join(targetDir, "SKILL.md"), "utf-8")).toContain("source copy");
@@ -2240,7 +2240,7 @@ describe("claude derived view (~/.claude/skills as symlinks into ~/.agents/skill
     expect(existsSync(join(linkPath, "SKILL.md"))).toBe(true);
   });
 
-  it("standalone skill install links claude at the store and uninstall only unlinks", () => {
+  it("standalone skill install links claude at the store and uninstall only unlinks", async () => {
     const claude = enableClaude();
     const skillName = "derived-view-skill";
     const sourceRepo = join(TEST_ROOT, "source-repo");
@@ -2254,7 +2254,7 @@ describe("claude derived view (~/.claude/skills as symlinks into ~/.agents/skill
       sourcePath: sourceSkillDir,
     } as any;
 
-    expect(installSkillToInstance(skill, "claude-code", claude.instanceId)).toBe(true);
+    expect(await installSkillToInstance(skill, "claude-code", claude.instanceId)).toBe(true);
 
     const linkPath = join(claudeSkillsDir(claude), flattenNamespacedName("testns", skillName));
     const storePath = join(agentsRoot(), "testns", skillName);
@@ -2263,7 +2263,7 @@ describe("claude derived view (~/.claude/skills as symlinks into ~/.agents/skill
     expect(readFileSync(join(linkPath, "SKILL.md"), "utf-8")).toContain("source copy");
 
     // Re-install is idempotent: the existing correct link is kept.
-    expect(installSkillToInstance(skill, "claude-code", claude.instanceId)).toBe(true);
+    expect(await installSkillToInstance(skill, "claude-code", claude.instanceId)).toBe(true);
     expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
 
     const withInstall = {
@@ -2272,7 +2272,7 @@ describe("claude derived view (~/.claude/skills as symlinks into ~/.agents/skill
         { toolId: "claude-code", instanceId: claude.instanceId, instanceName: "Claude", diskPath: linkPath },
       ],
     } as any;
-    expect(uninstallSkillFromInstance(withInstall, "claude-code", claude.instanceId)).toBe(true);
+    expect(await uninstallSkillFromInstance(withInstall, "claude-code", claude.instanceId)).toBe(true);
     expect(lstatSync(linkPath, { throwIfNoEntry: false })).toBeUndefined();
     expect(existsSync(join(storePath, "SKILL.md"))).toBe(true);
   });
