@@ -60,7 +60,8 @@ export function WorkspacePickerModal({ profileName, targets, onApply, onUnassign
               {t.assigned ? <Text color="green">{"  "}✓ assigned</Text> : null}
             </Box>
           ))}
-          <Text color="gray">↑/↓ select · Enter apply · d unassign · Esc cancel</Text>
+          {/* `d` only does something on an assigned row, so only offer it there. */}
+          <Text color="gray">↑/↓ select · Enter apply{targets[sel].assigned ? " · d unassign" : ""} · Esc cancel</Text>
         </>
       )}
     </Box>

@@ -354,18 +354,20 @@ export function App() {
    * guard (like every other install in the app). applyProfile reports
    * success/failure itself.
    */
-  const applyInFlight = useRef(new Set<string>());
+  // One profile apply at a time, app-wide — like detailMutationInFlight. Two
+  // applies (even to different workspaces) would run two skills CLIs against
+  // the same store and, for Global, the same lock file.
+  const applyInFlight = useRef(false);
   const applyWithSpinner = async (workspace: string, name: string, targetLabel: string): Promise<boolean> => {
-    const key = `${workspace}:${name}`;
-    if (applyInFlight.current.has(key)) {
+    if (applyInFlight.current) {
       notify("An action is already in progress.", "warning");
       return false;
     }
-    applyInFlight.current.add(key);
+    applyInFlight.current = true;
     try {
       return await withSpinner(`Applying ${name} to ${targetLabel}...`, () => applyProfile(workspace, name), notify, clearNotification);
     } finally {
-      applyInFlight.current.delete(key);
+      applyInFlight.current = false;
     }
   };
   // Profile detail (Profiles tab Enter): the standard ItemDetail pipeline — a
@@ -1754,7 +1756,12 @@ export function App() {
   const openSkillDetailByName = (name: string, fromProfile?: string): void => {
     const skill = standaloneSkills.find((s) => s.name === name);
     if (!skill) {
-      notify(`No detail available for ${name}`, "warning");
+      // Skill details come from the Installed data, which loads in the background at startup.
+      const stillLoading = !useStore.getState().installedPluginsLoaded;
+      notify(
+        stillLoading ? `Still loading installed skills — try ${name} again in a moment` : `No detail available for ${name}`,
+        stillLoading ? "info" : "warning",
+      );
       return;
     }
     // fromList: opened from a flat definition view (Projects drill-in / Profiles
@@ -3011,9 +3018,13 @@ export function App() {
         modeHint={
           tab === "projects" && projectDetailPath
             ? "Enter details/expand · P apply profile · p push · u pull · e toggle · d delete · / search · Esc back · R refresh · q quit"
-            : tab === "profiles" && profilesEditing
-              ? "Space toggle · Enter details · S save · r rename · v selected only · →/← expand · / search · c consult advisor · Esc back"
-              : undefined
+            : tab === "profiles" && profilesEditing === "naming"
+              ? "Type a name · Enter continue · Esc cancel"
+              : tab === "profiles" && profilesEditing === "confirmDelete"
+                ? "y/Enter delete · n/Esc cancel"
+                : tab === "profiles" && profilesEditing
+                  ? "Space toggle · Enter details · S save · r rename · v selected only · →/← expand · / search · c consult advisor · Esc back"
+                  : undefined
         }
       />
       <StatusBar />

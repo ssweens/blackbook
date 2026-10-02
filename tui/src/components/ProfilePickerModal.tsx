@@ -58,7 +58,8 @@ export function ProfilePickerModal({ profiles, workspaceName, assigned, onApply,
               {assigned?.has(n) ? <Text color="green">{"  "}✓ assigned</Text> : null}
             </Box>
           ))}
-          <Text color="gray">↑/↓ select · Enter apply{onUnassign ? " · d unassign" : ""} · Esc cancel</Text>
+          {/* `d` only does something on an assigned row, so only offer it there. */}
+          <Text color="gray">↑/↓ select · Enter apply{onUnassign && assigned?.has(names[sel]) ? " · d unassign" : ""} · Esc cancel</Text>
         </>
       )}
     </Box>

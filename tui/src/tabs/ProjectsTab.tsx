@@ -24,7 +24,9 @@ function coverageLines(coverage: ProfileCoverage[] | undefined): Array<{ key: st
     .map((c) => ({
       key: c.profile,
       stale: !c.upToDate,
-      text: `profile ${c.profile}: ${c.present.length}/${c.total} · ${profileStatusSummary(c)}${c.upToDate ? "" : " — P to apply"}`,
+      // "P to apply" only when applying would change something; a skill the
+      // source repo no longer has can't be applied, only edited out.
+      text: `profile ${c.profile}: ${c.present.length}/${c.total} · ${profileStatusSummary(c)}${c.toApply.length || c.drifted.length || c.removed.length ? " — P to apply" : ""}`,
     }));
 }
 

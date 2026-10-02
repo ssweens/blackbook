@@ -2140,14 +2140,98 @@ describe("App E2E — Skill detail from Projects and Profiles", () => {
 
       sendKey(stdin, "P");
       // Mirror of the Projects tab's picker; shows which workspaces already use the profile.
-      await waitForFrame(stdout.lastFrame, (f) => f.includes("Apply profile Docs to…") && f.includes("Global (~/.agents)") && f.includes("api") && f.includes("✓ assigned") && f.includes("d unassign"));
-      sendKey(stdin, KEYS.down); // → api
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Apply profile Docs to…") && f.includes("Global (~/.agents)") && f.includes("api") && f.includes("✓ assigned"));
+      sendKey(stdin, KEYS.down); // → api (assigned, so `d unassign` is offered here)
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("❯ api") && f.includes("d unassign"));
       sendKey(stdin, "d");       // unassign from api
       await waitForFrame(stdout.lastFrame, () => unassignProfile.mock.calls.length === 1);
       expect(unassignProfile).toHaveBeenCalledWith("/w/api", "Docs");
       sendKey(stdin, KEYS.enter); // apply to api
       await waitForFrame(stdout.lastFrame, () => applyProfile.mock.calls.length === 2);
       expect(applyProfile).toHaveBeenLastCalledWith("/w/api", "Docs");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("one apply at a time, app-wide: applying to a project while a Global apply runs is refused", async () => {
+    const applyProfile = vi.fn(() => new Promise<boolean>((r) => setTimeout(() => r(true), 150)));
+    const proj: ProjectInfo = { path: "/w/api", name: "api", exists: true, hasAgentsDir: true, skills: [], available: [] };
+    docsState(applyProfile, { projects: [proj] });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Docs") && f.includes("G apply to Global"));
+      sendKey(stdin, "G");
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Applying Docs to Global"));
+      // A different target is still "an action in progress": the two runs would
+      // drive two skills CLIs against the same store at once.
+      sendKey(stdin, "P");
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Apply profile Docs to…"));
+      sendKey(stdin, KEYS.down); // → api
+      sendKey(stdin, KEYS.enter);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("An action is already in progress."));
+      await waitForFrame(stdout.lastFrame, () => applyProfile.mock.calls.length === 1);
+      await new Promise((r) => setTimeout(r, 200)); // let the first apply finish; no second one must start
+      expect(applyProfile).toHaveBeenCalledTimes(1);
+      expect(applyProfile).toHaveBeenCalledWith(homedir(), "Docs");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("the hint bar follows the Profiles sub-mode (naming, delete confirm), and pickers offer d only on an assigned row", async () => {
+    const applyProfile = vi.fn<(workspace: string, name: string) => Promise<boolean>>().mockResolvedValue(true);
+    const unassignProfile = vi.fn<(workspace: string, name: string) => Promise<boolean>>().mockResolvedValue(true);
+    const proj: ProjectInfo = {
+      path: "/w/api", name: "api", exists: true, hasAgentsDir: true, skills: [], available: [],
+      profileCoverage: [{ profile: "Docs", total: 2, present: ["docx", "pdf"], missing: [], removed: [], applied: true, assigned: true, installMissing: [], drifted: [], unresolvable: [], toApply: [], upToDate: true }],
+    };
+    docsState(applyProfile, { projects: [proj], unassignProfile });
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      const BUILDER = "Space toggle · Enter details · S save";
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Docs") && f.includes("G apply to Global"));
+      sendKey(stdin, "n"); // naming a new profile: the builder's keys don't apply yet
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("New profile") && f.includes("Type a name · Enter continue · Esc cancel"));
+      expect(stdout.lastFrame()).not.toContain(BUILDER);
+      sendKey(stdin, KEYS.escape);
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("G apply to Global"));
+      sendKey(stdin, "d"); // delete confirm: its keys, not the builder's
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Delete profile") && f.includes("y/Enter delete · n/Esc cancel"));
+      expect(stdout.lastFrame()).not.toContain(BUILDER);
+      sendKey(stdin, "n"); // cancel
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("G apply to Global") && !f.includes("Delete profile"));
+
+      sendKey(stdin, "P"); // picker: Global is not assigned → no `d unassign` offered
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Apply profile Docs to…") && f.includes("❯ Global"));
+      expect(stdout.lastFrame()).not.toContain("d unassign");
+      sendKey(stdin, KEYS.down); // → api (assigned)
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("❯ api") && f.includes("d unassign"));
+    } finally {
+      unmount();
+    }
+  });
+
+  it("a key pressed to dismiss a sticky notification on the Profiles list does nothing else (same as every other tab)", async () => {
+    const applyProfile = vi.fn<(workspace: string, name: string) => Promise<boolean>>().mockResolvedValue(true);
+    docsState(applyProfile);
+    const { stdin, stdout, unmount } = render(<App />);
+    try {
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Docs") && f.includes("G apply to Global"));
+      // The result of a previous apply is still on screen, waiting to be acknowledged.
+      act(() => { useStore.getState().notify('Applied "Docs" to tui: +4 added', "success"); });
+      await waitForFrame(stdout.lastFrame, (f) => f.includes("Press any key to dismiss"));
+
+      // Raw write (not sendKey, which pre-clears): G must only dismiss, not start another apply.
+      act(() => { stdin.write("G"); });
+      await waitForFrame(stdout.lastFrame, (f) => !f.includes("Press any key to dismiss"));
+      await settleInput();
+      expect(applyProfile).not.toHaveBeenCalled();
+
+      // With nothing to dismiss, the same key applies.
+      act(() => { stdin.write("G"); });
+      await waitForFrame(stdout.lastFrame, () => applyProfile.mock.calls.length === 1);
+      expect(applyProfile).toHaveBeenCalledWith(homedir(), "Docs");
     } finally {
       unmount();
     }

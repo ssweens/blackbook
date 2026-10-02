@@ -15,6 +15,9 @@ import type {
 } from "../types.js";
 import type { PluginDrift } from "../plugin-drift.js";
 
+/** Profiles-tab sub-mode that owns input; false while the list is showing. */
+export type ProfilesEditing = false | "builder" | "naming" | "confirmDelete" | "consult";
+
 export interface Actions {
   setTab: (tab: Tab) => void;
   setSearch: (search: string) => void;
@@ -101,9 +104,12 @@ export interface Actions {
   refreshLockSync: (targets: import("../lock-install-sync.js").LockSyncTarget[]) => Promise<void>;
   /** Remove a profile from a workspace's `profiles` meta in its lock (skills stay installed). */
   unassignProfile: (workspace: string, name: string) => Promise<boolean>;
-  /** True while the Profiles tab builder/confirm owns input (suppresses global keys). */
-  profilesEditing: boolean;
-  setProfilesEditing: (editing: boolean) => void;
+  /**
+   * Which Profiles-tab sub-mode owns input (suppresses global keys), or false
+   * for the list. The hint bar shows that sub-mode's keys.
+   */
+  profilesEditing: ProfilesEditing;
+  setProfilesEditing: (editing: ProfilesEditing) => void;
   setDetailPiPackage: (pkg: PiPackage | null) => Promise<void>;
   togglePiMarketplaceEnabled: (name: string) => Promise<void>;
   addPiMarketplace: (name: string, source: string) => Promise<void>;

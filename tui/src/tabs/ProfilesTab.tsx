@@ -13,6 +13,7 @@ import {
 } from "../lib/consultation-context.js";
 import { runConsultation as invokeConsultation } from "../lib/consultation-runner.js";
 import { useStore } from "../lib/store.js";
+import type { ProfilesEditing } from "../lib/store/types.js";
 import { getConfigRepoPath, getConsultationSettings } from "../lib/config.js";
 import { indexSourceSkillTree, type SourceSkillNamespace } from "../lib/projects.js";
 import { computeWindow, matchesQuery, windowLabel } from "../lib/list-window.js";
@@ -146,10 +147,18 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenProfileDet
   // Tell App's global input handler to stand down while the builder or the
   // delete confirm owns the keyboard (digits/q/etc. must not fire).
   const setProfilesEditing = useStore((s) => s.setProfilesEditing);
+  // The sub-mode, not just a flag: the hint bar shows each one's own keys
+  // (the builder's while naming or confirming a delete would be wrong).
+  const editing: ProfilesEditing =
+    consultation !== null ? "consult"
+      : mode.kind === "list" ? false
+        : mode.kind === "confirmDelete" ? "confirmDelete"
+          : mode.naming ? "naming"
+            : "builder";
   useEffect(() => {
-    setProfilesEditing(mode.kind !== "list" || consultation !== null);
+    setProfilesEditing(editing);
     return () => setProfilesEditing(false);
-  }, [consultation, mode.kind, setProfilesEditing]);
+  }, [editing, setProfilesEditing]);
 
   const names = useMemo(() => Object.keys(profiles).sort(compareProfileNames), [profiles]);
 
@@ -362,6 +371,15 @@ export function ProfilesTab({ contentHeight, onOpenSkillDetail, onOpenProfileDet
 
   useInput((input, key) => {
     if (consultation) return;
+
+    // A sticky notification ("Press any key to dismiss") is acknowledged by the
+    // next key and that key does nothing else — the convention on every tab,
+    // enforced in App's handler. This tab owns its own list keys, so without
+    // this guard a `G` pressed to dismiss "Applied Docs…" would ALSO start the
+    // next apply. Child effects register before the parent's, so this handler
+    // sees the notifications App is about to clear. Esc is excluded: it closes
+    // the topmost layer regardless (same as App).
+    if (!key.escape && useStore.getState().notifications.some((n) => !n.spinner)) return;
 
     if (mode.kind === "list") {
       if (key.upArrow) setListIndex(Math.max(0, listIndex - 1));
